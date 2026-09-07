@@ -1,4 +1,5 @@
 # noraneko-ci の build コンテナ。bsys6 prepare が apt で入れるものを先に焼いておく(prepare の 4〜5 分 → 数十秒)。
+# (.woodpecker/ の下に置くと Woodpecker が pipeline 設定と思って転ぶ)
 # 一覧は .github/bsys6/src/prepare.sh の linux と macos の和 + .woodpecker/build.yml の基本 + LLVM 20。
 # prepare.sh の apt はそのまま走らせる(全部入っていれば no-op、ずれていれば足りない分だけ入る=安全網)。
 #

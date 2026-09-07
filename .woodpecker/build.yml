@@ -20,7 +20,7 @@ when:
 
 steps:
   build:
-    image: localhost/noraneko-ci:ubuntu24 # 箱が cloud-init で B2 から load した image(.woodpecker/image/Dockerfile)。無ければ cloud-init が素の ubuntu を同名にする
+    image: localhost/noraneko-ci:ubuntu24 # 箱が cloud-init で B2 から load した image(.github/ci-image/Dockerfile)。無ければ cloud-init が素の ubuntu を同名にする
     commands:
       # 中では root(rootless podman なので host から見れば ci)。HOME は箱側(~/.mozbuild と rust を持続させる)
       - export WORK=/srv/ci/work/$BUILD_TARGET HOME=/srv/ci/work/$BUILD_TARGET/home; mkdir -p "$HOME/bin"
