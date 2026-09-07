@@ -9,13 +9,13 @@ cd "$(dirname "$0")/../.github/bsys6"
 
 export UP=$SCCACHE_ENDPOINT S3="--aws-sigv4 aws:amz:$SCCACHE_REGION:s3 --user $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" T=$BUILD_TARGET-$BUILD_ARCH
 
-# apt の deb を捨てない(image の docker-clean が消す)。置き場は volume、種は B2 の cache/apt/<arch>.tar。
+# apt の deb を捨てない(image の docker-clean が消す)。置き場は volume、種は B2 の cache/apt/<target>-<arch>.tar。
 # prepare の apt(build-essential、gtk の dev、LLVM 20 …)は毎回数百 MB 落としていた。展開と設定は残る
 APT_CACHE=$WORK/apt-cache
 rm -f /etc/apt/apt.conf.d/docker-clean
 mkdir -p "$APT_CACHE/archives/partial"
 if [ -n "$SCCACHE_BUCKET" ] && ! ls "$APT_CACHE"/archives/*.deb >/dev/null 2>&1; then
-  curl -sf $S3 "$UP/$SCCACHE_BUCKET/cache/apt/$BUILD_ARCH.tar" | tar -x -C "$APT_CACHE" || true
+  curl -sf $S3 "$UP/$SCCACHE_BUCKET/cache/apt/$T.tar" | tar -x -C "$APT_CACHE" || true
 fi
 rm -rf /var/cache/apt/archives && ln -s "$APT_CACHE/archives" /var/cache/apt/archives
 apt_stamp() { ls "$APT_CACHE"/archives/*.deb 2>/dev/null | md5sum | cut -c1-32; }
@@ -46,10 +46,10 @@ rc=0
 TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 prepare build package || rc=$?
 /usr/local/bin/ci-record build_end target=$BUILD_TARGET arch=$BUILD_ARCH rc=$rc dur_s=$SECONDS kind=woodpecker
 sccache --show-stats > /srv/ci/telemetry/sccache-$(date +%s)-$BUILD_TARGET-$BUILD_ARCH.txt 2>&1 || true
-# apt の deb が増えていたら B2 の種を差し替える(target が違っても arch が同じなら中身はほぼ同じ)
+# apt の deb が増えていたら B2 の種を差し替える(target で入れる物が違うので鍵は target 別)
 if [ -n "$SCCACHE_BUCKET" ] && [ "$(apt_stamp)" != "$APT_STAMP0" ]; then
   tar -C "$APT_CACHE" -cf /tmp/apt-cache.tar archives
-  curl -sf $S3 -T /tmp/apt-cache.tar "$UP/$SCCACHE_BUCKET/cache/apt/$BUILD_ARCH.tar" \
+  curl -sf $S3 -T /tmp/apt-cache.tar "$UP/$SCCACHE_BUCKET/cache/apt/$T.tar" \
     && echo "apt-cache: B2 に置いた($(ls "$APT_CACHE"/archives/*.deb | wc -l) 個)" || true
 fi
 # 箱は使い捨てなので、ログは B2(sccache と同じ bucket)の logs/sccache/<target>/ に置く。読むのは noraneko-ci の bin/sccache-report
