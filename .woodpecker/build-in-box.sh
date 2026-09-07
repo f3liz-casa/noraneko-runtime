@@ -46,6 +46,15 @@ rc=0
 TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 prepare build package || rc=$?
 /usr/local/bin/ci-record build_end target=$BUILD_TARGET arch=$BUILD_ARCH rc=$rc dur_s=$SECONDS kind=woodpecker
 sccache --show-stats > /srv/ci/telemetry/sccache-$(date +%s)-$BUILD_TARGET-$BUILD_ARCH.txt 2>&1 || true
+# 産物(bsys6 package が置く tar.xz)を B2 の artifacts/<commit 10 桁>/ に。release step は GH_TOKEN が無いと skip で、
+# 箱は使い捨てなので、ここに置かないと消える
+if [ "$rc" = 0 ] && [ -n "$SCCACHE_BUCKET" ]; then
+  sha=$(echo "$CI_COMMIT_SHA" | cut -c1-10)
+  for f in "$(pwd)"/noraneko-*.tar.xz; do
+    [ -f "$f" ] || continue
+    curl -sf $S3 -T "$f" "$UP/$SCCACHE_BUCKET/artifacts/$sha/$(basename "$f")" && echo "artifact: artifacts/$sha/$(basename "$f")" || true
+  done
+fi
 # apt の deb が増えていたら B2 の種を差し替える(target で入れる物が違うので鍵は target 別)
 if [ -n "$SCCACHE_BUCKET" ] && [ "$(apt_stamp)" != "$APT_STAMP0" ]; then
   tar -C "$APT_CACHE" -cf /tmp/apt-cache.tar archives
