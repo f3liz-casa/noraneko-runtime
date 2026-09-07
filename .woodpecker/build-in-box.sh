@@ -34,7 +34,7 @@ if [ -n "$SCCACHE_BUCKET" ]; then
     rm -f /srv/ci/telemetry/proxy-$T.jsonl
     "$HOME/bin/sccache-proxy" -store "$WORK/proxy-store" -log /srv/ci/telemetry/proxy-$T.jsonl \
       -record /srv/ci/telemetry/proxy-$T.list -prefetch /tmp/prefetch.list >/srv/ci/telemetry/proxy-$T.err 2>&1 &
-    for i in 1 2 3 4 5 6 7 8 9 10; do curl -sf -o /dev/null http://127.0.0.1:9800/ 2>/dev/null && break; sleep 1; done
+    for i in 1 2 3 4 5 6 7 8 9 10; do curl -sf -o /dev/null http://127.0.0.1:9800/healthz 2>/dev/null && break; sleep 1; done
     echo "sccache-proxy: 先読み $(wc -l < /tmp/prefetch.list) 鍵"
     export SCCACHE_ENDPOINT=http://127.0.0.1:9800
   fi
@@ -62,7 +62,15 @@ if [ -s "$SCCACHE_ERROR_LOG" ] && [ -n "$SCCACHE_BUCKET" ]; then
   if [ -s /srv/ci/telemetry/proxy-$T.jsonl ]; then
     xz -T0 -c /srv/ci/telemetry/proxy-$T.jsonl > /tmp/proxy-log.xz
     curl -sf $S3 -T /tmp/proxy-log.xz "$UP/$SCCACHE_BUCKET/${key%.log.xz}.access.jsonl.xz" || true
-    [ "$rc" = 0 ] && [ -s /srv/ci/telemetry/proxy-$T.list ] && curl -sf $S3 -T /srv/ci/telemetry/proxy-$T.list "$UP/$SCCACHE_BUCKET/prefetch/$T.list" || true
+    # 次の先読みの列: 通っていて、しかも前の列の半分以上あるときだけ差し替える(増分ビルドの小さな記録で上書きしない。#28→#30 でやった)
+    if [ "$rc" = 0 ] && [ -s /srv/ci/telemetry/proxy-$T.list ]; then
+      new=$(wc -l < /srv/ci/telemetry/proxy-$T.list); old=$(wc -l < /tmp/prefetch.list)
+      if [ $((new * 2)) -ge "$old" ]; then
+        curl -sf $S3 -T /srv/ci/telemetry/proxy-$T.list "$UP/$SCCACHE_BUCKET/prefetch/$T.list" && echo "prefetch: 列を差し替えた($old → $new 鍵)" || true
+      else
+        echo "prefetch: 列は前のまま($old 鍵、今回の記録は $new 鍵)"
+      fi
+    fi
   fi
 fi
 exit $rc
