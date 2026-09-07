@@ -51,6 +51,10 @@ steps:
       - git -C "$REPO_DIR" fetch origin "$CI_COMMIT_SHA"
       - git -C "$REPO_DIR" checkout -f "$CI_COMMIT_SHA"
       - cd "$REPO_DIR/.github/bsys6"
+      # sccache の hit/miss をソースの path つきで残す(何を変えると何が一気にだめになるかを後で読む)。
+      # compiler モジュールだけに絞ると一 compile 数行で済む。server は env を継ぐので start-server の前に置く
+      - export SCCACHE_LOG=sccache::compiler::compiler=debug SCCACHE_ERROR_LOG=/srv/ci/telemetry/sccache-$BUILD_TARGET-$BUILD_ARCH.log
+      - rm -f "$SCCACHE_ERROR_LOG"
       # sccache server は先に起こす(mach configure 中の自動起動は 10 秒で timeout する)
       - sccache --start-server >/dev/null 2>&1 || true
       - /usr/local/bin/ci-record build_start target=$BUILD_TARGET arch=$BUILD_ARCH commit=$CI_COMMIT_SHA kind=woodpecker
@@ -59,4 +63,11 @@ steps:
         TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 prepare build package || rc=$?
         /usr/local/bin/ci-record build_end target=$BUILD_TARGET arch=$BUILD_ARCH rc=$rc dur_s=$SECONDS kind=woodpecker
         sccache --show-stats > /srv/ci/telemetry/sccache-$(date +%s)-$BUILD_TARGET-$BUILD_ARCH.txt 2>&1 || true
+        # 箱は使い捨てなので、ログは B2(sccache と同じ bucket)の logs/sccache/<target>/ に置く。読むのは noraneko-ci の bin/sccache-report
+        if [ -s "$SCCACHE_ERROR_LOG" ] && [ -n "$SCCACHE_BUCKET" ]; then
+          key="logs/sccache/$BUILD_TARGET-$BUILD_ARCH/$(date -u +%Y%m%dT%H%M%SZ)-$(echo "$CI_COMMIT_SHA" | cut -c1-10)-rc$rc.log.xz"
+          xz -T0 -c "$SCCACHE_ERROR_LOG" > /tmp/sccache-log.xz
+          curl -sf --aws-sigv4 "aws:amz:$SCCACHE_REGION:s3" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" -T /tmp/sccache-log.xz "$SCCACHE_ENDPOINT/$SCCACHE_BUCKET/$key" \
+            && /usr/local/bin/ci-record sccache_log target=$BUILD_TARGET arch=$BUILD_ARCH key=$key || true
+        fi
         exit $rc
