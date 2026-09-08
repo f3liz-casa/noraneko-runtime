@@ -53,6 +53,11 @@ if [ "$rc" = 0 ] && [ -n "$SCCACHE_BUCKET" ]; then
   for f in "$(pwd)"/noraneko-*.tar.xz; do
     [ -f "$f" ] || continue
     curl -sf $S3 -T "$f" "$UP/$SCCACHE_BUCKET/artifacts/$sha/$(basename "$f")" && echo "artifact: artifacts/$sha/$(basename "$f")" || true
+    # 最新を指す pointer(dl.f3liz.casa/noraneko-runtime/latest/<target> が読む)。ci-box と main のときだけ動かす
+    case "$CI_COMMIT_BRANCH" in main|ci-box)
+      printf 'artifacts/%s/%s\n' "$sha" "$(basename "$f")" > /tmp/latest.ptr
+      curl -sf $S3 -T /tmp/latest.ptr "$UP/$SCCACHE_BUCKET/artifacts/latest/$T" && echo "latest: $T → artifacts/$sha/$(basename "$f")" || true ;;
+    esac
   done
 fi
 # apt の deb が増えていたら B2 の種を差し替える(target で入れる物が違うので鍵は target 別)
