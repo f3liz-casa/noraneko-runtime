@@ -17,7 +17,7 @@ RUN apt-get update -qq \
       python3-pip build-essential autoconf2.13 yasm \
       libgtk-3-dev libxtst6 libxrandr2 libasound2-dev libpango1.0-dev libatk1.0-dev \
       libcairo-gobject2 libgdk-pixbuf2.0-dev libdbus-glib-1-dev xvfb mesa-utils msitools \
-      rsync zip unzip python3-testresources file nodejs \
+      rsync zip unzip python3-testresources file nodejs ruby \
  && wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg \
  && echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-$LLVM_VERSION main" > /etc/apt/sources.list.d/llvm.list \
  && apt-get update -qq \
