@@ -20,7 +20,7 @@ when:
 
 steps:
   build:
-    image: docker.io/library/ubuntu:24.04
+    image: localhost/noraneko-ci:ubuntu24 # 箱が cloud-init で B2 から load した image(.github/ci-image/Dockerfile)。無ければ cloud-init が素の ubuntu を同名にする
     commands:
       # 中では root(rootless podman なので host から見れば ci)。HOME は箱側(~/.mozbuild と rust を持続させる)
       - export WORK=/srv/ci/work/$BUILD_TARGET HOME=/srv/ci/work/$BUILD_TARGET/home; mkdir -p "$HOME/bin"
@@ -50,13 +50,5 @@ steps:
         fi
       - git -C "$REPO_DIR" fetch origin "$CI_COMMIT_SHA"
       - git -C "$REPO_DIR" checkout -f "$CI_COMMIT_SHA"
-      - cd "$REPO_DIR/.github/bsys6"
-      # sccache server は先に起こす(mach configure 中の自動起動は 10 秒で timeout する)
-      - sccache --start-server >/dev/null 2>&1 || true
-      - /usr/local/bin/ci-record build_start target=$BUILD_TARGET arch=$BUILD_ARCH commit=$CI_COMMIT_SHA kind=woodpecker
-      - |
-        rc=0
-        TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 prepare build package || rc=$?
-        /usr/local/bin/ci-record build_end target=$BUILD_TARGET arch=$BUILD_ARCH rc=$rc dur_s=$SECONDS kind=woodpecker
-        sccache --show-stats > /srv/ci/telemetry/sccache-$(date +%s)-$BUILD_TARGET-$BUILD_ARCH.txt 2>&1 || true
-        exit $rc
+      # ここから先は file の script(stdin 経由の 8 KiB の罠を避ける。理由は script の頭に)
+      - bash "$REPO_DIR/.woodpecker/build-in-box.sh"

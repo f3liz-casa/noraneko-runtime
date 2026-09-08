@@ -20,6 +20,8 @@ ac_add_options --enable-optimize
 mk_add_options AUTOCLOBBER=1
 ac_add_options MOZ_TELEMETRY_REPORTING=
 ac_add_options --with-branding=browser/branding/noraneko-unofficial
+# bundle id は {distribution-id}.{MOZ_MACBUNDLE_ID}(toolkit/moz.configure)。casa.f3liz.noraneko にする
+ac_add_options --with-distribution-id=casa.f3liz
 export MOZ_PACKAGE_JSSHELL=1
 
 # sccache: 箱では SCCACHE_DIR(local disk)か SCCACHE_BUCKET(S3互換=B2)が入る。GHA では未設定=無効。
