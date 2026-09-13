@@ -59,6 +59,13 @@ if [ "$rc" = 0 ] && [ -n "$SCCACHE_BUCKET" ]; then
       curl -sf $S3 -T /tmp/latest.ptr "$UP/$SCCACHE_BUCKET/artifacts/latest/$T" && echo "latest: $T → artifacts/$sha/$(basename "$f")" || true ;;
     esac
   done
+  # 添え物: noraneko 側の package.yml が MAR を作るのに使う <target>-<arch>-application-ini.zip と -dist-host.zip。
+  # release.sh の梱包(dry-run)を借りて、産物の隣(同じ artifacts/<sha>/)に置く。pointer は動かさない
+  RELEASE_DRY_RUN=1 TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 release >/dev/null 2>&1 || true
+  for f in "$(pwd)/release-out/$T-application-ini.zip" "$(pwd)/release-out/$T-dist-host.zip"; do
+    [ -f "$f" ] || continue
+    curl -sf $S3 -T "$f" "$UP/$SCCACHE_BUCKET/artifacts/$sha/$(basename "$f")" && echo "artifact: artifacts/$sha/$(basename "$f")" || true
+  done
 fi
 # apt の deb が増えていたら B2 の種を差し替える(target で入れる物が違うので鍵は target 別)
 if [ -n "$SCCACHE_BUCKET" ] && [ "$(apt_stamp)" != "$APT_STAMP0" ]; then
