@@ -24,11 +24,6 @@ ac_add_options --enable-lto=thin
 ac_add_options --enable-release
 ac_add_options --enable-optimize
 
-#sccache
-#mk_add_options 'export RUSTC_WRAPPER=sccache'
-#mk_add_options 'export CCACHE_CPP2=yes'
-#ac_add_options --with-ccache
-#mk_add_options 'export SCCACHE_GHA_ENABLED=on'
 mk_add_options AUTOCLOBBER=1
 #Telemetry
 #https://searchfox.org/mozilla-central/rev/893f350260faac2ee6bf2b14c627d55eb2babfb0/toolkit/components/telemetry/docs/internals/preferences.rst
@@ -40,3 +35,14 @@ ac_add_options --with-branding=browser/branding/noraneko-unofficial
 export MOZ_PACKAGE_JSSHELL=1
 ac_add_options --enable-unverified-updates
 ac_add_options --enable-update-channel=release
+
+# sccache: 箱では SCCACHE_DIR(local disk)か SCCACHE_BUCKET(S3互換=B2)が入る。GHA では未設定=無効。
+if [ -n "${SCCACHE_DIR:-}${SCCACHE_BUCKET:-}" ]; then
+  ac_add_options --with-ccache=/usr/local/bin/sccache
+  mk_add_options "export RUSTC_WRAPPER=/usr/local/bin/sccache"
+  [ -n "${SCCACHE_DIR:-}" ] && mk_add_options "export SCCACHE_DIR=$SCCACHE_DIR"
+  [ -n "${SCCACHE_DIR:-}" ] && mk_add_options "export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-50G}"
+  for v in SCCACHE_BUCKET SCCACHE_ENDPOINT SCCACHE_REGION SCCACHE_S3_KEY_PREFIX AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+    eval "val=\${$v:-}"; [ -n "$val" ] && mk_add_options "export $v=$val"
+  done
+fi

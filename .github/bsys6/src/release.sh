@@ -25,8 +25,9 @@ emit() { # target arch objdir <application.ini の glob(木からの相対)> <ar
   cp "$art" "$OUT/$PROJECT_NAME-$t-$a-moz-artifact.$ext"
   cp "$ini" "$OUT/nora-application.ini"
   (cd "$OUT" && zip -q "$t-$a-application-ini.zip" nora-application.ini && rm -f nora-application.ini)
+  # 旧 release と同じく bin/ が根(noraneko の package.yml が dist/host に unzip して dist/host/bin/mar を使う)
   if [ -d "$tree/$obj/dist/host/bin" ]; then
-    (cd "$tree" && zip -qr "$OUT/$t-$a-dist-host.zip" "$obj/dist/host/bin")
+    (cd "$tree/$obj/dist/host" && zip -qr "$OUT/$t-$a-dist-host.zip" bin)
   fi
   [ -n "$BUILDID" ] || BUILDID=$(grep -m1 '^BuildID=' "$ini" | cut -d= -f2 | tr -d '\r')
   echo "-> $t-$a: packaged (BuildID $BUILDID)" >&2

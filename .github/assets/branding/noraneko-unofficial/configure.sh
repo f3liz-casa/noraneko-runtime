@@ -3,3 +3,5 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 MOZ_APP_DISPLAYNAME=Noraneko
+# macOS の bundle id の後半。前半は mozconfig の --with-distribution-id(casa.f3liz)
+MOZ_MACBUNDLE_ID=noraneko

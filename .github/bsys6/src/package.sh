@@ -15,7 +15,7 @@ fi
 (cd $SOURCE && ./mach package)
 
 if [ "$TARGET" == "windows" ]; then
-  source $BSYS6/exports/move_artifact.sh "PACKAGE" "$SOURCE/obj-$MOZ_TARGET/dist" "$PROJECT_NAME-*.zip"
+  source $BSYS6/exports/move_artifact.sh "PACKAGE" "$SOURCE/obj-$MOZ_TARGET/dist" "$PROJECT_NAME-*.win64.zip"
 elif [ "$TARGET" == "macos" ]; then
   if [ "$(uname -m)" == "aarch64" ]; then
     # aarch64 ホスト(dmg 道具なし): MOZ_PKG_FORMAT=TAR の staging(noraneko/Noraneko.app、symlink 無し)を xz で

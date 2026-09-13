@@ -84,7 +84,8 @@ linux)
 windows)
   echo "-> Preparing build environment for Windows cross-compilation (target: $TARGET)"
 
-  $BSYS6/utils/dependencies.sh "python3-pip curl msitools zstd libc6-i386 p7zip-full jq zip unzip wget mono-complete gettext-base pkg-config wine64 lsb-release gnupg2" "python-pip curl msitools zstd lib32-glibc p7zip jq zip unzip wget mono gettext pkgconf wine"
+  # build-essential は make(mach が gmake を探す)のため。linux の一覧には元からあり、素の ubuntu コンテナには無い
+  $BSYS6/utils/dependencies.sh "python3-pip curl msitools zstd libc6-i386 p7zip-full jq zip unzip wget mono-complete gettext-base pkg-config wine64 lsb-release gnupg2 build-essential" "python-pip curl msitools zstd lib32-glibc p7zip jq zip unzip wget mono gettext pkgconf wine base-devel"
 
   # Install LLVM/Clang
   install_llvm

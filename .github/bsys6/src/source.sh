@@ -17,11 +17,12 @@ if [ -z "${SOURCE:-}" ]; then
   platform_mozconfig="$SOURCEDIR/.github/workflows/mozconfigs/$TARGET-$ARCH.mozconfig"
   
   # Create mozconfig backup if needed
-  if [ ! -f "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH" ]; then
-    if [ -f "$platform_mozconfig" ]; then
-      echo "-> Using platform mozconfig from $platform_mozconfig" >&2
-      cp "$platform_mozconfig" "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH"
-    elif [ -f "$SOURCEDIR/mozconfig" ]; then
+  # platform mozconfig があるときは毎回写す(木が残る箱で、mozconfig の変更が届かなかった。#37)
+  if [ -f "$platform_mozconfig" ]; then
+    echo "-> Using platform mozconfig from $platform_mozconfig" >&2
+    cp "$platform_mozconfig" "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH"
+  elif [ ! -f "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH" ]; then
+    if [ -f "$SOURCEDIR/mozconfig" ]; then
       echo "-> Creating mozconfig backup" >&2
       cp "$SOURCEDIR/mozconfig" "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH"
     else

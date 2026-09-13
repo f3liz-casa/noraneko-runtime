@@ -30,3 +30,7 @@ pref("app.update.badgeWaitTime", 0);
 // Number of usages of the web console.
 // If this is less than 5, then pasting code into the web console is disabled
 pref("devtools.selfxss.count", 5);
+
+// drops(noraneko: コードで機能が降ってくる仕組み)= temporary add-on を privileged にする。
+// Nightly/DevEdition と同じ。firefox.js の既定(false)を上書きする
+pref("extensions.experiments.enabled", true);
