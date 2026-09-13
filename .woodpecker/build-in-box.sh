@@ -62,7 +62,8 @@ if [ "$rc" = 0 ] && [ -n "$SCCACHE_BUCKET" ]; then
   # 添え物: noraneko 側の package.yml が MAR を作るのに使う <target>-<arch>-application-ini.zip と -dist-host.zip。
   # release.sh の梱包(dry-run)を借りて、産物の隣(同じ artifacts/<sha>/)に置く。pointer は動かさない
   RELEASE_DRY_RUN=1 TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 release >/dev/null 2>&1 || true
-  for f in "$(pwd)/release-out/$T-application-ini.zip" "$(pwd)/release-out/$T-dist-host.zip"; do
+  # *.xpt_artifacts.zip は artifact build(noraneko の package.yml の mach build)が MOZ_ARTIFACT_FILE で産物と一緒に読む
+  for f in "$(pwd)/release-out/$T-application-ini.zip" "$(pwd)/release-out/$T-dist-host.zip" "$(pwd)"/../../obj-*/dist/*.xpt_artifacts.zip; do
     [ -f "$f" ] || continue
     curl -sf $S3 -T "$f" "$UP/$SCCACHE_BUCKET/artifacts/$sha/$(basename "$f")" && echo "artifact: artifacts/$sha/$(basename "$f")" || true
   done
