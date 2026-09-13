@@ -1,4 +1,6 @@
-# noraneko-ci: OCI の箱の agent(docker backend = rootless podman + crun)で bsys6 を回す。
+# noraneko-ci(x86_64 の箱): Windows x86_64 を cross で焼く。中身は build.yml と同じで、違いは labels と -j だけ。
+# なぜ別の箱か: gecko は Linux から Windows を cross するとき wine を必須にして、SDK の x86-64 fxc.exe で D3D の
+# シェーダを焼く(gfx/layers/d3d11/genshaders.py)。ARM の箱の wine は x86 の exe を動かせない。
 # workflow ごとに素の ubuntu コンテナが一つ立ち、道具は中で `bsys6 prepare` が入れる(host 直走のときと同じ手順)。
 # 木・objdir・~/.mozbuild・rust は箱の /srv/ci/work/<target> に住むので、箱が生きている間は二回目から速い。
 # mount は agent 側の設定(WOODPECKER_BACKEND_DOCKER_VOLUMES)で全コンテナに付く。yaml に volumes: は書かない。
@@ -8,14 +10,11 @@ skip_clone: true
 
 matrix:
   include:
-    - BUILD_TARGET: linux
-      BUILD_ARCH: aarch64
-    - BUILD_TARGET: macos
-      BUILD_ARCH: aarch64
+    - BUILD_TARGET: windows
+      BUILD_ARCH: x86_64
 
-# 箱は二種(aarch64 の A1 = linux+mac、x86_64 の E5 = windows)。labels が無いと x86_64 の agent も拾ってしまう
 labels:
-  arch: aarch64
+  arch: x86_64
 
 when:
   - event: [manual, cron]
@@ -34,8 +33,8 @@ steps:
       - apt-get update -qq && apt-get install -y -qq --no-install-recommends sudo git ca-certificates curl xz-utils >/dev/null
       - set -a; . /etc/ci-box/env; [ -r /etc/ci-box/sccache.env ] && . /etc/ci-box/sccache.env; set +a
       - export MOZBUILD_STATE_PATH=$HOME/.mozbuild
-      # linux と mac が同時に走るので -j は半分ずつ(32GB に cold 二本 -j16 は入らない: 空き 2.9G / swap 11G / load 34 を実測)
-      - export BUILD_JOBS=$(( $(nproc) / 2 ))
+      # この箱は windows 一本だけなので、全部使う
+      - export BUILD_JOBS=$(nproc)
       # sccache(公式 musl バイナリ、volume に一回置けば残る)
       - |
         if [ ! -x "$HOME/bin/sccache" ]; then

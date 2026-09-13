@@ -28,7 +28,7 @@ export XZ_OPT=-T0
 export SCCACHE_LOG=sccache::compiler::compiler=debug SCCACHE_ERROR_LOG=/srv/ci/telemetry/sccache-$BUILD_TARGET-$BUILD_ARCH.log
 rm -f "$SCCACHE_ERROR_LOG"
 if [ -n "$SCCACHE_BUCKET" ]; then
-  if curl -sf $S3 -o "$HOME/bin/sccache-proxy" "$SCCACHE_ENDPOINT/$SCCACHE_BUCKET/bin/sccache-proxy-linux-arm64"; then
+  if curl -sf $S3 -o "$HOME/bin/sccache-proxy" "$SCCACHE_ENDPOINT/$SCCACHE_BUCKET/bin/sccache-proxy-linux-$(dpkg --print-architecture)"; then
     chmod 755 "$HOME/bin/sccache-proxy"
     curl -sf $S3 -o /tmp/prefetch.list "$SCCACHE_ENDPOINT/$SCCACHE_BUCKET/prefetch/$T.list" || : > /tmp/prefetch.list
     rm -f /srv/ci/telemetry/proxy-$T.jsonl
@@ -46,11 +46,11 @@ rc=0
 TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 prepare build package || rc=$?
 /usr/local/bin/ci-record build_end target=$BUILD_TARGET arch=$BUILD_ARCH rc=$rc dur_s=$SECONDS kind=woodpecker
 sccache --show-stats > /srv/ci/telemetry/sccache-$(date +%s)-$BUILD_TARGET-$BUILD_ARCH.txt 2>&1 || true
-# 産物(bsys6 package が置く tar.xz)を B2 の artifacts/<commit 10 桁>/ に。release step は GH_TOKEN が無いと skip で、
+# 産物(bsys6 package が置く tar.xz、windows は zip)を B2 の artifacts/<commit 10 桁>/ に。release step は GH_TOKEN が無いと skip で、
 # 箱は使い捨てなので、ここに置かないと消える
 if [ "$rc" = 0 ] && [ -n "$SCCACHE_BUCKET" ]; then
   sha=$(echo "$CI_COMMIT_SHA" | cut -c1-10)
-  for f in "$(pwd)"/noraneko-*.tar.xz; do
+  for f in "$(pwd)"/noraneko-*.tar.xz "$(pwd)"/noraneko-*.zip; do
     [ -f "$f" ] || continue
     curl -sf $S3 -T "$f" "$UP/$SCCACHE_BUCKET/artifacts/$sha/$(basename "$f")" && echo "artifact: artifacts/$sha/$(basename "$f")" || true
     # 最新を指す pointer(dl.f3liz.casa/noraneko-runtime/latest/<target> が読む)。ci-box と main のときだけ動かす
