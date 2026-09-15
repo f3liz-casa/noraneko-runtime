@@ -1249,7 +1249,7 @@ function shouldUseService() {
   if (
     !AppConstants.MOZ_MAINTENANCE_SERVICE ||
     !isServiceInstalled() ||
-    !Services.prefs.getBoolPref(PREF_APP_UPDATE_SERVICE_ENABLED, false)
+    !Services.prefs.getBoolPref(PREF_APP_UPDATE_SERVICE_ENABLED, true)
   ) {
     LOG("shouldUseService - returning false");
     return false;
@@ -1774,14 +1774,13 @@ function handleUpdateFailure(update) {
       PREF_APP_UPDATE_SERVICE_MAXERRORS,
       DEFAULT_SERVICE_MAX_ERRORS
     );
-    // Prevent the preference from setting a value greater than 10.
-    maxFail = Math.min(maxFail, 10);
     // As a safety, when the service reaches maximum failures, it will
     // disable itself and fallback to using the normal update mechanism
     // without the service.
     if (failCount >= maxFail) {
       Services.prefs.setBoolPref(PREF_APP_UPDATE_SERVICE_ENABLED, false);
       Services.prefs.clearUserPref(PREF_APP_UPDATE_SERVICE_ERRORS);
+      Glean.update.autoDisableStagedUpdates.record();
     } else {
       failCount++;
       Services.prefs.setIntPref(PREF_APP_UPDATE_SERVICE_ERRORS, failCount);
@@ -3171,9 +3170,25 @@ export class UpdateService {
       }
       case STATE_SUCCEEDED:
       case STATE_FAILED:
-        // There is more handing and validation to be done in this state, so
-        // we never want to return early here or lose any of the available state
-        // information, even if it is inconsistent.
+        {
+          // There is more handing and validation to be done in this state, so
+          // we never want to return early here or lose any of the available state
+          // information, even if it is inconsistent.
+          let history = null;
+          try {
+            history = this._getUpdates();
+          } catch (ex) {
+            LOG(
+              "UpdateService:#asyncInit: couldn't read update type from updates.xml"
+            );
+          }
+          Glean.update.updateOutcome.record({
+            is_success: status == STATE_SUCCEEDED,
+            can_stage: getCanStageUpdates(false),
+            is_background: lazy.gIsBackgroundTaskMode,
+            ...lazy.UpdateUtils.summarizeLatestUpdate(history),
+          });
+        }
         break;
       case STATE_DOWNLOAD_FAILED:
         // This is an odd state to start up in since we usually handle this
@@ -3495,8 +3510,7 @@ export class UpdateService {
               "pending-elevate. Showing Update elevation dialog."
           );
           let uri = "chrome://mozapps/content/update/updateElevation.xhtml";
-          let features =
-            "chrome,centerscreen,resizable=no,titlebar,toolbar=no,dialog=no";
+          let features = "chrome,centerscreen,resizable=no,titlebar,dialog=no";
 
           // The following timeout is intended to make the elevation dialog
           // appear on top of any browser windows after startup. In the past,
@@ -3768,7 +3782,7 @@ export class UpdateService {
     await this.init();
 
     if (!this.disabled && AppConstants.NIGHTLY_BUILD) {
-      // Scalar ID: update.suppress_prompts
+      // Metric ID: update.suppress_prompts
       AUSTLMY.pingSuppressPrompts();
     }
     if (this.disabled || this.manualUpdateOnly) {
@@ -3809,7 +3823,7 @@ export class UpdateService {
     // Glean.update.cannotStageExternal
     // Glean.update.cannotStageNotify
     // Glean.update.cannotStageSubsequent
-    if (!getCanApplyUpdates()) {
+    if (!getCanStageUpdates()) {
       Glean.update["cannotStage" + this._pingSuffix].add();
     }
     if (AppConstants.platform == "win") {
@@ -5712,7 +5726,7 @@ export class CheckerService {
         if ("AppUpdatePin" in policies) {
           updatePin = policies.AppUpdatePin;
 
-          // Scalar ID: update.version_pin
+          // Metric ID: update.version_pin
           AUSTLMY.pingPinPolicy(updatePin);
         }
       }
