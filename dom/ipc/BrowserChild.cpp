@@ -5,7 +5,6 @@
 #include "BrowserChild.h"
 
 #ifdef ACCESSIBILITY
-#  include "mozilla/a11y/DocAccessibleChild.h"
 #  include "nsAccessibilityService.h"
 #endif
 #include <utility>
@@ -362,9 +361,6 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
       mShouldSendWebProgressEventsToParent(false),
       mRenderLayers(true),
       mIsPreservingLayers(false),
-#if defined(XP_WIN) && defined(ACCESSIBILITY)
-      mNativeWindowHandle(0),
-#endif
       mCancelContentJSEpoch(0) {
   mozilla::HoldJSObjects(this);
 
@@ -516,13 +512,6 @@ nsresult BrowserChild::Init(mozIDOMWindowProxy* aParent,
   NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
   nsCOMPtr<EventTarget> chromeHandler = window->GetChromeEventHandler();
   docShell->SetChromeEventHandler(chromeHandler);
-
-  // Window scrollbar flags only affect top level remote frames, not fission
-  // frames.
-  if (mIsTopLevel) {
-    nsContentUtils::SetScrollbarsVisibility(
-        docShell, !!(mChromeFlags & nsIWebBrowserChrome::CHROME_SCROLLBARS));
-  }
 
   nsWeakPtr weakPtrThis = do_GetWeakReference(
       static_cast<nsIBrowserChild*>(this));  // for capture by the lambda
@@ -1135,8 +1124,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvInitRendering(
 mozilla::ipc::IPCResult BrowserChild::RecvScrollbarPreferenceChanged(
     ScrollbarPreference aPreference) {
   MOZ_ASSERT(!mIsTopLevel,
-             "Scrollbar visibility should be derived from chrome flags for "
-             "top-level windows");
+             "Top-level windows use the default scrollbar preference");
   if (nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation())) {
     nsDocShell::Cast(docShell)->SetScrollbarPreference(aPreference);
   }
@@ -2221,7 +2209,7 @@ already_AddRefed<DataTransfer> BrowserChild::ConvertToDataTransfer(
   // the principal permits it (and dom.events.datatransfer.protected.enabled is
   // false).  Otherwise, protected DataTransfer access should only be given to
   // the system.
-  if (!aPrincipal || Manager()->GetRemoteType() != EXTENSION_REMOTE_TYPE) {
+  if (!aPrincipal || !Manager()->GetRemoteType().IsExtension()) {
     aPrincipal = nsContentUtils::GetSystemPrincipal();
   }
 
@@ -2414,6 +2402,7 @@ void BrowserChild::RequestEditCommands(NativeKeyBindingsType aType,
 
   // Don't send aEvent to the parent process directly because it'll be marked
   // as posted to remote process.
+  // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
   WidgetKeyboardEvent localEvent(aEvent);
   SendRequestNativeKeyBindings(aType, localEvent, &aCommands);
 }
@@ -2745,21 +2734,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvPasteTransferable(
   return IPC_OK();
 }
 
-#ifdef ACCESSIBILITY
-a11y::PDocAccessibleChild* BrowserChild::AllocPDocAccessibleChild(
-    PDocAccessibleChild*, const uint64_t&, const MaybeDiscardedBrowsingContext&,
-    const bool&) {
-  MOZ_ASSERT_UNREACHABLE("should never call this!");
-  return nullptr;
-}
-
-bool BrowserChild::DeallocPDocAccessibleChild(
-    a11y::PDocAccessibleChild* aChild) {
-  delete static_cast<mozilla::a11y::DocAccessibleChild*>(aChild);
-  return true;
-}
-#endif
-
 RefPtr<VsyncMainChild> BrowserChild::GetVsyncChild() {
   // Initializing VsyncMainChild here turns on per-BrowserChild Vsync for a
   // given platform. Note: this only makes sense if nsWindow returns a
@@ -3058,16 +3032,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvDestroyPrintClone(
   }
 #endif
   return IPC_OK();
-}
-
-mozilla::ipc::IPCResult BrowserChild::RecvUpdateNativeWindowHandle(
-    const uintptr_t& aNewHandle) {
-#if defined(XP_WIN) && defined(ACCESSIBILITY)
-  mNativeWindowHandle = aNewHandle;
-  return IPC_OK();
-#else
-  return IPC_FAIL_NO_REASON(this);
-#endif
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvDestroy() {

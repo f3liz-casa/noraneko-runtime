@@ -8,13 +8,13 @@
 
 #![deny(missing_docs)]
 
+use crate::Atom;
 use crate::derives::*;
 use crate::parser::{Parse, ParserContext};
 use crate::typed_om::{KeywordValue, NumericType, NumericValue, ToTyped, TypedValue, UnitValue};
 use crate::values::distance::{ComputeSquaredDistance, SquaredDistance};
 use crate::values::generics::position::IsTreeScoped;
-use crate::Atom;
-pub use cssparser::{serialize_identifier, serialize_name, CowRcStr, Parser};
+pub use cssparser::{CowRcStr, Parser, serialize_identifier, serialize_name};
 pub use cssparser::{SourceLocation, Token};
 use num_traits::Zero;
 use precomputed_hash::PrecomputedHash;
@@ -41,11 +41,7 @@ pub type CSSFloat = f32;
 /// it into NaN.
 #[inline]
 pub fn normalize(v: CSSFloat) -> CSSFloat {
-    if v.is_nan() {
-        0.0
-    } else {
-        v
-    }
+    if v.is_nan() { 0.0 } else { v }
 }
 
 /// Computes the minimum value of the two floats. The CSS Values and Units definition
@@ -214,7 +210,7 @@ impl AsRef<str> for AtomString {
 }
 
 impl Parse for AtomString {
-    fn parse<'i>(_: &ParserContext, input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i>> {
+    fn parse(_: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         Ok(Self(Atom::from(input.expect_string()?.as_ref())))
     }
 }
@@ -255,7 +251,7 @@ impl PrecomputedHash for AtomString {
     }
 }
 
-impl<'a> From<&'a str> for AtomString {
+impl From<&str> for AtomString {
     #[inline]
     fn from(string: &str) -> Self {
         Self(Atom::from(string))
@@ -432,7 +428,7 @@ impl PrecomputedHash for AtomIdent {
 }
 
 #[cfg(feature = "gecko")]
-impl<'a> From<&'a str> for AtomIdent {
+impl From<&str> for AtomIdent {
     #[inline]
     fn from(string: &str) -> Self {
         Self(Atom::from(string))
@@ -452,16 +448,18 @@ impl AtomIdent {
     where
         F: FnOnce(&Self) -> R,
     {
-        Atom::with(ptr, |atom: &Atom| {
-            // safety: repr(transparent)
-            let atom = atom as *const Atom as *const AtomIdent;
-            callback(&*atom)
-        })
+        unsafe {
+            Atom::with(ptr, |atom: &Atom| {
+                // safety: repr(transparent)
+                let atom = atom as *const Atom as *const AtomIdent;
+                callback(&*atom)
+            })
+        }
     }
 
     /// Cast an atom ref to an AtomIdent ref.
     #[inline]
-    pub fn cast<'a>(atom: &'a Atom) -> &'a Self {
+    pub fn cast(atom: &Atom) -> &Self {
         let ptr = atom as *const _ as *const Self;
         // safety: repr(transparent)
         unsafe { &*ptr }
@@ -534,11 +532,8 @@ impl ComputeSquaredDistance for Impossible {
 impl_trivial_to_shmem!(Impossible);
 
 impl Parse for Impossible {
-    fn parse<'i, 't>(
-        _context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
-        Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError))
+    fn parse(_context: &ParserContext, _input: &mut Parser) -> Result<Self, ParseError> {
+        Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
     }
 }
 
@@ -580,10 +575,12 @@ impl<A: Debug, B: Debug> Debug for Either<A, B> {
     Clone,
     Debug,
     Default,
+    Deserialize,
     Eq,
     Hash,
     MallocSizeOf,
     PartialEq,
+    Serialize,
     SpecifiedValueInfo,
     ToAnimatedValue,
     ToComputedValue,
@@ -598,28 +595,18 @@ impl CustomIdent {
     ///
     /// TODO(zrhoffman, bug 1844501): Use CustomIdent::parse in more places instead of
     /// CustomIdent::from_ident.
-    pub fn parse<'i, 't>(
-        input: &mut Parser<'i, 't>,
-        invalid: &[&str],
-    ) -> Result<Self, ParseError<'i>> {
-        let location = input.current_source_location();
+    pub fn parse(input: &mut Parser, invalid: &[&str]) -> Result<Self, ParseError> {
         let ident = input.expect_ident()?;
-        CustomIdent::from_ident(location, ident, invalid)
+        CustomIdent::from_ident(ident, invalid)
     }
 
     /// Parse an already-tokenizer identifier
-    pub fn from_ident<'i>(
-        location: SourceLocation,
-        ident: &CowRcStr<'i>,
-        excluding: &[&str],
-    ) -> Result<Self, ParseError<'i>> {
+    pub fn from_ident<'i>(ident: &CowRcStr<'i>, excluding: &[&str]) -> Result<Self, ParseError> {
         if !Self::is_valid(ident, excluding) {
-            return Err(
-                location.new_custom_error(SelectorParseErrorKind::UnexpectedIdent(ident.clone()))
-            );
+            return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
         }
         if excluding.iter().any(|s| ident.eq_ignore_ascii_case(s)) {
-            Err(location.new_custom_error(StyleParseErrorKind::UnspecifiedError))
+            Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
         } else {
             Ok(CustomIdent(Atom::from(ident.as_ref())))
         }
@@ -682,14 +669,9 @@ pub struct DashedIdent(pub Atom);
 
 impl DashedIdent {
     /// Parse an already-tokenizer identifier
-    pub fn from_ident<'i>(
-        location: SourceLocation,
-        ident: &CowRcStr<'i>,
-    ) -> Result<Self, ParseError<'i>> {
+    pub fn from_ident<'i>(ident: &CowRcStr<'i>) -> Result<Self, ParseError> {
         if !ident.starts_with("--") {
-            return Err(
-                location.new_custom_error(SelectorParseErrorKind::UnexpectedIdent(ident.clone()))
-            );
+            return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
         }
         Ok(Self(Atom::from(ident.as_ref())))
     }
@@ -726,13 +708,9 @@ impl IsTreeScoped for DashedIdent {
 }
 
 impl Parse for DashedIdent {
-    fn parse<'i, 't>(
-        _: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
-        let location = input.current_source_location();
+    fn parse(_: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         let ident = input.expect_ident()?;
-        Self::from_ident(location, ident)
+        Self::from_ident(ident)
     }
 }
 
@@ -794,16 +772,12 @@ impl KeyframesName {
 }
 
 impl Parse for KeyframesName {
-    fn parse<'i, 't>(
-        _: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
-        let location = input.current_source_location();
+    fn parse(_: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         Ok(match *input.next()? {
-            Token::Ident(ref s) => Self(CustomIdent::from_ident(location, s, &["none"])?.0),
+            Token::Ident(ref s) => Self(CustomIdent::from_ident(s, &["none"])?.0),
             // Note that empty <string> should be rejected.
             Token::QuotedString(ref s) if !s.as_ref().is_empty() => Self(Atom::from(s.as_ref())),
-            ref t => return Err(location.new_unexpected_token_error(t.clone())),
+            _ => return Err(ParseError::unexpected_token()),
         })
     }
 }

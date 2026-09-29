@@ -11,27 +11,37 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.coroutineScope
 import androidx.navigation.NavController
 import mozilla.components.browser.state.action.AwesomeBarAction
 import mozilla.components.browser.state.store.BrowserStore
+import mozilla.components.compose.base.theme.layout.AcornWindowSize
 import mozilla.components.compose.browser.awesomebar.AwesomeBar
 import mozilla.components.compose.browser.awesomebar.AwesomeBarOrientation
+import mozilla.components.compose.browser.awesomebar.internal.CurrentTabDetailsInteractions.CopyClicked
+import mozilla.components.compose.browser.awesomebar.internal.CurrentTabDetailsInteractions.DetailsClicked
+import mozilla.components.compose.browser.awesomebar.internal.CurrentTabDetailsInteractions.EditClicked
+import mozilla.components.compose.browser.awesomebar.internal.CurrentTabDetailsInteractions.ShareClicked
 import mozilla.components.compose.browser.toolbar.store.BrowserEditToolbarAction.SearchQueryUpdated
 import mozilla.components.compose.browser.toolbar.store.BrowserToolbarStore
 import mozilla.components.compose.browser.toolbar.ui.BrowserToolbarQuery
@@ -52,6 +62,10 @@ import org.mozilla.fenix.search.BrowserStoreToFenixSearchMapperMiddleware
 import org.mozilla.fenix.search.BrowserToolbarToFenixSearchMapperMiddleware
 import org.mozilla.fenix.search.FenixSearchMiddleware
 import org.mozilla.fenix.search.SearchFragmentAction
+import org.mozilla.fenix.search.SearchFragmentAction.CopyCurrentWebsiteDetailsClicked
+import org.mozilla.fenix.search.SearchFragmentAction.EditCurrentWebsiteDetailsClicked
+import org.mozilla.fenix.search.SearchFragmentAction.ReloadCurrentWebsiteClicked
+import org.mozilla.fenix.search.SearchFragmentAction.ShareCurrentWebsiteDetailsClicked
 import org.mozilla.fenix.search.SearchFragmentAction.SuggestionClicked
 import org.mozilla.fenix.search.SearchFragmentAction.SuggestionSelected
 import org.mozilla.fenix.search.SearchFragmentStore
@@ -59,6 +73,18 @@ import org.mozilla.fenix.search.createInitialSearchFragmentState
 import org.mozilla.fenix.settings.SupportUtils
 
 private const val MATERIAL_DESIGN_SCRIM = "#52000000"
+private const val AWESOMEBAR_MAX_WIDTH = 600
+
+/**
+ * Cap the width of the awesomebar content to [AcornWindowSize.Small] and center it in the available space as a staged
+ * rollout change.
+ */
+private fun Modifier.awesomeBarContentWidth(useAddressBarFocusMode: Boolean) =
+    if (useAddressBarFocusMode) {
+        fillMaxWidth().wrapContentWidth(align = Alignment.CenterHorizontally).widthIn(max = AWESOMEBAR_MAX_WIDTH.dp)
+    } else {
+        fillMaxWidth()
+    }
 
 /**
  * Wrapper over a [Composable] to show search suggestions, responsible for its setup.
@@ -94,43 +120,46 @@ class AwesomeBarComposable(
     private val searchStore by initializeSearchStore()
 
     /**
-     * [Composable] fully integrated with [BrowserStore] and [BrowserToolbarStore]
-     * that will show search suggestions whenever the users edits the current query in the toolbar.
+     * [Composable] fully integrated with [BrowserStore] and [BrowserToolbarStore] that will show search suggestions
+     * whenever the users edits the current query in the toolbar.
      */
     @OptIn(ExperimentalLayoutApi::class) // for WindowInsets.isImeVisible
     @Suppress("LongMethod", "CyclomaticComplexMethod", "CognitiveComplexMethod")
     @Composable
     fun SearchSuggestions() {
-        val deleteHistoryDelegate = remember(activity.getRootView(), searchStore) {
-            activity.getRootView()?.let {
-                DeleteHistoryEntryDelegate(it, it.context.components, searchStore)
-            }
-        }
-        val isSearchActive = appStore.observeAsComposableState { it.searchState.isSearchActive }.value
-        val state = searchStore.observeAsComposableState { it }.value
-        val orientation by remember(state.searchSuggestionsOrientedAtBottom) {
-            derivedStateOf {
-                when (searchStore.state.searchSuggestionsOrientedAtBottom) {
-                    true -> AwesomeBarOrientation.BOTTOM
-                    false -> AwesomeBarOrientation.TOP
+        val deleteHistoryDelegate =
+            remember(activity.getRootView(), searchStore) {
+                activity.getRootView()?.let {
+                    DeleteHistoryEntryDelegate(it, it.context.components, searchStore)
                 }
             }
-        }
-        val shouldShowClipboardBar by remember(
-            state.showClipboardSuggestions,
-            state.query,
-            state.clipboardHasUrl,
-        ) {
-            derivedStateOf {
-                state.showClipboardSuggestions &&
-                        state.query.isEmpty() &&
-                        state.clipboardHasUrl
+        val isSearchActive = appStore.observeAsComposableState { it.searchState.isSearchActive }.value
+        val state = searchStore.observeAsComposableState { it }.value
+        val orientation by
+            remember(state.searchSuggestionsOrientedAtBottom) {
+                derivedStateOf {
+                    when (searchStore.state.searchSuggestionsOrientedAtBottom) {
+                        true -> AwesomeBarOrientation.BOTTOM
+                        false -> AwesomeBarOrientation.TOP
+                    }
+                }
             }
-        }
-        val clipboardBarBackground = edgeToEdgeClipboardBarBackground(
-            shouldUseEdgeToEdgeColors = isEdgeToEdgeBackgroundEnabled,
-            isPrivateMode = activity.browsingModeManager.mode == BrowsingMode.Private,
-        )
+        val shouldShowClipboardBar by
+            remember(
+                state.showClipboardSuggestions,
+                state.query,
+                state.clipboardHasUrl,
+            ) {
+                derivedStateOf {
+                    state.showClipboardSuggestions && state.query.isEmpty() && state.clipboardHasUrl
+                }
+            }
+        val clipboardBarBackground =
+            edgeToEdgeClipboardBarBackground(
+                shouldUseEdgeToEdgeColors = isEdgeToEdgeBackgroundEnabled,
+                isPrivateMode = activity.browsingModeManager.mode == BrowsingMode.Private,
+            )
+        val showCurrentTabData = remember { components.settings.showAddressBarInFocusMode }
         val view = LocalView.current
         val focusManager = LocalFocusManager.current
         val keyboardController = LocalSoftwareKeyboardController.current
@@ -149,12 +178,13 @@ class AwesomeBarComposable(
             val url = components.clipboardHandler.extractURL()
 
             ClipboardSuggestionBar(
+                modifier = Modifier.awesomeBarContentWidth(showCurrentTabData),
                 shouldUseBottomToolbar = components.settings.shouldUseBottomToolbar,
                 backgroundColor = clipboardBarBackground,
                 onClick = {
                     url?.let {
                         toolbarStore.dispatch(
-                            SearchQueryUpdated(query = BrowserToolbarQuery(url), isQueryPrefilled = true),
+                            SearchQueryUpdated(query = BrowserToolbarQuery(url), isQueryPrefilled = true)
                         )
                     }
                 },
@@ -164,25 +194,23 @@ class AwesomeBarComposable(
         if (isSearchActive) {
             if (state.showSearchSuggestionsHint) {
                 PrivateSuggestionsCard(
+                    modifier = Modifier.awesomeBarContentWidth(showCurrentTabData),
                     onSearchSuggestionsInPrivateModeAllowed = {
-                       components.settings.shouldShowSearchSuggestionsInPrivate = true
-                       components.settings.showSearchSuggestionsInPrivateOnboardingFinished = true
+                        components.settings.shouldShowSearchSuggestionsInPrivate = true
+                        components.settings.showSearchSuggestionsInPrivateOnboardingFinished = true
                         searchStore.dispatch(SearchFragmentAction.SetShowSearchSuggestions(true))
                         searchStore.dispatch(SearchFragmentAction.AllowSearchSuggestionsInPrivateModePrompt(false))
                         searchStore.dispatch(SearchFragmentAction.PrivateSuggestionsCardAccepted)
                     },
                     onSearchSuggestionsInPrivateModeBlocked = {
-                       components.settings.shouldShowSearchSuggestionsInPrivate = false
-                       components.settings.showSearchSuggestionsInPrivateOnboardingFinished = true
-                        searchStore.dispatch(
-                            SearchFragmentAction.AllowSearchSuggestionsInPrivateModePrompt(false),
-                        )
+                        components.settings.shouldShowSearchSuggestionsInPrivate = false
+                        components.settings.showSearchSuggestionsInPrivateOnboardingFinished = true
+                        searchStore.dispatch(SearchFragmentAction.AllowSearchSuggestionsInPrivateModePrompt(false))
                     },
                     onLearnMoreClick = {
                         components.useCases.fenixBrowserUseCases.loadUrlOrSearch(
-                            searchTermOrURL = SupportUtils.getGenericSumoURLForTopic(
-                                SupportUtils.SumoTopic.SEARCH_SUGGESTION,
-                            ),
+                            searchTermOrURL =
+                                SupportUtils.getGenericSumoURLForTopic(SupportUtils.SumoTopic.SEARCH_SUGGESTION),
                             newTab = appStore.state.searchState.sourceTabId == null,
                             private = true,
                         )
@@ -192,55 +220,74 @@ class AwesomeBarComposable(
             }
             if (state.shouldShowSearchSuggestions) {
                 Box(
-                    modifier = modifier
-                        .background(MaterialTheme.colorScheme.surface)
-                        .fillMaxSize()
-                        .pointerInput(WindowInsets.isImeVisible) {
+                    modifier =
+                        modifier.background(MaterialTheme.colorScheme.surface).fillMaxSize().pointerInput(
+                            WindowInsets.isImeVisible
+                        ) {
                             detectTapGestures(
                                 // Hide the keyboard for any touches in the empty area of the awesomebar
                                 onPress = {
                                     focusManager.clearFocus()
                                     view.hideKeyboard()
                                     appStore.dispatch(SearchEnded)
-                                },
+                                }
                             )
-                        },
+                        }
                 ) {
-                    AwesomeBar(
-                        text = state.query,
-                        providers = state.searchSuggestionsProviders,
-                        hiddenSuggestions = state.hiddenSuggestions,
-                        orientation = orientation,
-                        onSuggestionClicked = { suggestion ->
-                            searchStore.dispatch(SuggestionClicked(suggestion))
-                        },
-                        onAutoComplete = { suggestion ->
-                            searchStore.dispatch(SuggestionSelected(suggestion))
-                        },
-                        onRemoveClicked = { suggestion ->
-                            deleteHistoryDelegate?.handleDeletingHistoryEntry(suggestion)
-                        },
-                        onVisibilityStateUpdated = {
-                            browserStore.dispatch(AwesomeBarAction.VisibilityStateUpdated(it))
-                        },
-                        onScroll = { view.hideKeyboard() },
-                        profiler = components.core.engine.profiler,
-                    )
+                    val currentTabDetailsToShow =
+                        remember(state.query.isBlank()) {
+                            when (state.query.isBlank() && showCurrentTabData) {
+                                true -> state.currentTabData
+                                else -> null
+                            }
+                        }
+
+                    Box(modifier = Modifier.awesomeBarContentWidth(showCurrentTabData)) {
+                        AwesomeBar(
+                            text = state.query,
+                            currentTabData = currentTabDetailsToShow,
+                            providers = state.searchSuggestionsProviders,
+                            hiddenSuggestions = state.hiddenSuggestions,
+                            orientation = orientation,
+                            onSuggestionClicked = { suggestion ->
+                                searchStore.dispatch(SuggestionClicked(suggestion))
+                            },
+                            onAutoComplete = { suggestion ->
+                                searchStore.dispatch(SuggestionSelected(suggestion))
+                            },
+                            onRemoveClicked = { suggestion ->
+                                deleteHistoryDelegate?.handleDeletingHistoryEntry(suggestion)
+                            },
+                            onCurrentSiteDetailsInteraction = {
+                                when (it) {
+                                    ShareClicked -> searchStore.dispatch(ShareCurrentWebsiteDetailsClicked)
+                                    CopyClicked -> searchStore.dispatch(CopyCurrentWebsiteDetailsClicked)
+                                    EditClicked -> searchStore.dispatch(EditCurrentWebsiteDetailsClicked)
+                                    DetailsClicked -> searchStore.dispatch(ReloadCurrentWebsiteClicked)
+                                }
+                            },
+                            onVisibilityStateUpdated = {
+                                browserStore.dispatch(AwesomeBarAction.VisibilityStateUpdated(it))
+                            },
+                            onScroll = { view.hideKeyboard() },
+                            profiler = components.core.engine.profiler,
+                        )
+                    }
                 }
             } else if (showScrimWhenNoSuggestions) {
                 Spacer(
-                    modifier = modifier
-                        .background(Color(MATERIAL_DESIGN_SCRIM.toColorInt()))
-                        .fillMaxSize()
-                        .pointerInput(WindowInsets.isImeVisible) {
+                    modifier =
+                        modifier.background(Color(MATERIAL_DESIGN_SCRIM.toColorInt())).fillMaxSize().pointerInput(
+                            WindowInsets.isImeVisible
+                        ) {
                             detectTapGestures(
                                 onPress = {
                                     focusManager.clearFocus()
                                     keyboardController?.hide()
                                     appStore.dispatch(SearchEnded)
-                                },
+                                }
                             )
-                        },
+                        }
                 )
             }
         }
@@ -249,12 +296,13 @@ class AwesomeBarComposable(
             val url = components.clipboardHandler.extractURL()
 
             ClipboardSuggestionBar(
+                modifier = Modifier.awesomeBarContentWidth(showCurrentTabData),
                 shouldUseBottomToolbar = components.settings.shouldUseBottomToolbar,
                 backgroundColor = clipboardBarBackground,
                 onClick = {
                     url?.let {
                         toolbarStore.dispatch(
-                            SearchQueryUpdated(query = BrowserToolbarQuery(url), isQueryPrefilled = true),
+                            SearchQueryUpdated(query = BrowserToolbarQuery(url), isQueryPrefilled = true)
                         )
                     }
                 },
@@ -262,44 +310,48 @@ class AwesomeBarComposable(
         }
     }
 
-    private fun initializeSearchStore() = fragment.fragmentStore(
-        createInitialSearchFragmentState(
-            context = activity,
-            components = components,
-            tabId = tabId,
-            pastedText = null,
-            searchAccessPoint = searchAccessPoint,
-        ),
-    ) {
-        val lifecycleScope = fragment.viewLifecycleOwner.lifecycle.coroutineScope
+    private fun initializeSearchStore() =
+        fragment.fragmentStore(
+            createInitialSearchFragmentState(
+                context = activity,
+                components = components,
+                tabId = tabId,
+                pastedText = null,
+                searchAccessPoint = searchAccessPoint,
+            )
+        ) {
+            val lifecycleScope = fragment.viewLifecycleOwner.lifecycle.coroutineScope
 
-        SearchFragmentStore(
-            initialState = it,
-            middleware = listOf(
-                BrowserToolbarToFenixSearchMapperMiddleware(
-                    toolbarStore = toolbarStore,
-                    browsingModeManager = activity.browsingModeManager,
-                    scope = lifecycleScope,
-                    browserStore = browserStore,
-                ),
-                BrowserStoreToFenixSearchMapperMiddleware(
-                    browserStore = browserStore,
-                    scope = lifecycleScope,
-                    appStore = components.appStore,
-                ),
-                FenixSearchMiddleware(
-                    fragment = fragment,
-                    engine = components.core.engine,
-                    useCases = components.useCases,
-                    nimbusComponents = components.nimbus,
-                    settings = components.settings,
-                    appStore = appStore,
-                    browserStore = browserStore,
-                    toolbarStore = toolbarStore,
-                    navController = navController,
-                    browsingModeManager = activity.browsingModeManager,
-                ),
-            ),
-        )
-    }
+            SearchFragmentStore(
+                initialState = it,
+                middleware =
+                    listOf(
+                        BrowserToolbarToFenixSearchMapperMiddleware(
+                            toolbarStore = toolbarStore,
+                            browsingModeManager = activity.browsingModeManager,
+                            scope = lifecycleScope,
+                            browserStore = browserStore,
+                        ),
+                        BrowserStoreToFenixSearchMapperMiddleware(
+                            browserStore = browserStore,
+                            scope = lifecycleScope,
+                            appStore = components.appStore,
+                        ),
+                        FenixSearchMiddleware(
+                            fragment = fragment,
+                            engine = components.core.engine,
+                            useCases = components.useCases,
+                            nimbusComponents = components.nimbus,
+                            settings = components.settings,
+                            appStore = appStore,
+                            browserStore = browserStore,
+                            toolbarStore = toolbarStore,
+                            navController = navController,
+                            browsingModeManager = activity.browsingModeManager,
+                            shareUseCases = components.useCases.shareUseCases,
+                            clipboardHandler = components.clipboardHandler,
+                        ),
+                    ),
+            )
+        }
 }

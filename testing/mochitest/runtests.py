@@ -55,6 +55,7 @@ from manifestparser.filters import (
 from manifestparser.util import normsep
 from mozgeckoprofiler import (
     symbolicate_profile_json,
+    symbolicate_profiles,
     view_gecko_profile,
 )
 from mozserve import DoHServer, Http2Server, Http3Server, MozHttp2Server
@@ -913,10 +914,10 @@ def checkAndConfigureV4l2loopback(device):
     class v4l2_control(ctypes.Structure):
         _fields_ = [("id", ctypes.c_uint32), ("value", ctypes.c_int32)]
 
-    # These are private v4l2 control IDs, see:
-    # https://github.com/umlaeute/v4l2loopback/blob/fd822cf0faaccdf5f548cddd9a5a3dcebb6d584d/v4l2loopback.c#L131
-    KEEP_FORMAT = 0x8000000
-    SUSTAIN_FRAMERATE = 0x8000001
+    # These are v4l2loopback control IDs, see:
+    # https://github.com/v4l2loopback/v4l2loopback/blob/v0.15.4/v4l2loopback.c#L260-L262
+    KEEP_FORMAT = 0x0098F900
+    SUSTAIN_FRAMERATE = 0x0098F901
     VIDIOC_S_CTRL = 0xC008561C
 
     control = v4l2_control()
@@ -960,7 +961,7 @@ def findTestMediaDevices(log):
         log.error("Couldn't find a v4l2loopback video device")
         return None
 
-    # Feed it a frame of output so it has something to display
+    # Repeat a single frame for the duration of the tests.
     gst01 = which("gst-launch-0.1")
     gst010 = which("gst-launch-0.10")
     gst10 = which("gst-launch-1.0")
@@ -976,6 +977,8 @@ def findTestMediaDevices(log):
         "videotestsrc",
         "pattern=green",
         "num-buffers=1",
+        "!",
+        "imagefreeze",
         "!",
         "v4l2sink",
         f"device={device}",
@@ -1042,6 +1045,7 @@ class MochitestDesktop:
         self.server = None
         self.wsserver = None
         self.websocketProcessBridge = None
+        self.parakeetModelServer = None
         self.sslTunnel = None
         self.manifest = None
         self.tests_by_manifest = defaultdict(list)
@@ -1434,6 +1438,60 @@ class MochitestDesktop:
                 break
         return is_webrtc_tag_present and options.subsuite in ["media"]
 
+    def startParakeetModelServer(self, options):
+        """Start the local model-hub server for the speech-recognition
+        (parakeet) tests. It serves the GGUF models fetched into MOZ_FETCHES_DIR
+        (and the audio/transcript from the source tree) so the tests never hit
+        the network; the test points browser.ml.modelHubRootUrl at it.
+        """
+        port = 8766
+        env = dict(os.environ)
+        env["PARAKEET_MODEL_SERVER_PORT"] = str(port)
+        command = [sys.executable, "serve_model.py"]
+        self.parakeetModelServer = subprocess.Popen(command, cwd=SCRIPT_DIR, env=env)
+        self.log.info(
+            f"runtests.py | parakeet model server pid: {self.parakeetModelServer.pid}"
+        )
+
+        # Ensure the server is up, wait for at most ten seconds. A plain TCP
+        # connect isn't enough: if a server from a previous, ungracefully
+        # terminated run is still wedged on this port, connect() succeeds
+        # against that stale process and every test in this run silently
+        # talks to it instead. Check for the marker header so we know we're
+        # actually talking to the server we just spawned.
+        for i in range(1, 100):
+            if self.parakeetModelServer.poll() is not None:
+                self.log.error("runtests.py | parakeet model server failed to launch.")
+                return
+            try:
+                with urlopen(f"http://127.0.0.1:{port}/", timeout=1) as resp:
+                    if resp.headers.get("X-Parakeet-Model-Server") == "1":
+                        break
+                self.log.error(
+                    f"runtests.py | port {port} is already in use by a "
+                    "process that isn't the parakeet model server; kill it "
+                    "and re-run."
+                )
+                return
+            except Exception:
+                time.sleep(0.1)
+        else:
+            self.log.error(
+                "runtests.py | Timed out while waiting for parakeet model "
+                "server startup."
+            )
+
+    def needsParakeetModelServer(self, options):
+        """
+        Returns whether the active tests include the parakeet speech-recognition
+        tests, which need the local model hub.
+        """
+        tests = self.getActiveTests(options)
+        for test in tests:
+            if "parakeet-asr" in test.get("tags", ""):
+                return True
+        return False
+
     def startHttp3Server(self, options):
         """
         Start a Http3 test server.
@@ -1576,6 +1634,10 @@ class MochitestDesktop:
         if self.needsWebsocketProcessBridge(options):
             self.startWebsocketProcessBridge(options)
 
+        # Only the speech-recognition tests need the local model hub.
+        if self.needsParakeetModelServer(options):
+            self.startParakeetModelServer(options)
+
         # start SSL pipe
         self.sslTunnel = SSLTunnel(options, logger=self.log)
         self.sslTunnel.buildConfig(self.locations, public=public)
@@ -1641,6 +1703,13 @@ class MochitestDesktop:
                 self.log.info("Stopping websocket/process bridge")
             except Exception:
                 self.log.critical("Exception stopping websocket/process bridge")
+        if self.parakeetModelServer is not None:
+            try:
+                self.parakeetModelServer.kill()
+                self.parakeetModelServer.wait()
+                self.log.info("Stopping parakeet model server")
+            except Exception:
+                self.log.critical("Exception stopping parakeet model server")
         if self.http3Server is not None:
             try:
                 self.http3Server.stop()
@@ -3877,6 +3946,9 @@ toolbar#nav-bar {
                 with out_path.open("w", encoding="utf-8") as f:
                     f.write(json.dumps(data))
 
+        if "MOZ_AUTOMATION" in os.environ:
+            symbolicate_profiles()
+
         self.handleShutdownProfile(options)
 
         if not result:
@@ -4253,8 +4325,7 @@ toolbar#nav-bar {
             profiler_logger.info("Wait 10s for Firefox to write the profile to disk.")
             time.sleep(10)
 
-            # Symbolicate the profile generated above using signals. The profile
-            # file will be named something like:
+            # The profile file will be named something like:
             #  `$MOZ_UPLOAD_DIR/profile_${tid}_${pid}.json
             # where `tid` is /currently/ always 0 (we can only write our profile
             # from the main thread). This may change if we end up writing from
@@ -4262,16 +4333,6 @@ toolbar#nav-bar {
             # `platform.cpp` for more details on how we name signal-generated
             # profiles.
             # Sanity check that we actually have a MOZ_UPLOAD_DIR
-            if "MOZ_UPLOAD_DIR" in os.environ:
-                profiler_logger.info(
-                    f"Symbolicating profile in {os.environ['MOZ_UPLOAD_DIR']}"
-                )
-                profile_path = "{}/profile_0_{}.json".format(
-                    os.environ["MOZ_UPLOAD_DIR"], browser_pid
-                )
-                profiler_logger.info(f"Looking inside symbols dir: {symbolsPath})")
-                profiler_logger.info(f"Symbolicating profile: {profile_path}")
-                symbolicate_profile_json(profile_path, symbolsPath)
         else:
             profiler_logger.info(
                 "Not sending a signal to start the profiler - not on MacOS or Linux. See Bug 1823370."

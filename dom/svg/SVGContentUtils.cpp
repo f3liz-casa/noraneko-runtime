@@ -87,10 +87,10 @@ static DashState GetStrokeDashData(
       return DashState::ContinuousStroke;
     }
     const FallibleTArray<Float>& dashSrc = aContextPaint->GetStrokeDashArray();
-    dashArrayLength = dashSrc.Length();
-    if (dashArrayLength <= 0) {
+    if (dashSrc.IsEmpty()) {
       return DashState::ContinuousStroke;
     }
+    dashArrayLength = dashSrc.Length();
     Float* dashPattern = aStrokeOptions->InitDashPattern(dashArrayLength);
     if (!dashPattern) {
       return DashState::ContinuousStroke;
@@ -104,8 +104,7 @@ static DashState GetStrokeDashData(
     }
   } else {
     const auto dasharray = aStyleSVG->mStrokeDasharray.AsValues().AsSpan();
-    dashArrayLength = dasharray.Length();
-    if (dashArrayLength <= 0) {
+    if (dasharray.IsEmpty()) {
       return DashState::ContinuousStroke;
     }
     if (auto* shapeElement = SVGGeometryElement::FromNode(aElement)) {
@@ -115,6 +114,7 @@ static DashState GetStrokeDashData(
         return DashState::ContinuousStroke;
       }
     }
+    dashArrayLength = dasharray.Length();
     Float* dashPattern = aStrokeOptions->InitDashPattern(dashArrayLength);
     if (!dashPattern) {
       return DashState::ContinuousStroke;
@@ -275,6 +275,44 @@ Float SVGContentUtils::GetStrokeWidth(const SVGElement* aElement,
   }
 
   return res;
+}
+
+bool SVGContentUtils::HasPercentageDependentStroke(
+    const ComputedStyle* aComputedStyle, const SVGContextPaint* aContextPaint) {
+  const nsStyleSVG* styleSVG = aComputedStyle->StyleSVG();
+  if (!styleSVG->HasStroke()) {
+    return false;
+  }
+
+  if (styleSVG->mStrokeWidth.IsContextValue()) {
+    if (!aContextPaint || aContextPaint->GetStrokeWidth() <= 0.f) {
+      return false;
+    }
+  } else {
+    auto& lp = styleSVG->mStrokeWidth.AsLengthPercentage();
+    if (lp.IsDefinitelyZero()) {
+      return false;
+    }
+    if (lp.HasPercent()) {
+      return true;
+    }
+  }
+
+  if (!styleSVG->mStrokeDasharray.IsContextValue()) {
+    for (const auto& dash : styleSVG->mStrokeDasharray.AsValues().AsSpan()) {
+      if (!dash.IsDefinitelyZero() && dash.HasPercent()) {
+        return true;
+      }
+    }
+  }
+  if (!styleSVG->mStrokeDashoffset.IsContextValue()) {
+    auto& lp = styleSVG->mStrokeDashoffset.AsLengthPercentage();
+    if (!lp.IsDefinitelyZero() && lp.HasPercent()) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 float SVGContentUtils::GetFontSize(const Element* aElement) {
@@ -561,7 +599,8 @@ static gfx::Matrix GetCTMInternal(SVGElement* aElement, CTMType aCTMType,
   }
   auto transformToAncestor = nsLayoutUtils::GetTransformToAncestor(
       RelativeTo{parentFrame, ViewportType::Layout},
-      RelativeTo{ancestorFrame, ViewportType::Layout}, nsIFrame::IN_CSS_UNITS);
+      RelativeTo{ancestorFrame, ViewportType::Layout},
+      TransformMatrixFlag::InCSSUnits);
   gfx::Matrix result2d;
   if (transformToAncestor.CanDraw2D(&result2d)) {
     tm = tm * result2d;
@@ -589,9 +628,9 @@ gfx::Matrix SVGContentUtils::GetScreenCTM(SVGElement* aElement) {
   return GetCTMInternal(aElement, CTMType::Screen, false);
 }
 
-void SVGContentUtils::RectilinearGetStrokeBounds(
+Rect SVGContentUtils::RectilinearGetStrokeBounds(
     const Rect& aRect, const Matrix& aToBoundsSpace,
-    const Matrix& aToNonScalingStrokeSpace, float aStrokeWidth, Rect* aBounds) {
+    const Matrix& aToNonScalingStrokeSpace, float aStrokeWidth) {
   MOZ_ASSERT(aToBoundsSpace.IsRectilinear(),
              "aToBoundsSpace must be rectilinear");
   MOZ_ASSERT(aToNonScalingStrokeSpace.IsRectilinear(),
@@ -600,7 +639,7 @@ void SVGContentUtils::RectilinearGetStrokeBounds(
   Matrix nonScalingToSource = aToNonScalingStrokeSpace.Inverse();
   Matrix nonScalingToBounds = nonScalingToSource * aToBoundsSpace;
 
-  *aBounds = aToBoundsSpace.TransformBounds(aRect);
+  Rect bounds = aToBoundsSpace.TransformBounds(aRect);
 
   // Compute the amounts dx and dy that nonScalingToBounds scales a half-width
   // stroke in the x and y directions, and then inflate aBounds by those amounts
@@ -621,7 +660,8 @@ void SVGContentUtils::RectilinearGetStrokeBounds(
     dy = (aStrokeWidth / 2.0f) * std::abs(nonScalingToBounds._12);
   }
 
-  aBounds->Inflate(dx, dy);
+  bounds.Inflate(dx, dy);
+  return bounds;
 }
 
 double SVGContentUtils::ComputeNormalizedHypotenuse(double aWidth,

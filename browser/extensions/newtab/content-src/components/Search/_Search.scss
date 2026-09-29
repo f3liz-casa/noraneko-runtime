@@ -39,6 +39,12 @@ $glyph-forward: url('chrome://browser/skin/forward.svg');
     cursor: default;
     display: flex;
     height: $search-height-new;
+
+    // The address bar component fills the slot the handoff button also fills.
+    moz-urlbar {
+      --urlbar-height: #{$search-height-new};
+    }
+
     margin: 0 auto;
     position: relative;
     width: 304px;

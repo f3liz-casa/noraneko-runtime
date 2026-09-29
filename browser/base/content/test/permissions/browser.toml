@@ -50,12 +50,17 @@ support-files = ["dummy.js"]
 
 ["browser_site_scoped_permissions.js"]
 
+["browser_speech_recognition_model_download_prompt.js"]
+support-files = ["empty.html"]
+
 ["browser_temporary_permissions.js"]
 support-files = ["../webrtc/get_user_media.html"]
 
 ["browser_temporary_permissions_api.js"]
 
 ["browser_temporary_permissions_api_e2e.js"]
+
+["browser_temporary_permissions_child_clear.js"]
 
 ["browser_temporary_permissions_cross_origin_navigation.js"]
 

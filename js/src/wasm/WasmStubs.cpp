@@ -59,7 +59,7 @@ static uint32_t ResultStackSize(ValType type) {
       return ABIResult::StackSizeOfFloat;
     case ValType::F64:
       return ABIResult::StackSizeOfDouble;
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
     case ValType::V128:
       return ABIResult::StackSizeOfV128;
 #endif
@@ -85,7 +85,7 @@ uint32_t js::wasm::MIRTypeToABIResultSize(jit::MIRType type) {
       return ABIResult::StackSizeOfFloat;
     case MIRType::Double:
       return ABIResult::StackSizeOfDouble;
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
     case MIRType::Simd128:
       return ABIResult::StackSizeOfV128;
 #endif
@@ -121,7 +121,7 @@ void ABIResultIter::settleRegister(ValType type) {
     case ValType::Ref:
       cur_ = ABIResult(type, ReturnReg);
       break;
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
     case ValType::V128:
       cur_ = ABIResult(type, ReturnSimd128Reg);
       break;
@@ -302,7 +302,7 @@ static void GenPrintF64(DebugChannel channel, MacroAssembler& masm,
            });
 }
 
-#  ifdef ENABLE_WASM_SIMD
+#  ifdef ENABLE_JIT_SIMD
 static void GenPrintV128(DebugChannel channel, MacroAssembler& masm,
                          const FloatRegister& src) {
   // TODO: We might try to do something meaningful here once SIMD data are
@@ -323,7 +323,7 @@ static void GenPrintF32(DebugChannel channel, MacroAssembler& masm,
                         const FloatRegister& src) {}
 static void GenPrintF64(DebugChannel channel, MacroAssembler& masm,
                         const FloatRegister& src) {}
-#  ifdef ENABLE_WASM_SIMD
+#  ifdef ENABLE_JIT_SIMD
 static void GenPrintV128(DebugChannel channel, MacroAssembler& masm,
                          const FloatRegister& src) {}
 #  endif
@@ -409,7 +409,7 @@ static void SetupABIArguments(MacroAssembler& masm, const FuncExport& fe,
             masm.loadFloat32(src, iter->fpu());
             break;
           case MIRType::Simd128:
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
             // This is only used by the testing invoke path,
             // wasmLosslessInvoke, and is guarded against in normal JS-API
             // call paths.
@@ -456,7 +456,7 @@ static void SetupABIArguments(MacroAssembler& masm, const FuncExport& fe,
             break;
           }
           case MIRType::Simd128: {
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
             // This is only used by the testing invoke path,
             // wasmLosslessInvoke, and is guarded against in normal JS-API
             // call paths.
@@ -504,7 +504,7 @@ static void StoreRegisterResult(MacroAssembler& masm, const FuncExport& fe,
           masm.store64(result.gpr64(), Address(loc, 0));
           break;
         case ValType::V128:
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
           masm.storeUnalignedSimd128(result.fpr(), Address(loc, 0));
           break;
 #else
@@ -1642,7 +1642,7 @@ static void StackCopy(MacroAssembler& masm, MIRType type, Register scratch,
     masm.loadDouble(src, fpscratch);
     GenPrintF64(DebugChannel::Import, masm, fpscratch);
     masm.storeDouble(fpscratch, dst);
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
   } else if (type == MIRType::Simd128) {
     ScratchSimd128Scope fpscratch(masm);
     masm.loadUnalignedSimd128(src, fpscratch);
@@ -1948,6 +1948,10 @@ static bool GenerateImportFunction(jit::MacroAssembler& masm,
   CallSiteDesc desc(CallSiteKind::Import);
   MoveSPForJitABI(masm);
   masm.wasmCallImport(desc, CalleeDesc::import(funcImportInstanceOffset));
+
+  // The call may not have preserved the stack pointer, so recover it from FP
+  // before reading the instance slot.
+  masm.freeStackTo(framePushed);
 
   // Restore the instance register and pinned regs, per wasm function ABI.
   masm.loadPtr(
@@ -2623,7 +2627,7 @@ static const LiveRegisterSet RegsToPreserve(
                        ~((Registers::SetType(1) << Registers::sp) |
                          (Registers::SetType(1) << Registers::pc))),
     FloatRegisterSet(FloatRegisters::AllDoubleMask));
-#  ifdef ENABLE_WASM_SIMD
+#  ifdef ENABLE_JIT_SIMD
 #    error "high lanes of SIMD registers need to be saved too."
 #  endif
 #elif defined(JS_CODEGEN_MIPS64)
@@ -2634,7 +2638,7 @@ static const LiveRegisterSet RegsToPreserve(
                          (Registers::SetType(1) << Registers::sp) |
                          (Registers::SetType(1) << Registers::zero))),
     FloatRegisterSet(FloatRegisters::AllDoubleMask));
-#  ifdef ENABLE_WASM_SIMD
+#  ifdef ENABLE_JIT_SIMD
 #    error "high lanes of SIMD registers need to be saved too."
 #  endif
 #elif defined(JS_CODEGEN_LOONG64)
@@ -2645,7 +2649,7 @@ static const LiveRegisterSet RegsToPreserve(
                          (uint32_t(1) << Registers::sp) |
                          (uint32_t(1) << Registers::zero))),
     FloatRegisterSet(FloatRegisters::AllDoubleMask));
-#  ifdef ENABLE_WASM_SIMD
+#  ifdef ENABLE_JIT_SIMD
 #    error "high lanes of SIMD registers need to be saved too."
 #  endif
 #elif defined(JS_CODEGEN_RISCV64)
@@ -2656,7 +2660,7 @@ static const LiveRegisterSet RegsToPreserve(
                          (uint32_t(1) << Registers::sp) |
                          (uint32_t(1) << Registers::zero))),
     FloatRegisterSet(FloatRegisters::AllDoubleMask));
-#  ifdef ENABLE_WASM_SIMD
+#  ifdef ENABLE_JIT_SIMD
 #    error "high lanes of SIMD registers need to be saved too."
 #  endif
 #elif defined(JS_CODEGEN_ARM64)
@@ -2667,7 +2671,7 @@ static const LiveRegisterSet RegsToPreserve(
     GeneralRegisterSet(Registers::AllMask &
                        ~((Registers::SetType(1) << RealStackPointer.code()) |
                          (Registers::SetType(1) << Registers::lr))),
-#  ifdef ENABLE_WASM_SIMD
+#  ifdef ENABLE_JIT_SIMD
     FloatRegisterSet(FloatRegisters::AllSimd128Mask));
 #  else
     // If SIMD is not enabled, it's pointless to save/restore the upper 64
@@ -2685,7 +2689,7 @@ static const LiveRegisterSet RegsToPreserve(
 #else
 static const LiveRegisterSet RegsToPreserve(
     GeneralRegisterSet(0), FloatRegisterSet(FloatRegisters::AllDoubleMask));
-#  ifdef ENABLE_WASM_SIMD
+#  ifdef ENABLE_JIT_SIMD
 #    error "no SIMD support"
 #  endif
 #endif
@@ -2850,7 +2854,9 @@ void wasm::ClobberWasmRegsForLongJmp(MacroAssembler& masm, Register jumpReg) {
 }
 
 #ifdef ENABLE_WASM_JSPI
+
 bool wasm::GenerateContBaseFrameStub(jit::MacroAssembler& masm,
+                                     const FuncType& funcType,
                                      Offsets* offsets) {
   AssertExpectedSP(masm);
   masm.haltingAlign(CodeAlignment);
@@ -2866,21 +2872,28 @@ bool wasm::GenerateContBaseFrameStub(jit::MacroAssembler& masm,
   int32_t offsetFromFPToStack = -ContStack::offsetOfBaseFrameFP();
 
   // Store initial callee's InstanceReg into calleeInstance_ before clearing
-  // initialResumeTarget_.
+  // initialResumeTarget_, so the frame iterator and GC can recover the instance
+  // for this base frame.
   masm.storePtr(InstanceReg,
                 Address(FramePointer,
                         static_cast<int32_t>(
                             wasm::FrameWithInstances::calleeInstanceOffset())));
 
-  // Clear the 'resumeTarget' in our frame.
+  // Load paramsArea before clearing initialResumeTarget_.
+  masm.loadPtr(
+      Address(FramePointer, offsetFromFPToStack +
+                                ContStack::offsetOfInitialResumeTarget() +
+                                offsetof(wasm::SwitchTarget, paramsArea)),
+      scratch1);
+
+  // Clear the 'resumeTarget' in the frame (use scratch2 for the address).
   masm.computeEffectiveAddress(
       Address(FramePointer,
               offsetFromFPToStack + ContStack::offsetOfInitialResumeTarget()),
-      scratch1);
-  EmitClearSwitchTarget(masm, scratch1);
+      scratch2);
+  EmitClearSwitchTarget(masm, scratch2);
 
-  // Load the cont.new callee funcref into WasmCallRefReg, and clear it the
-  // field.
+  // Load the cont.new callee funcref into WasmCallRefReg, and clear the field.
   MOZ_ASSERT(scratch4 == WasmCallRefReg);
   masm.loadPtr(
       Address(FramePointer,
@@ -2891,26 +2904,195 @@ bool wasm::GenerateContBaseFrameStub(jit::MacroAssembler& masm,
       Address(FramePointer,
               offsetFromFPToStack + ContStack::offsetOfInitialResumeCallee()));
 
-  // Perform a call_ref of the callee. We aren't passing an arguments or
-  // receiving any results yet.
-  masm.reserveStack(
-      ComputeByteAlignment(sizeof(Frame), WasmStackAlignment) +
-      AlignBytes(wasm::FrameWithInstances::sizeOfInstanceFieldsAndShadowStack(),
-                 WasmStackAlignment));
+  // scratch1 holds the paramsArea pointer; scratch2 is now free.
+
+  ArgTypeVector args(funcType);
+  size_t stackArgBytes = StackArgBytesForWasmABI(funcType);
+
+  ResultType results = ResultType::Vector(funcType.results());
+  uint32_t stackResultBytes = ABIResultIter::MeasureStackBytes(results);
+  size_t alignedStackResultBytes =
+      AlignBytes(stackResultBytes, WasmStackAlignment);
+
+  size_t reserveSize = ComputeByteAlignment(sizeof(Frame), WasmStackAlignment) +
+                       AlignBytes(stackArgBytes, WasmStackAlignment);
+
+  // The stack result area is appended past the arg area so the callee can write
+  // stack results there via the hidden pointer argument.
+  size_t stackResultAreaOffset = reserveSize;
+  reserveSize += alignedStackResultBytes;
+
+  masm.reserveStack(reserveSize);
   masm.assertStackAlignment(WasmStackAlignment);
+
+  // Single pass over the args. scratch1 holds the paramsArea base; each param
+  // occupies MIRTypeToABIResultSize bytes there. ABIArgIter tracks where each
+  // param goes for the call_ref: register args are loaded into their ABI
+  // register and stack args are copied (through scratch3) into the reserved arg
+  // area. The synthetic stack-results pointer, if present, is pointed at the
+  // reserved stack result area rather than copied from paramsArea.
+  {
+    size_t paramsAreaByteOffset = 0;
+    for (ABIArgIter iter(args, ABIKind::Wasm); !iter.done(); iter++) {
+      MIRType type = iter.mirType();
+      if (type == MIRType::StackResults) {
+        Address stackResultArea(masm.getStackPointer(), stackResultAreaOffset);
+        if (iter->kind() == ABIArg::GPR) {
+          masm.computeEffectiveAddress(stackResultArea, iter->gpr());
+        } else {
+          MOZ_ASSERT(iter->kind() == ABIArg::Stack);
+          masm.computeEffectiveAddress(stackResultArea, scratch3);
+          masm.storePtr(scratch3, Address(masm.getStackPointer(),
+                                          iter->offsetFromArgBase()));
+        }
+        // The hidden pointer is not a resume param, so it consumes no
+        // paramsArea space: don't advance paramsAreaByteOffset.
+        continue;
+      }
+      Address src(scratch1, paramsAreaByteOffset);
+      if (iter->kind() == ABIArg::Stack) {
+        Address dst(masm.getStackPointer(), iter->offsetFromArgBase());
+        StackCopy(masm, type, scratch3, src, dst);
+      } else {
+        // Register argument: load directly into its ABI register.
+        switch (iter->kind()) {
+          case ABIArg::GPR:
+            if (type == MIRType::Int32) {
+              masm.load32(src, iter->gpr());
+            } else if (type == MIRType::Int64) {
+              masm.load64(src, iter->gpr64());
+            } else {
+              masm.loadPtr(src, iter->gpr());
+            }
+            break;
+          case ABIArg::FPU:
+            if (type == MIRType::Float32) {
+              masm.loadFloat32(src, iter->fpu());
+#  ifdef ENABLE_JIT_SIMD
+            } else if (type == MIRType::Simd128) {
+              masm.loadUnalignedSimd128(src, iter->fpu());
+#  endif
+            } else {
+              masm.loadDouble(src, iter->fpu());
+            }
+            break;
+#  ifdef JS_CODEGEN_REGISTER_PAIR
+          case ABIArg::GPR_PAIR:
+            masm.load64(src, iter->gpr64());
+            break;
+#  endif
+          default:
+            break;
+        }
+      }
+      paramsAreaByteOffset += MIRTypeToABIResultSize(type);
+    }
+  }
+
   wasm::CallSiteDesc callSite(CallSiteKind::FuncRef);
   wasm::CalleeDesc callee = wasm::CalleeDesc::wasmFuncRef();
   CodeOffset fastCallOffset;
   CodeOffset slowCallOffset;
   masm.wasmCallRef(callSite, callee, &fastCallOffset, &slowCallOffset);
-  // This is probably unnecessary. At the least we should free the same amount?
-  masm.freeStack(
-      wasm::FrameWithInstances::sizeOfInstanceFieldsAndShadowStack());
 
-  // The call returned and we must switch back to our handler's stack. Get the
-  // return target of handler and switch to it.
-  masm.loadPtr(Address(FramePointer, -ContStack::offsetOfBaseFrameFP() +
-                                         ContStack::offsetOfHandlers()),
+  // The current stack pointer might not match the one before the call if the
+  // callee performed a tail call, so recover it from FP before reading the
+  // stack results.
+  masm.freeStackTo(masm.framePushed());
+
+  // Store results to returnTarget.paramsArea in source order. scratch3 holds
+  // the paramsArea pointer for the whole routine, so it must not alias a result
+  // register: loading it would clobber the register result. We store the
+  // register result first, while it is still live in ReturnReg; once it is in
+  // memory, scratch2 (the stack-result shuffle temporary) may safely alias a
+  // result register.
+  if (!results.empty()) {
+    MOZ_ASSERT(scratch3 != ReturnReg);
+#  ifndef JS_PUNBOX64
+    MOZ_ASSERT(scratch3 != ReturnReg64.high && scratch3 != ReturnReg64.low);
+#  endif
+    masm.loadPtr(Address(FramePointer,
+                         offsetFromFPToStack + ContStack::offsetOfHandlers()),
+                 scratch3);
+    masm.loadPtr(
+        Address(scratch3, offsetof(wasm::Handlers, returnTarget) +
+                              offsetof(wasm::SwitchTarget, paramsArea)),
+        scratch3);
+
+    // SP was restored above, so the stack results the callee wrote through the
+    // hidden pointer are at SP + stackResultAreaOffset.
+    int32_t stackAreaSPOffset = static_cast<int32_t>(stackResultAreaOffset);
+
+    // Iterate in Prev direction (source order: result[0], result[1], ...) and
+    // accumulate each result's byte offset into the paramsArea. Only a single
+    // result is ever in a register (the last one in source order); store it now
+    // while ReturnReg is still live.
+    ABIResultIter iter(results);
+    while (!iter.done()) {
+      iter.next();
+    }
+    iter.switchToPrev();
+    size_t paramsAreaByteOffset = 0;
+    for (; !iter.done(); iter.prev()) {
+      const ABIResult& result = iter.cur();
+      MIRType type = result.type().toMIRType();
+      if (result.inRegister()) {
+        Address dst(scratch3, paramsAreaByteOffset);
+        switch (result.type().kind()) {
+          case ValType::I32:
+            masm.store32(result.gpr(), dst);
+            break;
+          case ValType::I64:
+            masm.store64(result.gpr64(), dst);
+            break;
+          case ValType::F32:
+            masm.storeFloat32(result.fpr(), dst);
+            break;
+          case ValType::F64:
+            masm.storeDouble(result.fpr(), dst);
+            break;
+          case ValType::Ref:
+            masm.storePtr(result.gpr(), dst);
+            break;
+#  ifdef ENABLE_JIT_SIMD
+          case ValType::V128:
+            masm.storeUnalignedSimd128(result.fpr(), dst);
+            break;
+#  endif
+          default:
+            MOZ_CRASH(
+                "unexpected register result type in typed base frame stub");
+        }
+      }
+      paramsAreaByteOffset += MIRTypeToABIResultSize(type);
+    }
+
+    // Now copy the stack results into the paramsArea. The register result is
+    // already stored, so scratch2 may alias a result register here. StackCopy
+    // handles the 32-bit i64 case without needing a register pair.
+    iter.reset();
+    while (!iter.done()) {
+      iter.next();
+    }
+    iter.switchToPrev();
+    paramsAreaByteOffset = 0;
+    for (; !iter.done(); iter.prev()) {
+      const ABIResult& result = iter.cur();
+      MIRType type = result.type().toMIRType();
+      if (!result.inRegister()) {
+        Address src(
+            masm.getStackPointer(),
+            stackAreaSPOffset + static_cast<int32_t>(result.stackOffset()));
+        Address dst(scratch3, paramsAreaByteOffset);
+        StackCopy(masm, type, scratch2, src, dst);
+      }
+      paramsAreaByteOffset += MIRTypeToABIResultSize(type);
+    }
+  }
+
+  // Switch back to the handler's return stack.
+  masm.loadPtr(Address(FramePointer,
+                       offsetFromFPToStack + ContStack::offsetOfHandlers()),
                scratch1);
   masm.computeEffectiveAddress(
       Address(scratch1, offsetof(wasm::Handlers, returnTarget)), scratch1);
@@ -3555,9 +3737,22 @@ bool wasm::GenerateStubs(const CodeMetadata& codeMeta,
 
 #ifdef ENABLE_WASM_JSPI
   if (codeMeta.stackSwitchingEnabled()) {
-    if (!GenerateContBaseFrameStub(masm, &offsets) ||
-        !code->codeRanges.emplaceBack(CodeRange::ContBaseFrame, offsets)) {
-      return false;
+    uint32_t numTypes = codeMeta.types->length();
+    for (uint32_t i = 0; i < numTypes; i++) {
+      const TypeDef& typeDef = codeMeta.types->type(i);
+      if (!typeDef.isContType()) {
+        continue;
+      }
+      const FuncType& funcType = typeDef.contType().funcType();
+      if (!GenerateContBaseFrameStub(masm, funcType, &offsets)) {
+        return false;
+      }
+      if (!code->codeRanges.emplaceBack(CodeRange::ContBaseFrame, offsets)) {
+        return false;
+      }
+      if (!code->contBaseFrameOffsets.putNew(i, offsets.begin)) {
+        return false;
+      }
     }
   }
 #endif

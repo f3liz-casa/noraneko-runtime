@@ -16,10 +16,7 @@ function pemToBase64(pem) {
 
 add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["test.wait300msAfterTabSwitch", true],
-      ["security.certerrors.felt-privacy-v1", true],
-    ],
+    set: [["security.certerrors.felt-privacy-v1", true]],
   });
 });
 
@@ -32,7 +29,7 @@ add_task(async function testNotYetValidCert() {
   await SpecialPowers.spawn(browser, [certBase64], async cert => {
     const mockErrorInfo = {
       errorCodeString: "MOZILLA_PKIX_ERROR_NOT_YET_VALID_CERTIFICATE",
-      errorIsOverridable: false,
+      errorIsOverridable: true,
       channelStatus: 0,
       overridableErrorCategory: "expired-or-not-yet-valid",
       validNotBefore: Date.now() + 1000 * 1000,
@@ -55,6 +52,7 @@ add_task(async function testNotYetValidCert() {
     netErrorCard.resolvedErrorId =
       "MOZILLA_PKIX_ERROR_NOT_YET_VALID_CERTIFICATE";
     netErrorCard.errorConfig = netErrorCard.getErrorConfig();
+    netErrorCard.hideExceptionButton = netErrorCard.shouldHideExceptionButton();
     await netErrorCard.getUpdateComplete();
 
     netErrorCard.advancedButton.scrollIntoView();

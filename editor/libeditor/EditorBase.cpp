@@ -2019,6 +2019,113 @@ nsresult EditorBase::PasteAsAction(nsIClipboard::ClipboardType aClipboardType,
   return EditorBase::ToGenericNSResult(rv);
 }
 
+nsresult EditorBase::PasteNoFormattingAsAction(
+    nsIClipboard::ClipboardType aClipboardType,
+    DispatchPasteEvent aDispatchPasteEvent,
+    DataTransfer* aDataTransfer /* = nullptr */,
+    nsIPrincipal* aPrincipal /* = nullptr */) {
+  if (IsReadonly()) {
+    return NS_OK;
+  }
+  // Create the same DataTransfer object here so we can share it between
+  // the clipboard event and its data with the call to
+  // InsertFromTransferableWithSelection below. This prevents
+  // race conditions with Content Analysis on like we see in bug 1918027.
+  RefPtr<DataTransfer> dataTransfer =
+      aDataTransfer ? RefPtr<DataTransfer>(aDataTransfer)
+                    : RefPtr<DataTransfer>(CreateDataTransferForPaste(
+                          ePasteNoFormatting, aClipboardType));
+
+  auto clearDataTransfer = MakeScopeExit([&] {
+    // If the caller passed in aDataTransfer, they are responsible for clearing
+    // this.
+    if (!aDataTransfer && dataTransfer) {
+      dataTransfer->ClearForPaste();
+    }
+  });
+
+  AutoEditActionDataSetter editActionData(*this, EditAction::ePaste,
+                                          aPrincipal);
+  if (NS_WARN_IF(!editActionData.CanHandle())) {
+    return NS_ERROR_NOT_INITIALIZED;
+  }
+
+  if (aDispatchPasteEvent == DispatchPasteEvent::Yes) {
+    RefPtr<nsFocusManager> focusManager = nsFocusManager::GetFocusManager();
+    if (NS_WARN_IF(!focusManager)) {
+      return NS_ERROR_UNEXPECTED;
+    }
+    const RefPtr<Element> focusedElement = focusManager->GetFocusedElement();
+    MOZ_ASSERT_IF(IsTextEditor(), focusedElement == GetExposedRoot());
+
+    Result<ClipboardEventResult, nsresult> ret = Err(NS_ERROR_FAILURE);
+    {
+      // This method is not set up to pass back the new aDataTransfer
+      // if it changes. If we need this in the future, we can change
+      // aDataTransfer to be a RefPtr<DataTransfer>*.
+      MOZ_ASSERT(!aDataTransfer);
+      AutoTrackDataTransferForPaste trackDataTransfer(*this, dataTransfer);
+
+      ret = DispatchClipboardEventAndUpdateClipboard(
+          ePasteNoFormatting, Some(aClipboardType), dataTransfer);
+      if (MOZ_UNLIKELY(ret.isErr())) {
+        NS_WARNING(
+            "EditorBase::DispatchClipboardEventAndUpdateClipboard("
+            "ePasteNoFormatting) failed");
+        return EditorBase::ToGenericNSResult(ret.unwrapErr());
+      }
+    }
+    switch (ret.inspect()) {
+      case ClipboardEventResult::DoDefault:
+        break;
+      case ClipboardEventResult::DefaultPreventedOfPaste:
+      case ClipboardEventResult::IgnoredOrError:
+        return EditorBase::ToGenericNSResult(NS_ERROR_EDITOR_ACTION_CANCELED);
+      case ClipboardEventResult::CopyOrCutHandled:
+        MOZ_ASSERT_UNREACHABLE("Invalid result for ePaste");
+    }
+
+    // If focus is changed by a "paste" event listener, we should keep handling
+    // the "pasting" in new focused editor because Chrome works as so.
+    const RefPtr<Element> newFocusedElement = focusManager->GetFocusedElement();
+    if (MOZ_UNLIKELY(focusedElement != newFocusedElement)) {
+      MOZ_ASSERT_IF(IsTextEditor(), newFocusedElement != GetExposedRoot());
+      // For the privacy reason, let's top handling it if new focused element is
+      // in different document.
+      if (focusManager->GetFocusedWindow() != GetWindow()) {
+        return EditorBase::ToGenericNSResult(NS_ERROR_EDITOR_ACTION_CANCELED);
+      }
+      RefPtr<EditorBase> editorBase =
+          nsContentUtils::GetActiveEditor(GetPresContext());
+      if (!editorBase || (editorBase->IsHTMLEditor() &&
+                          !editorBase->AsHTMLEditor()->IsActiveInDOMWindow())) {
+        return EditorBase::ToGenericNSResult(NS_ERROR_EDITOR_ACTION_CANCELED);
+      }
+      if (editorBase != this) {
+        nsresult rv = editorBase->PasteNoFormattingAsAction(
+            aClipboardType, DispatchPasteEvent::No, dataTransfer, aPrincipal);
+        NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                             "EditorBase::PasteNoFormattingAsAction("
+                             "DispatchPasteEvent::No) failed");
+        return EditorBase::ToGenericNSResult(rv);
+      }
+    }
+  }
+
+  if (IsHTMLEditor()) {
+    nsresult rv = MOZ_KnownLive(AsHTMLEditor())
+                      ->HandlePasteNoFormatting(editActionData, aClipboardType,
+                                                dataTransfer);
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                         "HTMLEditor::PasteNoFormattingAsAction() failed");
+    return EditorBase::ToGenericNSResult(rv);
+  }
+
+  nsresult rv = HandlePaste(editActionData, aClipboardType, dataTransfer);
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "EditorBase::HandlePaste() failed");
+  return EditorBase::ToGenericNSResult(rv);
+}
+
 nsresult EditorBase::PasteAsQuotationAsAction(
     nsIClipboard::ClipboardType aClipboardType,
     DispatchPasteEvent aDispatchPasteEvent,
@@ -3381,7 +3488,7 @@ EditorDOMPoint EditorBase::ComputePointToInsertText(
 
 Result<InsertTextResult, nsresult> EditorBase::InsertTextWithTransaction(
     const nsAString& aStringToInsert, const EditorDOMPoint& aPointToInsert,
-    InsertTextTo aInsertTextTo) {
+    InsertTextTo aInsertTextTo, InsertTextFor aPurpose) {
   MOZ_ASSERT_IF(IsTextEditor(),
                 aInsertTextTo == InsertTextTo::ExistingTextNodeIfAvailable);
 
@@ -3397,7 +3504,7 @@ Result<InsertTextResult, nsresult> EditorBase::InsertTextWithTransaction(
 
   EditorDOMPoint pointToInsert =
       ComputePointToInsertText(aPointToInsert, aInsertTextTo);
-  if (ShouldHandleIMEComposition()) {
+  if (ShouldHandleIMEComposition() && InsertingTextForComposition(aPurpose)) {
     if (!pointToInsert.IsInTextNode()) {
       // create a text node
       RefPtr<nsTextNode> newTextNode = CreateTextNode(u""_ns);
@@ -3415,8 +3522,8 @@ Result<InsertTextResult, nsresult> EditorBase::InsertTextWithTransaction(
       pointToInsert.Set(newTextNode, 0u);
     }
     Result<InsertTextResult, nsresult> insertTextResult =
-        InsertTextIntoTextNodeWithTransaction(aStringToInsert,
-                                              pointToInsert.AsInText());
+        InsertTextIntoTextNodeWithTransaction(
+            aStringToInsert, pointToInsert.AsInText(), aPurpose);
     NS_WARNING_ASSERTION(
         insertTextResult.isOk(),
         "EditorBase::InsertTextIntoTextNodeWithTransaction() failed");
@@ -3426,8 +3533,8 @@ Result<InsertTextResult, nsresult> EditorBase::InsertTextWithTransaction(
   if (pointToInsert.IsInTextNode()) {
     // we are inserting text into an existing text node.
     Result<InsertTextResult, nsresult> insertTextResult =
-        InsertTextIntoTextNodeWithTransaction(aStringToInsert,
-                                              pointToInsert.AsInText());
+        InsertTextIntoTextNodeWithTransaction(
+            aStringToInsert, pointToInsert.AsInText(), aPurpose);
     NS_WARNING_ASSERTION(
         insertTextResult.isOk(),
         "EditorBase::InsertTextIntoTextNodeWithTransaction() failed");
@@ -3462,23 +3569,24 @@ EditorBase::ComputeInsertedRange(const EditorDOMPointInText& aInsertedPoint,
 
   EditorDOMPointInText endOfInsertion(
       aInsertedPoint.ContainerAs<Text>(),
-      aInsertedPoint.Offset() + aInsertedString.Length());
+      std::min<uint32_t>(aInsertedPoint.Offset() + aInsertedString.Length(),
+                         aInsertedPoint.ContainerAs<Text>()->TextDataLength()));
   return {aInsertedPoint, endOfInsertion};
 }
 
 Result<InsertTextResult, nsresult>
 EditorBase::InsertTextIntoTextNodeWithTransaction(
     const nsAString& aStringToInsert,
-    const EditorDOMPointInText& aPointToInsert) {
+    const EditorDOMPointInText& aPointToInsert, InsertTextFor aPurpose) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(aPointToInsert.IsSetAndValid());
 
   RefPtr<EditTransactionBase> transaction;
-  bool isIMETransaction = false;
-  if (ShouldHandleIMEComposition()) {
+  const bool isIMETransaction =
+      ShouldHandleIMEComposition() && InsertingTextForComposition(aPurpose);
+  if (isIMETransaction) {
     transaction =
         CompositionTransaction::Create(*this, aStringToInsert, aPointToInsert);
-    isIMETransaction = true;
   } else {
     transaction =
         InsertTextTransaction::Create(*this, aStringToInsert, aPointToInsert);
@@ -4236,6 +4344,10 @@ nsresult EditorBase::OnCompositionChange(
 
 void EditorBase::OnCompositionEnd(
     WidgetCompositionEvent& aCompositionEndEvent) {
+  // In the usual case, this is called with an eCompositionEnd event,
+  // however, TextComposition may also call it with the eCompositionCommit
+  // directly (e.g. when the editor is removed during a composition).
+  MOZ_ASSERT(aCompositionEndEvent.CausesDOMCompositionEndEvent());
   MOZ_LOG(gTextInputLog, LogLevel::Info,
           ("%p %s::OnCompositionEnd(aCompositionEndEvent={ mData=\"%s\"}), "
            "mComposition=%p",
@@ -4293,12 +4405,14 @@ void EditorBase::OnCompositionEnd(
   if (editAction == EditAction::eCancelComposition && placeholderTransaction) {
     const nsTArray<OwningNonNull<EditTransactionBase>>& childTransactions =
         placeholderTransaction->ChildTransactions();
-    MOZ_ASSERT(!childTransactions.IsEmpty());
     // If the first transaction is inserting composition string, we didn't
     // replace selection with the composition string.  Then, all of the
-    // operations during the composition is canceled by the user.  So, we should
-    // not record it as an undo transaction.
-    if (childTransactions[0]->GetAsCompositionTransaction()) {
+    // operations during the composition is canceled by the user.  So, we
+    // should not record it as an undo transaction.
+    // FYI: If non-related action of the composition, we already closed the
+    // previous transaction.
+    if (!childTransactions.IsEmpty() &&
+        childTransactions[0]->GetAsCompositionTransaction()) {
       nsCOMPtr<nsITransaction> transaction =
           mTransactionManager->PopUndoStack();
       MOZ_DIAGNOSTIC_ASSERT(transaction == placeholderTransaction);

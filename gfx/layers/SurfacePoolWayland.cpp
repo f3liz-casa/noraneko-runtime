@@ -132,7 +132,7 @@ RefPtr<WaylandBuffer> SurfacePoolWayland::ObtainBufferFromPool(
         LayoutDeviceIntSize::FromUnknownSize(aSize), aGL, aFormat);
   } else {
     buffer = widget::WaylandBufferSHM::Create(
-        LayoutDeviceIntSize::FromUnknownSize(aSize));
+        LayoutDeviceIntSize::FromUnknownSize(aSize), aFormat);
   }
   if (buffer) {
     mInUseEntries.insert(
@@ -296,7 +296,8 @@ UniquePtr<MozFramebuffer> SurfacePoolWayland::CreateFramebufferForTexture(
     // framebuffer that shares it.
     if (auto buffer = GetDepthBufferForSharing(aProofOfLock, aGL, aSize)) {
       return MozFramebuffer::CreateForBackingWithSharedDepthAndStencil(
-          aSize, 0, LOCAL_GL_TEXTURE_2D, aTexture, buffer);
+          aSize, 0, LOCAL_GL_TEXTURE_2D, aTexture, buffer,
+          MozFramebuffer::ColorBackingOwnership::Borrowed);
     }
   }
 
@@ -305,7 +306,7 @@ UniquePtr<MozFramebuffer> SurfacePoolWayland::CreateFramebufferForTexture(
   // mDepthBuffers.
   UniquePtr<MozFramebuffer> fb = MozFramebuffer::CreateForBacking(
       aGL, aSize, 0, aNeedsDepthBuffer, aNeedsDepthBuffer, LOCAL_GL_TEXTURE_2D,
-      aTexture);
+      aTexture, MozFramebuffer::ColorBackingOwnership::Borrowed);
   if (fb && fb->GetDepthAndStencilBuffer()) {
     mDepthBuffers.AppendElement(
         DepthBufferEntry{aGL, aSize, fb->GetDepthAndStencilBuffer().get()});

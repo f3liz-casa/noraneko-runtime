@@ -201,8 +201,7 @@ template <typename storage_type>
 struct MapSorterIt {
   storage_type* ptr;
   MapSorterIt(storage_type* ptr) : ptr(ptr) {}
-  bool operator==(const MapSorterIt& other) const { return ptr == other.ptr; }
-  bool operator!=(const MapSorterIt& other) const { return !(*this == other); }
+  bool operator==(const MapSorterIt& other) const = default;
   MapSorterIt& operator++() {
     ++ptr;
     return *this;
@@ -373,6 +372,10 @@ inline void AssignToString(std::string& dest, absl::string_view value,
                            BytesTag /*tag*/ = BytesTag{}) {
   dest.assign(value.data(), value.size());
 }
+inline void AssignToString(std::string& dest, const absl::Cord& value,
+                           BytesTag tag = BytesTag{}) {
+  absl::CopyCordToString(value, &dest);
+}
 
 // Adds `value`, optionally bounded by `size`, as the last element of `dest`.
 // This overload set is used to implement `add_xxx()` methods for repeated
@@ -423,6 +426,11 @@ struct PrivateAccess {
   static constexpr auto GenerateParseTable(
       const ::google::protobuf::internal::ClassData* class_data) {
     return T::InternalGenerateParseTable_(class_data);
+  }
+
+  template <typename T>
+  static constexpr decltype(auto) FullMessageName() {
+    return T::FullMessageName();
   }
 
   static internal::ExtensionSet* GetExtensionSet(MessageLite* msg);

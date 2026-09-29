@@ -125,7 +125,7 @@ DIRS += ["autocomplete", "printingui", "satchel", "captivedetect"]
 if CONFIG["OS_TARGET"] != "Android":
     DIRS += ["terminator"]
 
-if CONFIG["MOZ_UPDATE_AGENT"]:
+if CONFIG["MOZ_BACKGROUNDTASKS"] and CONFIG["OS_TARGET"] in ("WINNT", "Darwin"):
     DIRS += ["taskscheduler"]
 
 DIRS += ["build"]
@@ -161,6 +161,9 @@ if CONFIG["MOZ_UNIFFI_FIXTURES"]:
 
 if CONFIG["NIGHTLY_BUILD"]:
     DIRS += ["aboutinference"]
+
+if CONFIG["OS_ARCH"] == "WINNT":
+    DIRS += ["push"]
 
 UNIFIED_SOURCES += [
     "/toolkit/components/antitracking/ContentBlockingAllowList.cpp",

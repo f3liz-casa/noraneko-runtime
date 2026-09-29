@@ -28,16 +28,19 @@ class DebugDrawerNavigationMiddlewareTest {
     private lateinit var store: DebugDrawerStore
 
     @Before
-    fun setup() = runTest(testDispatcher) {
-        store = DebugDrawerStore(
-            middlewares = listOf(
-                DebugDrawerNavigationMiddleware(
-                    navController = navController,
-                    scope = testCoroutineScope,
-                ),
-            ),
-        )
-    }
+    fun setup() =
+        runTest(testDispatcher) {
+            store =
+                DebugDrawerStore(
+                    middlewares =
+                        listOf(
+                            DebugDrawerNavigationMiddleware(
+                                navController = navController,
+                                scope = testCoroutineScope,
+                            )
+                        )
+                )
+        }
 
     @Test
     fun `WHEN home is the next destination THEN the back stack is cleared and the user is returned to home`() =
@@ -132,6 +135,16 @@ class DebugDrawerNavigationMiddlewareTest {
             testDispatcher.scheduler.advanceUntilIdle()
 
             verify { navController.navigate(DebugDrawerRoute.DistributionTools.route) }
+        }
+
+    @Test
+    fun `WHEN the IP protection location tools screen is the next destination THEN that screen is navigated to`() =
+        runTest(testDispatcher) {
+            store.dispatch(DebugDrawerAction.NavigateTo.IPProtectionLocationTools)
+
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            verify { navController.navigate(DebugDrawerRoute.IPProtectionLocationTools.route) }
         }
 
     @Test

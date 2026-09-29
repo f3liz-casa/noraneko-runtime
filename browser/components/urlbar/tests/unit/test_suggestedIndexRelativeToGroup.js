@@ -505,7 +505,7 @@ add_task(async function test() {
     },
   ];
 
-  let controller = UrlbarTestUtils.newMockController();
+  let { parentController } = UrlbarTestUtils.mockChildController();
 
   for (let {
     desc,
@@ -528,7 +528,7 @@ add_task(async function test() {
     let provider = registerBasicTestProvider(results);
     let context = createContext(undefined, { providers: [provider.name] });
     let providersManager = ProvidersManager.getInstanceForSap("urlbar");
-    await providersManager.startQuery(context, controller);
+    await providersManager.startQuery(context, parentController);
 
     // Make the list of expected results.
     let expectedResults = [];
@@ -536,7 +536,7 @@ add_task(async function test() {
       // Find the index in `results` of the expected result.
       let index = results.findIndex(
         r =>
-          UrlbarUtils.getResultGroup(r) == group &&
+          UrlbarShared.getResultGroup(r) == group &&
           r.suggestedIndex === suggestedIndex
       );
       Assert.notEqual(

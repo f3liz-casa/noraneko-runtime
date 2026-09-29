@@ -23,14 +23,18 @@ async function validateSchema(paramList, nameOfList) {
   let schema = {
     $schema: "http://json-schema.org/draft-07/schema#",
     type: "object",
-    properties: {
+    additionalProperties: {
       type: "object",
       properties: {
         queryParams: {
           type: "array",
           items: { type: "string" },
         },
-        origins: {
+        hosts: {
+          type: "array",
+          items: { type: "string" },
+        },
+        schemelessSites: {
           type: "array",
           items: { type: "string" },
         },
@@ -38,9 +42,11 @@ async function validateSchema(paramList, nameOfList) {
           type: "boolean",
         },
       },
+      additionalProperties: false,
       anyOf: [
-        { properties: { isGlobal: { const: true } } },
-        { required: ["origins"] },
+        { properties: { isGlobal: { const: true } }, required: ["isGlobal"] },
+        { required: ["hosts"] },
+        { required: ["schemelessSites"] },
       ],
       required: ["queryParams"],
     },
@@ -129,4 +135,21 @@ add_task(async function test_check_duplicates() {
 add_task(async function test_check_schema() {
   validateSchema(stripOnShareLGPLParams, "Strip On Share LGPL");
   validateSchema(stripOnShareList, "Strip On Share");
+});
+
+// Validate that all schemelessSites in the list are an eTLD+1
+add_task(async function test_schemeless_sites_are_base_domains() {
+  function validateList(list) {
+    for (let [key, rule] of Object.entries(list)) {
+      for (let origin of rule.schemelessSites ?? []) {
+        Assert.equal(
+          Services.eTLD.getSchemelessSiteFromHost(origin),
+          origin,
+          `${key}: schemelessSites entry "${origin}" must be an eTLD+1`
+        );
+      }
+    }
+  }
+  validateList(stripOnShareList);
+  validateList(stripOnShareLGPLParams);
 });

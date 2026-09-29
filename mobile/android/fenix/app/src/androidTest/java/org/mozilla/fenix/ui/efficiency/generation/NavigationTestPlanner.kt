@@ -1,9 +1,13 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.fenix.ui.efficiency.generation
 
 import org.mozilla.fenix.ui.efficiency.helpers.BasePage
 import org.mozilla.fenix.ui.efficiency.helpers.PageContext
 import org.mozilla.fenix.ui.efficiency.navigation.LaunchConfig
-import org.mozilla.fenix.ui.efficiency.navigation.NavigationRegistry
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationGraph
 import org.mozilla.fenix.ui.efficiency.navigation.PageCatalog
 
 // TODO (Jackie J. 3/23/2026): fix all of these horrible names, they're temporary.
@@ -27,25 +31,25 @@ object NavigationTestPlanner {
         override fun toString(): String = "$firstPropertyName -> $secondPropertyName"
     }
 
-    fun buildReachabilityCases(): List<ReachabilityCase> {
-        return PageCatalog.discoverPages()
+    fun buildReachabilityCases(graph: NavigationGraph = NavigationGraphBootstrap.buildGraph()): List<ReachabilityCase> {
+        return PageCatalog.discoverNavigablePages()
             .map { pageRef ->
                 ReachabilityCase(
                     propertyName = pageRef.propertyName,
                     page = pageRef.getter,
-                    launch = NavigationRegistry.launchConfigFor(pageRef.propertyName.toDisplayLabel())
-                        ?: LaunchConfig(),
+                    launch = graph.launchConfigFor(pageRef.propertyName.toDisplayLabel()) ?: LaunchConfig(),
                 )
             }
             .sortedBy { it.propertyName }
     }
 
-    fun buildNavigationPairCases(): List<NavigationPairCasePlan> {
-        val reachabilityCases = buildReachabilityCases()
+    fun buildNavigationPairCases(
+        graph: NavigationGraph = NavigationGraphBootstrap.buildGraph()
+    ): List<NavigationPairCasePlan> {
+        val reachabilityCases = buildReachabilityCases(graph)
 
-        val casesByPageName = reachabilityCases
-            .filter { it.launch == LaunchConfig() }
-            .associateBy { it.propertyName.toDisplayLabel() }
+        val casesByPageName =
+            reachabilityCases.filter { it.launch == LaunchConfig() }.associateBy { it.propertyName.toDisplayLabel() }
         val sortedPageNames = casesByPageName.keys.sorted()
 
         return buildList {
@@ -55,7 +59,7 @@ object NavigationTestPlanner {
                         continue
                     }
 
-                    val paths = NavigationRegistry.findAllPaths(firstPageName, secondPageName)
+                    val paths = graph.findAllPaths(firstPageName, secondPageName)
                     if (paths.isEmpty()) {
                         continue
                     }
@@ -70,7 +74,7 @@ object NavigationTestPlanner {
                             firstPage = firstCase.page,
                             secondPage = secondCase.page,
                             distinctPathCount = paths.size,
-                        ),
+                        )
                     )
                 }
             }

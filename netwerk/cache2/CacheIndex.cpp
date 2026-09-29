@@ -72,52 +72,6 @@ class FrecencyComparator {
 
 }  // namespace
 
-// used to dispatch a wrapper deletion the caller's thread
-// cannot be used on IOThread after shutdown begins
-class DeleteCacheIndexRecordWrapper : public Runnable {
-  CacheIndexRecordWrapper* mWrapper;
-
- public:
-  explicit DeleteCacheIndexRecordWrapper(CacheIndexRecordWrapper* wrapper)
-      : Runnable("net::CacheIndex::DeleteCacheIndexRecordWrapper"),
-        mWrapper(wrapper) {}
-  NS_IMETHOD Run() override {
-    StaticMutexAutoLock lock(CacheIndex::sLock);
-
-    // if somehow the item is still in the frecency storage, remove it
-    RefPtr<CacheIndex> index = CacheIndex::gInstance;
-    if (index) {
-      bool found = index->mFrecencyStorage.RecordExistedUnlocked(mWrapper);
-      if (found) {
-        LOG(
-            ("DeleteCacheIndexRecordWrapper::Run() - \
-            record wrapper found in frecency storage during deletion"));
-        index->mFrecencyStorage.RemoveRecord(mWrapper, lock);
-      }
-    }
-
-    delete mWrapper;
-    return NS_OK;
-  }
-};
-
-void CacheIndexRecordWrapper::DispatchDeleteSelfToCurrentThread() {
-  // Dispatch during shutdown will not trigger DeleteCacheIndexRecordWrapper
-  nsCOMPtr<nsIRunnable> event = new DeleteCacheIndexRecordWrapper(this);
-  MOZ_ALWAYS_SUCCEEDS(NS_DispatchToCurrentThread(event));
-}
-
-CacheIndexRecordWrapper::~CacheIndexRecordWrapper() {
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-  CacheIndex::sLock.AssertCurrentThreadOwns();
-  RefPtr<CacheIndex> index = CacheIndex::gInstance;
-  if (index) {
-    bool found = index->mFrecencyStorage.RecordExistedUnlocked(this);
-    MOZ_DIAGNOSTIC_ASSERT(!found);
-  }
-#endif
-}
-
 /**
  * This helper class is responsible for keeping CacheIndex::mIndexStats and
  * CacheIndex::mFrecencyStorage up to date.
@@ -1856,12 +1810,15 @@ void CacheIndex::WriteIndexToDisk(const StaticMutexAutoLock& aProofOfLock) {
   NetworkEndian::writeUint32(mRWBuf + mRWBufPos,
                              static_cast<uint32_t>(mTotalBytesWritten >> 10));
   mRWBufPos += sizeof(uint32_t);
-  // Whether the entries on disk are encrypted at rest. This reflects the
-  // session's actual encryption state (fixed at startup when CacheCrypto is
-  // initialized), not the live pref, so that a mid-session pref flip -- which
-  // only takes effect on the next restart -- is not masked here.
+  // Whether the entries on disk are encrypted at rest. This is the session's
+  // captured pref value, which is fixed at startup -- a mid-session flip only
+  // takes effect on the next restart, so reading the live pref here would mask
+  // it. Deliberately not IsActive(): a session where encryption is enabled but
+  // no cipher could be loaded writes no entries at all, since
+  // CacheFile::SetupEncryption() fails them closed, so the entries on disk are
+  // still the encrypted ones an earlier session wrote.
   NetworkEndian::writeUint32(mRWBuf + mRWBufPos,
-                             CacheCrypto::IsActive() ? 1 : 0);
+                             CacheCrypto::IsEnabled() ? 1 : 0);
   mRWBufPos += sizeof(uint32_t);
 
   mSkipEntries = 0;
@@ -2344,7 +2301,10 @@ void CacheIndex::ParseRecords(const StaticMutexAutoLock& aProofOfLock) {
 
     bool wasEncrypted = !!NetworkEndian::readUint32(mRWBuf + pos);
     pos += sizeof(uint32_t);
-    bool nowEncrypted = CacheCrypto::IsActive();
+    // The pref rather than IsActive(), matching what WriteRecords() stores: a
+    // keystore that is temporarily unavailable must not be read as "the user
+    // turned encryption off" and cost them the whole cache.
+    bool nowEncrypted = CacheCrypto::IsEnabled();
     if (wasEncrypted != nowEncrypted) {
       // The at-rest encryption setting changed since the cache was written, so
       // the entries on disk no longer match the current setting. Purge the
@@ -3490,7 +3450,8 @@ void CacheIndex::FrecencyStorage::AppendRecord(
        "hash=%08x%08x%08x"
        "%08x%08x]",
        aRecord, LOGSHA1(aRecord->Get()->mHash)));
-  MOZ_DIAGNOSTIC_ASSERT(!mRecs.Contains(aRecord));
+  MOZ_RELEASE_ASSERT(!mRecs.Contains(aRecord),
+                     "Record is already in the frecency storage");
   mRecs.PutEntry(aRecord);
 }
 

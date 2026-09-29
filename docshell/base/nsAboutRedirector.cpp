@@ -60,7 +60,7 @@ class CrashChannel final : public nsBaseChannel {
       using ContentParent = mozilla::dom::ContentParent;
       nsTArray<RefPtr<ContentParent>> toKill;
       for (auto* cp : ContentParent::AllProcesses(ContentParent::eLive)) {
-        if (cp->GetRemoteType() == EXTENSION_REMOTE_TYPE) {
+        if (cp->GetRemoteType().IsExtension()) {
           toKill.AppendElement(cp);
         }
       }
@@ -219,6 +219,8 @@ static const RedirEntry kRedirMap[] = {
 #  endif
          nsIAboutModule::ALLOW_SCRIPT},
 #endif
+    {"sync-log", "chrome://global/content/aboutSyncLog.html",
+     nsIAboutModule::ALLOW_SCRIPT},
     {"telemetry", "chrome://global/content/aboutTelemetry.xhtml",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI},
 #ifndef MOZ_WIDGET_ANDROID

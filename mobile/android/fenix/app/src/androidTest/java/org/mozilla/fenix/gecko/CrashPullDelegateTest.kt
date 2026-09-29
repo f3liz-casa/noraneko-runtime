@@ -6,17 +6,18 @@ package org.mozilla.fenix.gecko
 
 import android.content.Context
 import io.mockk.mockk
+import kotlin.test.assertNotNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.TestScope
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.storage.CreditCardsAddressesStorage
 import mozilla.components.concept.storage.LoginsStorage
 import org.junit.Before
 import org.junit.Test
 import org.mozilla.fenix.helpers.TestHelper
-import kotlin.test.assertNotNull
 
 class CrashPullDelegateTest {
     private lateinit var context: Context
@@ -41,11 +42,14 @@ class CrashPullDelegateTest {
         //
         // We cannot use runTestOnMain here because it looks not to be available.
         runBlocking {
-            scope.launch {
-                val runtime = GeckoProvider.getOrCreateRuntime(context, mockAutofill, mockLogin, mockPolicy)
-                assertNotNull(runtime.crashPullDelegate)
-                runtime.crashPullDelegate?.onCrashPull(arrayOf("1", "2"))
-            }.join()
+            scope
+                .launch {
+                    val runtime =
+                        GeckoProvider.getOrCreateRuntime(context, mockAutofill, mockLogin, mockPolicy, TestScope())
+                    assertNotNull(runtime.crashPullDelegate)
+                    runtime.crashPullDelegate?.onCrashPull(arrayOf("1", "2"))
+                }
+                .join()
         }
     }
 }

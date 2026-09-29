@@ -168,11 +168,6 @@ class LIRGeneratorShared {
   inline LUse usePayload(MDefinition* mir, LUse::Policy policy);
   inline LUse usePayloadAtStart(MDefinition* mir, LUse::Policy policy);
   inline LUse usePayloadInRegisterAtStart(MDefinition* mir);
-
-  // Adds a box input to an instruction, setting operand |n| to the type and
-  // |n+1| to the payload. Does not modify the operands, instead expecting a
-  // policy to already be set.
-  inline void fillBoxUses(LInstruction* lir, size_t n, MDefinition* mir);
 #endif
 
   // Test whether mir1 and mir2 may give rise to different LIR nodes even if
@@ -193,7 +188,7 @@ class LIRGeneratorShared {
   inline LBoxDefinition tempBox();
   inline LDefinition tempFloat32();
   inline LDefinition tempDouble();
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
   inline LDefinition tempSimd128();
 #endif
   inline LDefinition tempCopy(MDefinition* input, uint32_t reusedInput);

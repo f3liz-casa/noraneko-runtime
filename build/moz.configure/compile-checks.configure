@@ -395,7 +395,7 @@ def check_and_add_warning_impl(warning, compiler=None, when=None, check=True):
 
 # When changing this version, please check that no warning support have been
 # removed.
-clang_latest_release = dependable("22.1.0")
+clang_latest_release = dependable("23.1.0")
 
 
 @depends(c_compiler, clang_latest_release, when=moz_automation)
@@ -446,8 +446,10 @@ def check_and_add_warning(
         dependable(max_clang_version) if max_clang_version else clang_latest_release
     )
     is_compatible_clang = depends(c_compiler, max_clang_version)(
-        lambda c, max_clang_version: c.type in ("clang", "clang-cl")
-        and min_clang_version <= c.version <= max_clang_version
+        lambda c, max_clang_version: (
+            c.type in ("clang", "clang-cl")
+            and min_clang_version <= c.version <= max_clang_version
+        )
     )
     is_clang = depends(c_compiler.type)(lambda t: t in ("clang", "clang-cl"))
     res_clang = check_and_add_warning_impl(

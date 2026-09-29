@@ -7,6 +7,7 @@
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/PresState.h"
 #include "mozilla/dom/CustomElementRegistry.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/ElementInternalsBinding.h"
 #include "mozilla/dom/FormData.h"
 #include "mozilla/dom/FromParser.h"
@@ -23,6 +24,7 @@ HTMLElement::HTMLElement(already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo,
     : nsGenericHTMLFormElement(std::move(aNodeInfo)) {
   if (NodeInfo()->Equals(nsGkAtoms::bdi)) {
     AddStatesSilently(ElementState::HAS_DIR_ATTR_LIKE_AUTO);
+    OwnerDoc()->SetNeedsDirHandling();
   }
 
   InhibitRestoration(!(aFromParser & FROM_PARSER_NETWORK));
@@ -291,8 +293,9 @@ void HTMLElement::AfterClearForm(bool aUnbindOrDelete) {
 
 void HTMLElement::UpdateFormOwner() {
   MOZ_ASSERT(IsFormAssociatedElement());
-  DebugOnly<CustomElementData*> data = GetCustomElementData();
-  MOZ_ASSERT(data && data->mState == CustomElementData::State::eCustom);
+  MOZ_ASSERT(GetCustomElementData());
+  MOZ_ASSERT(GetCustomElementData()->mState ==
+             CustomElementData::State::eCustom);
 
   // If @form is set, the element *has* to be in a composed document,
   // otherwise it wouldn't be possible to find an element with the
@@ -413,8 +416,7 @@ void HTMLElement::UpdateFormOwner(bool aBindToTree, Element* aFormIdElement) {
 }
 
 bool HTMLElement::IsFormAssociatedElement() const {
-  CustomElementData* data = GetCustomElementData();
-  return data && data->IsFormAssociated();
+  return IsFormAssociatedCustomElement();
 }
 
 void HTMLElement::FieldSetDisabledChanged(bool aNotify) {

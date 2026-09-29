@@ -11,7 +11,7 @@ use crate::data::{EagerPseudoStyles, ElementStyles};
 use crate::dom::{TElement, TNode};
 use crate::matching::MatchMethods;
 use crate::properties::longhands::display::computed_value::T as Display;
-use crate::properties::{ComputedValues, FirstLineReparenting};
+use crate::properties::{AnimationDeclarations, ComputedValues, FirstLineReparenting};
 use crate::rule_tree::{RuleCascadeFlags, RuleTree, StrongRuleNode};
 use crate::selector_parser::{PseudoElement, SelectorImpl};
 use crate::stylist::RuleInclusion;
@@ -58,7 +58,7 @@ impl ResolvedStyle {
     /// Convenience accessor for the style.
     #[inline]
     pub fn style(&self) -> &ComputedValues {
-        &*self.0
+        &self.0
     }
 }
 
@@ -94,7 +94,7 @@ impl ResolvedElementStyles {
 impl PrimaryStyle {
     /// Convenience accessor for the style.
     pub fn style(&self) -> &ComputedValues {
-        &*self.style.0
+        &self.style.0
     }
 }
 
@@ -116,10 +116,10 @@ where
     let parent_data = parent_el.as_ref().and_then(|e| e.borrow_data());
     let parent_style = parent_data.as_ref().map(|d| d.styles.primary());
 
-    let mut layout_parent_el = parent_el.clone();
+    let mut layout_parent_el = parent_el;
     let layout_parent_data;
     let mut layout_parent_style = parent_style;
-    if parent_style.map_or(false, |s| s.is_display_contents()) {
+    if parent_style.is_some_and(|s| s.is_display_contents()) {
         layout_parent_el = Some(layout_parent_el.unwrap().layout_parent());
         layout_parent_data = layout_parent_el.as_ref().unwrap().borrow_data().unwrap();
         layout_parent_style = Some(layout_parent_data.styles.primary());
@@ -173,7 +173,10 @@ where
         rule_inclusion: RuleInclusion,
         pseudo_resolution: PseudoElementResolution,
     ) -> Self {
-        debug_assert_eq!(element.as_node().depth(), context.thread_local.current_dom_depth);
+        debug_assert_eq!(
+            element.as_node().depth(),
+            context.thread_local.current_dom_depth
+        );
         Self {
             element,
             context,
@@ -191,14 +194,20 @@ where
     ) -> PrimaryStyle {
         let primary_results = self.match_primary(VisitedHandlingMode::AllLinksUnvisited);
 
-        let inside_link = parent_style.map_or(false, |s| s.visited_style().is_some());
+        let inside_link = parent_style.is_some_and(|s| s.visited_style().is_some());
 
         let visited_rules = if self.context.shared.visited_styles_enabled
             && (inside_link || self.element.is_link())
         {
-            let visited_matching_results =
-                self.match_primary(VisitedHandlingMode::RelevantLinkVisited);
-            Some(visited_matching_results.rule_node)
+            if self.needs_visited_matching() {
+                let visited_matching_results =
+                    self.match_primary(VisitedHandlingMode::RelevantLinkVisited);
+                Some(visited_matching_results.rule_node)
+            } else {
+                // Not `None`: the style sharing cache compares these against
+                // the candidate's visited rules, which are the same node.
+                Some(primary_results.rule_node.clone())
+            }
         } else {
             None
         };
@@ -213,6 +222,30 @@ where
             parent_style,
             layout_parent_style,
         )
+    }
+
+    /// Whether matching again with the relevant link treated as visited can give a different rule
+    /// node than the pass we already did.
+    ///
+    /// `:link` and `:visited` only match links, so for anything else other than them (and their
+    /// pseudo-elements), this needs a selector testing link state from a position that reaches a
+    /// non-link, like `a:visited span`.
+    fn needs_visited_matching(&self) -> bool {
+        if self.element.is_link() {
+            return true;
+        }
+        if self.element.implemented_pseudo_element().is_some()
+            && self
+                .element
+                .pseudo_element_originating_element()
+                .is_some_and(|e| e.is_link())
+        {
+            return true;
+        }
+        self.context
+            .shared
+            .stylist
+            .any_applicable_rule_data(self.element, |data| data.has_non_link_visited_dependency())
     }
 
     fn cascade_primary_style(
@@ -266,10 +299,10 @@ where
 
         let mut pseudo_styles = EagerPseudoStyles::default();
 
-        if !self
+        if self
             .element
             .implemented_pseudo_element()
-            .is_some_and(|p| !p.is_element_backed())
+            .is_none_or(|p| p.is_element_backed())
         {
             let layout_parent_style_for_pseudo =
                 layout_parent_style_for_pseudo(&primary_style, layout_parent_style);
@@ -347,7 +380,7 @@ where
         layout_parent_style: Option<&ComputedValues>,
         pseudo: Option<&PseudoElement>,
     ) -> ResolvedStyle {
-        debug_assert!(pseudo.map_or(true, |p| p.is_eager()));
+        debug_assert!(pseudo.is_none_or(|p| p.is_eager()));
 
         let mut conditions = Default::default();
         let values = self.context.shared.stylist.cascade_style_and_visited(
@@ -469,6 +502,7 @@ where
             "Match primary for {:?}, visited: {:?}",
             self.element, visited_handling
         );
+        let animation_declarations = self.element.animation_declarations(self.context.shared);
         let mut applicable_declarations = ApplicableDeclarationList::new();
 
         let bloom_filter = self.context.thread_local.bloom_filter.filter();
@@ -490,7 +524,7 @@ where
             None,
             self.element.style_attribute(),
             self.element.smil_override(),
-            self.element.animation_declarations(self.context.shared),
+            &animation_declarations,
             self.rule_inclusion,
             &mut applicable_declarations,
             &mut matching_context,
@@ -528,6 +562,7 @@ where
         );
         debug_assert!(pseudo_element.is_eager());
 
+        let animation_declarations = AnimationDeclarations::default();
         let mut applicable_declarations = ApplicableDeclarationList::new();
 
         let stylist = &self.context.shared.stylist;
@@ -560,7 +595,7 @@ where
             Some(pseudo_element),
             None,
             None,
-            /* animation_declarations = */ Default::default(),
+            &animation_declarations,
             self.rule_inclusion,
             &mut applicable_declarations,
             &mut matching_context,

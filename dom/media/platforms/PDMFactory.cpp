@@ -484,6 +484,40 @@ DecodeSupportSet PDMFactory::Supports(
   return current->Supports(aParams, aDiagnostics);
 }
 
+RefPtr<PDMSupportsDecoderPromise> PDMFactory::SupportsAsync(
+    const SupportDecoderParams& aParams) const {
+  if (mEMEPDM) {
+    return mEMEPDM->SupportsAsync(aParams);
+  }
+
+  nsTArray<RefPtr<PDMSupportsDecoderPromise>> promises(mCurrentPDMs.Length());
+  for (const auto& m : mCurrentPDMs) {
+    if (!m->Supports(aParams, nullptr).isEmpty()) {
+      promises.AppendElement(m->SupportsAsync(aParams));
+    }
+  }
+  return PDMSupportsDecoderPromise::AllSettled(GetCurrentSerialEventTarget(),
+                                               promises)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [mimeType = aParams.mConfig.mMimeType](
+              CopyableTArray<PDMSupportsDecoderPromise::ResolveOrRejectValue>&&
+                  aValues) -> RefPtr<PDMSupportsDecoderPromise> {
+            DecodeSupportSet support{};
+            for (const auto& value : aValues) {
+              if (value.IsResolve()) {
+                support += value.ResolveValue();
+              }
+            }
+            return PDMSupportsDecoderPromise::CreateAndResolve(support,
+                                                               __func__);
+          },
+          [] {
+            MOZ_CRASH("AllSettled does not reject");
+            return RefPtr<PDMSupportsDecoderPromise>(nullptr);
+          });
+}
+
 /* static */
 void PDMFactory::ForcePDM(PlatformDecoderModule* aPDM) {
   auto forced = sForcedPDM.Lock();
@@ -572,22 +606,19 @@ void PDMFactory::CreateRddPDMs() {
   StartupPDM(FFVPXRuntimeLinker::CreateDecoder());
 #ifdef MOZ_FFMPEG
   if (StaticPrefs::media_ffmpeg_enabled() &&
-      StaticPrefs::media_rdd_ffmpeg_enabled() &&
-      !StartupPDM(
-          FFmpegRuntimeLinker::CreateDecoder(),
-  // When Vulkan video decoding is enabled, insert the full FFmpeg
-  // decoder before ffvpx so that Vulkan hardware decoding is
-  // preferred. ffvpx does not support Vulkan decode and would
-  // otherwise be selected first and fall back to software.
-  // TODO (bug 2034236): remove once ffvpx gains Vulkan decode support.
-#  ifdef MOZ_WIDGET_GTK
-          StaticPrefs::media_hardware_video_decoding_vulkan_enabled_AtStartup()
-#  else
-          false
-#  endif
-              )) {
-    mFailureFlags += GetFailureFlagBasedOnFFmpegStatus(
-        FFmpegRuntimeLinker::LinkStatusCode());
+      StaticPrefs::media_rdd_ffmpeg_enabled()) {
+    // Prefer system FFmpeg first only when Vulkan is wanted and
+    // PreferSystemFFmpegForVulkan() is true; otherwise leave ffvpx first.
+    const bool preferSystemForVulkan =
+        gfx::gfxVars::CanUseVulkanHardwareVideoDecoding() &&
+        FFmpegRuntimeLinker::PreferSystemFFmpegForVulkan();
+    PDM_INIT_LOG("Insert system FFmpeg before ffvpx: {}",
+                 preferSystemForVulkan);
+    if (!StartupPDM(FFmpegRuntimeLinker::CreateDecoder(),
+                    preferSystemForVulkan)) {
+      mFailureFlags += GetFailureFlagBasedOnFFmpegStatus(
+          FFmpegRuntimeLinker::LinkStatusCode());
+    }
   }
 #endif
   StartupPDM(AgnosticDecoderModule::Create(),

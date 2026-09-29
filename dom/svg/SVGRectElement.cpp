@@ -49,9 +49,9 @@ SVGRectElement::SVGRectElement(
     already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo)
     : SVGRectElementBase(std::move(aNodeInfo)) {}
 
-bool SVGRectElement::IsAttributeMapped(const nsAtom* aAttribute) const {
+bool SVGRectElement::IsNoNamespaceAttrMapped(const nsAtom* aAttribute) const {
   return IsInLengthInfo(aAttribute, sLengthInfo) ||
-         SVGRectElementBase::IsAttributeMapped(aAttribute);
+         SVGRectElementBase::IsNoNamespaceAttrMapped(aAttribute);
 }
 
 namespace SVGT = SVGGeometryProperty::Tags;
@@ -114,10 +114,9 @@ SVGElement::LengthAttributesInfo SVGRectElement::GetLengthInfo() {
 //----------------------------------------------------------------------
 // SVGGeometryElement methods
 
-bool SVGRectElement::GetGeometryBounds(Rect* aBounds,
-                                       const StrokeOptions& aStrokeOptions,
-                                       const Matrix& aToBoundsSpace,
-                                       const Matrix* aToNonScalingStrokeSpace) {
+Maybe<Rect> SVGRectElement::GetGeometryBounds(
+    const StrokeOptions& aStrokeOptions, const Matrix& aToBoundsSpace,
+    const Matrix* aToNonScalingStrokeSpace) {
   Rect rect;
   Float rx, ry;
 
@@ -131,8 +130,7 @@ bool SVGRectElement::GetGeometryBounds(Rect* aBounds,
     // Rendering of the element disabled
     rect.SetEmpty();  // Make sure width/height are zero and not negative
     // We still want the x/y position from 'rect'
-    *aBounds = aToBoundsSpace.TransformBounds(rect);
-    return true;
+    return Some(aToBoundsSpace.TransformBounds(rect));
   }
 
   if (!aToBoundsSpace.IsRectilinear()) {
@@ -141,7 +139,7 @@ bool SVGRectElement::GetGeometryBounds(Rect* aBounds,
     ry = std::max(ry, 0.0f);
 
     if (rx != 0 || ry != 0) {
-      return false;
+      return Nothing();
     }
   }
 
@@ -159,17 +157,15 @@ bool SVGRectElement::GetGeometryBounds(Rect* aBounds,
         rect.Inflate(aStrokeOptions.mLineWidth / 2.f);
         Matrix nonScalingToBounds =
             aToNonScalingStrokeSpace->Inverse() * aToBoundsSpace;
-        *aBounds = nonScalingToBounds.TransformBounds(rect);
-        return true;
+        return Some(nonScalingToBounds.TransformBounds(rect));
       }
-      return false;
+      return Nothing();
     }
     // The "beveled" comment above applies here too
     rect.Inflate(aStrokeOptions.mLineWidth / 2.f);
   }
 
-  *aBounds = aToBoundsSpace.TransformBounds(rect);
-  return true;
+  return Some(aToBoundsSpace.TransformBounds(rect));
 }
 
 void SVGRectElement::GetAsSimplePath(SimplePath* aSimplePath) {

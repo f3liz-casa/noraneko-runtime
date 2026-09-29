@@ -24,10 +24,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.unit.dp
-import org.mozilla.fenix.theme.FirefoxTheme
-import org.mozilla.fenix.theme.PreviewThemeProvider
-import org.mozilla.fenix.theme.Theme
+import mozilla.components.compose.base.theme.PreviewThemeProvider
+import mozilla.components.compose.base.theme.Theme
 import mozilla.components.ui.icons.R as iconsR
+import org.mozilla.fenix.theme.FirefoxTheme
 
 /**
  * The background of an item that is being swiped horizontally.
@@ -54,15 +54,15 @@ fun DismissibleItemBackground(
                 Icon(
                     painter = painterResource(iconsR.drawable.mozac_ic_delete_24),
                     contentDescription = null,
-                    modifier = Modifier
-                        .padding(horizontal = 32.dp)
-                        .align(
-                            if (isSwipingToStart) {
-                                Alignment.CenterEnd
-                            } else {
-                                Alignment.CenterStart
-                            },
-                        ),
+                    modifier =
+                        Modifier.padding(horizontal = FirefoxTheme.layout.space.static400)
+                            .align(
+                                if (isSwipingToStart) {
+                                    Alignment.CenterEnd
+                                } else {
+                                    Alignment.CenterStart
+                                }
+                            ),
                     tint = MaterialTheme.colorScheme.error,
                 )
             }
@@ -87,7 +87,11 @@ private fun DismissibleItemBackgroundPreviewContent() {
                 DismissibleItemBackground(
                     isSwipeActive = true,
                     isSwipingToStart = false,
-                    shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
+                    shape =
+                        RoundedCornerShape(
+                            bottomStart = FirefoxTheme.layout.space.static100,
+                            bottomEnd = FirefoxTheme.layout.space.static100,
+                        ),
                 )
             }
 
@@ -106,9 +110,7 @@ private fun DismissibleItemBackgroundPreviewContent() {
 
 @Preview
 @Composable
-private fun DismissedTabBackgroundPreview(
-    @PreviewParameter(PreviewThemeProvider::class) theme: Theme,
-) {
+private fun DismissedTabBackgroundPreview(@PreviewParameter(PreviewThemeProvider::class) theme: Theme) {
     FirefoxTheme(theme) {
         DismissibleItemBackgroundPreviewContent()
     }

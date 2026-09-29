@@ -10,6 +10,8 @@ support-files = ["distribution.ini"]
 
 ["test_browserGlue_migration_formautofill.js"]
 
+["test_browserGlue_migration_ippL10nCoverage.js"]
+
 ["test_browserGlue_migration_no_errors.js"]
 
 ["test_browserGlue_migration_osauth.js"]
@@ -31,6 +33,8 @@ skip-if = [
 
 ["test_distribution.js"]
 
+["test_distribution_bookmarks_first.js"]
+
 ["test_distribution_cachedexistence.js"]
 
 ["test_distribution_idonly.js"]
@@ -42,6 +46,8 @@ skip-if = [
 ["test_profileDataUpgrade_cookieBannerData.js"]
 
 ["test_profileDataUpgrade_duplicateCookiePerms.js"]
+
+["test_profileDataUpgrade_separatePrivateDefault.js"]
 
 ["test_profileDataUpgrade_smartwindow.js"]
 

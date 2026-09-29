@@ -80,16 +80,18 @@ add_task(async function test_disabled() {
     matches: [],
   });
 
-  info("Check whether prefs don't disable it in searchbar");
-  let context = createContext("", { isPrivate: false, sapName: "searchbar" });
-  await check_results({
-    context,
-    matches: [
-      makeRecentSearchResult(context, defaultEngine, "Joy Formidable"),
-      makeRecentSearchResult(context, defaultEngine, "Glasgow Weather"),
-      makeRecentSearchResult(context, defaultEngine, "Bob Vylan"),
-    ],
-  });
+  for (let sapName of UrlbarShared.SEARCHBAR_SAPS) {
+    info(`Check whether prefs don't disable it in ${sapName}`);
+    let context = createContext("", { isPrivate: false, sapName });
+    await check_results({
+      context,
+      matches: [
+        makeRecentSearchResult(context, defaultEngine, "Joy Formidable"),
+        makeRecentSearchResult(context, defaultEngine, "Glasgow Weather"),
+        makeRecentSearchResult(context, defaultEngine, "Bob Vylan"),
+      ],
+    });
+  }
 });
 
 add_task(async function test_most_recent_shown() {
@@ -116,26 +118,28 @@ add_task(async function test_most_recent_shown_searchbar() {
   UrlbarPrefs.set(SUGGESTS_PREF, true);
 
   info(
-    "Check that browser.urlbar.recentsearches.maxResults doesn't affect the search bar"
+    "Check that browser.urlbar.recentsearches.maxResults doesn't affect a search bar"
   );
-  await addSearches(Array.from(Array(12).keys()).map(i => `Search ${i}`));
-  let context = createContext("", { isPrivate: false, sapName: "searchbar" });
-  await check_results({
-    context,
-    matches: [
-      makeRecentSearchResult(context, defaultEngine, "Search 11"),
-      makeRecentSearchResult(context, defaultEngine, "Search 10"),
-      makeRecentSearchResult(context, defaultEngine, "Search 9"),
-      makeRecentSearchResult(context, defaultEngine, "Search 8"),
-      makeRecentSearchResult(context, defaultEngine, "Search 7"),
-      makeRecentSearchResult(context, defaultEngine, "Search 6"),
-      makeRecentSearchResult(context, defaultEngine, "Search 5"),
-      makeRecentSearchResult(context, defaultEngine, "Search 4"),
-      makeRecentSearchResult(context, defaultEngine, "Search 3"),
-      makeRecentSearchResult(context, defaultEngine, "Search 2"),
-    ],
-  });
-  await UrlbarTestUtils.formHistory.clear();
+  for (let sapName of UrlbarShared.SEARCHBAR_SAPS) {
+    await addSearches(Array.from(Array(12).keys()).map(i => `Search ${i}`));
+    let context = createContext("", { isPrivate: false, sapName });
+    await check_results({
+      context,
+      matches: [
+        makeRecentSearchResult(context, defaultEngine, "Search 11"),
+        makeRecentSearchResult(context, defaultEngine, "Search 10"),
+        makeRecentSearchResult(context, defaultEngine, "Search 9"),
+        makeRecentSearchResult(context, defaultEngine, "Search 8"),
+        makeRecentSearchResult(context, defaultEngine, "Search 7"),
+        makeRecentSearchResult(context, defaultEngine, "Search 6"),
+        makeRecentSearchResult(context, defaultEngine, "Search 5"),
+        makeRecentSearchResult(context, defaultEngine, "Search 4"),
+        makeRecentSearchResult(context, defaultEngine, "Search 3"),
+        makeRecentSearchResult(context, defaultEngine, "Search 2"),
+      ],
+    });
+    await UrlbarTestUtils.formHistory.clear();
+  }
 });
 
 add_task(async function test_per_engine() {

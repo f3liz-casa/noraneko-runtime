@@ -75,10 +75,6 @@ bool nsXPConnect::gOnceAliveNowDead = false;
 nsIScriptSecurityManager* nsXPConnect::gScriptSecurityManager = nullptr;
 nsIPrincipal* nsXPConnect::gSystemPrincipal = nullptr;
 
-const char XPC_EXCEPTION_CONTRACTID[] = "@mozilla.org/js/xpc/Exception;1";
-const char XPC_CONSOLE_CONTRACTID[] = "@mozilla.org/consoleservice;1";
-const char XPC_SCRIPT_ERROR_CONTRACTID[] = "@mozilla.org/scripterror;1";
-
 /***************************************************************************/
 
 #ifdef XP_IOS
@@ -94,7 +90,7 @@ static bool IsLockdownModeEnabled() {
 #endif
 
 static void InitJSEngine() {
-#if defined(ENABLE_WASM_SIMD) && \
+#if defined(ENABLE_JIT_SIMD) && \
     (defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86))
   // Update static engine preferences, such as AVX, before
   // `JS_InitWithFailureDiagnostic` is called.

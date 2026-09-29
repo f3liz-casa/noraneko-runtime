@@ -29,7 +29,7 @@
             <image class="tab-icon-overlay" role="presentation"/>
             <image class="tab-note-icon-overlay" role="presentation"/>
           </stack>
-          <html:moz-button type="icon ghost" size="small" class="tab-audio-button" tabindex="-1"></html:moz-button>
+          <html:moz-button type="icon toolbar" size="small" class="tab-audio-button" tabindex="-1"></html:moz-button>
           <vbox class="tab-label-container"
                 align="start"
                 pack="center"
@@ -141,6 +141,16 @@
       // Tabs in tab groups are one level down (level 2); this tab will
       // update its value when it moves in and out of tab groups.
       this.setAttribute("aria-level", 1);
+    }
+
+    /**
+     * This tab's index in `gBrowser.tabs`, which counts every tab. See
+     * `elementIndex` for its position among the visible tab strip elements.
+     *
+     * @type {number}
+     */
+    get index() {
+      return this._index;
     }
 
     #elementIndex;
@@ -737,7 +747,24 @@
       }
     }
 
-    _mouseenter() {
+    /**
+     * Removes the listeners set up by #endHoverUnlessPointerArrives, or null
+     * when no hover is waiting to be confirmed by the event state manager.
+     *
+     * @type {function|null}
+     */
+    #stopWaitingForPointer = null;
+
+    /**
+     * @param {object} [options]
+     * @param {boolean} [options.withoutPointerEvent=false]
+     *   Set when the tab strip moved this tab under the pointer rather than the
+     *   pointer having moved onto the tab. The event state manager doesn't know
+     *   the pointer is here and so won't send the mouseout that normally ends
+     *   the hover, so end it from the next mouse event instead unless the event
+     *   state manager has agreed the pointer is here by then.
+     */
+    _mouseenter({ withoutPointerEvent = false } = {}) {
       this._hover = true;
 
       if (this.selected) {
@@ -750,9 +777,34 @@
       SessionStore.speculativeConnectOnTabHover(this);
 
       this.dispatchEvent(new CustomEvent("TabHoverStart", { bubbles: true }));
+
+      if (withoutPointerEvent) {
+        this.#endHoverUnlessPointerArrives();
+      }
+    }
+
+    #endHoverUnlessPointerArrives() {
+      const types = ["mousemove", "mouseover"];
+      const onMouseEvent = () => {
+        this.#stopWaitingForPointer();
+        if (!this.matches(":hover")) {
+          this._mouseleave();
+        }
+      };
+      this.#stopWaitingForPointer?.();
+      this.#stopWaitingForPointer = () => {
+        this.#stopWaitingForPointer = null;
+        for (let type of types) {
+          window.removeEventListener(type, onMouseEvent, true);
+        }
+      };
+      for (let type of types) {
+        window.addEventListener(type, onMouseEvent, true);
+      }
     }
 
     _mouseleave() {
+      this.#stopWaitingForPointer?.();
       if (!this._hover) {
         return;
       }

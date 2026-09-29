@@ -82,12 +82,27 @@ class ModuleLoader final : public JS::loader::ModuleLoaderBase {
   }
 
   void AsyncExecuteInlineModule(ModuleLoadRequest* aRequest);
-  void ExecuteInlineModule(ModuleLoadRequest* aRequest);
+  MOZ_CAN_RUN_SCRIPT void ExecuteInlineModule(ModuleLoadRequest* aRequest);
 
  private:
   nsresult CompileJavaScriptOrWasmModule(
+      JSContext* aCx, JS::Handle<JSObject*> aGlobal,
+      JS::CompileOptions& aOptions, ModuleLoadRequest* aRequest,
+      JS::MutableHandle<JSObject*> aModuleOut);
+  nsresult CompileEmptyJavaScriptModule(
       JSContext* aCx, JS::CompileOptions& aOptions, ModuleLoadRequest* aRequest,
       JS::MutableHandle<JSObject*> aModuleOut);
+#ifdef NIGHTLY_BUILD
+  using WasmBytesBuffer =
+      JS::loader::ScriptLoadRequest::ScriptTextBuffer<uint8_t>;
+  nsresult CompileWasmModuleBytes(JSContext* aCx, JS::CompileOptions& aOptions,
+                                  ModuleLoadRequest* aRequest,
+                                  WasmBytesBuffer& aBytes,
+                                  JS::MutableHandle<JSObject*> aModuleOut);
+  nsresult CompileEmptyWasmModule(JSContext* aCx, JS::CompileOptions& aOptions,
+                                  ModuleLoadRequest* aRequest,
+                                  JS::MutableHandle<JSObject*> aModuleOut);
+#endif
   nsresult CompileJsonModule(JSContext* aCx, JS::CompileOptions& aOptions,
                              ModuleLoadRequest* aRequest,
                              JS::MutableHandle<JSObject*> aModuleOut);

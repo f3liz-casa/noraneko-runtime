@@ -48,7 +48,7 @@ nsresult HTMLMarqueeElement::BindToTree(BindContext& aContext,
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (IsInComposedDoc()) {
-    AttachAndSetUAShadowRoot();
+    AttachAndSetUAShadowRoot(NotifyUAWidget::Yes);
   }
 
   return rv;
@@ -57,7 +57,7 @@ nsresult HTMLMarqueeElement::BindToTree(BindContext& aContext,
 void HTMLMarqueeElement::UnbindFromTree(UnbindContext& aContext) {
   if (IsInComposedDoc()) {
     // We don't want to unattach the shadow root because it used to
-    // contain a <slot>.
+    // contain a <slot>.NotifyUAWidget
     TeardownUAShadowRoot(NotifyUAWidget::Yes, UnattachShadowRoot::No);
   }
 
@@ -118,8 +118,8 @@ void HTMLMarqueeElement::MapAttributesIntoRule(
   nsGenericHTMLElement::MapBGColorInto(aBuilder);
 }
 
-NS_IMETHODIMP_(bool)
-HTMLMarqueeElement::IsAttributeMapped(const nsAtom* aAttribute) const {
+bool HTMLMarqueeElement::IsNoNamespaceAttrMapped(
+    const nsAtom* aAttribute) const {
   static const MappedAttributeEntry* const map[] = {
       sImageMarginSizeAttributeMap, sBackgroundColorAttributeMap,
       sCommonAttributeMap};

@@ -71,6 +71,22 @@ PRCallOnceType nsSocketTransportService::gMaxCountInitOnce;
 // Utility functions
 bool OnSocketThread() { return PR_GetCurrentThread() == gSocketThread; }
 
+nsresult DispatchToCurrent(already_AddRefed<nsIRunnable> aEvent) {
+  nsCOMPtr<nsIRunnable> event(aEvent);
+  nsISerialEventTarget* thread = GetCurrentSerialEventTarget();
+  if (!thread) {
+    // If there's no serial event target, fallback to current thread.
+    thread = NS_GetCurrentThread();
+  }
+  if (!thread) {
+    return NS_ERROR_UNEXPECTED;
+  }
+  return thread->Dispatch(event.forget(), NS_DISPATCH_FALLIBLE);
+}
+nsresult DispatchToCurrent(nsIRunnable* aEvent) {
+  return DispatchToCurrent(do_AddRef(aEvent));
+}
+
 //-----------------------------------------------------------------------------
 
 bool nsSocketTransportService::SocketContext::IsTimedOut(
@@ -712,17 +728,7 @@ int32_t nsSocketTransportService::Poll(PRIntervalTime ts) {
   int32_t n;
   {
     TimeStamp startTime = TimeStamp::Now();
-    if (pollTimeout != PR_INTERVAL_NO_WAIT) {
-      // There will be an actual non-zero wait, let the profiler know about it
-      // by marking thread as sleeping around the polling call.
-      profiler_thread_sleep();
-    }
-
     n = PR_Poll(firstPollEntry, pollCount, pollTimeout);
-
-    if (pollTimeout != PR_INTERVAL_NO_WAIT) {
-      profiler_thread_wake();
-    }
     if (profiler_thread_is_being_profiled_for_markers()) {
       PROFILER_MARKER_TEXT(
           "SocketTransportService::Poll", NETWORK,

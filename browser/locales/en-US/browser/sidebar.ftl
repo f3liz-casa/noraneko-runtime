@@ -8,6 +8,9 @@ menu-view-genai-chat =
 menu-view-contextual-password-manager =
   .label = Passwords
 
+menu-view-resource-monitor =
+  .label = Resource Monitor
+
 # Label for the Open Tabs entry in the View > Sidebars menu bar menu.
 # "Open Tabs" is a noun phrase referring to the tabs currently open in
 # the browser, not an instruction to open tabs.
@@ -87,6 +90,10 @@ sidebar-show-on-the-left =
 # hovers over it.
 expand-sidebar-on-hover =
   .label = Expand sidebar on hover
+# Option to show a preview of the most recently active tabs when the mouse
+# pointer hovers over the Open Tabs button in the sidebar.
+sidebar-show-preview-on-hover =
+  .label = Show preview on hover
 sidebar-manage-extensions2 = Manage all extensions
 
 ## Labels for sidebar context menu items
@@ -204,6 +211,8 @@ sidebar-menu-customize-label =
   .label = Customize sidebar
 sidebar-menu-contextual-password-manager-label =
   .label = Passwords
+sidebar-menu-resource-monitor-label =
+  .label = Resource monitor
 sidebar-menu-more-tools-label =
   .label = More tools
 

@@ -2,10 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const lazy = {};
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-ChromeUtils.defineESModuleGetters(lazy, {
-  sessionStoreLogger: "resource:///modules/sessionstore/SessionLogger.sys.mjs",
+const lazy = XPCOMUtils.declareLazy({
+  sessionStoreLogger:
+    "moz-src:///browser/components/sessionstore/SessionLogger.sys.mjs",
 });
 
 /**
@@ -111,7 +112,8 @@ const SessionWriterInternal = {
    *
    * @param {string} origin Which of sessionstore.js or its backups
    *   was used. One of the `STATE_*` constants defined above.
-   * @param {boolean} a flag indicate whether we loaded a session file with ext .js
+   * @param {boolean} useOldExtension Whether we loaded a session file with
+   *   extension .js.
    * @param {object} paths The paths at which to find the various files.
    * @param {object} prefs The preferences the writer needs to know.
    */

@@ -83,6 +83,11 @@ export class UrlbarProviderActionsSearchMode extends UrlbarProvider {
     return !!action.isInactive?.();
   }
 
+  /**
+   * @param {UrlbarQueryContext} queryContext
+   * @param {UrlbarParentController} controller
+   * @param {object} details
+   */
   onEngagement(queryContext, controller, details) {
     let { key, inputLength } = details.result.payload;
     let action = lazy.ActionsProviderQuickActions.getAction(key);
@@ -99,6 +104,7 @@ export class UrlbarProviderActionsSearchMode extends UrlbarProvider {
 
   getViewTemplate(result) {
     let action = lazy.ActionsProviderQuickActions.getAction(result.payload.key);
+    let isInactive = this.#isActionInactive(action);
     return {
       children: [
         {
@@ -108,7 +114,8 @@ export class UrlbarProviderActionsSearchMode extends UrlbarProvider {
             "data-action": result.payload.key,
             "data-input-length": result.payload.inputLength,
             role: "button",
-            disabled: this.#isActionInactive(action),
+            "aria-disabled": isInactive ? "true" : null,
+            disabled: isInactive,
           },
           children: [
             {

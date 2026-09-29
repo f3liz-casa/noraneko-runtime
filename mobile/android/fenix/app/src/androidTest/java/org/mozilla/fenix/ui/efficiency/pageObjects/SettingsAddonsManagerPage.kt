@@ -8,60 +8,71 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
 import org.mozilla.fenix.helpers.TestAssetHelper.waitingTimeLong
 import org.mozilla.fenix.ui.efficiency.helpers.BasePage
-import org.mozilla.fenix.ui.efficiency.helpers.Selector
-import org.mozilla.fenix.ui.efficiency.navigation.NavigationRegistry
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationFacts
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationGraph
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationOptions
 import org.mozilla.fenix.ui.efficiency.navigation.NavigationStep
 import org.mozilla.fenix.ui.efficiency.selectors.BrowserPageSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.HomeSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.MainMenuSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.SettingsAddonsManagerSelectors
 
-class SettingsAddonsManagerPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>) : BasePage(composeRule) {
+class SettingsAddonsManagerPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>) :
+    BasePage(composeRule) {
     override val pageName = "SettingsAddonsManagerPage"
 
-    init {
-        NavigationRegistry.register(
+    internal override fun registerNavigation(builder: NavigationGraph.Builder) {
+        builder.register(
             from = "HomePage",
             to = pageName,
-            steps = listOf(
-                NavigationStep.Click(HomeSelectors.MAIN_MENU_BUTTON),
-                NavigationStep.Click(MainMenuSelectors.EXTENSIONS_BUTTON),
-            ),
+            steps =
+                listOf(
+                    NavigationStep.Click(HomeSelectors.MAIN_MENU_BUTTON),
+                    NavigationStep.Click(MainMenuSelectors.EXTENSIONS_BUTTON),
+                ),
         )
 
-        NavigationRegistry.register(
-            from = "HomePage",
+        builder.register(
+            from = "MainMenuPage",
             to = pageName,
-            steps = listOf(
-                NavigationStep.Click(HomeSelectors.MAIN_MENU_BUTTON),
-                NavigationStep.Click(MainMenuSelectors.EXTENSIONS_BUTTON),
-                // Click the add-on to be able to open the details
-            ),
+            steps =
+                listOf(
+                    NavigationStep.Click(MainMenuSelectors.EXTENSIONS_BUTTON_UIAUTOMATOR),
+                    NavigationStep.Click(MainMenuSelectors.MANAGE_EXTENSIONS_BUTTON),
+                ),
         )
 
-        NavigationRegistry.register(
+        builder.register(
             from = pageName,
             to = "HomePage",
-            steps = listOf(
-                NavigationStep.Click(SettingsAddonsManagerSelectors.NAVIGATE_BACK_TOOLBAR_BUTTON),
-            ),
+            steps = listOf(NavigationStep.Click(SettingsAddonsManagerSelectors.NAVIGATE_BACK_TOOLBAR_BUTTON)),
+            requires = setOf(NavigationFacts.RETURN_SURFACE_HOME),
+        )
+
+        builder.register(
+            from = pageName,
+            to = "BrowserPage",
+            steps = listOf(NavigationStep.Click(SettingsAddonsManagerSelectors.NAVIGATE_BACK_TOOLBAR_BUTTON)),
+            requires = setOf(NavigationFacts.RETURN_SURFACE_BROWSER),
         )
     }
 
-    override fun navigateToPage(url: String, forceNavigation: Boolean): SettingsAddonsManagerPage {
-        super.navigateToPage(url, forceNavigation)
+    override fun navigateToPage(
+        url: String,
+        forceNavigation: Boolean,
+        navigationOptions: NavigationOptions,
+    ): SettingsAddonsManagerPage {
+        super.navigateToPage(url, forceNavigation, navigationOptions)
         return this
     }
 
-    override fun mozGetSelectorsByGroup(group: String): List<Selector> {
-        return SettingsAddonsManagerSelectors.all.filter { it.groups.contains(group) }
-    }
+    override val selectorCatalog = SettingsAddonsManagerSelectors
 
     /**
-     * Installs [addonTitle] from the add-ons manager list, then closes the install-completed prompt.
-     * When [allowInPrivateBrowsing] is true the "Allow in private browsing" checkbox is ticked before
-     * confirming. Assumes the add-ons manager list is already open. Mirrors the legacy installAddon /
-     * installAddonInPrivateMode + closeAddonInstallCompletePrompt flow.
+     * Installs [addonTitle] from the add-ons manager list, then closes the install-completed prompt. When
+     * [allowInPrivateBrowsing] is true the "Allow in private browsing" checkbox is ticked before confirming. Assumes
+     * the add-ons manager list is already open. Mirrors the legacy installAddon / installAddonInPrivateMode +
+     * closeAddonInstallCompletePrompt flow.
      */
     fun installAddon(addonTitle: String, allowInPrivateBrowsing: Boolean = false): SettingsAddonsManagerPage {
         mozWaitUntilAbsent(SettingsAddonsManagerSelectors.ADD_ONS_PROGRESS_BAR, timeout = waitingTimeLong)
@@ -82,8 +93,8 @@ class SettingsAddonsManagerPage(composeRule: AndroidComposeTestRule<HomeActivity
     }
 
     /**
-     * Opens the detail screen for the installed [addonTitle] and removes it, returning to the add-ons
-     * manager list. Mirrors the legacy openDetailedMenuForAddon + removeAddon flow.
+     * Opens the detail screen for the installed [addonTitle] and removes it, returning to the add-ons manager list.
+     * Mirrors the legacy openDetailedMenuForAddon + removeAddon flow.
      */
     fun removeInstalledExtension(addonTitle: String): SettingsAddonsManagerPage {
         mozVerify(SettingsAddonsManagerSelectors.INSTALLED_ADDON_ITEM(addonTitle))
@@ -94,9 +105,8 @@ class SettingsAddonsManagerPage(composeRule: AndroidComposeTestRule<HomeActivity
     }
 
     /**
-     * Opens the detail screen for the installed [addonTitle], toggles it off, and returns to the
-     * add-ons manager list. Mirrors the legacy openDetailedMenuForAddon + disableExtension +
-     * waitUntilSnackbarGone + goBack flow.
+     * Opens the detail screen for the installed [addonTitle], toggles it off, and returns to the add-ons manager list.
+     * Mirrors the legacy openDetailedMenuForAddon + disableExtension + waitUntilSnackbarGone + goBack flow.
      */
     fun disableInstalledExtension(addonTitle: String): SettingsAddonsManagerPage {
         mozVerify(SettingsAddonsManagerSelectors.INSTALLED_ADDON_ITEM(addonTitle))

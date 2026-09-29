@@ -11,6 +11,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/ReflowInput.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
+#include "mozilla/dom/PerformanceContainerTiming.h"
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/RenderRootStateManager.h"
 #include "mozilla/layers/WebRenderBridgeChild.h"
@@ -84,7 +85,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
     return Frame()->InkOverflowRectRelativeToSelf() + ToReferenceFrame();
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       mozilla::wr::DisplayListBuilder& aBuilder,
       wr::IpcResourceUpdateQueue& aResources, const StackingContextHelper& aSc,
       mozilla::layers::RenderRootStateManager* aManager,
@@ -112,10 +113,10 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
         MOZ_ASSERT(container->IsAsync());
         aManager->CommandBuilder().PushImage(this, container, aBuilder,
                                              aResources, aSc, bounds, bounds);
-        return true;
+        return Ok();
       }
 
-      return true;
+      return Ok();
     }
 
     switch (element->GetCurrentContextType()) {
@@ -131,7 +132,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
         auto* canvasFrame = static_cast<nsHTMLCanvasFrame*>(mFrame);
         if (!canvasFrame->UpdateWebRenderCanvasData(aDisplayListBuilder,
                                                     canvasData)) {
-          return true;
+          return Ok();
         }
         WebRenderCanvasRendererAsync* data = canvasData->GetCanvasRenderer();
         MOZ_ASSERT(data);
@@ -161,6 +162,9 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
             OpUpdateAsyncImagePipeline(data->GetPipelineId().value(), scBounds,
                                        wr::WrRotation::Degree0, filter,
                                        mixBlendMode));
+
+        ContainerTimingHelpers::MaybeProcessPaintForContainer(
+            element, canvasFrame, dest - ToReferenceFrame());
         break;
       }
       case CanvasContextType::ImageBitmap: {
@@ -168,7 +172,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
             static_cast<nsHTMLCanvasFrame*>(mFrame);
         CSSIntSize canvasSizeInPx = canvasFrame->GetCanvasSize();
         if (canvasSizeInPx.width <= 0 || canvasSizeInPx.height <= 0) {
-          return true;
+          return Ok();
         }
         bool isRecycled;
         RefPtr<WebRenderCanvasData> canvasData =
@@ -178,7 +182,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
         if (!canvasFrame->UpdateWebRenderCanvasData(aDisplayListBuilder,
                                                     canvasData)) {
           canvasData->ClearImageContainer();
-          return true;
+          return Ok();
         }
 
         nsRect dest = canvasFrame->GetDestRect(
@@ -190,6 +194,9 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
         aManager->CommandBuilder().PushImage(
             this, canvasData->GetImageContainer(), aBuilder, aResources, aSc,
             bounds, bounds);
+
+        ContainerTimingHelpers::MaybeProcessPaintForContainer(
+            element, canvasFrame, dest - ToReferenceFrame());
         break;
       }
       case CanvasContextType::NoContext:
@@ -197,7 +204,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
       default:
         MOZ_ASSERT_UNREACHABLE("unknown canvas context type");
     }
-    return true;
+    return Ok();
   }
 
   // FirstContentfulPaint is supposed to ignore "white" canvases.  We use
@@ -255,6 +262,9 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
           Rect(0, 0, canvasSizeInPx.width, canvasSizeInPx.height),
           SurfacePattern(surface, ExtendMode::CLAMP, Matrix(),
                          nsLayoutUtils::GetSamplingFilterForFrame(f)));
+
+      ContainerTimingHelpers::MaybeProcessPaintForContainer(
+          canvas, f, dest - ToReferenceFrame());
       return;
     }
 
@@ -295,6 +305,9 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
 
     renderer->FireDidTransactionCallback();
     renderer->ResetDirty();
+
+    ContainerTimingHelpers::MaybeProcessPaintForContainer(
+        canvas, f, dest - ToReferenceFrame());
   }
 };
 

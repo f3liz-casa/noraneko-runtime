@@ -40,12 +40,42 @@ e.g. macOS Terminal.app), `--color-scope tag|line`, `--no-color`. Run `python3 e
 Optional ergonomics: add a shell alias (e.g. `alias eff='python3 /abs/path/effpretty.py'`) — but the
 tool needs no setup to run.
 
+## Two streams, one capture
+
+The harness emits the same run twice: prose on the `Eff` tag for a human, and one JSON object per
+event on `EffJson` for a machine. effpretty is the only process reading logcat during a run, so it is
+where they are separated -- a second `adb logcat` would race this one for the same buffer and both
+would come away with holes.
+
+```bash
+effpretty capture --mode watch --out run-report.txt --events run-events.jsonl
+```
+
+`--events` receives the structured records verbatim, one per line, and they are never rendered: they
+describe the same events as the `[CMD]`/`[LOC]` lines beside them, so printing both would bury the
+narrative. `efftriage` reads that sidecar in preference to the rendered report.
+
+`--events` works on `view` as well as `capture`, which is how a Firebase run gets the same treatment:
+there is no effpretty on the CI device, but the downloaded logcat still contains the `EffJson` lines.
+
+```bash
+effpretty view firebase-logcat.txt --out run-report.txt --events run-events.jsonl
+```
+
+Why bother, when the rendered report says the same thing: triage rules that match rendered English
+break silently. Rewording a harness message leaves every test passing and the rules quietly matching
+nothing -- which happened to one rule in August 2026, and to eight more at once during the BasePage
+consolidation. A field cannot be reworded by accident.
+
+Each record carries what the prose only implies: `verb`, `selector`, `strategy`, `value`, `outcome`
+(OK/FAIL/SKIP), `elapsedMs` as a number, a `failure` taxonomy value rather than a sentence, the
+stack of whatever threw, and the label of the screen dump taken for that failure.
+
 ## What it surfaces
 
 - Structured steps → indented, colored, glyph-annotated.
 - `TestRunner` → `▶ TEST` banners; `run finished` green (0 failed) / vermillion (≥1 failed).
-- `BaseTest` retry → loud `↻ RETRY (first attempt failed)` — a test that failed attempt #1 and passed
-  on retry (a potentially masked failure).
+- Provider retries remain separate attempts; `BaseTest` does not retry a failure in-process.
 - `AndroidRuntime:E` → `‼ CRASH`.
 
 Palette is Okabe–Ito (colorblind-safe); glyphs + indentation carry the meaning so it stays readable

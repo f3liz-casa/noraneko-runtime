@@ -1,12 +1,13 @@
 # Writing an efficiency test
 
-Once the building blocks exist, the test is a short, fluent description of _what_ to check. It
-extends `BaseTest`, which owns the compose rule, retries, cleanup, and the mock web server.
+Once the building blocks exist, the test is a short, fluent description of _what_ to check. It extends
+`BaseTest`, which owns rule composition, launch, cleanup, failure capture, and declared execution
+resources. It does not retry failures in-process.
 
 ## Structure
 
 ```kotlin
-class OnboardingTest : BaseTest(skipOnboarding = false) {
+class OnboardingTest : BaseTest(LaunchConfig(skipOnboarding = false)) {
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/3349493
     @SmokeTest
@@ -18,12 +19,15 @@ class OnboardingTest : BaseTest(skipOnboarding = false) {
 }
 ```
 
-- **`BaseTest(...)` options** configure the launch: `skipOnboarding` (default true),
-  `isPocketEnabled`, `isRecentlyVisitedFeatureEnabled`, `isPageLoadTranslationsPromptEnabled`. Set
-  the ones the scenario needs.
+- **`BaseTest(LaunchConfig(...))`** configures the launch. Every flag and its default lives in
+  `navigation/LaunchConfig.kt` --- set only the ones the scenario needs, and read that file rather
+  than a list here, which is the sort of thing that goes stale. Override `launchConfig()` instead
+  when the launch varies per case.
 - **`on`** is the `PageContext` — `on.<page>` gives the typed page object.
 - **`navigateToPage()`** routes + confirms arrival; `navigateToPage(url)` on `browserPage` loads a
   page. Chain `moz*` verbs off it.
+- **`executionRequirements(description)`** declares test-specific device state, cleanup, and optional
+  resources. See `../test-execution-contracts.md`; ordinary tests use the server owned by `BaseTest`.
 - **Preserve the `// TestRail link:` comment and `@SmokeTest`** from the legacy test — coverage
   tooling joins on the TestRail id, and the smoke tag drives suite membership.
 
@@ -40,6 +44,10 @@ Use the `moz*` verbs (full list in `extending-basepage.md`): `mozClick`, `mozCli
 `mozVerifyElementAbsent`, `mozVerifyElementsByGroup`, `mozVerifyAnyContainsText`, … Each returns the
 page, so chain them. Prefer `mozClickIfPresent` for genuinely conditional UI (e.g. an optional
 interstitial card) rather than branching logic in the test.
+
+Page readiness is a navigation oracle, not a substitute for the behavior oracle. If the test changes a
+setting, saves data, or invokes a feature, verify the user-visible result of that operation rather than
+counting successful navigation as proof.
 
 ## Close-out (order matters)
 

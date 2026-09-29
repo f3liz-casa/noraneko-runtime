@@ -271,6 +271,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
 
   void SetPresContext(nsPresContext* aPresContext);
   void ClearFrameRefs(nsIFrame* aFrame);
+  void MaybeLeavePendingLink(bool aWasCanceled);
 
   nsIFrame* GetEventTarget();
   nsIContent* GetExplicitEventTargetContent(const WidgetEvent* = nullptr);
@@ -559,6 +560,10 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
    */
   nsIContent* GetTrackingDragGestureContent() const {
     return mGestureDownContent;
+  }
+
+  dom::BrowserParent* GetTrackingDragGestureTopLevelRemoteTarget() const {
+    return mGestureDownTopLevelRemoteTarget;
   }
 
   // Update the tracked gesture content to the parent of its frame when it's
@@ -1446,6 +1451,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   // as the target in most cases but not always - for example when dragging
   // an <area> of an image map this is the image. (bug 289667)
   nsCOMPtr<nsIContent> mGestureDownFrameOwner;
+  RefPtr<dom::BrowserParent> mGestureDownTopLevelRemoteTarget;
   // Data associated with a drag started in a content process.
   RefPtr<dom::RemoteDragStartData> mGestureDownDragStartData;
   // State of keys when the original gesture-down happened
@@ -1466,6 +1472,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   // The primary frame of the link currently shown in the status bar.
   // Checked in ClearFrameRefs to avoid stalling link status bar.
   WeakFrame mLinkOverFrame;
+  RefPtr<dom::Element> mPendingLeaveLinkElement;
 
   nsPresContext* mPresContext;      // Not refcnted
   RefPtr<dom::Document> mDocument;  // Doesn't necessarily need to be owner

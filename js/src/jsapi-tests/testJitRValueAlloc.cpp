@@ -53,11 +53,7 @@ class Fibonacci {
       return *this;
     }
 
-    bool operator==(const Iterator& other) const {
-      return value_ == other.value_ && last_ == other.last_;
-    }
-
-    bool operator!=(const Iterator& other) const { return !(*this == other); }
+    bool operator==(const Iterator& other) const = default;
 
     auto operator*() const { return static_cast<int32_t>(value_); }
   };

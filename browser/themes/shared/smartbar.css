@@ -3,8 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* TODO (Bug 2008938): Make in-page Smartbar styling not dependent on chrome styles */
-@import url("chrome://browser/skin/urlbar-searchbar.css");
-@import url("chrome://browser/skin/urlbar/view.css");
+@import url("chrome://browser/skin/urlbar.css");
+@import url("chrome://browser/skin/tabbrowser/tab.tokens.css");
 
 :host,
 :root {
@@ -62,6 +62,13 @@
       outline-offset: var(--focus-outline-offset);
     }
   }
+
+  /* Neutralize the UA popover rules. */
+  inset: auto;
+  border: none;
+  padding: 0;
+  overflow: visible;
+  background-color: transparent;
 
   display: flex;
   flex-direction: column;
@@ -291,9 +298,11 @@
 }
 
 /* Results */
-.smartbar .urlbarView-results {
-  padding-block: var(--space-medium);
-  padding-inline: var(--space-large);
+@media not -moz-pref("browser.nova.enabled") {
+  .smartbar .urlbarView-results {
+    padding-block: var(--space-medium);
+    padding-inline: var(--space-large);
+  }
 }
 
 /* Button container */
@@ -334,8 +343,10 @@
     }
   }
 
-  .smartbar .urlbarView-results {
-    padding-block: calc(var(--space-medium) - var(--urlbarView-row-gutter));
+  .smartbar > .urlbarView {
+    /* The view's max-height budgets the padding, so keep it inside the box. */
+    box-sizing: border-box;
+    padding: calc(var(--space-medium) - var(--urlbarView-row-gutter)) var(--space-large);
   }
 
   .urlbarView-row {

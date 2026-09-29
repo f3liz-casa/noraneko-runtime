@@ -41,6 +41,26 @@ You can run the following command to launch an emulator and install and run Feni
 ./mach run --app=fenix
 ```
 
+## Run experiments with nimbus-cli
+
+[`nimbus-cli`](https://experimenter.info/nimbus-cli) enrolls a local build into experiments and rollouts.
+`mach` downloads it into your state directory the first time you use it and checks daily for a newer version, so there is nothing to install:
+
+```shell
+./mach android nimbus-cli --app fenix --channel developer list
+./mach android nimbus-cli --app fenix --channel developer enroll <experiment-slug> --branch <branch> --reset-app
+```
+
+The apps reachable from this repository are `fenix` and `focus_android`; the iOS apps `nimbus-cli` also supports are not built here.
+
+Arguments are passed straight through to `nimbus-cli`, with two things to keep in mind:
+
+- `mach` handles `--help` itself, so use `./mach android nimbus-cli -- --help` to read `nimbus-cli`'s own help.
+- `mach` strips the first `--`, so pass a second one when forwarding arguments to the app, for example
+  `./mach android nimbus-cli --app fenix --channel developer open -- -- --my-app-arg`.
+
+Pass `--update` to check for a newer `nimbus-cli` right away instead of waiting for the daily check.
+
 ## Run Fenix tests
 
 You can run tests via all the normal routes from within Android Studio:
@@ -81,9 +101,10 @@ You can pass an extra argument `--fix` to autofix certain types of reported issu
 It is advisable to run your tests before submitting your patch. You can do this using Mozilla’s `try` server.
 The following commands will ensure that all the required tests are run based on the changes made:
 
-- `./mach try --preset fenix` - will run Fenix test suites
-- `./mach try --preset firefox-android` - will run AC and Fenix test suites
+- `./mach try --preset android-fenix` - will run Fenix test suites
+- `./mach try --preset android-frontend` - will run AC and Fenix test suites
 - `./mach try --preset android-geckoview` - will run GeckoView test suites
+- `./mach try --preset android-fullstack` - will run GeckoView, AC, Focus, and Fenix test suites
 
 Failures on `try` will show up with the test name highlighted in orange. Select the test to find out more.
 Intermittent failures occasionally occur due to issues with the test harness. Retriggering the test is a good way to confirm it is an intermittent failure and not due to the patch.
@@ -95,7 +116,7 @@ Currently, the CI builds GeckoView even if your commit doesn't impact it.
 
 If you know your changes don't impact GeckoView, you can try using the following option: `--use-existing-tasks` or `-E`. For example:
 
-`./mach try --preset firefox-android -E`
+`./mach try --preset android-frontend -E`
 
 This will try to reuse a GeckoView build from a previous CI job, and thus reduce the CI time.
 

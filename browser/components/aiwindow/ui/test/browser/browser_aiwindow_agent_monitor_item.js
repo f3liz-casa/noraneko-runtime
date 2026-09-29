@@ -169,7 +169,12 @@ add_task(async function test_preset_updates_condition() {
 add_task(async function test_submit_and_delete_dispatch_detail() {
   await withTestPage(async browser => {
     await setProps(browser, {
-      agent: AGENT,
+      // A schedule the card seeds from, so the submitted one doesn't depend on
+      // the form's clock-based default
+      agent: {
+        ...AGENT,
+        schedule: { frequency: "daily", time: "09:00", weekday: 1 },
+      },
       mode: "display",
       expanded: true,
       editing: true,
@@ -314,6 +319,92 @@ add_task(async function test_check_now_dispatches_detail() {
   });
 });
 
+add_task(async function test_watch_url_chip_dispatches_open() {
+  const WATCH_URL = "https://soundnest.com/audio/sony-wh-1000xm5";
+
+  await withTestPage(async browser => {
+    await setProps(browser, {
+      agent: { ...AGENT, watchUrls: [WATCH_URL] },
+      mode: "display",
+      expanded: true,
+    });
+
+    await SpecialPowers.spawn(browser, [WATCH_URL], async watchUrl => {
+      const el = content.document.getElementById("test-agent-monitor-item");
+      const shadow = el.shadowRoot;
+
+      let openDetail = null;
+      el.addEventListener(
+        "AIChatContent:OpenLink",
+        e => (openDetail = e.detail)
+      );
+
+      const chip = shadow.querySelector(".url-chips ai-website-chip");
+      Assert.ok(chip, "Watched pages render as website chips");
+      Assert.equal(
+        chip.label,
+        "soundnest.com",
+        "The chip is labelled with the hostname"
+      );
+      Assert.equal(
+        chip.href,
+        watchUrl,
+        "The chip is a real link to the full watched URL"
+      );
+
+      chip.shadowRoot.querySelector(".chip").click();
+      await el.updateComplete;
+
+      Assert.ok(openDetail, "Clicking a chip emits AIChatContent:OpenLink");
+      Assert.equal(
+        openDetail.url,
+        watchUrl,
+        "OpenLink carries the full watched URL"
+      );
+      Assert.ok(
+        openDetail.preferSwitchToTab,
+        "A plain click prefers an already open tab"
+      );
+    });
+  });
+});
+
+add_task(async function test_watch_url_chip_shows_resolved_title() {
+  const WITH_TITLE = "https://soundnest.com/audio/sony-wh-1000xm5";
+  const NO_TITLE = "https://example.com/no-title-here";
+
+  await withTestPage(async browser => {
+    await setProps(browser, {
+      agent: {
+        ...AGENT,
+        watchUrls: [WITH_TITLE, NO_TITLE],
+        watchUrlTitles: { [WITH_TITLE]: "Sony WH-1000XM5 Headphones" },
+      },
+      mode: "display",
+      expanded: true,
+    });
+
+    await SpecialPowers.spawn(browser, [], async () => {
+      const el = content.document.getElementById("test-agent-monitor-item");
+      const chips = el.shadowRoot.querySelectorAll(
+        ".url-chips ai-website-chip"
+      );
+
+      Assert.equal(chips.length, 2, "Both watched pages render as chips");
+      Assert.equal(
+        chips[0].label,
+        "Sony WH-1000XM5 Headphones",
+        "A chip with a resolved title is labelled with the title"
+      );
+      Assert.equal(
+        chips[1].label,
+        "example.com",
+        "A chip with no resolved title falls back to the hostname"
+      );
+    });
+  });
+});
+
 add_task(async function test_edit_mode_shows_pages_and_scheduler() {
   await withTestPage(async browser => {
     await setProps(browser, {
@@ -328,7 +419,7 @@ add_task(async function test_edit_mode_shows_pages_and_scheduler() {
       const shadow = el.shadowRoot;
 
       Assert.equal(
-        shadow.querySelectorAll(".page-pill").length,
+        shadow.querySelectorAll(".page-pills-row ai-website-chip").length,
         1,
         "Edit mode seeds a pill for the monitor's existing URL"
       );
@@ -484,7 +575,7 @@ add_task(async function test_create_mode_empty_state_inputs() {
       );
       await el.updateComplete;
       Assert.equal(
-        shadow.querySelectorAll(".page-pill").length,
+        shadow.querySelectorAll(".page-pills-row ai-website-chip").length,
         1,
         "Adding a URL shows a pill"
       );
@@ -507,6 +598,50 @@ add_task(async function test_create_mode_empty_state_inputs() {
         ["https://example.com/product"],
         "submit carries the added page URL"
       );
+    });
+  });
+});
+
+add_task(async function test_create_mode_defaults_time_to_next_slot() {
+  await withTestPage(async browser => {
+    await SpecialPowers.spawn(browser, [], async () => {
+      const SLOTS_PER_DAY = 48;
+      const slotValue = date => {
+        const slot =
+          Math.ceil((date.getHours() * 60 + date.getMinutes()) / 30) %
+          SLOTS_PER_DAY;
+        const hour = Math.floor(slot / 2);
+        return `${String(hour).padStart(2, "0")}:${slot % 2 ? "30" : "00"}`;
+      };
+
+      // The card computes its default in its constructor, so bracket that call
+      // with timestamps: the only acceptable values are the slots those two
+      // instants map to, which collapse to one unless a boundary was crossed.
+      const before = new Date();
+      const el = content.document.createElement("agent-monitor-item");
+      const after = new Date();
+
+      const accepted = [...new Set([slotValue(before), slotValue(after)])];
+
+      el.mode = "create";
+      content.document.body.append(el);
+      await el.updateComplete;
+
+      const timeSelect = el.shadowRoot.querySelectorAll(
+        "moz-select.form-select"
+      )[1];
+      Assert.ok(
+        accepted.includes(timeSelect.value),
+        `Time defaults to the upcoming half-hour slot, got ${timeSelect.value}, expected one of ${accepted}`
+      );
+      Assert.ok(
+        [...el.shadowRoot.querySelectorAll("moz-option")].some(
+          opt => opt.value === timeSelect.value
+        ),
+        "The default is a value the time dropdown actually offers"
+      );
+
+      el.remove();
     });
   });
 });
@@ -776,7 +911,7 @@ add_task(async function test_draft_restores_over_agent_values() {
         "Condition is restored from the draft, not the agent"
       );
       Assert.equal(
-        shadow.querySelectorAll(".page-pill").length,
+        shadow.querySelectorAll(".page-pills-row ai-website-chip").length,
         2,
         "Added URLs are restored from the draft, replacing the seeded one"
       );
@@ -823,7 +958,7 @@ add_task(async function test_add_and_remove_page_pills() {
       const shadow = el.shadowRoot;
 
       Assert.equal(
-        shadow.querySelectorAll(".page-pill").length,
+        shadow.querySelectorAll(".page-pills-row ai-website-chip").length,
         0,
         "Starts with no page pills when nothing is seeded"
       );
@@ -834,21 +969,19 @@ add_task(async function test_add_and_remove_page_pills() {
       shadow.querySelector("moz-button.add-page-btn").click();
       await el.updateComplete;
       Assert.equal(
-        shadow.querySelectorAll(".page-pill").length,
+        shadow.querySelectorAll(".page-pills-row ai-website-chip").length,
         1,
         "Add button adds the typed URL as a pill"
       );
 
-      const removeButton = shadow.querySelector(".page-pill .page-pill-remove");
-
-      await ContentTaskUtils.waitForCondition(() => {
-        const rect = removeButton.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      }, "Remove button is laid out before clicking");
-      removeButton.click();
+      const chip = shadow.querySelector(".page-pills-row ai-website-chip");
+      await chip.updateComplete;
+      // The chip's remove button only becomes visible on hover, which a test
+      // can't trigger reliably, so click it directly.
+      chip.shadowRoot.querySelector(".chip-remove").click();
       await el.updateComplete;
       Assert.equal(
-        shadow.querySelectorAll(".page-pill").length,
+        shadow.querySelectorAll(".page-pills-row ai-website-chip").length,
         0,
         "Pill remove button removes the URL"
       );
@@ -884,9 +1017,62 @@ add_task(async function test_invalid_url_shows_error() {
         "An invalid URL surfaces an error message"
       );
       Assert.equal(
-        shadow.querySelectorAll(".page-pill").length,
+        shadow.querySelectorAll(".page-pills-row ai-website-chip").length,
         0,
         "An invalid URL is not added as a pill"
+      );
+    });
+  });
+});
+
+add_task(async function test_max_watch_urls_from_host() {
+  await withTestPage(async browser => {
+    // The host owns the cap: about:smartwindowtasks passes the actor's value
+    await setProps(browser, {
+      agent: { conditionPresets: [] },
+      mode: "create",
+      maxWatchUrls: 1,
+    });
+
+    await SpecialPowers.spawn(browser, [], async () => {
+      const el = content.document.getElementById("test-agent-monitor-item");
+      const shadow = el.shadowRoot;
+
+      const addUrl = async url => {
+        const urlInput = shadow.querySelector("moz-input-url.page-url-input");
+        urlInput.value = url;
+        urlInput.dispatchEvent(new content.Event("input", { bubbles: true }));
+        shadow.querySelector("moz-button.add-page-btn").click();
+        await el.updateComplete;
+      };
+
+      await addUrl("https://example.com/a");
+      Assert.equal(
+        shadow.querySelectorAll(".page-pills-row ai-website-chip").length,
+        1,
+        "The first URL is added"
+      );
+
+      await addUrl("https://example.com/b");
+      await ContentTaskUtils.waitForCondition(
+        () => shadow.querySelector(".error-message"),
+        "Waiting for the max URLs error to appear"
+      );
+
+      Assert.equal(
+        shadow.querySelectorAll(".page-pills-row ai-website-chip").length,
+        1,
+        "A URL past the host's cap is not added"
+      );
+      // Assert on substitution rather than copy: the cap has to reach Fluent
+      // under the name the string expects, or formatValue rejects and the
+      // error message never renders.
+      const errorText = shadow
+        .querySelector(".error-message")
+        .textContent.trim();
+      Assert.ok(
+        errorText.includes("1") && !errorText.includes("{"),
+        `The error message interpolates the cap: ${errorText}`
       );
     });
   });

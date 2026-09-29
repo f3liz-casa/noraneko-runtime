@@ -46,6 +46,7 @@ class ABIArgIter;
 namespace wasm {
 
 struct CodeMetadata;
+struct StackMap;
 struct TableDesc;
 struct V128;
 
@@ -535,6 +536,8 @@ class TrapSitesForKind {
   // We subtract one so that this check is not idempotent on 32-bit systems.
   static constexpr size_t MAX_LENGTH = UINT32_MAX - 1;
 
+  uint32_t getPCoffset(uint32_t index) const { return pcOffsets_[index]; }
+
   uint32_t length() const {
     size_t result = pcOffsets_.length();
     // Enforced by dynamic checks in mutation functions.
@@ -710,6 +713,8 @@ class TrapSites {
  public:
   explicit TrapSites() = default;
 
+  const TrapSitesForKind& get(Trap trap) const { return array_[trap]; }
+
   bool empty() const {
     for (Trap trap : mozilla::MakeEnumeratedRange(Trap::Limit)) {
       if (!array_[trap].empty()) {
@@ -760,6 +765,8 @@ class TrapSites {
       array_[trap].shrinkStorageToFit();
     }
   }
+
+  size_t length(Trap trap) const { return array_[trap].length(); }
 
   [[nodiscard]]
   bool lookup(uint32_t trapInstructionOffset,
@@ -886,6 +893,18 @@ struct TrapData {
   // For Trap::OutOfBounds triggered by a memory fault, the memory index and
   // byte offset of the faulting address within the memory's mapped region.
   mozilla::Maybe<FaultInfo> faultInfo;
+};
+
+// A class that abstractifies the process of adding stackmaps to a collection
+// thereof.  The idea is that an instantiation of this interface can perform any
+// action it wants in `addMap`, and `addMap` will be called deep within the
+// assembler stack, normally to add a stackmap corresponding to a trap site.
+// This decouples the assembler stack from any knowledge of how baseline/Ion
+// manage stackmaps.
+class StackMapRegistry {
+ public:
+  [[nodiscard]]
+  virtual bool addMap(StackMap* map, FaultingCodeRange insnRange) = 0;
 };
 
 // The (,Callable,Func)Offsets classes are used to record the offsets of

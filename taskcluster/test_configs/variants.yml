@@ -42,7 +42,7 @@ headless:
 a11y-checks:
     description: "{description} with accessibility checks enabled"
     component: "Core::Disability Access APIs"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     suffix: "a11y-checks"
     mozinfo: "a11y_checks"
     replace:
@@ -69,7 +69,7 @@ a11y-checks:
 aab:
     description: "{description} with aab test_runner"
     component: "GeckoView::General"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     when: &gv_e10s_filter
         $eval: '"android" in task["test-platform"]'
     suffix: "aab"
@@ -87,6 +87,8 @@ aab:
                         - linux64-fix-stacks
                         - linux64-jdk
                         - linux64-hostutils
+                        - linux64-samply
+                        - profiler-node-tools
     replace:
         target: "geckoview-test_runner.aab"
 
@@ -187,7 +189,7 @@ standalone:
 geckoview-no-fission:
     description: "{description} without fission enabled"
     component: "GeckoView::General"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     when:
         <<: *gv_e10s_filter
     suffix: "nofis"
@@ -200,7 +202,7 @@ geckoview-no-fission:
 geckoview-fission:
     description: "{description} with fission enabled and default isolation strategy"
     component: "GeckoView::General"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     when:
         <<: *gv_e10s_filter
     suffix: "fis"
@@ -209,7 +211,7 @@ geckoview-fission:
 geckoview-fission-isolate-high-value:
     description: "{description} with fission enabled and isolation strategy isolateHighValue"
     component: "GeckoView::General"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     when:
         <<: *gv_e10s_filter
     suffix: "fis-hv"
@@ -222,7 +224,7 @@ geckoview-fission-isolate-high-value:
 no-fission:
     description: "{description} without fission enabled"
     component: "Core::DOM: Content Processes"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     suffix: "nofis"
     mozinfo: "fission"
     when:
@@ -238,7 +240,7 @@ no-fission:
 geckoview-zygote:
     description: "{description} with app Zygote preloading enabled"
     component: "GeckoView::General"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     suffix: "zygote"
     when:
         <<: *gv_e10s_filter
@@ -313,7 +315,7 @@ socketprocess:
 webrender-dcomp-disabled:
     description: "{description} with dcomp disabled"
     component: "Core::Graphics: WebRender"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     suffix: "wr-dc0"
     when:
         $eval: '"windows1" in task["test-platform"]'
@@ -329,7 +331,7 @@ webrender-dcomp-disabled:
 webrender-dcomp-present:  # Default variant ends up like this.
     description: "{description} with dcomp present but not overlays"
     component: "Core::Graphics: WebRender"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     suffix: "wr-dc1-p"
     when:
         $eval: '"windows1" in task["test-platform"]'
@@ -345,7 +347,7 @@ webrender-dcomp-present:  # Default variant ends up like this.
 webrender-dcomp-overlays:
     description: "{description} with dcomp overlays but not compositing"
     component: "Core::Graphics: WebRender"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     suffix: "wr-dc2-o"
     when:
         $eval: '"windows1" in task["test-platform"]'
@@ -361,7 +363,7 @@ webrender-dcomp-overlays:
 webrender-dcomp-compositing:
     description: "{description} with dcomp compositing"
     component: "Core::Graphics: WebRender"
-    expiration: "2026-09-01"
+    expiration: "2027-03-01"
     suffix: "wr-dc3-c"
     when:
         $eval: '"windows1" in task["test-platform"]'
@@ -430,6 +432,64 @@ eme-wmf:
                 - "--setpref=media.wmf.media-engine.enabled=2"
                 - "--setpref=media.wmf.media-engine.bypass-gfx-blocklist=true"
                 - "--setpref=media.eme.mfcdm.origin-filter.enabled=0"
+
+# Use OpenH264 plugin built in CI and make it preferred over other codecs.
+openh264:
+    description: "{description} with OpenH264 preferred"
+    component: "Core::Audio/Video: Playback"
+    expiration: "never"
+    suffix: "openh264"
+    treeherder-suffix: "oh264"
+    when:
+        $eval: '(
+                    "linux" in task["test-platform"]
+                    || "windows" in task["test-platform"]
+                    || "macosx" in task["test-platform"]
+                ) && !(
+                    "asan" in task["test-platform"]
+                    || "tsan" in task["test-platform"]
+                    || "ccov" in task["test-platform"]
+                )'
+    merge:
+        dependencies:
+            openh264-plugin:
+                by-test-platform:
+                    macosx.*-aarch64.*: openh264-plugin-macosx64-aarch64/opt
+                    macosx.*-64.*: openh264-plugin-macosx64/opt
+                    windows.*-aarch64.*: openh264-plugin-win64-aarch64/opt
+                    windows.*-64.*: openh264-plugin-win64/opt
+                    windows.*-32.*: openh264-plugin-win32/opt
+                    linux.*-aarch64.*: openh264-plugin-linux64-aarch64/opt
+                    linux.*-64.*: openh264-plugin-linux64/opt
+        fetches:
+            openh264-plugin:
+                by-test-platform:
+                    macosx.*-aarch64.*:
+                        - artifact: /private/openh264/openh264-v{openh264_version}-macosx64-aarch64.zip
+                          dest: gmp-gmpopenh264/{openh264_version}
+                    macosx.*-64.*:
+                        - artifact: /private/openh264/openh264-v{openh264_version}-macosx64.zip
+                          dest: gmp-gmpopenh264/{openh264_version}
+                    windows.*-aarch64.*:
+                        - artifact: /private/openh264/openh264-v{openh264_version}-win64-aarch64.zip
+                          dest: gmp-gmpopenh264/{openh264_version}
+                    windows.*-64.*:
+                        - artifact: /private/openh264/openh264-v{openh264_version}-win64.zip
+                          dest: gmp-gmpopenh264/{openh264_version}
+                    windows.*-32.*:
+                        - artifact: /private/openh264/openh264-v{openh264_version}-win32.zip
+                          dest: gmp-gmpopenh264/{openh264_version}
+                    linux.*-aarch64.*:
+                        - artifact: /private/openh264/openh264-v{openh264_version}-linux64-aarch64.zip
+                          dest: gmp-gmpopenh264/{openh264_version}
+                    linux.*-64.*:
+                        - artifact: /private/openh264/openh264-v{openh264_version}-linux64.zip
+                          dest: gmp-gmpopenh264/{openh264_version}
+        mozharness:
+            extra-options:
+                - "--setpref=media.gmp.encoder.enabled=true"
+                - "--setpref=media.gmp.encoder.preferred=true"
+                - "--setpref=media.gmp.decoder.preferred=true"
 
 media-gpu:
     description: "{description} for running media tests on the GPU worker"
@@ -581,7 +641,7 @@ draw-snapshot:
 async-event-dispatching:
     description: "{description} with async widget event dispatching"
     component: "Remote Protocol::Agent"
-    expiration: "2026-10-01"
+    expiration: "2027-04-01"
     suffix: "async"
     mozinfo: "remote_async"
     replace:
@@ -673,8 +733,6 @@ urlbar-ipc:
     expiration: "2027-06-01"
     suffix: "uipc"
     mozinfo: "urlbar_ipc"
-    replace:
-        tier: 2
     merge:
         worker:
             env:

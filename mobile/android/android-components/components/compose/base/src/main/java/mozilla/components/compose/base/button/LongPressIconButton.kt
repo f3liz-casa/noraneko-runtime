@@ -4,7 +4,6 @@
 
 package mozilla.components.compose.base.button
 
-import android.view.SoundEffectConstants
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -37,32 +35,27 @@ import mozilla.components.compose.base.modifier.rightClickable
 import mozilla.components.compose.base.theme.AcornTheme
 import mozilla.components.ui.icons.R as iconsR
 
-// Temporary workaround to Compose buttons not having click sounds
-// see https://issuetracker.google.com/issues/219984415
-
 private val RippleRadius = 24.dp
 
 /**
  * A button with the following functionalities:
  * - it has a minimum touch target size of 48dp
  * - it will perform a haptic feedback for long clicks or right clicks
- * - it will play a sound effect for clicks
  * - it will use the [AcornTheme] ripple color.
  *
  * @param onClick Callback for when this button is clicked.
  * @param onLongClick Callback for when this button is long clicked or right click.
  * @param contentDescription Text used by accessibility services to describe what this button does.
  * @param modifier Optional modifier for further customisation of this button.
- * @param onClickLabel Semantic / accessibility label for the [onClick] action.
- * Will be read as "Double tap to [onLongClick]". Leave `null` for "activate" to be read.
- * @param onLongClickLabel Semantic / accessibility label for the [onLongClick] action.
- * Will be read as "Double tap and hold to [onLongClickLabel]". Leave `null` for "long press" to be read.
- * @param enabled Whether or not this button will handle input events and appear enabled
- * for semantics purposes. `true` by default.
- * @param interactionSource An optional hoisted [MutableInteractionSource] for observing and
- * emitting [Interaction]s for this button. You can use this to change the button's appearance
- * or preview the button in different states. Note that if `null` is provided, interactions will
- * still happen internally.
+ * @param onClickLabel Semantic / accessibility label for the [onClick] action. Will be read as "Double tap to
+ *   [onLongClick]". Leave `null` for "activate" to be read.
+ * @param onLongClickLabel Semantic / accessibility label for the [onLongClick] action. Will be read as "Double tap and
+ *   hold to [onLongClickLabel]". Leave `null` for "long press" to be read.
+ * @param enabled Whether or not this button will handle input events and appear enabled for semantics purposes. `true`
+ *   by default.
+ * @param interactionSource An optional hoisted [MutableInteractionSource] for observing and emitting [Interaction]s for
+ *   this button. You can use this to change the button's appearance or preview the button in different states. Note
+ *   that if `null` is provided, interactions will still happen internally.
  * @param content The content to be shown inside this button.
  */
 @Composable
@@ -71,10 +64,11 @@ fun LongPressIconButton(
     onLongClick: (() -> Unit),
     contentDescription: String,
     modifier: Modifier = Modifier,
-    colors: IconButtonColors = IconButtonDefaults.iconButtonColors(
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-    ),
+    colors: IconButtonColors =
+        IconButtonDefaults.iconButtonColors(
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+        ),
     onClickLabel: String? = null,
     onLongClickLabel: String? = null,
     enabled: Boolean = true,
@@ -85,36 +79,33 @@ fun LongPressIconButton(
 
     CompositionLocalProvider(LocalContentColor provides contentColor) {
         val haptic = LocalHapticFeedback.current
-        val view = LocalView.current
 
         Box(
-            modifier = modifier
-                .semantics { this.contentDescription = contentDescription }
-                .minimumInteractiveComponentSize()
-                .combinedClickable(
-                    interactionSource = interactionSource,
-                    indication = ripple(bounded = false, radius = RippleRadius),
-                    enabled = enabled,
-                    onClickLabel = onClickLabel,
-                    role = Role.Button,
-                    onLongClickLabel = onLongClickLabel,
-                    onLongClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongClick()
-                    },
-                    onClick = {
-                        view.playSoundEffect(SoundEffectConstants.CLICK)
-                        onClick()
-                    },
-                )
-                .rightClickable(
-                    interactionSource = interactionSource,
-                    indication = ripple(bounded = false, radius = RippleRadius),
-                    onRightClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongClick()
-                    },
-                ),
+            modifier =
+                modifier
+                    .semantics { this.contentDescription = contentDescription }
+                    .minimumInteractiveComponentSize()
+                    .combinedClickable(
+                        interactionSource = interactionSource,
+                        indication = ripple(bounded = false, radius = RippleRadius),
+                        enabled = enabled,
+                        onClickLabel = onClickLabel,
+                        role = Role.Button,
+                        onLongClickLabel = onLongClickLabel,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        },
+                        onClick = { onClick() },
+                    )
+                    .rightClickable(
+                        interactionSource = interactionSource,
+                        indication = ripple(bounded = false, radius = RippleRadius),
+                        onRightClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        },
+                    ),
             contentAlignment = Alignment.Center,
         ) {
             content()

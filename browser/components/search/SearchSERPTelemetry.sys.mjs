@@ -1219,7 +1219,9 @@ class TelemetryHandler {
    *   Returns a provider or undefined if no provider was found for the url.
    */
   _getProviderInfoForURL(url) {
-    return this._searchProviderInfo.find(info =>
+    // Provider info is populated asynchronously from Remote Settings during
+    // init, so it may not be available yet for early page loads.
+    return this._searchProviderInfo?.find(info =>
       info.searchPageRegexp.test(url)
     );
   }
@@ -1407,7 +1409,14 @@ class TelemetryHandler {
   _reportSerpPage(info, source, url) {
     let payload = `${info.provider}:${info.type}:${info.code || "none"}`;
     let name = source.replace(/_([a-z])/g, (m, p) => p.toUpperCase());
-    Glean.browserSearchContent[name][payload].add(1);
+    // This probe is recorded to both legacy and Glean telemetry, however
+    // we are not adding new sources to legacy telemetry. Hence fallback to
+    // the "unknown" source for the newer sources.
+    if (name in Glean.browserSearchContent) {
+      Glean.browserSearchContent[name][payload].add(1);
+    } else {
+      Glean.browserSearchContent.unknown[payload].add(1);
+    }
     lazy.logConsole.debug("Impression:", payload, url);
   }
 
@@ -1679,7 +1688,7 @@ class ContentHandler {
       }
 
       let url = wrappedChannel.finalURL;
-      let info = this._searchProviderInfo.find(provider => {
+      let info = this._searchProviderInfo?.find(provider => {
         return provider.telemetryId == item.info.provider;
       });
 
@@ -1717,15 +1726,24 @@ class ContentHandler {
         }
       }
 
-      if (!info.extraAdServersRegexps?.some(regex => regex.test(url))) {
+      if (!info?.extraAdServersRegexps?.some(regex => regex.test(url))) {
         return;
       }
 
       try {
         let name = item.source.replace(/_([a-z])/g, (m, p) => p.toUpperCase());
-        Glean.browserSearchAdclicks[name][
-          `${info.telemetryId}:${item.info.type}`
-        ].add(1);
+        // This probe is recorded to both legacy and Glean telemetry, however
+        // we are not adding new sources to legacy telemetry. Hence fallback to
+        // the "unknown" source for the newer sources.
+        if (name in Glean.browserSearchAdclicks) {
+          Glean.browserSearchAdclicks[name][
+            `${info.telemetryId}:${item.info.type}`
+          ].add(1);
+        } else {
+          Glean.browserSearchAdclicks.unknown[
+            `${info.telemetryId}:${item.info.type}`
+          ].add(1);
+        }
         wrappedChannel._adClickRecorded = true;
         if (item.newtabSessionId) {
           Glean.newtabSearchAd.click.record({
@@ -1828,14 +1846,13 @@ class ContentHandler {
       // Exceptions:
       // - If a searchbox was used to initiate the load, don't record another
       //   engagement because the event was logged elsewhere.
-      // - If the ad impression hasn't been recorded yet, we have no way of
-      //   knowing precisely what kind of component was selected.
+      //
+      // If the ad impression hasn't been recorded yet, we can't know precisely
+      // which component was selected, but we can still tell an ad from a
+      // non-ad by the URL alone. Recording the engagement as uncategorized is
+      // better than dropping it.
       let isSerp = false;
-      if (
-        telemetryState &&
-        telemetryState.adImpressionsReported &&
-        !telemetryState.searchBoxSubmitted
-      ) {
+      if (telemetryState && !telemetryState.searchBoxSubmitted) {
         if (info.searchPageRegexp?.test(originURL)) {
           isSerp = true;
         }
@@ -1865,12 +1882,14 @@ class ContentHandler {
           }
         }
 
-        // Determine the component type of the link.
+        // Determine the component type of the link. The map is null if the
+        // page was never categorized for components, in which case the type
+        // is resolved from the URL below.
         let type;
         for (let [
           storedUrl,
           componentType,
-        ] of telemetryState.urlToComponentMap.entries()) {
+        ] of telemetryState.urlToComponentMap?.entries() ?? []) {
           // The URL we're navigating to may have more query parameters if
           // the provider adds query parameters when the user clicks on a link.
           // On the other hand, the URL we are navigating to may have have
@@ -1892,8 +1911,10 @@ class ContentHandler {
           "Find component for URL"
         );
 
-        // If no component was found, it's possible the link was added after
-        // components were categorized.
+        // If no component was found, either the link was added after
+        // components were categorized, or the page was never categorized
+        // because the user engaged before the content process finished
+        // scanning it.
         if (!type) {
           let isAd = info.extraAdServersRegexps?.some(regex => regex.test(url));
           type = isAd
@@ -1982,9 +2003,18 @@ class ContentHandler {
       info.url
     );
     let name = item.source.replace(/_([a-z])/g, (m, p) => p.toUpperCase());
-    Glean.browserSearchWithads[name][
-      `${item.info.provider}:${item.info.type}`
-    ].add(1);
+    // This probe is recorded to both legacy and Glean telemetry, however
+    // we are not adding new sources to legacy telemetry. Hence fallback to
+    // the "unknown" source for the newer sources.
+    if (name in Glean.browserSearchWithads) {
+      Glean.browserSearchWithads[name][
+        `${item.info.provider}:${item.info.type}`
+      ].add(1);
+    } else {
+      Glean.browserSearchWithads.unknown[
+        `${item.info.provider}:${item.info.type}`
+      ].add(1);
+    }
     Services.obs.notifyObservers(null, "reported-page-with-ads");
 
     telemetryState.adsReported = true;

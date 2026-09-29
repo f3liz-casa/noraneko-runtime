@@ -50,6 +50,7 @@
 #include "mozilla/HangDetails.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/MozPromise.h"
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/PageloadEvent.h"
 #include "mozilla/Preferences.h"
@@ -150,6 +151,10 @@
 #include "mozilla/glean/IpcMetrics.h"
 #include "mozilla/glean/PFOGTransport.h"
 #include "mozilla/hal_sandbox/PHalParent.h"
+#ifndef ANDROID
+#  include "mozilla/hwinference/HWInferenceParent.h"
+#  include "mozilla/hwinference/PSpeechRecognitionChild.h"
+#endif  // !ANDROID
 #include "mozilla/intl/L10nRegistry.h"
 #include "mozilla/intl/LocaleService.h"
 #include "mozilla/intl/OSPreferences.h"
@@ -164,6 +169,7 @@
 #include "mozilla/ipc/SharedMemoryHandle.h"
 #include "mozilla/ipc/TestShellParent.h"
 #include "mozilla/ipc/URIUtils.h"
+#include "mozilla/ipc/UtilityProcessManager.h"
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/ImageBridgeParent.h"
 #include "mozilla/layers/LayerTreeOwnerTracker.h"
@@ -225,7 +231,6 @@
 #include "nsILocalStorageManager.h"
 #include "nsIMemoryInfoDumper.h"
 #include "nsIMemoryReporter.h"
-#include "nsINavHistoryService.h"
 #include "nsINetworkLinkService.h"
 #include "nsIObserverService.h"
 #include "nsIParentChannel.h"
@@ -576,18 +581,17 @@ ContentParentsMemoryReporter::CollectReports(
 // processes that are in the Preallocator cache (which would be type
 // 'prealloc'), and recycled processes ('web' and in the future
 // eTLD+1-locked) processes).
-nsClassHashtable<nsCStringHashKey, nsTArray<ContentParent*>>*
+nsClassHashtable<nsGenericHashKey<RemoteType>, nsTArray<ContentParent*>>*
     ContentParent::sBrowserContentParents;
 
 namespace {
 
-ProcessID GetTelemetryProcessID(const nsACString& remoteType) {
+ProcessID GetTelemetryProcessID(const RemoteType& remoteType) {
   // OOP WebExtensions run in a content process.
   // For Telemetry though we want to break out collected data from the
   // WebExtensions process into a separate bucket, to make sure we can analyze
   // it separately and avoid skewing normal content process metrics.
-  return remoteType == EXTENSION_REMOTE_TYPE ? ProcessID::Extension
-                                             : ProcessID::Content;
+  return remoteType.IsExtension() ? ProcessID::Extension : ProcessID::Content;
 }
 
 }  // anonymous namespace
@@ -645,7 +649,8 @@ void ContentParent_NotifyUpdatedDictionaries() {
 // PreallocateProcess is called by the PreallocatedProcessManager.
 // ContentParent then takes this process back within GetNewOrUsedBrowserProcess.
 /*static*/ UniqueContentParentKeepAlive ContentParent::MakePreallocProcess() {
-  RefPtr<ContentParent> process = new ContentParent(PREALLOC_REMOTE_TYPE);
+  RefPtr<ContentParent> process =
+      new ContentParent(RemoteType(RemoteType::Kind::Prealloc));
   if (NS_WARN_IF(!process->BeginSubprocessLaunch(PROCESS_PRIORITY_PREALLOC))) {
     process->LaunchSubprocessReject();
     return nullptr;
@@ -700,7 +705,7 @@ void ContentParent::ShutDown() {
 }
 
 /*static*/
-uint32_t ContentParent::GetPoolSize(const nsACString& aContentProcessType) {
+uint32_t ContentParent::GetPoolSize(const RemoteType& aContentProcessType) {
   if (!sBrowserContentParents) {
     return 0;
   }
@@ -712,74 +717,20 @@ uint32_t ContentParent::GetPoolSize(const nsACString& aContentProcessType) {
 }
 
 /*static*/ nsTArray<ContentParent*>& ContentParent::GetOrCreatePool(
-    const nsACString& aContentProcessType) {
+    const RemoteType& aContentProcessType) {
   if (!sBrowserContentParents) {
-    sBrowserContentParents =
-        new nsClassHashtable<nsCStringHashKey, nsTArray<ContentParent*>>;
+    sBrowserContentParents = new nsClassHashtable<nsGenericHashKey<RemoteType>,
+                                                  nsTArray<ContentParent*>>;
   }
 
   return *sBrowserContentParents->GetOrInsertNew(aContentProcessType);
 }
 
-nsDependentCSubstring RemoteTypePrefix(const nsACString& aContentProcessType) {
-  // The suffix after a `=` in a remoteType is dynamic, and used to control the
-  // process pool to use.
-  int32_t equalIdx = aContentProcessType.FindChar(L'=');
-  if (equalIdx == kNotFound) {
-    equalIdx = aContentProcessType.Length();
-  }
-  return StringHead(aContentProcessType, equalIdx);
-}
-
-static bool IsRemoteTypeJitDisabled(const nsACString& aContentProcessType) {
-  if (!StringEndsWith(aContentProcessType, DISABLE_JIT_REMOTE_TYPE_SUFFIX)) {
-    return false;
-  }
-
-  auto remoteTypePrefix = RemoteTypePrefix(aContentProcessType);
-  if (remoteTypePrefix != FISSION_WEB_REMOTE_TYPE &&
-      remoteTypePrefix != SERVICEWORKER_REMOTE_TYPE &&
-      remoteTypePrefix != WITH_COOP_COEP_REMOTE_TYPE) {
-    return false;
-  }
-
-  auto suffixStart =
-      aContentProcessType.Length() - DISABLE_JIT_REMOTE_TYPE_SUFFIX.Length();
-  if (suffixStart > 0) {
-    char priorChar = aContentProcessType[suffixStart - 1];
-    if (priorChar != '&' && priorChar != '^') {
-      return false;
-    }
-  } else {
-    return false;
-  }
-
-  return true;
-}
-
-bool IsWebRemoteType(const nsACString& aContentProcessType) {
-  // Note: matches webIsolated, web, and webCOOP+COEP types.
-  return StringBeginsWith(aContentProcessType, DEFAULT_REMOTE_TYPE);
-}
-
-bool IsWebCoopCoepRemoteType(const nsACString& aContentProcessType) {
-  return StringBeginsWith(aContentProcessType,
-                          WITH_COOP_COEP_REMOTE_TYPE_PREFIX);
-}
-
-bool IsExtensionRemoteType(const nsACString& aContentProcessType) {
-  return aContentProcessType == EXTENSION_REMOTE_TYPE;
-}
-
 /*static*/
 uint32_t ContentParent::GetMaxProcessCount(
-    const nsACString& aContentProcessType) {
-  // Max process count is based only on the prefix.
-  const nsDependentCSubstring processTypePrefix =
-      RemoteTypePrefix(aContentProcessType);
-
-  // Check for the default remote type of "web", as it uses different prefs.
-  if (processTypePrefix == DEFAULT_REMOTE_TYPE) {
+    const RemoteType& aContentProcessType) {
+  // Check for the shared web remote type, as it uses different prefs.
+  if (aContentProcessType.IsSharedWeb()) {
     return GetMaxWebProcessCount();
   }
 
@@ -787,7 +738,7 @@ uint32_t ContentParent::GetMaxProcessCount(
   // used as a fallback, as it is intended to control the number of "web"
   // content processes, checked in `mozilla::GetMaxWebProcessCount()`.
   nsAutoCString processCountPref("dom.ipc.processCount.");
-  processCountPref.Append(processTypePrefix);
+  processCountPref.Append(aContentProcessType.StringifyKind());
 
   int32_t maxContentParents = Preferences::GetInt(processCountPref.get(), 1);
   if (maxContentParents < 1) {
@@ -799,7 +750,7 @@ uint32_t ContentParent::GetMaxProcessCount(
 
 /*static*/
 bool ContentParent::IsMaxProcessCountReached(
-    const nsACString& aContentProcessType) {
+    const RemoteType& aContentProcessType) {
   return GetPoolSize(aContentProcessType) >=
          GetMaxProcessCount(aContentProcessType);
 }
@@ -816,7 +767,7 @@ void ContentParent::ReleaseCachedProcesses() {
 #ifdef DEBUG
   for (const auto& cps : *sBrowserContentParents) {
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
-            ("%s: %zu processes", PromiseFlatCString(cps.GetKey()).get(),
+            ("%s: %zu processes", cps.GetKey().Stringify().get(),
              cps.GetData()->Length()));
   }
 #endif
@@ -888,29 +839,9 @@ already_AddRefed<ContentParent> ContentParent::MinTabSelect(
   return candidate.forget();
 }
 
-/* static */
-already_AddRefed<nsIPrincipal>
-ContentParent::CreateRemoteTypeIsolationPrincipal(
-    const nsACString& aRemoteType) {
-  if ((RemoteTypePrefix(aRemoteType) != FISSION_WEB_REMOTE_TYPE) &&
-      !StringBeginsWith(aRemoteType, WITH_COOP_COEP_REMOTE_TYPE_PREFIX)) {
-    return nullptr;
-  }
-
-  int32_t offset = aRemoteType.FindChar('=') + 1;
-  MOZ_ASSERT(offset > 1, "can not extract origin from that remote type");
-  nsAutoCString origin(
-      Substring(aRemoteType, offset, aRemoteType.Length() - offset));
-
-  nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
-  nsCOMPtr<nsIPrincipal> principal;
-  ssm->CreateContentPrincipalFromOrigin(origin, getter_AddRefs(principal));
-  return principal.forget();
-}
-
 /*static*/
 UniqueContentParentKeepAlive ContentParent::GetUsedBrowserProcess(
-    const nsACString& aRemoteType, nsTArray<ContentParent*>& aContentParents,
+    const RemoteType& aRemoteType, nsTArray<ContentParent*>& aContentParents,
     uint32_t aMaxContentParents, bool aPreferUsed, ProcessPriority aPriority,
     uint64_t aBrowserId) {
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
@@ -940,7 +871,7 @@ UniqueContentParentKeepAlive ContentParent::GetUsedBrowserProcess(
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
             ("GetUsedProcess: Reused process id=%p childID=%" PRIu64 " for %s",
              selected.get(), (uint64_t)selected->ChildID(),
-             PromiseFlatCString(aRemoteType).get()));
+             aRemoteType.Stringify().get()));
     selected->AssertAlive();
     return selected->AddKeepAlive(aBrowserId);
   }
@@ -948,13 +879,9 @@ UniqueContentParentKeepAlive ContentParent::GetUsedBrowserProcess(
   // Try to take a preallocated process except for certain remote types.
   // Note: this process may not have finished launching yet
   UniqueContentParentKeepAlive preallocated;
-  if (aRemoteType != FILE_REMOTE_TYPE &&
-      aRemoteType != PRIVILEGEDABOUT_REMOTE_TYPE &&
-      aRemoteType != EXTENSION_REMOTE_TYPE &&  // Bug 1638119
-      !IsRemoteTypeJitDisabled(aRemoteType) &&
+  if (aRemoteType.SupportsPrealloc() &&
       (preallocated = PreallocatedProcessManager::Take(aRemoteType))) {
-    MOZ_DIAGNOSTIC_ASSERT(preallocated->GetRemoteType() ==
-                          PREALLOC_REMOTE_TYPE);
+    MOZ_DIAGNOSTIC_ASSERT(preallocated->GetRemoteType().IsPrealloc());
     preallocated->AssertAlive();
 
     if (profiler_thread_is_being_profiled_for_markers()) {
@@ -968,20 +895,18 @@ UniqueContentParentKeepAlive ContentParent::GetUsedBrowserProcess(
         ContentParent::GetLog(), LogLevel::Debug,
         ("Adopted preallocated process id=%p childID=%" PRIu64 " for type %s%s",
          preallocated.get(), (uint64_t)preallocated->ChildID(),
-         PromiseFlatCString(aRemoteType).get(),
+         aRemoteType.Stringify().get(),
          preallocated->IsLaunching() ? " (still launching)" : ""));
 
-    MOZ_LOG(mozilla::ipc::gChildProcessLifecycleLog, LogLevel::Info,
-            ("REMOTETYPE [childID = %" PRIi32 "] [remoteType = %s]",
-             preallocated->Process()->GetChildID(),
-             PromiseFlatCString(aRemoteType).get()));
+    MOZ_LOG(
+        mozilla::ipc::gChildProcessLifecycleLog, LogLevel::Info,
+        ("REMOTETYPE [childID = %" PRIi32 "] [remoteType = %s]",
+         preallocated->Process()->GetChildID(), aRemoteType.Stringify().get()));
 
     // This ensures that the preallocator won't shut down the process once
     // it finishes starting
-    preallocated->mRemoteType.Assign(aRemoteType);
+    preallocated->mRemoteType = aRemoteType;
     preallocated->LoadedOrigins()->SetRemoteType(preallocated->mRemoteType);
-    preallocated->mRemoteTypeIsolationPrincipal =
-        CreateRemoteTypeIsolationPrincipal(aRemoteType);
     preallocated->AddToPool(aContentParents);
 
     // rare, but will happen
@@ -989,8 +914,8 @@ UniqueContentParentKeepAlive ContentParent::GetUsedBrowserProcess(
       // Specialize this process for the appropriate remote type, and activate
       // it.
 
-      (void)preallocated->SendRemoteType(preallocated->mRemoteType,
-                                         preallocated->mProfile);
+      (void)preallocated->SendSetRemoteType(preallocated->mRemoteType,
+                                            preallocated->mProfile);
 
       preallocated->StartRemoteWorkerService();
 
@@ -1015,11 +940,10 @@ UniqueContentParentKeepAlive ContentParent::GetUsedBrowserProcess(
 
 /*static*/
 UniqueContentParentKeepAlive ContentParent::GetNewOrUsedLaunchingBrowserProcess(
-    const nsACString& aRemoteType, BrowsingContextGroup* aGroup,
+    const RemoteType& aRemoteType, BrowsingContextGroup* aGroup,
     ProcessPriority aPriority, bool aPreferUsed, uint64_t aBrowserId) {
   MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
-          ("GetNewOrUsedProcess for type %s",
-           PromiseFlatCString(aRemoteType).get()));
+          ("GetNewOrUsedProcess for type %s", aRemoteType.Stringify().get()));
 
   if (AppShutdown::IsInOrBeyond(ShutdownPhase::AppShutdownConfirmed)) {
     return nullptr;
@@ -1059,7 +983,7 @@ UniqueContentParentKeepAlive ContentParent::GetNewOrUsedLaunchingBrowserProcess(
     // The life cycle will be set to `LifecycleState::LAUNCHING`.
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
             ("Launching new process immediately for type %s",
-             PromiseFlatCString(aRemoteType).get()));
+             aRemoteType.Stringify().get()));
 
     RefPtr<ContentParent> newCp = new ContentParent(aRemoteType);
     if (NS_WARN_IF(!newCp->BeginSubprocessLaunch(aPriority))) {
@@ -1095,7 +1019,7 @@ UniqueContentParentKeepAlive ContentParent::GetNewOrUsedLaunchingBrowserProcess(
 
 /*static*/
 RefPtr<ContentParent::LaunchPromise>
-ContentParent::GetNewOrUsedBrowserProcessAsync(const nsACString& aRemoteType,
+ContentParent::GetNewOrUsedBrowserProcessAsync(const RemoteType& aRemoteType,
                                                BrowsingContextGroup* aGroup,
                                                ProcessPriority aPriority,
                                                bool aPreferUsed,
@@ -1114,7 +1038,7 @@ ContentParent::GetNewOrUsedBrowserProcessAsync(const nsACString& aRemoteType,
 
 /*static*/
 UniqueContentParentKeepAlive ContentParent::GetNewOrUsedBrowserProcess(
-    const nsACString& aRemoteType, BrowsingContextGroup* aGroup,
+    const RemoteType& aRemoteType, BrowsingContextGroup* aGroup,
     ProcessPriority aPriority, bool aPreferUsed, uint64_t aBrowserId) {
   UniqueContentParentKeepAlive contentParent =
       GetNewOrUsedLaunchingBrowserProcess(aRemoteType, aGroup, aPriority,
@@ -1368,7 +1292,7 @@ NS_IMETHODIMP ContentParent::ValidatePrincipalXPCOM(nsIPrincipal* aPrincipal,
 /*static*/
 already_AddRefed<RemoteBrowser> ContentParent::CreateBrowser(
     const TabContext& aContext, Element* aFrameElement,
-    const nsACString& aRemoteType, BrowsingContext* aBrowsingContext,
+    const RemoteType& aRemoteType, BrowsingContext* aBrowsingContext,
     ContentParent* aOpenerContentParent) {
   AUTO_PROFILER_LABEL("ContentParent::CreateBrowser", OTHER);
 
@@ -1385,9 +1309,9 @@ already_AddRefed<RemoteBrowser> ContentParent::CreateBrowser(
     return nullptr;
   }
 
-  nsAutoCString remoteType(aRemoteType);
-  if (remoteType.IsEmpty()) {
-    remoteType = SharedWebRemoteType(aBrowsingContext->OriginAttributesRef());
+  RemoteType remoteType(aRemoteType);
+  if (!remoteType.IsKnown() || remoteType.IsNotRemote()) {
+    remoteType = RemoteType::SharedWeb(aBrowsingContext->OriginAttributesRef());
   }
 
   TabId tabId(nsContentUtils::GenerateTabId());
@@ -1595,7 +1519,7 @@ void ContentParent::BroadcastMediaCodecsSupportedUpdate(
   }
 }
 
-const nsACString& ContentParent::GetRemoteType() const { return mRemoteType; }
+const RemoteType& ContentParent::GetRemoteType() const { return mRemoteType; }
 
 static StaticRefPtr<nsIAsyncShutdownClient> sXPCOMShutdownClient;
 static StaticRefPtr<nsIAsyncShutdownClient> sProfileBeforeChangeClient;
@@ -1963,6 +1887,12 @@ void ContentParent::ActorDestroy(ActorDestroyReason why) {
     fss->Forget(ChildID());
   }
 
+#ifndef ANDROID
+  // A process that dies never sends its ReleaseHWInferenceConnection.
+  mHWInferenceConnections = 0;
+  mHWInferenceKeepAlive = nullptr;
+#endif  // !ANDROID
+
   if (why == NormalShutdown && !mCalledClose) {
     // If we shut down normally but haven't called Close, assume somebody
     // else called Close on us. In that case, we still need to call
@@ -2172,7 +2102,7 @@ void ContentParent::MaybeBeginShutDown(bool aImmediate,
       aImmediate || IsDead() ||
       AppShutdown::IsInOrBeyond(ShutdownPhase::AppShutdownConfirmed) ||
       StaticPrefs::dom_ipc_processReuse_unusedGraceMs() == 0 ||
-      IsRemoteTypeJitDisabled(mRemoteType);
+      mRemoteType.IsJitDisabled();
 
   // Clean up any scheduled idle task unless we schedule a new one.
   auto cancelIdleTask = MakeScopeExit([&] {
@@ -2195,7 +2125,7 @@ void ContentParent::MaybeBeginShutDown(bool aImmediate,
     // processes alive for performance reasons (e.g. test runs and privileged
     // content process for some about: pages). We don't want to alter behavior
     // if the pref is not set, so default to 0.
-    if (!aIgnoreKeepAlivePref && mIsInPool && !mRemoteType.Contains('=') &&
+    if (!aIgnoreKeepAlivePref && mIsInPool && !mRemoteType.HasMeta() &&
         !AppShutdown::IsInOrBeyond(ShutdownPhase::AppShutdownConfirmed)) {
       auto* contentParents = sBrowserContentParents->Get(mRemoteType);
       MOZ_RELEASE_ASSERT(
@@ -2203,7 +2133,7 @@ void ContentParent::MaybeBeginShutDown(bool aImmediate,
           "mIsInPool, yet no entry for mRemoteType in sBrowserContentParents?");
 
       nsAutoCString keepAlivePref("dom.ipc.keepProcessesAlive.");
-      keepAlivePref.Append(mRemoteType);
+      keepAlivePref.Append(mRemoteType.StringifyKind());
 
       int32_t processesToKeepAlive = 0;
       if (NS_SUCCEEDED(Preferences::GetInt(keepAlivePref.get(),
@@ -2325,7 +2255,7 @@ already_AddRefed<TestShellParent> ContentParent::GetTestShellSingleton() {
 void ContentParent::AppendDynamicSandboxParams(
     std::vector<std::string>& aArgs) {
   // For file content processes
-  if (GetRemoteType() == FILE_REMOTE_TYPE) {
+  if (GetRemoteType().IsFile()) {
     MacSandboxInfo::AppendFileAccessParam(aArgs, true);
   }
 }
@@ -2489,7 +2419,7 @@ bool ContentParent::BeginSubprocessLaunch(ProcessPriority aPriority) {
   Preferences::AddStrongObserver(this, "");
 
   geckoargs::sSafeMode.Put(gSafeMode, extraArgs);
-  geckoargs::sDisableJit.Put(IsRemoteTypeJitDisabled(mRemoteType), extraArgs);
+  geckoargs::sDisableJit.Put(mRemoteType.IsJitDisabled(), extraArgs);
 
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
   if (IsContentSandboxEnabled()) {
@@ -2510,7 +2440,7 @@ bool ContentParent::BeginSubprocessLaunch(ProcessPriority aPriority) {
 
   MOZ_LOG(mozilla::ipc::gChildProcessLifecycleLog, LogLevel::Info,
           ("REMOTETYPE [childID = %" PRIi32 "] [remoteType = %s]",
-           mSubprocess->GetChildID(), mRemoteType.get()));
+           mSubprocess->GetChildID(), mRemoteType.Stringify().get()));
 
   mLaunchYieldTS = TimeStamp::Now();
   return mSubprocess->AsyncLaunch(std::move(extraArgs));
@@ -2631,13 +2561,9 @@ bool ContentParent::LaunchSubprocessResolve(bool aIsSync,
   return true;
 }
 
-static bool IsFileContent(const nsACString& aRemoteType) {
-  return aRemoteType == FILE_REMOTE_TYPE;
-}
-
-ContentParent::ContentParent(const nsACString& aRemoteType)
+ContentParent::ContentParent(const RemoteType& aRemoteType)
     : mSubprocess(new GeckoChildProcessHost(GeckoProcessType_Content,
-                                            IsFileContent(aRemoteType))),
+                                            aRemoteType.IsFile())),
       mLaunchTS(TimeStamp::Now()),
       mLaunchYieldTS(mLaunchTS),
       mIsAPreallocBlocker(false),
@@ -2647,7 +2573,7 @@ ContentParent::ContentParent(const nsACString& aRemoteType)
       mThreadsafeHandle(
           new ThreadsafeContentParentHandle(this, mChildID, mRemoteType)),
       mLifecycleState(LifecycleState::LAUNCHING),
-      mIsForBrowser(!mRemoteType.IsEmpty()),
+      mIsForBrowser(!mRemoteType.IsNotRemote()),
       mCalledClose(false),
       mCalledKillHard(false),
       mCreatedPairedMinidumps(false),
@@ -2665,9 +2591,6 @@ ContentParent::ContentParent(const nsACString& aRemoteType)
 #endif
       mHangMonitorActor(nullptr) {
   MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
-
-  mRemoteTypeIsolationPrincipal =
-      CreateRemoteTypeIsolationPrincipal(aRemoteType);
 
   // Insert ourselves into the global linked list of ContentParent objects.
   if (!sContentParents) {
@@ -2986,9 +2909,9 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
   // to the message we send to enable the Sandbox (SendStartProcessSandbox)
   // because different remote types require different sandbox privileges.
 
-  (void)SendRemoteType(mRemoteType, mProfile);
+  (void)SendSetRemoteType(mRemoteType, mProfile);
 
-  if (mRemoteType != PREALLOC_REMOTE_TYPE) {
+  if (!mRemoteType.IsPrealloc()) {
     StartRemoteWorkerService();
   }
 
@@ -3098,7 +3021,7 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
 #  ifdef XP_LINUX
   if (shouldSandbox) {
     MOZ_ASSERT(!mSandboxBroker);
-    bool isFileProcess = mRemoteType == FILE_REMOTE_TYPE;
+    bool isFileProcess = mRemoteType.IsFile();
     UniquePtr<SandboxBroker::Policy> policy =
         sSandboxBrokerPolicyFactory->GetContentPolicy(Pid(), isFileProcess);
     if (policy) {
@@ -3504,8 +3427,7 @@ mozilla::ipc::IPCResult ContentParent::RecvGetClipboardDataSnapshot(
     mozilla::NotNull<nsIPrincipal*> aRequestingPrincipal,
     GetClipboardDataSnapshotResolver&& aResolver) {
   if (!ValidatePrincipal(aRequestingPrincipal,
-                         {ValidatePrincipalOptions::AlwaysAllowSystem,
-                          ValidatePrincipalOptions::AllowExpanded})) {
+                         {ValidatePrincipalOptions::AllowExpanded})) {
     return PrincipalValidationIpcFail(aRequestingPrincipal, this, __func__);
   }
 
@@ -3627,7 +3549,7 @@ mozilla::ipc::IPCResult ContentParent::RecvFirstIdle() {
   if (mIsAPreallocBlocker) {
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Verbose,
             ("RecvFirstIdle id=%p childID=%" PRIu64 ": Removing Blocker for %s",
-             this, (uint64_t)this->ChildID(), mRemoteType.get()));
+             this, (uint64_t)this->ChildID(), mRemoteType.Stringify().get()));
     PreallocatedProcessManager::RemoveBlocker(mRemoteType, this);
     mIsAPreallocBlocker = false;
   }
@@ -3825,7 +3747,7 @@ NS_IMETHODIMP
 ContentParent::GetState(nsIPropertyBag** aResult) {
   auto props = MakeRefPtr<nsHashPropertyBag>();
   props->SetPropertyAsACString(u"remoteTypePrefix"_ns,
-                               RemoteTypePrefix(mRemoteType));
+                               mRemoteType.StringifyKind());
   *aResult = props.forget().downcast<nsIWritablePropertyBag>().take();
   return NS_OK;
 }
@@ -3833,7 +3755,8 @@ ContentParent::GetState(nsIPropertyBag** aResult) {
 static void InitShutdownClients() {
   if (!sXPCOMShutdownClient) {
     nsresult rv;
-    nsCOMPtr<nsIAsyncShutdownService> svc = services::GetAsyncShutdownService();
+    nsCOMPtr<nsIAsyncShutdownService> svc =
+        components::AsyncShutdown::Service();
     if (!svc) {
       return;
     }
@@ -4712,7 +4635,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPExternalHelperAppConstructor(
   // file:// URI coming from any other process.
   if (uri && uri->SchemeIs("file") &&
       StaticPrefs::browser_tabs_remote_separateFileUriProcess() &&
-      GetRemoteType() != FILE_REMOTE_TYPE) {
+      !GetRemoteType().IsFile()) {
     return IPC_FAIL(this, "Non-file process sent a file:// URI.");
   }
 
@@ -5251,6 +5174,53 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateAudioIPCConnection(
   return IPC_OK();
 }
 
+#ifndef ANDROID
+void ContentParent::EnsureHWInferenceConnection() {
+  // Re-acquiring unconditionally: a no-op when the process and its actor are
+  // up, and what recovers when either went away under us.
+  mHWInferenceKeepAlive =
+      UtilityProcessManager::GetSingleton()->AcquireContentHWInferenceProcess();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvAcquireHWInferenceProcess() {
+  ++mHWInferenceConnections;
+  EnsureHWInferenceConnection();
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvCreateSpeechRecognition(
+    Endpoint<hwinference::PSpeechRecognitionParent>&& aEndpoint) {
+  if (!mHWInferenceConnections) {
+    return IPC_FAIL(this, "Must be holding a HWInference connection");
+  }
+
+  EnsureHWInferenceConnection();
+
+  // Launch failed: dropping the endpoint tears down the child's session actor,
+  // which reports "service-not-allowed" to the page.
+  if (!mHWInferenceKeepAlive) {
+    return IPC_OK();
+  }
+
+  hwinference::HWInferenceParent::StartContentSpeechRecognition(
+      std::move(aEndpoint), mChildID);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvReleaseHWInferenceConnection() {
+  if (mHWInferenceConnections == 0) {
+    return IPC_FAIL(this,
+                    "ReleaseHWInferenceConnection without a matching "
+                    "AcquireHWInferenceProcess");
+  }
+
+  if (--mHWInferenceConnections == 0) {
+    mHWInferenceKeepAlive = nullptr;
+  }
+  return IPC_OK();
+}
+#endif  // !ANDROID
+
 already_AddRefed<extensions::PExtensionsParent>
 ContentParent::AllocPExtensionsParent() {
   return MakeAndAddRef<extensions::ExtensionsParent>();
@@ -5599,6 +5569,16 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateWindow(
   RefPtr<BrowserParent> newTab = BrowserParent::GetFrom(aNewTab);
   MOZ_ASSERT(newTab);
 
+  // We're about to hand the new tab to the frontend to be embedded, so it must
+  // be a freshly created actor which isn't already embedded somewhere else.
+  // Being destroyed means it has already been embedded and torn down, because
+  // we only destroy a BrowserParent via its embedder or via a prior failed
+  // CreateWindow.
+  if (newTab->IsEmbedded() || newTab->IsDestroyed() ||
+      newTab->CreatingWindow()) {
+    return IPC_FAIL(this, "New tab is not a fresh unembedded PBrowser");
+  }
+
   auto destroyNewTabOnError = MakeScopeExit([&] {
     // We always expect to open a new window here. If we don't, it's an error.
     if (!cwi.windowOpened() || NS_FAILED(rv)) {
@@ -5619,6 +5599,13 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateWindow(
   RefPtr<BrowsingContext> newBC = newTab->GetBrowsingContext();
   if (!newBC) {
     return IPC_FAIL(this, "Missing BrowsingContext for new tab");
+  }
+
+  // The frontend must not embed a discarded BrowsingContext. The parent can
+  // discard it on its own, so don't blame the child for this one.
+  if (NS_WARN_IF(newBC->IsDiscarded())) {
+    rv = NS_ERROR_FAILURE;
+    return IPC_OK();
   }
 
   uint64_t newBCOpenerId = newBC->GetOpenerId();
@@ -6262,71 +6249,6 @@ static bool WebDriverSessionRunning() {
   return false;
 }
 
-#ifndef MOZ_GECKOVIEW_HISTORY
-// Whether aDomain (an ETLD+1) was unvisited today, until aNavigationStartTime,
-// per the in-process Places history. Returns false when history is
-// unavailable. Desktop only; GeckoView history lives in the embedding app.
-static bool FirstDailyLoadFromPlaces(const nsACString& aDomain,
-                                     const TimeStamp& aNavigationStartTime) {
-  if (aNavigationStartTime.IsNull()) {
-    return false;
-  }
-
-  nsCOMPtr<nsINavHistoryService> history =
-      do_GetService(NS_NAVHISTORYSERVICE_CONTRACTID);
-  bool historyDisabled = true;
-  if (!history || NS_FAILED(history->GetHistoryDisabled(&historyDisabled)) ||
-      historyDisabled) {
-    return false;
-  }
-
-  nsCOMPtr<nsINavHistoryQuery> query;
-  nsCOMPtr<nsINavHistoryQueryOptions> options;
-  if (NS_FAILED(history->GetNewQuery(getter_AddRefs(query))) ||
-      NS_FAILED(history->GetNewQueryOptions(getter_AddRefs(options)))) {
-    return false;
-  }
-
-  // Convert the monotonic navigation start to Places' wall-clock visit_date.
-  PRTime navigationStart =
-      PR_Now() -
-      static_cast<PRTime>(
-          (TimeStamp::Now() - aNavigationStartTime).ToMicroseconds());
-
-  if (NS_FAILED(query->SetDomain(aDomain)) ||
-      NS_FAILED(query->SetDomainIsHost(false)) ||
-      NS_FAILED(query->SetBeginTimeReference(
-          nsINavHistoryQuery::TIME_RELATIVE_TODAY)) ||
-      NS_FAILED(query->SetBeginTime(0)) ||
-      NS_FAILED(query->SetEndTime(navigationStart)) ||
-      NS_FAILED(options->SetResultType(
-          nsINavHistoryQueryOptions::RESULTS_AS_VISIT)) ||
-      NS_FAILED(options->SetMaxResults(1)) ||
-      NS_FAILED(options->SetQueryType(
-          nsINavHistoryQueryOptions::QUERY_TYPE_HISTORY))) {
-    return false;
-  }
-
-  nsCOMPtr<nsINavHistoryResult> result;
-  if (NS_FAILED(
-          history->ExecuteQuery(query, options, getter_AddRefs(result)))) {
-    return false;
-  }
-
-  nsCOMPtr<nsINavHistoryContainerResultNode> root;
-  if (NS_FAILED(result->GetRoot(getter_AddRefs(root))) ||
-      NS_FAILED(root->SetContainerOpen(true))) {
-    return false;
-  }
-
-  uint32_t visitCount = 0;
-  nsresult rv = root->GetChildCount(&visitCount);
-  root->SetContainerOpen(false);
-
-  return NS_SUCCEEDED(rv) && visitCount == 0;
-}
-#endif
-
 #ifdef MOZ_GECKOVIEW_HISTORY
 // Local midnight (start of the current day in local time) as milliseconds since
 // the Unix epoch.
@@ -6381,7 +6303,8 @@ static void QueryFirstDailyLoad(const nsACString& aDomain,
         callback(aVisitedToday.isSome() && !*aVisitedToday);
       });
 #else
-  aCallback(FirstDailyLoadFromPlaces(aDomain, aNavigationStartTime));
+  aCallback(mozilla::performance::pageload_event::FirstDailyLoadFromPlaces(
+      aDomain, aNavigationStartTime));
 #endif
 }
 
@@ -6440,6 +6363,11 @@ mozilla::ipc::IPCResult ContentParent::RecvRecordPageLoadEvent(
   // Check whether a webdriver is running.
   aPageloadEventData.set_usingWebdriver(WebDriverSessionRunning());
 
+#ifndef MOZ_GECKOVIEW_HISTORY
+  aPageloadEventData.set_isActiveClient(
+      mozilla::performance::pageload_event::IsActiveClient());
+#endif
+
 #if defined(ANDROID)
   // Get network link type iff android.
   aPageloadEventData.set_networkType(UpdateNetworkLinkType());
@@ -6471,17 +6399,14 @@ mozilla::ipc::IPCResult ContentParent::RecvRecordPageLoadEvent(
   }
 
   // Set the process isolation category based on the remote type for Android.
-  const nsDependentCSubstring remoteTypePrefix =
-      RemoteTypePrefix(GetRemoteType());
-
   using namespace mozilla::performance::pageload_event;
   AndroidIsolationCategory isolationCategory;
-  if (remoteTypePrefix == WEB_REMOTE_TYPE) {
+  if (mRemoteType.IsSharedWeb()) {
     isolationCategory = AndroidIsolationCategory::SHARED_WEB;
-  } else if (remoteTypePrefix == FISSION_WEB_REMOTE_TYPE) {
-    isolationCategory = AndroidIsolationCategory::SITE_ISOLATED;
-  } else if (remoteTypePrefix == WITH_COOP_COEP_REMOTE_TYPE) {
+  } else if (mRemoteType.IsWebCoopCoep()) {
     isolationCategory = AndroidIsolationCategory::COOP_ISOLATED;
+  } else if (mRemoteType.IsIsolatedWeb()) {
+    isolationCategory = AndroidIsolationCategory::SITE_ISOLATED;
   } else {
     isolationCategory = AndroidIsolationCategory::OTHER;
   }
@@ -6524,7 +6449,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPURLClassifierConstructor(
   MOZ_ASSERT(aActor);
   *aSuccess = false;
 
-  auto* actor = static_cast<URLClassifierParent*>(aActor);
+  auto* actor = mozilla::ipc::ActorCast<URLClassifierParent>(aActor);
   nsCOMPtr<nsIPrincipal> principal(aPrincipal);
   if (!principal) {
     actor->ClassificationFailed();
@@ -6541,7 +6466,7 @@ bool ContentParent::DeallocPURLClassifierParent(PURLClassifierParent* aActor) {
   MOZ_ASSERT(aActor);
 
   RefPtr<URLClassifierParent> actor =
-      dont_AddRef(static_cast<URLClassifierParent*>(aActor));
+      dont_AddRef(mozilla::ipc::ActorCast<URLClassifierParent>(aActor));
   return true;
 }
 
@@ -6568,7 +6493,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPURLClassifierLocalConstructor(
     return IPC_FAIL(this, "aURI should not be null");
   }
 
-  auto* actor = static_cast<URLClassifierLocalParent*>(aActor);
+  auto* actor = mozilla::ipc::ActorCast<URLClassifierLocalParent>(aActor);
   return actor->StartClassify(aURI, features);
 }
 
@@ -6578,7 +6503,7 @@ bool ContentParent::DeallocPURLClassifierLocalParent(
   MOZ_ASSERT(aActor);
 
   RefPtr<URLClassifierLocalParent> actor =
-      dont_AddRef(static_cast<URLClassifierLocalParent*>(aActor));
+      dont_AddRef(mozilla::ipc::ActorCast<URLClassifierLocalParent>(aActor));
   return true;
 }
 
@@ -6628,7 +6553,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPURLClassifierLocalByNameConstructor(
     ipcFeatures.AppendElement(IPCURLClassifierFeature(name, tables));
   }
 
-  auto* actor = static_cast<URLClassifierLocalByNameParent*>(aActor);
+  auto* actor = mozilla::ipc::ActorCast<URLClassifierLocalByNameParent>(aActor);
   return actor->StartClassify(aURI, ipcFeatures, aListType);
 }
 
@@ -6637,8 +6562,8 @@ bool ContentParent::DeallocPURLClassifierLocalByNameParent(
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aActor);
 
-  RefPtr<URLClassifierLocalByNameParent> actor =
-      dont_AddRef(static_cast<URLClassifierLocalByNameParent*>(aActor));
+  RefPtr<URLClassifierLocalByNameParent> actor = dont_AddRef(
+      mozilla::ipc::ActorCast<URLClassifierLocalByNameParent>(aActor));
   return true;
 }
 
@@ -6981,10 +6906,10 @@ mozilla::ipc::IPCResult ContentParent::RecvAddOrRemovePageAwakeRequest(
 
 #if defined(XP_WIN)
 mozilla::ipc::IPCResult ContentParent::RecvGetModulesTrust(
-    ModulePaths&& aModPaths, bool aRunAtNormalPriority,
+    ModuleIdentifiers&& aModIdents, bool aRunAtNormalPriority,
     GetModulesTrustResolver&& aResolver) {
   RefPtr<DllServices> dllSvc(DllServices::Get());
-  dllSvc->GetModulesTrust(std::move(aModPaths), aRunAtNormalPriority)
+  dllSvc->GetModulesTrust(std::move(aModIdents), aRunAtNormalPriority)
       ->Then(
           GetMainThreadSerialEventTarget(), __func__,
           [aResolver](ModulesMapResult&& aResult) {
@@ -7410,8 +7335,12 @@ mozilla::ipc::IPCResult ContentParent::RecvBlurToParent(
       !aBrowsingContextToClear.IsNullOrDiscarded() &&
       (focusedBrowsingContext->OwnerProcessId() !=
        aBrowsingContextToClear.get_canonical()->OwnerProcessId())) {
-    MOZ_RELEASE_ASSERT(!ancestorDifferent,
-                       "This combination is not supposed to happen.");
+    if (ancestorDifferent) {
+      return IPC_FAIL(this,
+                      "RecvBlurToParent: browsingContextToClear and "
+                      "ancestorBrowsingContextToFocus can't both be in a "
+                      "different process than focusedBrowsingContext.");
+    }
     if (ContentParent* cp =
             aBrowsingContextToClear.get_canonical()->GetContentParent()) {
       (void)cp->SendSetFocusedElement(aBrowsingContextToClear, false);
@@ -7906,6 +7835,9 @@ mozilla::ipc::IPCResult ContentParent::RecvSetActiveSessionHistoryEntry(
     const MaybeDiscarded<BrowsingContext>& aContext,
     const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
     uint32_t aLoadType, uint32_t aUpdatedCacheKey, const nsID& aChangeID) {
+  if (aInfo.GetOriginalURI() || aInfo.GetResultPrincipalURI()) {
+    return IPC_FAIL(this, "Should not be set by content");
+  }
   if (!aContext.IsNullOrDiscarded()) {
     aContext.get_canonical()->SetActiveSessionHistoryEntry(
         aPreviousScrollPos, &aInfo, aLoadType, aUpdatedCacheKey, aChangeID);
@@ -7916,6 +7848,9 @@ mozilla::ipc::IPCResult ContentParent::RecvSetActiveSessionHistoryEntry(
 mozilla::ipc::IPCResult ContentParent::RecvReplaceActiveSessionHistoryEntry(
     const MaybeDiscarded<BrowsingContext>& aContext,
     SessionHistoryInfo&& aInfo) {
+  if (aInfo.GetOriginalURI() || aInfo.GetResultPrincipalURI()) {
+    return IPC_FAIL(this, "Should not be set by content");
+  }
   if (!aContext.IsNullOrDiscarded()) {
     aContext.get_canonical()->ReplaceActiveSessionHistoryEntry(&aInfo);
   }
@@ -7994,13 +7929,13 @@ NS_IMETHODIMP ContentParent::GetOsPid(int32_t* aOut) {
 }
 
 NS_IMETHODIMP ContentParent::GetRemoteType(nsACString& aRemoteType) {
-  aRemoteType = GetRemoteType();
+  aRemoteType = GetRemoteType().Stringify();
   return NS_OK;
 }
 
 void ContentParent::StartRemoteWorkerService() {
   MOZ_ASSERT(!mRemoteWorkerServiceActor);
-  MOZ_ASSERT(mRemoteType != PREALLOC_REMOTE_TYPE);
+  MOZ_ASSERT(!mRemoteType.IsPrealloc());
 
   Endpoint<PRemoteWorkerServiceChild> childEp;
   mRemoteWorkerServiceActor =
@@ -8224,7 +8159,7 @@ IPCResult ContentParent::RecvKillGPUProcess() {
 }
 #endif
 
-nsCString ThreadsafeContentParentHandle::GetRemoteType() {
+RemoteType ThreadsafeContentParentHandle::GetRemoteType() {
   return mLoadedOrigins->GetRemoteType();
 }
 

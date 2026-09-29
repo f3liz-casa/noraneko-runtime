@@ -27,6 +27,7 @@
 
 // We expose a singleton from this module. Some tests may import the
 // constructor via the system global.
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { FormAutofill } from "resource://autofill/FormAutofill.sys.mjs";
 import { FormAutofillUtils } from "resource://gre/modules/shared/FormAutofillUtils.sys.mjs";
 import { AutofillDataTypes } from "resource://gre/modules/shared/AutofillDataTypes.sys.mjs";
@@ -35,6 +36,8 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AddressComponent: "resource://gre/modules/shared/AddressComponent.sys.mjs",
+  AutocompleteRemoveRecord:
+    "resource://gre/modules/AutocompleteRemoveRecord.sys.mjs",
   FormAutofillML: "resource://gre/modules/shared/FormAutofillML.sys.mjs",
   FormAutofillHeuristics:
     "resource://gre/modules/shared/FormAutofillHeuristics.sys.mjs",
@@ -46,6 +49,23 @@ ChromeUtils.defineESModuleGetters(lazy, {
   PassportRecord: "resource://gre/modules/shared/PassportRecord.sys.mjs",
   FirefoxRelay: "resource://gre/modules/FirefoxRelay.sys.mjs",
   LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
+});
+
+// TODO Bug 2064859 - refactor this out as external provider
+ChromeUtils.defineLazyGetter(lazy, "SmartFormFillAutocomplete", () => {
+  if (AppConstants.MOZ_BUILD_APP != "browser") {
+    return undefined;
+  }
+
+  try {
+    return ChromeUtils.importESModule(
+      // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
+      "moz-src:///browser/components/aiwindow/ui/modules/SmartFormFillAutocomplete.sys.mjs"
+    ).SmartFormFillAutocomplete;
+  } catch (error) {
+    console.error(`Unable to load SmartFormFillAutocomplete.sys.mjs: ${error}`);
+  }
+  return undefined;
 });
 
 ChromeUtils.defineLazyGetter(lazy, "log", () =>
@@ -383,8 +403,14 @@ export class FormAutofillParent extends JSWindowActorParent {
         break;
       }
       case "FormAutofill:RemoveAddresses": {
-        data.guids.forEach(guid =>
-          lazy.gFormAutofillStorage.addresses.remove(guid)
+        // Not removeMany(): that one is the migration's silent bulk delete,
+        // while the test helpers wait for one formautofill-storage-changed per
+        // guid. The Rust store removes asynchronously, so forEach would drop
+        // the promises and return before any record was deleted.
+        await Promise.all(
+          data.guids.map(guid =>
+            lazy.gFormAutofillStorage.addresses.remove(guid)
+          )
         );
         break;
       }
@@ -873,7 +899,7 @@ export class FormAutofillParent extends JSWindowActorParent {
         lazy.log.debug(
           "A duplicated address record is found, do not show the prompt"
         );
-        storage.notifyUsed(record.guid);
+        await storage.notifyUsed(record.guid);
         return false;
       }
 
@@ -1068,7 +1094,7 @@ export class FormAutofillParent extends JSWindowActorParent {
    *         `allFieldNames` is an array containing all the matched field name found in this section.
    */
   async searchAutoCompleteEntries(searchString, options) {
-    const { fieldName, elementId, scenarioName } = options;
+    const { fieldName, elementId, inputType, scenarioName } = options;
 
     const section = this.getSectionByElementId(elementId);
     if (!section.isValidSection() || !section.isEnabled()) {
@@ -1086,20 +1112,72 @@ export class FormAutofillParent extends JSWindowActorParent {
       hasInput: !!searchString?.length,
     });
 
+    const smartFormFillPromise =
+      lazy.SmartFormFillAutocomplete?.autocompleteItemsAsync({
+        browsingContext: this.browsingContext,
+        searchString,
+        inputType,
+        focusElementId: elementId,
+      }) ?? [];
+
     // Retrieve information for the autocomplete entry
     const recordsPromise = this.getRecords({
       searchString,
       fieldName,
     });
 
-    const [records, externalEntries] = await Promise.all([
+    const [records, relayEntries, smartFormFillEntries] = await Promise.all([
       recordsPromise,
       relayPromise,
+      smartFormFillPromise,
     ]);
+    const externalEntries = [...relayEntries, ...smartFormFillEntries];
 
     // Sort addresses by timeLastUsed for showing the lastest used address at top.
     records.sort((a, b) => b.timeLastUsed - a.timeLastUsed);
+
     return { records, externalEntries, allFieldNames: section.allFieldNames };
+  }
+
+  // The dropdown is torn down when the reauthentication or confirmation prompt
+  // takes focus, so bring it back once the flow is over.
+  #reopenAutocompletePopup() {
+    if (!this.manager || this.manager.isClosed) {
+      return;
+    }
+    this.sendAsyncMessage("FormAutofill:RepopulateAutocompletePopup");
+  }
+
+  async #confirmCreditCardRemoval() {
+    const promptMessage = FormAutofillUtils.reauthOSPromptMessage(
+      "autofill-delete-payment-method-os-prompt-macos",
+      "autofill-delete-payment-method-os-prompt-windows",
+      "autofill-delete-payment-method-os-prompt-other"
+    );
+    let verified;
+    let result;
+    try {
+      verified = await FormAutofillUtils.verifyUserOSAuth(
+        FormAutofill.AUTOFILL_CREDITCARDS_OS_AUTH_LOCKED_PREF,
+        promptMessage
+      );
+      result = verified ? "success" : "fail_user_canceled";
+    } catch (ex) {
+      result = "fail_error";
+      throw ex;
+    } finally {
+      Glean.formautofill.promptShownOsReauth.record({
+        trigger: "delete_autocomplete",
+        result,
+      });
+    }
+
+    if (verified) {
+      await lazy.AutocompleteRemoveRecord.confirmRemoval(
+        this.manager.browsingContext.topChromeWindow,
+        "payment"
+      );
+    }
   }
 
   /**
@@ -1125,6 +1203,31 @@ export class FormAutofillParent extends JSWindowActorParent {
 
       case "FormAutofill:FillForm": {
         this.autofillFields(data.focusElementId, data.profile);
+        break;
+      }
+
+      case "FormAutofill:DeleteAddress": {
+        try {
+          await lazy.AutocompleteRemoveRecord.confirmRemoval(
+            this.manager.browsingContext.topChromeWindow,
+            "address"
+          );
+        } catch (ex) {
+          lazy.log.warn("Address removal flow failed:", ex);
+        } finally {
+          this.#reopenAutocompletePopup();
+        }
+        break;
+      }
+
+      case "FormAutofill:DeleteCreditCard": {
+        try {
+          await this.#confirmCreditCardRemoval();
+        } catch (ex) {
+          lazy.log.warn("Payment method removal flow failed:", ex);
+        } finally {
+          this.#reopenAutocompletePopup();
+        }
         break;
       }
 
@@ -1514,8 +1617,11 @@ export class FormAutofillParent extends JSWindowActorParent {
   }
 
   #getTemporaryRecordForTab(collectionName) {
-    // The temporary record is stored in the top-level actor.
-    const topBC = this.browsingContext.top;
+    // The temporary record is stored in the top-level actor. Reached through
+    // manager, which is null once the window has gone away, where
+    // browsingContext throws instead: getRecords() awaits before calling this,
+    // so the tab can close in between.
+    const topBC = this.manager?.browsingContext.top;
     const actor = FormAutofillParent.getActor(topBC);
     return actor?.temporaryRecords?.[collectionName] ?? [];
   }

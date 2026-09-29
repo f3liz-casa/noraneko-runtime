@@ -12,7 +12,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   OsEnvironment: "resource://gre/modules/OsEnvironment.sys.mjs",
-  WindowsLaunchOnLogin: "resource://gre/modules/WindowsLaunchOnLogin.sys.mjs",
+  LaunchOnLogin: "resource://gre/modules/LaunchOnLogin.sys.mjs",
   PlacesDBUtils: "resource://gre/modules/PlacesDBUtils.sys.mjs",
   ShellService: "moz-src:///browser/components/shell/ShellService.sys.mjs",
   TelemetryReportingPolicy:
@@ -137,6 +137,10 @@ export let StartupTelemetry = {
     await lazy.TelemetryReportingPolicy.ensureUserIsNotified();
 
     Services.fog.initializeFOG();
+
+    // A ping we schedule ourselves because it depends on the FxA state, but
+    // must enable early so it catches probes recorded early. Bug 2049938.
+    GleanPings.fxAccountsClientInfo.setEnabled(true);
 
     // Register Glean to listen for experiment updates releated to the
     // "gleanInternalSdk" feature defined in the t/c/nimbus/FeatureManifest.yaml
@@ -335,21 +339,15 @@ export let StartupTelemetry = {
 
   globalPrivacyControl() {
     const FEATURE_PREF_ENABLED = "privacy.globalprivacycontrol.enabled";
-    const FUNCTIONALITY_PREF_ENABLED =
-      "privacy.globalprivacycontrol.functionality.enabled";
     const PREF_WAS_ENABLED = "privacy.globalprivacycontrol.was_ever_enabled";
     const _checkGPCPref = async () => {
       const feature_enabled = Services.prefs.getBoolPref(
         FEATURE_PREF_ENABLED,
         false
       );
-      const functionality_enabled = Services.prefs.getBoolPref(
-        FUNCTIONALITY_PREF_ENABLED,
-        false
-      );
       const was_enabled = Services.prefs.getBoolPref(PREF_WAS_ENABLED, false);
       let value = 0;
-      if (feature_enabled && functionality_enabled) {
+      if (feature_enabled) {
         value = 1;
         Services.prefs.setBoolPref(PREF_WAS_ENABLED, true);
       } else if (was_enabled) {
@@ -359,7 +357,6 @@ export let StartupTelemetry = {
     };
 
     Services.prefs.addObserver(FEATURE_PREF_ENABLED, _checkGPCPref);
-    Services.prefs.addObserver(FUNCTIONALITY_PREF_ENABLED, _checkGPCPref);
     _checkGPCPref();
   },
 
@@ -372,6 +369,7 @@ export let StartupTelemetry = {
       "browser.ai.control.linkPreviewKeyPoints": "linkPreviewKeyPoints",
       "browser.ai.control.sidebarChatbot": "sidebarChatbot",
       "browser.ai.control.smartWindow": "smartWindow",
+      "browser.ai.control.speechRecognition": "speechRecognition",
     };
     const _checkAiControlPrefs = async () => {
       const globalIsBlocked =
@@ -481,12 +479,11 @@ export let StartupTelemetry = {
 
   async launchOnLoginState() {
     let state;
-    if (AppConstants.platform != "win") {
+    if (!lazy.LaunchOnLogin.isSupported()) {
       state = "not_supported";
     } else {
       try {
-        const enablementDetails =
-          await lazy.WindowsLaunchOnLogin.getLaunchOnLoginEnablementDetails();
+        const enablementDetails = await lazy.LaunchOnLogin.enablementDetails();
         if (enablementDetails.isEnabled) {
           state = "enabled";
         } else if (!enablementDetails.isSupported) {

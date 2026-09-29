@@ -20,7 +20,6 @@ linux64-gcc-8:
     treeherder:
         symbol: TL(gcc8)
     run:
-        clone-with: hg
         script: build-gcc-linux.sh
     fetches:
         fetch:
@@ -35,7 +34,6 @@ linux64-gcc-9:
     treeherder:
         symbol: TL(gcc9)
     run:
-        clone-with: hg
         script: build-gcc-linux.sh
     fetches:
         fetch:
@@ -50,7 +48,6 @@ linux64-gcc-10:
     treeherder:
         symbol: TL(gcc10)
     run:
-        clone-with: hg
         script: build-gcc-linux.sh
         toolchain-alias:
             - linux64-gcc
@@ -67,12 +64,22 @@ linux64-gcc-11:
     description: "GCC 11 toolchain build"
     treeherder:
         symbol: TL(gcc11)
+    worker:
+        env:
+            # Override gcc's configure so that the resulting compiler
+            # still works with the base binutils version, while not
+            # building against it to avoid a longer chain of dependencies.
+            gcc_cv_as_gdwarf_5_flag: "no"
+            gcc_cv_as_debug_line_32_flag: "no"
+            gcc_cv_as_debug_line_64_flag: "no"
+            gcc_cv_as_dwarf_4_debug_line_flag: "no"
+            gcc_cv_as_gdwarf_4_flag: "no"
+            gcc_cv_as_working_gdwarf_n_flag: "no"
     run:
-        clone-with: hg
         script: build-gcc-linux.sh
     fetches:
         fetch:
-            - gcc-11.4.0
+            - gcc-11.5.0
             - gmp-6.1.0
             - isl-0.16.1
             - mpc-1.0.3
@@ -83,7 +90,6 @@ linux64-gcc-14:
     treeherder:
         symbol: TL(gcc14)
     run:
-        clone-with: hg
         script: build-gcc-linux.sh
     fetches:
         fetch:
@@ -98,7 +104,6 @@ linux64-gcc-10-sixgill:
     treeherder:
         symbol: TL(sixgill)
     run:
-        clone-with: hg
         script: build-gcc-sixgill-plugin-linux.sh
         resources:
             - 'taskcluster/scripts/misc/build-gcc-sixgill-plugin-linux.sh'

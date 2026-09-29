@@ -22,10 +22,12 @@ newtab.search:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1766887
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1786670
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1817105
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065246
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1766887
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1786670#c3
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1817105#c11
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065246
     data_sensitivity:
       - interaction
     notification_emails:
@@ -39,7 +41,8 @@ newtab.search:
       newtab_visit_id: &newtab_visit_id
         description: >
           The id of the newtab visit that originated the search.
-          Should always be present for handoff searches.
+          Should always be present for handoff searches and for searches from
+          the New Tab search bar.
           TODO(bug 1774597): for searches done without handoff (e.g. with
           `browser.newtabpage.activity-stream.improvesearch.handoffToAwesomebar`
           set to `false`), the active newtab visit id is unknown.
@@ -50,6 +53,7 @@ newtab.search:
           * `urlbar_handoff`
           * `about_home`
           * `about_newtab`
+          * `newtab_searchbar`
         type: string
       telemetry_id: &telemetry_id
         description: >
@@ -72,10 +76,12 @@ newtab.search.ad:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1766887
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1786670
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1817105
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065246
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1766887
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1786670#c3
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1817105#c11
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065246
     data_sensitivity:
       - interaction
     notification_emails:
@@ -109,10 +115,12 @@ newtab.search.ad:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1766887
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1786670
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1817105
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065246
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1766887
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1786670#c3
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1817105#c11
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065246
     data_sensitivity:
       - interaction
     notification_emails:
@@ -141,9 +149,11 @@ sap:
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1938929
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2008925
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2061005
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1938929
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2008925
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2061005
     data_sensitivity:
       - interaction
     notification_emails:
@@ -159,6 +169,9 @@ sap:
           `contextmenu`,
           `contextmenu_visual`,
           `about_newtab`,
+          `newtab_search_widget`,
+          `errorpage`,
+          `newtab_searchbar`,
           `searchbar`,
           `smartbar`
           `smartwindow_assistant`
@@ -255,7 +268,8 @@ sap:
       source:
         description: >
           The search access point from which the user initiated the search.
-          Possible values are `searchbar`, `smartbar` and `urlbar`.
+          Possible values are `newtab_searchbar`, `searchbar`, `smartbar` and
+          `urlbar`.
         type: string
       provider_id:
         description: >
@@ -297,11 +311,13 @@ serp:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1829953
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1851495
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2008925
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2061005
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1813162
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1824543
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1851495
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2008925
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2061005
     data_sensitivity:
       - interaction
     notification_emails:
@@ -332,13 +348,16 @@ serp:
           determine the source. The possible values are:
           `contextmenu`,
           `contextmenu_visual`,
+          `errorpage`,
           `follow_on_from_refine_on_incontent_search`,
           `follow_on_from_refine_on_SERP`,
           `opened_in_new_tab`,
           `reload`,
           `searchbar`,
+          `newtab_searchbar`,
           `smartbar`,
-          `smartwindow_assistant`
+          `smartwindow_assistant`,
+          `newtab_search_widget`,
           `system`,
           `urlbar`,
           `urlbar_handoff`,
@@ -431,9 +450,11 @@ serp:
           `non_ads_link`,
           `refined_search_buttons`,
           `shopping_tab`.
-          `ad_uncategorized` are likely the result of an engagement with an ad
-          loaded after the page was categorized for components (e.g. infinite
-          scrolling).
+          `ad_uncategorized` are the result of an engagement with an ad whose
+          component could not be determined. Either the ad was loaded after
+          the page was categorized for components (e.g. infinite scrolling),
+          or the SERP was never categorized because the user engaged before
+          the content process finished scanning the page.
         type: string
 
   ad_impression:
@@ -871,6 +892,22 @@ browser.engagement.navigation:
     expires: never
     telemetry_mirror: BROWSER_ENGAGEMENT_NAVIGATION_ABOUT_NEWTAB
 
+  newtab_search_widget:
+    type: labeled_counter
+    data_sensitivity:
+      - interaction
+    description: >
+      The count URI loads triggered in a subsession from a search widget on
+      about:newtab, broken down by the originating action.
+    bugs:
+      - https://bugzil.la/2063718
+    data_reviews:
+      - https://bugzil.la/2063718
+    notification_emails:
+      - fx-search-telemetry@mozilla.com
+      - rev-data@mozilla.com
+    expires: never
+
   contextmenu:
     type: labeled_counter
     description: >
@@ -943,6 +980,36 @@ browser.engagement.navigation:
       - https://bugzil.la/2008925
     data_reviews:
       - https://bugzil.la/2008925
+    notification_emails:
+      - fx-search-telemetry@mozilla.com
+      - rev-data@mozilla.com
+    expires: never
+
+  newtab_searchbar:
+    type: labeled_counter
+    description: >
+      The count URI loads triggered in a subsession from the New Tab search
+      bar, broken down by the originating action.
+    data_sensitivity:
+      - interaction
+    bugs:
+      - https://bugzil.la/2062210
+    data_reviews:
+      - https://bugzil.la/2062210
+    notification_emails:
+      - fx-search-telemetry@mozilla.com
+      - rev-data@mozilla.com
+    expires: never
+
+  errorpage:
+    type: labeled_counter
+    description: >
+      The count URI loads triggered in a subsession from the search CTA on
+      a network error page, broken down by the originating action.
+    bugs:
+      - https://bugzil.la/2061005
+    data_reviews:
+      - https://bugzil.la/2061005
     notification_emails:
       - fx-search-telemetry@mozilla.com
       - rev-data@mozilla.com
@@ -1191,38 +1258,6 @@ browser.search.content:
       - rev-data@mozilla.com
     expires: never
     telemetry_mirror: BROWSER_SEARCH_CONTENT_WEBEXTENSION
-
-  smartwindow_assistant:
-    type: labeled_counter
-    description: >
-      Records counts for in-content searches where the search was most
-      likely started from the AI window assistant. The key format is
-      <provider>:[tagged|tagged-follow-on|organic]:[code|other|none]
-      See https://firefox-source-docs.mozilla.org/browser/search/telemetry.html#browser-search-content
-    bugs:
-      - https://bugzil.la/2001519
-    data_reviews:
-      - https://bugzil.la/2001519
-    notification_emails:
-      - fx-search-telemetry@mozilla.com
-      - rev-data@mozilla.com
-    expires: never
-
-  smartbar:
-    type: labeled_counter
-    description: >
-      Records counts for in-content searches where the search was most
-      likely started from the smartbar. The key format is
-      <provider>:[tagged|tagged-follow-on|organic]:[code|other|none]
-      See https://firefox-source-docs.mozilla.org/browser/search/telemetry.html#browser-search-content
-    bugs:
-      - https://bugzil.la/2008925
-    data_reviews:
-      - https://bugzil.la/2008925
-    notification_emails:
-      - fx-search-telemetry@mozilla.com
-      - rev-data@mozilla.com
-    expires: never
 
   system:
     type: labeled_counter
@@ -1504,38 +1539,6 @@ browser.search.withads:
     expires: never
     telemetry_mirror: BROWSER_SEARCH_WITHADS_WEBEXTENSION
 
-  smartwindow_assistant:
-    type: labeled_counter
-    description: >
-      Records counts of SERP pages with adverts displayed where the search
-      was started from the AI window assistant. The key format is
-      ‘<provider>:<tagged|organic>’. See
-      https://firefox-source-docs.mozilla.org/browser/search/telemetry.html#browser-search-content
-    bugs:
-      - https://bugzil.la/2001519
-    data_reviews:
-      - https://bugzil.la/2001519
-    notification_emails:
-      - fx-search-telemetry@mozilla.com
-      - rev-data@mozilla.com
-    expires: never
-
-  smartbar:
-    type: labeled_counter
-    description: >
-      Records counts of SERP pages with adverts displayed where the search
-      was started from the smartbar. The key format is
-      ‘<provider>:<tagged|organic>’. See
-      https://firefox-source-docs.mozilla.org/browser/search/telemetry.html#browser-search-content
-    bugs:
-      - https://bugzil.la/2008925
-    data_reviews:
-      - https://bugzil.la/2008925
-    notification_emails:
-      - fx-search-telemetry@mozilla.com
-      - rev-data@mozilla.com
-    expires: never
-
   system:
     type: labeled_counter
     description: >
@@ -1793,36 +1796,6 @@ browser.search.adclicks:
       - rev-data@mozilla.com
     expires: never
     telemetry_mirror: BROWSER_SEARCH_ADCLICKS_WEBEXTENSION
-
-  smartwindow_assistant:
-    type: labeled_counter
-    description: >
-      Records clicks of adverts on SERP pages where the search was started
-      from the AI window assistant. The key format is ‘<provider>:<tagged|organic>’
-      See https://firefox-source-docs.mozilla.org/browser/search/telemetry.html#browser-search-content
-    bugs:
-      - https://bugzil.la/2001519
-    data_reviews:
-      - https://bugzil.la/2001519
-    notification_emails:
-      - fx-search-telemetry@mozilla.com
-      - rev-data@mozilla.com
-    expires: never
-
-  smartbar:
-    type: labeled_counter
-    description: >
-      Records clicks of adverts on SERP pages where the search was started
-      from the smartbar. The key format is ‘<provider>:<tagged|organic>’
-      See https://firefox-source-docs.mozilla.org/browser/search/telemetry.html#browser-search-content
-    bugs:
-      - https://bugzil.la/2008925
-    data_reviews:
-      - https://bugzil.la/2008925
-    notification_emails:
-      - fx-search-telemetry@mozilla.com
-      - rev-data@mozilla.com
-    expires: never
 
   system:
     type: labeled_counter

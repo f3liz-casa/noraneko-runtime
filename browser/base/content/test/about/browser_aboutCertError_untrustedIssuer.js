@@ -16,10 +16,7 @@ function pemToBase64(pem) {
 
 add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["test.wait300msAfterTabSwitch", true],
-      ["security.certerrors.felt-privacy-v1", true],
-    ],
+    set: [["security.certerrors.felt-privacy-v1", true]],
   });
 });
 
@@ -52,8 +49,8 @@ add_task(async function checkUntrustedCertIssuerCopy() {
     const info = Cu.cloneInto(mockErrorInfo, netErrorCard);
     netErrorCard.errorInfo = info;
     netErrorCard.resolvedErrorId = "SEC_ERROR_UNTRUSTED_ISSUER";
-    netErrorCard.hideExceptionButton = netErrorCard.shouldHideExceptionButton();
     netErrorCard.errorConfig = netErrorCard.getErrorConfig();
+    netErrorCard.hideExceptionButton = netErrorCard.shouldHideExceptionButton();
     await netErrorCard.getUpdateComplete();
 
     netErrorCard.advancedButton.scrollIntoView();

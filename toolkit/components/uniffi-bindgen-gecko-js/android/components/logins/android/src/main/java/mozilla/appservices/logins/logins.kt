@@ -739,6 +739,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_logins_checksum_method_loginstore_get_by_base_domain(
     ): Short
+    external fun uniffi_logins_checksum_method_loginstore_get_many(
+    ): Short
     external fun uniffi_logins_checksum_method_loginstore_has_logins_by_base_domain(
     ): Short
     external fun uniffi_logins_checksum_method_loginstore_is_empty(
@@ -746,6 +748,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_logins_checksum_method_loginstore_is_potentially_vulnerable_password(
     ): Short
     external fun uniffi_logins_checksum_method_loginstore_list(
+    ): Short
+    external fun uniffi_logins_checksum_method_loginstore_list_candidates(
     ): Short
     external fun uniffi_logins_checksum_method_loginstore_record_breach_alert_dismissal(
     ): Short
@@ -779,9 +783,9 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_logins_checksum_method_loginsbridgedengine_reset(
     ): Short
-    external fun uniffi_logins_checksum_method_loginsbridgedengine_reset_sync_id(
+    external fun uniffi_logins_checksum_method_loginsbridgedengine_reset_last_sync(
     ): Short
-    external fun uniffi_logins_checksum_method_loginsbridgedengine_set_last_sync(
+    external fun uniffi_logins_checksum_method_loginsbridgedengine_reset_sync_id(
     ): Short
     external fun uniffi_logins_checksum_method_loginsbridgedengine_set_uploaded(
     ): Short
@@ -881,6 +885,8 @@ external fun uniffi_logins_fn_method_loginstore_get(`ptr`: Long,`id`: RustBuffer
 ): RustBuffer.ByValue
 external fun uniffi_logins_fn_method_loginstore_get_by_base_domain(`ptr`: Long,`baseDomain`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_logins_fn_method_loginstore_get_many(`ptr`: Long,`ids`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_logins_fn_method_loginstore_has_logins_by_base_domain(`ptr`: Long,`baseDomain`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
 external fun uniffi_logins_fn_method_loginstore_is_empty(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -888,6 +894,8 @@ external fun uniffi_logins_fn_method_loginstore_is_empty(`ptr`: Long,uniffi_out_
 external fun uniffi_logins_fn_method_loginstore_is_potentially_vulnerable_password(`ptr`: Long,`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
 external fun uniffi_logins_fn_method_loginstore_list(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_logins_fn_method_loginstore_list_candidates(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_logins_fn_method_loginstore_record_breach_alert_dismissal(`ptr`: Long,`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -917,7 +925,7 @@ external fun uniffi_logins_fn_clone_loginsbridgedengine(`handle`: Long,uniffi_ou
 ): Long
 external fun uniffi_logins_fn_free_loginsbridgedengine(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
-external fun uniffi_logins_fn_method_loginsbridgedengine_apply(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+external fun uniffi_logins_fn_method_loginsbridgedengine_apply(`ptr`: Long,`serverModifiedMillis`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_logins_fn_method_loginsbridgedengine_ensure_current_sync_id(`ptr`: Long,`newSyncId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -925,10 +933,10 @@ external fun uniffi_logins_fn_method_loginsbridgedengine_last_sync(`ptr`: Long,u
 ): Long
 external fun uniffi_logins_fn_method_loginsbridgedengine_reset(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_logins_fn_method_loginsbridgedengine_reset_last_sync(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_logins_fn_method_loginsbridgedengine_reset_sync_id(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
-external fun uniffi_logins_fn_method_loginsbridgedengine_set_last_sync(`ptr`: Long,`lastSync`: Long,uniffi_out_err: UniffiRustCallStatus, 
-): Unit
 external fun uniffi_logins_fn_method_loginsbridgedengine_set_uploaded(`ptr`: Long,`newTimestamp`: Long,`uploadedIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_logins_fn_method_loginsbridgedengine_store_incoming(`ptr`: Long,`incomingEnvelopesAsJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -2232,6 +2240,12 @@ public interface LoginStoreInterface {
     
     fun `getByBaseDomain`(`baseDomain`: kotlin.String): List<Login>
     
+    /**
+     * Get and decrypt the logins with the given ids. Ids which don't exist are skipped, as are
+     * logins which fail to decrypt.
+     */
+    fun `getMany`(`ids`: List<kotlin.String>): List<Login>
+    
     fun `hasLoginsByBaseDomain`(`baseDomain`: kotlin.String): kotlin.Boolean
     
     fun `isEmpty`(): kotlin.Boolean
@@ -2246,6 +2260,12 @@ public interface LoginStoreInterface {
     fun `isPotentiallyVulnerablePassword`(`id`: kotlin.String): kotlin.Boolean
     
     fun `list`(): List<Login>
+    
+    /**
+     * Like `list()`, but without the encrypted fields - and so without needing the encryption
+     * key. Resolve the ids you're interested in with `get_many()`.
+     */
+    fun `listCandidates`(): List<LoginCandidate>
     
     /**
      * Stores that the user dismissed the breach alert for a login.
@@ -2696,6 +2716,24 @@ open class LoginStore: Disposable, AutoCloseable, LoginStoreInterface
     
 
     
+    /**
+     * Get and decrypt the logins with the given ids. Ids which don't exist are skipped, as are
+     * logins which fail to decrypt.
+     */
+    @Throws(LoginsApiException::class)override fun `getMany`(`ids`: List<kotlin.String>): List<Login> {
+            return FfiConverterSequenceTypeLogin.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LoginsApiException) { _status ->
+    UniffiLib.uniffi_logins_fn_method_loginstore_get_many(
+        it,
+        FfiConverterSequenceString.lower(`ids`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(LoginsApiException::class)override fun `hasLoginsByBaseDomain`(`baseDomain`: kotlin.String): kotlin.Boolean {
             return FfiConverterBoolean.lift(
     callWithHandle {
@@ -2750,6 +2788,24 @@ open class LoginStore: Disposable, AutoCloseable, LoginStoreInterface
     callWithHandle {
     uniffiRustCallWithError(LoginsApiException) { _status ->
     UniffiLib.uniffi_logins_fn_method_loginstore_list(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Like `list()`, but without the encrypted fields - and so without needing the encryption
+     * key. Resolve the ids you're interested in with `get_many()`.
+     */
+    @Throws(LoginsApiException::class)override fun `listCandidates`(): List<LoginCandidate> {
+            return FfiConverterSequenceTypeLoginCandidate.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LoginsApiException) { _status ->
+    UniffiLib.uniffi_logins_fn_method_loginstore_list_candidates(
         it,
         _status)
 }
@@ -3086,14 +3142,15 @@ public object FfiConverterTypeLoginStore: FfiConverter<LoginStore, Long> {
 
 
 /**
- * The Desktop-facing bridged sync engine. The canonical docs are in
- * https://searchfox.org/mozilla-central/source/services/interfaces/mozIBridgedSyncEngine.idl
+ * The Desktop-facing bridged sync engine - a thin wrapper over the
+ * `sync15::engine::SyncEngine` implemented by this component (see
+ * `sync15::engine::BridgedEngineWrapper`).
  * It's only actually used on Desktop, but it's fine to expose this everywhere.
  * NOTE: all timestamps here are milliseconds.
  */
 public interface LoginsBridgedEngineInterface {
     
-    fun `apply`(): List<kotlin.String>
+    fun `apply`(`serverModifiedMillis`: kotlin.Long): List<kotlin.String>
     
     fun `ensureCurrentSyncId`(`newSyncId`: kotlin.String): kotlin.String
     
@@ -3101,9 +3158,9 @@ public interface LoginsBridgedEngineInterface {
     
     fun `reset`()
     
-    fun `resetSyncId`(): kotlin.String
+    fun `resetLastSync`()
     
-    fun `setLastSync`(`lastSync`: kotlin.Long)
+    fun `resetSyncId`(): kotlin.String
     
     fun `setUploaded`(`newTimestamp`: kotlin.Long, `uploadedIds`: List<kotlin.String>)
     
@@ -3121,8 +3178,9 @@ public interface LoginsBridgedEngineInterface {
 }
 
 /**
- * The Desktop-facing bridged sync engine. The canonical docs are in
- * https://searchfox.org/mozilla-central/source/services/interfaces/mozIBridgedSyncEngine.idl
+ * The Desktop-facing bridged sync engine - a thin wrapper over the
+ * `sync15::engine::SyncEngine` implemented by this component (see
+ * `sync15::engine::BridgedEngineWrapper`).
  * It's only actually used on Desktop, but it's fine to expose this everywhere.
  * NOTE: all timestamps here are milliseconds.
  */
@@ -3223,13 +3281,13 @@ open class LoginsBridgedEngine: Disposable, AutoCloseable, LoginsBridgedEngineIn
     }
 
     
-    @Throws(LoginsApiException::class)override fun `apply`(): List<kotlin.String> {
+    @Throws(LoginsApiException::class)override fun `apply`(`serverModifiedMillis`: kotlin.Long): List<kotlin.String> {
             return FfiConverterSequenceString.lift(
     callWithHandle {
     uniffiRustCallWithError(LoginsApiException) { _status ->
     UniffiLib.uniffi_logins_fn_method_loginsbridgedengine_apply(
         it,
-        _status)
+        FfiConverterLong.lower(`serverModifiedMillis`),_status)
 }
     }
     )
@@ -3278,6 +3336,19 @@ open class LoginsBridgedEngine: Disposable, AutoCloseable, LoginsBridgedEngineIn
     
 
     
+    @Throws(LoginsApiException::class)override fun `resetLastSync`()
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(LoginsApiException) { _status ->
+    UniffiLib.uniffi_logins_fn_method_loginsbridgedengine_reset_last_sync(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
     @Throws(LoginsApiException::class)override fun `resetSyncId`(): kotlin.String {
             return FfiConverterString.lift(
     callWithHandle {
@@ -3289,19 +3360,6 @@ open class LoginsBridgedEngine: Disposable, AutoCloseable, LoginsBridgedEngineIn
     }
     )
     }
-    
-
-    
-    @Throws(LoginsApiException::class)override fun `setLastSync`(`lastSync`: kotlin.Long)
-        = 
-    callWithHandle {
-    uniffiRustCallWithError(LoginsApiException) { _status ->
-    UniffiLib.uniffi_logins_fn_method_loginsbridgedengine_set_last_sync(
-        it,
-        FfiConverterLong.lower(`lastSync`),_status)
-}
-    }
-    
     
 
     
@@ -4000,6 +4058,95 @@ public object FfiConverterTypeLogin: FfiConverterRustBuffer<Login> {
             FfiConverterString.write(value.`passwordField`, buf)
             FfiConverterString.write(value.`password`, buf)
             FfiConverterString.write(value.`username`, buf)
+    }
+}
+
+
+
+/**
+ * A login stored in the database, minus the encrypted fields.
+ *
+ * Reading these never needs the encryption key, so consumers which filter on the cleartext
+ * fields can do so without forcing the user to authenticate. See `list_candidates()`.
+ */
+data class LoginCandidate (
+    var `id`: kotlin.String
+    , 
+    var `timesUsed`: kotlin.Long
+    , 
+    var `timeCreated`: kotlin.Long
+    , 
+    var `timeLastUsed`: kotlin.Long
+    , 
+    var `timePasswordChanged`: kotlin.Long
+    , 
+    var `timeLastBreachAlertDismissed`: kotlin.Long?
+    , 
+    var `origin`: kotlin.String
+    , 
+    var `httpRealm`: kotlin.String?
+    , 
+    var `formActionOrigin`: kotlin.String?
+    , 
+    var `usernameField`: kotlin.String
+    , 
+    var `passwordField`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLoginCandidate: FfiConverterRustBuffer<LoginCandidate> {
+    override fun read(buf: ByteBuffer): LoginCandidate {
+        return LoginCandidate(
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalLong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LoginCandidate) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterLong.allocationSize(value.`timesUsed`) +
+            FfiConverterLong.allocationSize(value.`timeCreated`) +
+            FfiConverterLong.allocationSize(value.`timeLastUsed`) +
+            FfiConverterLong.allocationSize(value.`timePasswordChanged`) +
+            FfiConverterOptionalLong.allocationSize(value.`timeLastBreachAlertDismissed`) +
+            FfiConverterString.allocationSize(value.`origin`) +
+            FfiConverterOptionalString.allocationSize(value.`httpRealm`) +
+            FfiConverterOptionalString.allocationSize(value.`formActionOrigin`) +
+            FfiConverterString.allocationSize(value.`usernameField`) +
+            FfiConverterString.allocationSize(value.`passwordField`)
+    )
+
+    override fun write(value: LoginCandidate, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterLong.write(value.`timesUsed`, buf)
+            FfiConverterLong.write(value.`timeCreated`, buf)
+            FfiConverterLong.write(value.`timeLastUsed`, buf)
+            FfiConverterLong.write(value.`timePasswordChanged`, buf)
+            FfiConverterOptionalLong.write(value.`timeLastBreachAlertDismissed`, buf)
+            FfiConverterString.write(value.`origin`, buf)
+            FfiConverterOptionalString.write(value.`httpRealm`, buf)
+            FfiConverterOptionalString.write(value.`formActionOrigin`, buf)
+            FfiConverterString.write(value.`usernameField`, buf)
+            FfiConverterString.write(value.`passwordField`, buf)
     }
 }
 
@@ -4889,6 +5036,34 @@ public object FfiConverterSequenceTypeLogin: FfiConverterRustBuffer<List<Login>>
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeLogin.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeLoginCandidate: FfiConverterRustBuffer<List<LoginCandidate>> {
+    override fun read(buf: ByteBuffer): List<LoginCandidate> {
+        val len = buf.getInt()
+        return List<LoginCandidate>(len) {
+            FfiConverterTypeLoginCandidate.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<LoginCandidate>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeLoginCandidate.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<LoginCandidate>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeLoginCandidate.write(it, buf)
         }
     }
 }

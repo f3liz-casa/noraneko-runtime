@@ -1215,8 +1215,7 @@ ssl3_ProcessSessionTicketCommon(sslSocket *ss, const SECItem *ticket,
 
     if (ss->sec.ci.sid != NULL) {
         ssl_UncacheSessionID(ss);
-        ssl_FreeSID(ss->sec.ci.sid);
-        ss->sec.ci.sid = NULL;
+        ssl_SetSocketSID(ss, NULL);
     }
 
     if (!SECITEM_AllocItem(NULL, &decryptedTicket, ticket->len)) {
@@ -1271,7 +1270,7 @@ ssl3_ProcessSessionTicketCommon(sslSocket *ss, const SECItem *ticket,
         }
 
         ss->statelessResume = PR_TRUE;
-        ss->sec.ci.sid = sid;
+        ssl_SetSocketSID(ss, sid);
 
         /* We have the baseline value for the obfuscated ticket age here.  Save
          * that in xtnData temporarily.  This value is updated in
@@ -1659,13 +1658,17 @@ ssl3_SendSigAlgsXtn(const sslSocket *ss, TLSExtensionData *xtnData,
     }
 
     PRUint16 minVersion;
+    PRUint16 maxVersion;
     if (ss->sec.isServer) {
+        maxVersion = ss->version; /* CertificateRequest */
         minVersion = ss->version; /* CertificateRequest */
     } else {
+        maxVersion = ss->vrange.max; /* ClientHello */
         minVersion = ss->vrange.min; /* ClientHello */
     }
 
-    SECStatus rv = ssl3_EncodeSigAlgs(ss, minVersion, PR_TRUE /* forCert */,
+    SECStatus rv = ssl3_EncodeSigAlgs(ss, maxVersion, minVersion,
+                                      PR_TRUE /* forCert */,
                                       ss->opt.enableGrease, buf);
     if (rv != SECSuccess) {
         return SECFailure;

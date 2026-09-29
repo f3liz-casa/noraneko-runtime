@@ -155,7 +155,7 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
 
   js::InitMallocAllocator();
 
-  RETURN_IF_FAIL(js::Mutex::Init());
+  RETURN_IF_FAIL(js::MutexBase::Init());
 
   js::gc::InitMemorySubsystem();  // Ensure gc::SystemPageSize() works.
 
@@ -320,7 +320,7 @@ JS_PUBLIC_API bool JS_SetICUMemoryFunctions(JS_ICUAllocFn allocFn,
 #endif
 }
 
-#if defined(ENABLE_WASM_SIMD) && \
+#if defined(ENABLE_JIT_SIMD) && \
     (defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86))
 void JS::SetAVXEnabled(bool enabled) {
   if (enabled) {

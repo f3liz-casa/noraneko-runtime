@@ -423,7 +423,7 @@ class TabTracker extends TabTrackerBase {
       let nativeTab = adoptedTab;
       let adoptedBy = adoptingTab;
       let oldWindowId = windowTracker.getId(nativeTab.documentGlobal);
-      let oldPosition = nativeTab._tPos;
+      let oldPosition = nativeTab.index;
       this.emit("tab-detached", {
         nativeTab,
         adoptedBy,
@@ -435,7 +435,7 @@ class TabTracker extends TabTrackerBase {
     if (this.has("tab-attached")) {
       let nativeTab = adoptingTab;
       let newWindowId = windowTracker.getId(nativeTab.documentGlobal);
-      let newPosition = nativeTab._tPos;
+      let newPosition = nativeTab.index;
       this.emit("tab-attached", {
         nativeTab,
         tabId,
@@ -846,7 +846,7 @@ class Tab extends TabBase {
   }
 
   get index() {
-    return this.nativeTab._tPos;
+    return this.nativeTab.index;
   }
 
   get mutedInfo() {
@@ -1093,8 +1093,38 @@ class Window extends WindowBase {
     })();
 
     const initialState = window.windowState;
-    if (expectedState == initialState) {
+    // window.fullScreen is checked too, so that we still have work to do below
+    // when DOM and widget disagree on the fullscreen state (bug 2066805).
+    if (
+      expectedState == initialState &&
+      window.fullScreen == (expectedState == window.STATE_FULLSCREEN)
+    ) {
       return;
+    }
+
+    // On Linux, sizemode changes are asynchronous. Some of them might not even
+    // happen if the window manager doesn't want to, so wait for a bit instead of
+    // forever for a change that might not ever happen.
+    const noWindowManagerTimeout = 2000;
+
+    // Widgets report the sizemode change before resizing the window to the size
+    // of its new state, so the resize needs to be waited for separately,
+    // otherwise we would report the size the window had in its previous state.
+    // The minimized state is the only one that leaves the size unchanged, and
+    // waiting for a resize that never happens costs a whole
+    // noWindowManagerTimeout.
+    const resizeExpected =
+      window.fullScreen ||
+      (initialState != window.STATE_MINIMIZED &&
+        expectedState != window.STATE_MINIMIZED);
+
+    let onResize;
+    let promiseResize;
+    if (resizeExpected) {
+      promiseResize = new Promise(resolve => {
+        onResize = resolve;
+        window.addEventListener("resize", onResize);
+      });
     }
 
     // We check for window.fullScreen here to make sure to exit fullscreen even
@@ -1127,17 +1157,14 @@ class Window extends WindowBase {
         break;
 
       default:
+        window.removeEventListener("resize", onResize);
         throw new Error(`Unexpected window state: ${state}`);
     }
 
+    let onSizeModeChange;
+    let promiseExpectedSizeMode;
     if (window.windowState != expectedState) {
-      // On Linux, sizemode changes are asynchronous. Some of them might not
-      // even happen if the window manager doesn't want to, so wait for a bit
-      // instead of forever for a sizemode change that might not ever happen.
-      const noWindowManagerTimeout = 2000;
-
-      let onSizeModeChange;
-      const promiseExpectedSizeMode = new Promise(resolve => {
+      promiseExpectedSizeMode = new Promise(resolve => {
         onSizeModeChange = function () {
           if (window.windowState == expectedState) {
             resolve();
@@ -1145,13 +1172,18 @@ class Window extends WindowBase {
         };
         window.addEventListener("sizemodechange", onSizeModeChange);
       });
+    }
 
+    if (promiseExpectedSizeMode || promiseResize) {
+      // Both waits share a single timeout, so that a window manager that never
+      // reports either change delays us once rather than twice.
       await Promise.any([
-        promiseExpectedSizeMode,
+        Promise.all([promiseExpectedSizeMode, promiseResize]),
         new Promise(resolve => setTimeout(resolve, noWindowManagerTimeout)),
       ]);
 
       window.removeEventListener("sizemodechange", onSizeModeChange);
+      window.removeEventListener("resize", onResize);
     }
   }
 

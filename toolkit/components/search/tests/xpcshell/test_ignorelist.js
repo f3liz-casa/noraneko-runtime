@@ -216,15 +216,18 @@ add_task(async function test_ignoreListOnInstall() {
  */
 function assertPreference(engineName, ignoreListtype, url) {
   let prefValue = Services.prefs.getCharPref(
-    SearchUtils.BROWSER_SEARCH_PREF + "lastEngineIgnored"
+    "browser.search.lastEngineIgnored"
   );
   let matchResult = prefValue.match(/\d+ (.*?) (?:(https.*|\[.*))/);
   Assert.deepEqual(
     matchResult.slice(1),
-    [
-      `Search engine '${engineName}' matches ${ignoreListtype} ignore list`,
-      url,
-    ],
+    [`Search engine matches ${ignoreListtype} ignore list`, url],
     "Should have set the preference to the last engine ignored"
+  );
+
+  Assert.equal(
+    Services.prefs.getStringPref("browser.search.lastEngineIgnored.name"),
+    engineName,
+    "Should have set lastEngineIgnored.name to the blocked engine's name"
   );
 }

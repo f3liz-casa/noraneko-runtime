@@ -7,6 +7,12 @@ subsuite = "mozlint"
 
 ["test_android_format.py"]
 
+["test_android_ktfmt_ac.py"]
+
+["test_android_ktfmt_fenix.py"]
+
+["test_android_ktfmt_focus.py"]
+
 ["test_cargo-audit.py"]
 # testing it on linux is enough
 skip-if = [
@@ -57,6 +63,8 @@ skip-if = ["os == 'win'"]
 ["test_node_licenses.py"]
 
 ["test_node_package_names.py"]
+
+["test_pnpm_audit.py"]
 
 ["test_python_sites.py"]
 

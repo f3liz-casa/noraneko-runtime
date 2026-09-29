@@ -17,7 +17,7 @@ using mozilla::Maybe;
 using mozilla::Nothing;
 using mozilla::Some;
 
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
 
 // Specialization analysis for SIMD operations.  This is still x86-centric but
 // generalizes fairly easily to other architectures.
@@ -175,21 +175,6 @@ static void MapLanes(T* result, const T* input, int (*f)(int)) {
 template <typename T>
 static bool IsIdentity(const T* lanes) {
   return ScanIncreasingMasked(lanes, 0) == int(16 / sizeof(T));
-}
-
-// Recognize part of an identity permutation starting at start, with
-// the first value of the permutation expected to be bias.
-template <typename T>
-static bool IsIdentity(const T* lanes, int start, int len, int bias) {
-  if (lanes[start] != bias) {
-    return false;
-  }
-  for (int i = start + 1; i < start + len; i++) {
-    if (lanes[i] != lanes[i - 1] + 1) {
-      return false;
-    }
-  }
-  return true;
 }
 
 // We can permute by dwords if the mask is reducible to a dword mask, and in
@@ -843,4 +828,4 @@ SimdShuffle jit::AnalyzeSimdShuffle(SimdConstant control, MDefinition* lhs,
 #  undef R
 }
 
-#endif  // ENABLE_WASM_SIMD
+#endif  // ENABLE_JIT_SIMD

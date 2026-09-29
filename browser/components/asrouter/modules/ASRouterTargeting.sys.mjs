@@ -72,6 +72,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   ExtensionUtils: "resource://gre/modules/ExtensionUtils.sys.mjs",
   FeatureCalloutBroker:
     "resource:///modules/asrouter/FeatureCalloutBroker.sys.mjs",
+  FormHistory: "resource://gre/modules/FormHistory.sys.mjs",
   HomePage: "resource:///modules/HomePage.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   ProfileAge: "resource://gre/modules/ProfileAge.sys.mjs",
@@ -80,7 +81,10 @@ ChromeUtils.defineESModuleGetters(lazy, {
   // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
   SelectableProfileService:
     "resource:///modules/profiles/SelectableProfileService.sys.mjs",
-  SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
+  SessionStartup:
+    "moz-src:///browser/components/sessionstore/SessionStartup.sys.mjs",
+  SessionStore:
+    "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
   SmartTabGroupingManager:
     "moz-src:///browser/components/tabbrowser/SmartTabGrouping.sys.mjs",
   TargetingContext: "resource://messaging-system/targeting/Targeting.sys.mjs",
@@ -88,7 +92,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   TaskbarTabs: "resource:///modules/taskbartabs/TaskbarTabs.sys.mjs",
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.sys.mjs",
   TelemetrySession: "resource://gre/modules/TelemetrySession.sys.mjs",
-  WindowsLaunchOnLogin: "resource://gre/modules/WindowsLaunchOnLogin.sys.mjs",
+  LaunchOnLogin: "resource://gre/modules/LaunchOnLogin.sys.mjs",
 });
 
 ChromeUtils.defineLazyGetter(lazy, "fxAccounts", () => {
@@ -96,6 +100,15 @@ ChromeUtils.defineLazyGetter(lazy, "fxAccounts", () => {
     "resource://gre/modules/FxAccounts.sys.mjs"
   ).getFxAccountsSingleton();
 });
+
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "searchFormHistoryFieldname",
+  () =>
+    ChromeUtils.importESModule(
+      "moz-src:///toolkit/components/search/SearchSuggestionController.sys.mjs"
+    ).DEFAULT_FORM_HISTORY_PARAM
+);
 
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
@@ -556,7 +569,11 @@ export const QueryCache = {
           if (!Services.crashmanager) {
             return [];
           }
-          return Services.crashmanager.submittedDumps();
+          const crashes = await Services.crashmanager.getCrashes();
+          return crashes.map(crash => ({
+            id: crash.id,
+            date: crash.crashDate,
+          }));
         },
       }
     ),
@@ -888,6 +905,16 @@ const TargetingGetters = {
         .catch(() => resolve(NONE));
     });
   },
+  get recentSearchCount() {
+    const RECENT_SEARCH_WINDOW_DAYS = 28;
+    // FormHistory times are in microseconds, so we need to multiply by 1000 to get the correct time.
+    const lastUsedStart =
+      (Date.now() - RECENT_SEARCH_WINDOW_DAYS * 24 * 60 * 60 * 1000) * 1000;
+    return lazy.FormHistory.count({
+      fieldname: lazy.searchFormHistoryFieldname,
+      lastUsedStart,
+    }).catch(() => 0);
+  },
   get isDefaultBrowser() {
     return QueryCache.getters.isDefaultBrowser.get().catch(() => null);
   },
@@ -1195,20 +1222,20 @@ const TargetingGetters = {
   },
 
   get launchOnLoginEnabled() {
-    if (AppConstants.platform !== "win") {
+    if (!lazy.LaunchOnLogin.isSupported()) {
       return false;
     }
-    return lazy.WindowsLaunchOnLogin.getLaunchOnLoginEnabled();
+    return lazy.LaunchOnLogin.isEnabled();
   },
 
   // Whether launch on login could be enabled, i.e. it isn't overridden by
   // Windows Settings or enterprise policy. Used to avoid offering launch on
   // login to users for whom enabling it would silently no-op.
   get launchOnLoginAllowedByPolicy() {
-    if (AppConstants.platform !== "win") {
+    if (!lazy.LaunchOnLogin.isSupported()) {
       return false;
     }
-    return lazy.WindowsLaunchOnLogin.getLaunchOnLoginApproved();
+    return lazy.LaunchOnLogin.isAllowed();
   },
 
   get isMSIX() {
@@ -1647,8 +1674,8 @@ const TargetingGetters = {
   },
 
   /**
-   * The total number of crashes the user has experienced, as recorded in the
-   * dump files corresponding to submitted crashes.
+   * The total number of crashes the user has experienced, as recorded by the
+   * crash manager at crash time (independent of report submission).
    *
    * @returns {Promise<number>}
    */
@@ -1657,9 +1684,9 @@ const TargetingGetters = {
   },
 
   /**
-   * The number of days since the most recent crash, as recorded in the dump
-   * files corresponding to submitted crashes. If there are no recorded
-   * crashes, returns `null`.
+   * The number of days since the most recent crash, as recorded by the crash
+   * manager at crash time (independent of report submission). If there are no
+   * recorded crashes, returns `null`.
    *
    * @returns {Promise<number|null>}
    */
@@ -1675,7 +1702,8 @@ const TargetingGetters = {
 
   /**
    * The number of crashes the user has experienced in the last 24 hours, as
-   * recorded in the dump files corresponding to submitted crashes.
+   * recorded by the crash manager at crash time (independent of report
+   * submission).
    *
    * @returns {Promise<number>}
    */
@@ -1688,7 +1716,8 @@ const TargetingGetters = {
 
   /**
    * The number of crashes the user has experienced in the last 7 days, as
-   * recorded in the dump files corresponding to submitted crashes.
+   * recorded by the crash manager at crash time (independent of report
+   * submission).
    *
    * @returns {Promise<number>}
    */
@@ -1706,6 +1735,15 @@ const TargetingGetters = {
    */
   get isLaunchOnLogin() {
     return lazy.BrowserInitState.isLaunchOnLogin;
+  },
+
+  /**
+   * Whether the previous browser session ended in a crash.
+   *
+   * @returns {boolean}
+   */
+  get previousSessionCrashed() {
+    return lazy.SessionStartup.previousSessionCrashed;
   },
 };
 

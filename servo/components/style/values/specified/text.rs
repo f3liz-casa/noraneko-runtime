@@ -4,20 +4,20 @@
 
 //! Specified types for text properties.
 
+use crate::Zero;
 use crate::derives::*;
 use crate::parser::{Parse, ParserContext};
 use crate::properties::longhands::writing_mode::computed_value::T as SpecifiedWritingMode;
 use crate::values::computed;
 use crate::values::computed::text::TextEmphasisStyle as ComputedTextEmphasisStyle;
 use crate::values::computed::{Context, ToComputedValue};
+use crate::values::generics::NumberOrAuto;
 use crate::values::generics::text::{
     GenericHyphenateLimitChars, GenericInitialLetter, GenericTextDecorationInset,
     GenericTextDecorationLength, GenericTextIndent,
 };
-use crate::values::generics::NumberOrAuto;
 use crate::values::specified::length::{Length, LengthPercentage};
 use crate::values::specified::{AllowQuirks, Integer, Number};
-use crate::Zero;
 use cssparser::Parser;
 use icu_segmenter::GraphemeClusterSegmenter;
 use std::fmt::{self, Write};
@@ -38,10 +38,7 @@ pub enum Spacing {
 }
 
 impl Parse for Spacing {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if input
             .try_parse(|i| i.expect_ident_matching("normal"))
             .is_ok()
@@ -129,10 +126,7 @@ pub enum HyphenateCharacter {
 pub type HyphenateLimitChars = GenericHyphenateLimitChars<Integer>;
 
 impl Parse for HyphenateLimitChars {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         type IntegerOrAuto = NumberOrAuto<Integer>;
 
         let total_word_length = IntegerOrAuto::parse(context, input)?;
@@ -151,10 +145,7 @@ impl Parse for HyphenateLimitChars {
 }
 
 impl Parse for InitialLetter {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if input
             .try_parse(|i| i.expect_ident_matching("normal"))
             .is_ok()
@@ -225,10 +216,7 @@ pub struct TextOverflow {
 }
 
 impl Parse for TextOverflow {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<TextOverflow, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<TextOverflow, ParseError> {
         let first = TextOverflowSide::parse(context, input)?;
         Ok(
             if let Ok(second) = input.try_parse(|input| TextOverflowSide::parse(context, input)) {
@@ -373,7 +361,6 @@ pub enum TextTransformCase {
     /// Capitalize each word.
     Capitalize,
     /// Automatic italicization of math variables.
-    #[cfg(feature = "gecko")]
     MathAuto,
 }
 
@@ -393,22 +380,11 @@ pub enum TextTransformCase {
     ToShmem,
     ToTyped,
 )]
-#[cfg_attr(
-    feature = "gecko",
-    css(bitflags(
-        single = "none,math-auto",
-        mixed = "uppercase,lowercase,capitalize,full-width,full-size-kana",
-        validate_mixed = "Self::validate_mixed_flags",
-    ))
-)]
-#[cfg_attr(
-    not(feature = "gecko"),
-    css(bitflags(
-        single = "none",
-        mixed = "uppercase,lowercase,capitalize,full-width,full-size-kana",
-        validate_mixed = "Self::validate_mixed_flags",
-    ))
-)]
+#[css(bitflags(
+    single = "none,math-auto",
+    mixed = "uppercase,lowercase,capitalize,full-width,full-size-kana",
+    validate_mixed = "Self::validate_mixed_flags",
+))]
 #[repr(C)]
 /// Specified value for the text-transform property.
 /// (The spec grammar gives
@@ -426,15 +402,11 @@ bitflags! {
         /// Capitalize each word.
         const CAPITALIZE = 1 << 2;
         /// Automatic italicization of math variables.
-        #[cfg(feature = "gecko")]
         const MATH_AUTO = 1 << 3;
 
         /// All the case transforms, which are exclusive with each other.
-        #[cfg(feature = "gecko")]
+        /// Except for math-auto, they can be mixed with full-width or full-size-kana.
         const CASE_TRANSFORMS = Self::UPPERCASE.0 | Self::LOWERCASE.0 | Self::CAPITALIZE.0 | Self::MATH_AUTO.0;
-        /// All the case transforms, which are exclusive with each other.
-        #[cfg(feature = "servo")]
-        const CASE_TRANSFORMS = Self::UPPERCASE.0 | Self::LOWERCASE.0 | Self::CAPITALIZE.0;
 
         /// full-width
         const FULL_WIDTH = 1 << 4;
@@ -469,7 +441,6 @@ impl TextTransform {
             Self::UPPERCASE => TextTransformCase::Uppercase,
             Self::LOWERCASE => TextTransformCase::Lowercase,
             Self::CAPITALIZE => TextTransformCase::Capitalize,
-            #[cfg(feature = "gecko")]
             Self::MATH_AUTO => TextTransformCase::MathAuto,
             _ => unreachable!("Case bits are exclusive with each other"),
         }
@@ -768,10 +739,7 @@ impl ToComputedValue for TextEmphasisStyle {
 }
 
 impl Parse for TextEmphasisStyle {
-    fn parse<'i, 't>(
-        _context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if input
             .try_parse(|input| input.expect_ident_matching("none"))
             .is_ok()
@@ -792,7 +760,7 @@ impl Parse for TextEmphasisStyle {
         }
 
         if shape.is_none() && fill.is_none() {
-            return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
 
         // If a shape keyword is specified but neither filled nor open is
@@ -946,7 +914,7 @@ pub enum MozControlCharacterVisibility {
 #[cfg(feature = "gecko")]
 impl Default for MozControlCharacterVisibility {
     fn default() -> Self {
-        if static_prefs::pref!("layout.css.control-characters.visible") {
+        if crate::pref!("layout.css.control-characters.visible") {
             Self::Visible
         } else {
             Self::Hidden
@@ -1011,10 +979,7 @@ pub enum OverflowWrap {
 pub type TextIndent = GenericTextIndent<LengthPercentage>;
 
 impl Parse for TextIndent {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         let mut length = None;
         let mut hanging = false;
         let mut each_line = false;
@@ -1022,13 +987,12 @@ impl Parse for TextIndent {
         // The length-percentage and the two possible keywords can occur in any order.
         while !input.is_exhausted() {
             // If we haven't seen a length yet, try to parse one.
-            if length.is_none() {
-                if let Ok(len) = input
+            if length.is_none()
+                && let Ok(len) = input
                     .try_parse(|i| LengthPercentage::parse_quirky(context, i, AllowQuirks::Yes))
-                {
-                    length = Some(len);
-                    continue;
-                }
+            {
+                length = Some(len);
+                continue;
             }
 
             // Servo doesn't support the keywords, so just break and let the caller deal with it.
@@ -1051,7 +1015,7 @@ impl Parse for TextIndent {
                 each_line,
             })
         } else {
-            Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError))
+            Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
         }
     }
 }
@@ -1118,11 +1082,11 @@ impl TextDecorationInset {
     }
 }
 
-fn parse_inset_endpoint<'i, 't>(
+fn parse_inset_endpoint(
     ctx: &ParserContext,
-    input: &mut Parser<'i, 't>,
-) -> Result<LengthPercentage, ParseError<'i>> {
-    if !static_prefs::pref!("layout.css.text-decoration-inset-percentage.enabled") {
+    input: &mut Parser,
+) -> Result<LengthPercentage, ParseError> {
+    if !crate::pref!("layout.css.text-decoration-inset-percentage.enabled") {
         Length::parse(ctx, input).map(|l| l.into())
     } else {
         LengthPercentage::parse(ctx, input)
@@ -1130,10 +1094,7 @@ fn parse_inset_endpoint<'i, 't>(
 }
 
 impl Parse for TextDecorationInset {
-    fn parse<'i, 't>(
-        ctx: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(ctx: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
             return Ok(TextDecorationInset::Auto);
         }
@@ -1255,10 +1216,7 @@ pub enum RubyPosition {
 }
 
 impl Parse for RubyPosition {
-    fn parse<'i, 't>(
-        _context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<RubyPosition, ParseError<'i>> {
+    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<RubyPosition, ParseError> {
         // Parse alternate before
         let alternate = input
             .try_parse(|i| i.expect_ident_matching("alternate"))
@@ -1474,15 +1432,12 @@ pub struct TextEdge {
 }
 
 impl Parse for TextEdge {
-    fn parse<'i, 't>(
-        _context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<TextEdge, ParseError<'i>> {
+    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<TextEdge, ParseError> {
         let first = TextEdgeKeyword::parse(input)?;
 
         if let Ok(second) = input.try_parse(TextEdgeKeyword::parse) {
             if !first.is_valid_for_over() || !second.is_valid_for_under() {
-                return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+                return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
             }
 
             return Ok(TextEdge {

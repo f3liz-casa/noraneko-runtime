@@ -80,7 +80,7 @@ add_task(async function test_sidebar_providers() {
   await SidebarController.show("viewGenaiChatSidebar");
 
   const origCount = countVisible();
-  Assert.equal(origCount, 5, "Rendered expected number of provider options");
+  Assert.equal(origCount, 4, "Rendered expected number of provider options");
 
   await SidebarController.hide();
   await SpecialPowers.pushPrefEnv({
@@ -239,6 +239,7 @@ add_task(async function test_sidebar_menu() {
   const popup = await TestUtils.waitForCondition(() =>
     document.getElementById("chatbot-menupopup")
   );
+  await BrowserTestUtils.waitForPopupEvent(popup, "shown");
 
   Assert.ok(popup, "Menu popup created");
   let items = popup.querySelectorAll("menuitem");
@@ -254,11 +255,11 @@ add_task(async function test_sidebar_menu() {
   );
 
   // Disable shortcuts via menu
-  items[2].click();
-  const shown = BrowserTestUtils.waitForEvent(popup, "popupshown");
+  await BrowserTestUtils.activateMenuItem(items[2]);
+
   Services.prefs.clearUserPref("browser.ml.chat.provider");
   button.click();
-  await shown;
+  await BrowserTestUtils.waitForPopupEvent(popup, "shown");
 
   items = popup.querySelectorAll("menuitem");
   Assert.ok(!items[1].hasAttribute("checked"), "Shortcuts not shown");

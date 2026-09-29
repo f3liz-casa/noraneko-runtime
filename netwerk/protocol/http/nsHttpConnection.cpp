@@ -740,9 +740,11 @@ nsresult nsHttpConnection::AddTransaction(nsAHttpTransaction* httpTransaction,
   needTunnel = needTunnel && httpTransaction->QueryHttpTransaction();
 
   // Let the transaction know that the tunnel is already established and we
-  // don't need to setup the tunnel again.
-  if (transCI->UsingConnect()) {
-    MOZ_ASSERT(mProxyConnectResponseHead);
+  // don't need to setup the tunnel again. Note that we only have a response
+  // head if the CONNECT request was sent on this connection - for example a
+  // HTTP/2 proxy connection tunnels each transaction in its own stream, so
+  // there is nothing to report here.
+  if (transCI->UsingConnect() && mProxyConnectResponseHead) {
     httpTransaction->OnProxyConnectComplete(mProxyConnectResponseHead);
   }
 
@@ -1551,7 +1553,7 @@ void nsHttpConnection::ForceSendIO(nsITimer* aTimer, void* aClosure) {
   nsHttpConnection* self = static_cast<nsHttpConnection*>(aClosure);
   MOZ_ASSERT(aTimer == self->mForceSendTimer);
   self->mForceSendTimer = nullptr;
-  NS_DispatchToCurrentThread(new HttpConnectionForceIO(self, false));
+  DispatchToCurrent(new HttpConnectionForceIO(self, false));
 }
 
 nsresult nsHttpConnection::MaybeForceSendIO() {
@@ -1579,7 +1581,7 @@ nsresult nsHttpConnection::ForceRecv() {
   LOG(("nsHttpConnection::ForceRecv [this=%p]\n", this));
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
-  return NS_DispatchToCurrentThread(new HttpConnectionForceIO(this, true));
+  return DispatchToCurrent(new HttpConnectionForceIO(this, true));
 }
 
 // trigger an asynchronous write

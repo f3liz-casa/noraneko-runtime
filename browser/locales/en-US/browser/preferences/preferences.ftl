@@ -52,6 +52,9 @@ managed-notice-info-icon =
 managed-notice-nav =
     .label = Your browser is being managed by your organization.
 
+tls-key-logging-notice-nav =
+    .label = An app or service may see your encrypted traffic.
+
 category-list =
     .aria-label = Categories
 
@@ -361,10 +364,6 @@ browser-layout-vertical-tabs2 =
     .label = Vertical tabs
     .title = Tabs on the side, in the sidebar
     .description = Tabs on the side, in the sidebar
-
-browser-layout-show-sidebar2 =
-    .label = Show sidebar
-    .description = Quickly access bookmarks, tabs from your phone, AI chatbots, and more without leaving your main view.
 
 page-navigation-group =
     .label = Page navigation
@@ -773,6 +772,9 @@ update-history-2 =
 
 update-application-installation =
     .label = Installation
+
+update-application-radio-group =
+    .aria-label = Installation
 
 update-application-auto-2 =
     .label = Automatically install updates (recommended)
@@ -1300,9 +1302,31 @@ containers-new-tab-check3 =
     .label = Select a container for each new tab
     .accesskey = S
 
+# Checkbox in the Containers settings. By default, when a link is opened from
+# another application, Firefox tries to pick a matching container for it. When
+# this checkbox is checked, such links always open outside of any container.
+containers-external-links-check =
+    .label = Don’t use containers for links opened from external apps
+    .accesskey = D
+
 containers-settings-button2 =
     .title = Settings
 containers-remove-button3 =
+    .title = Delete
+
+containers-sites-card-header =
+    .label = Site-specific containers
+    .description = Choose a container for a site and { -brand-short-name } will use it every time the site opens.
+containers-sites-add-button =
+    .label = Add website
+    .accesskey = w
+
+# The dropdown that picks which container a site opens in.
+# Variables:
+#   $site (string) - Domain of the website, for example “example.com”.
+containers-site-container-select = Container for { $site }
+
+containers-site-remove-button =
     .title = Delete
 
 ## Account and sync
@@ -1800,6 +1824,9 @@ preferences-passwords-autofill-header =
 history-group =
     .label = History
 
+history-mode-radio-group =
+    .aria-label = History
+
 history-remember-option-all2 =
     .label = Remember history
 history-remember-option-never2 =
@@ -2290,6 +2317,9 @@ preferences-doh-status-not-active = Not active ({ $reason })
 
 preferences-doh-group-message2 = Enable DNS over HTTPS using:
 
+preferences-doh-radio-group =
+    .aria-label = Enable DNS over HTTPS using:
+
 preferences-doh-expand-section =
   .tooltiptext = More information
 
@@ -2551,9 +2581,13 @@ preferences-ai-controls-key-points-control =
     .label = Key points in link previews
     .description = See a quick summary before opening a link.
 
-preferences-ai-controls-sidebar-chatbot-group-2 =
+preferences-ai-controls-speech-recognition-control =
+    .label = Speech recognition
+    .description = Transcribe speech locally.
+
+preferences-ai-controls-sidebar-chatbot-group-3 =
     .label = AI chatbot providers in sidebar
-    .description = Keep a chatbot in view as you browse. Choose from Anthropic Claude, ChatGPT, Copilot, Google Gemini, and Mistral Vibe.
+    .description = Keep a chatbot in view as you browse. Choose from multiple providers and switch anytime.
 
 preferences-ai-controls-sidebar-chatbot-control =
     .label = Chatbot in sidebar
@@ -2582,6 +2616,7 @@ preferences-ai-controls-block-confirmation-pdfjs = Image alt text in { -brand-sh
 preferences-ai-controls-block-confirmation-tab-group-suggestions = Tab group suggestions
 preferences-ai-controls-block-confirmation-key-points = Key points in link previews
 preferences-ai-controls-block-confirmation-sidebar-chatbot = Chatbot providers in sidebar
+preferences-ai-controls-block-confirmation-speech-recognition = Speech recognition
 preferences-ai-controls-block-confirmation-features-after = Blocking also affects extensions that use AI provided by { -brand-short-name }.
 
 preferences-ai-controls-block-confirmation-cancel =
@@ -2637,6 +2672,9 @@ issue-card-dismiss-button =
 preferences-etp-status-header =
     .label = Enhanced Tracking Protection
     .description = Sites use trackers to follow you online and show creepy ads. { -brand-short-name } shields you as you browse, blocking trackers automatically so you’re in control of your digital trail.
+
+preferences-etp-level-radio-group =
+    .aria-label = Enhanced Tracking Protection
 
 preferences-etp-level-standard =
     .label = Standard (default)
@@ -2711,8 +2749,8 @@ preferences-etp-custom-cookie-behavior =
 
 preferences-etp-custom-cookie-behavior-accept-all =
     .label = Allow all cookies
-preferences-etp-custom-cookie-behavior-block-cross-site-cookies =
-    .label = Block cross-site cookies
+preferences-etp-custom-cookie-behavior-block-cross-site-tracking-cookies =
+    .label = Block cross-site tracking cookies
 preferences-etp-custom-cookie-behavior-isolate-cross-site-cookies =
     .label = Isolate cross-site cookies
 preferences-etp-custom-cookie-behavior-block-unvisited =
@@ -2782,11 +2820,11 @@ security-privacy-issue-warning-proxy-autodetection =
 
 # The header in settings with link to the referral page, where the user can invite others to
 # use the browser. "Share" here means recommending or referring the browser
-referrals-section-header =
-  .label = Share { -brand-short-name }
+referrals-section-header2 =
+  .label = Share { -brand-product-name }
   .description = Invite someone to choose the browser that puts privacy first.
 
 # Link that opens the referral page, where the user can invite others to
 # use the browser. "Share" here means recommending or referring the browser
-referrals-link =
-  .label = Share { -brand-short-name }
+referrals-link2 =
+  .label = Share { -brand-product-name }

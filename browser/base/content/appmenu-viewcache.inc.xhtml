@@ -37,6 +37,23 @@
                    crop="end"/>
           </vbox>
         </toolbarbutton>
+        <!-- Shown in place of the row-wide sign-in button once the user has
+             signed out, mirroring the account menu's signed-out card. -->
+        <hbox id="appMenu-fxa-signed-out-row"
+              align="center"
+              flex="1"
+              hidden="true">
+          <html:img class="fxa-menu-signed-out-avatar"
+                    alt=""
+                    src="chrome://browser/skin/fxa/avatar-empty.svg"/>
+          <vbox class="fxa-menu-signed-out-text" flex="1">
+            <label id="appMenu-fxa-signed-out-title"
+                   class="fxa-menu-signed-out-email"/>
+            <description id="appMenu-fxa-signed-out-message"
+                         class="fxa-menu-signed-out-message"/>
+          </vbox>
+          <html:moz-button id="appMenu-fxa-signed-out-sign-in-button"/>
+        </hbox>
         <html:moz-button id="appMenu-nova-fxa-label"/>
       </toolbaritem>
       <hbox id="appMenu-fxa-sign-in-promo"
@@ -51,6 +68,7 @@
                        data-l10n-id="appmenu-fxa-sign-in-promo-message"/>
         </vbox>
         <html:moz-button type="primary"
+                         size="small"
                          id="appMenu-fxa-sign-in-promo-button"
                          data-l10n-id="appmenu-fxa-sign-in-promo-button"/>
       </hbox>
@@ -695,6 +713,7 @@
                        data-l10n-id="fxa-menu-sign-in-promo-message"/>
         </vbox>
         <html:moz-button type="primary"
+                         size="small"
                          id="PanelUI-fxa-menu-sign-in-promo-button"
                          data-l10n-id="fxa-menu-sign-in-promo-button"/>
       </hbox>
@@ -799,7 +818,7 @@
           <hbox align="center">
             <image class="PanelUI-fxa-menu-share-firefox-button ctaMenuLogo" role="presentation" />
             <vbox flex="1">
-              <label id="fxa-menu-header-title" crop="end" data-l10n-id="appmenuitem-share-firefox-title" />
+              <label id="fxa-menu-header-title" crop="end" data-l10n-id="appmenuitem-share-firefox-title2" />
             </vbox>
           </hbox>
         </toolbarbutton>
@@ -1009,6 +1028,10 @@
       </html:moz-button-group>
     </vbox>
   </panelview>
+
+#ifdef NIGHTLY_BUILD
+#include ../../components/remotecontrol/content/remoteControlPanel.inc.xhtml
+#endif
 
   <panelview id="content-analysis-panel" class="PanelUI-subView" role="document" mainview-with-header="true">
     <vbox id="content-analysis-panel-container" role="alertdialog" aria-labelledby="content-analysis-header">

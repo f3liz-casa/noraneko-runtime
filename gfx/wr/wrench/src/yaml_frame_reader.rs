@@ -18,7 +18,7 @@ use webrender::api::*;
 use webrender::render_api::*;
 use webrender::api::units::*;
 use webrender::api::FillRule;
-use crate::wrench::{FontDescriptor, Wrench, WrenchThing, DisplayList};
+use crate::wrench::{FontDescriptor, FontInstanceDescriptor, Wrench, WrenchThing, DisplayList};
 use crate::yaml_helper::{StringEnum, YamlHelper, make_perspective};
 use yaml_rust::{Yaml, YamlLoader};
 use crate::PLATFORM_DEFAULT_FACE_NAME;
@@ -64,6 +64,36 @@ impl FontDescriptor {
     }
 }
 
+/// GL texture format parameters for an image format.
+struct GlFormatDesc {
+    internal: gl::GLenum,
+    external: gl::GLenum,
+    pixel_type: gl::GLenum,
+}
+
+fn gl_format_desc(format: ImageFormat) -> GlFormatDesc {
+    let (internal, external, pixel_type) = match format {
+        ImageFormat::R8 => (gl::R8, gl::RED, gl::UNSIGNED_BYTE),
+        ImageFormat::R16 => (gl::R16, gl::RED, gl::UNSIGNED_SHORT),
+        ImageFormat::BGRA8 => unreachable!("BGRA8 is uploaded through the RGBA8 layout, see add_image"),
+        ImageFormat::RGBA8 => (gl::RGBA8, gl::RGBA, gl::UNSIGNED_BYTE),
+        ImageFormat::RGBAF32 => (gl::RGBA32F, gl::RGBA, gl::FLOAT),
+        ImageFormat::RGBAI32 => (gl::RGBA32I, gl::RGBA_INTEGER, gl::INT),
+        ImageFormat::RG8 => (gl::RG8, gl::RG, gl::UNSIGNED_BYTE),
+        ImageFormat::RG16 => (gl::RG16, gl::RG, gl::UNSIGNED_SHORT),
+    };
+    GlFormatDesc { internal, external, pixel_type }
+}
+
+fn gl_target(target: ImageBufferKind) -> gl::GLenum {
+    match target {
+        ImageBufferKind::Texture2D => gl::TEXTURE_2D,
+        ImageBufferKind::TextureRect => gl::TEXTURE_RECTANGLE,
+        ImageBufferKind::TextureExternal |
+        ImageBufferKind::TextureExternalBT709 => gl::TEXTURE_EXTERNAL_OES,
+    }
+}
+
 struct LocalExternalImageHandler {
     texture_ids: Vec<(gl::GLuint, ImageDescriptor)>,
 }
@@ -78,7 +108,7 @@ impl LocalExternalImageHandler {
     fn init_gl_texture(
         id: gl::GLuint,
         gl_target: gl::GLuint,
-        format_desc: webrender::FormatDesc,
+        format_desc: GlFormatDesc,
         width: gl::GLint,
         height: gl::GLint,
         bytes: &[u8],
@@ -104,29 +134,28 @@ impl LocalExternalImageHandler {
     }
 
     pub fn add_image(&mut self,
-        device: &webrender::Device,
+        gl: &dyn gl::Gl,
         desc: ImageDescriptor,
         target: ImageBufferKind,
         image_data: ImageData,
     ) -> ImageData {
         let (image_id, channel_idx) = match image_data {
             ImageData::Raw(ref data) => {
-                let gl = device.gl();
                 let texture_ids = gl.gen_textures(1);
                 let format_desc = if desc.format == ImageFormat::BGRA8 {
                     // Force BGRA8 data to RGBA8 layout to avoid potential
                     // need for usage of texture-swizzle.
-                    webrender::FormatDesc {
+                    GlFormatDesc {
                         external: gl::BGRA,
-                        .. device.gl_describe_format(ImageFormat::RGBA8)
+                        .. gl_format_desc(ImageFormat::RGBA8)
                     }
                 } else {
-                    device.gl_describe_format(desc.format)
+                    gl_format_desc(desc.format)
                 };
 
                 LocalExternalImageHandler::init_gl_texture(
                     texture_ids[0],
-                    webrender::get_gl_target(target),
+                    gl_target(target),
                     format_desc,
                     desc.size.width as gl::GLint,
                     desc.size.height as gl::GLint,
@@ -160,7 +189,7 @@ impl ExternalImageHandler for LocalExternalImageHandler {
         let (id, desc) = self.texture_ids[key.0 as usize];
         ExternalImage {
             uv: TexelRect::new(0.0, 0.0, desc.size.width as f32, desc.size.height as f32),
-            source: ExternalImageSource::NativeTexture(id),
+            source: ExternalImageSource::NativeTexture(ExternalTextureHandle(id as u64)),
         }
     }
     fn unlock(&mut self, _key: ExternalImageId, _channel_index: u8) {}
@@ -342,8 +371,6 @@ pub struct YamlFrameReader {
 
     image_map: HashMap<(PathBuf, Option<i64>), (ImageKey, LayoutSize)>,
 
-    fonts: HashMap<FontDescriptor, FontKey>,
-    font_instances: HashMap<(FontKey, FontSize, FontInstanceFlags, SyntheticItalics), FontInstanceKey>,
     font_render_mode: Option<FontRenderMode>,
     snapshots: HashMap<String, Snapshot>,
     allow_mipmaps: bool,
@@ -388,8 +415,6 @@ impl YamlFrameReader {
             display_lists: Vec::new(),
             scroll_offsets: HashMap::new(),
             transform_properties: Vec::new(),
-            fonts: HashMap::new(),
-            font_instances: HashMap::new(),
             font_render_mode: None,
             snapshots: HashMap::new(),
             allow_mipmaps: false,
@@ -410,18 +435,10 @@ impl YamlFrameReader {
         }
     }
 
-    pub fn deinit(mut self, wrench: &mut Wrench) {
-        let mut txn = Transaction::new();
-
-        for (_, font_instance) in self.font_instances.drain() {
-            txn.delete_font_instance(font_instance);
-        }
-
-        for (_, font) in self.fonts.drain() {
-            txn.delete_font(font);
-        }
-
-        wrench.api.send_transaction(wrench.document_id, txn);
+    // Fonts are not torn down here: they live on `Wrench` so that an identical
+    // font keeps its instance key across yaml files, which is what lets content
+    // interning dedup a run that two files share.
+    pub fn deinit(self, _wrench: &mut Wrench) {
     }
 
     fn top_space(&self) -> SpatialId {
@@ -490,22 +507,26 @@ impl YamlFrameReader {
         if let Some(pipelines) = yaml["pipelines"].as_vec() {
             for pipeline in pipelines {
                 let pipeline_id = pipeline["id"].as_pipeline_id().unwrap();
-                let mut builder = DisplayListBuilder::new(pipeline_id);
+                let mut builder = wrench.take_dl_builder(pipeline_id);
                 self.build_pipeline(wrench, &mut builder, pipeline_id, false, pipeline);
+                wrench.put_dl_builder(pipeline_id, builder);
             }
         }
 
-        let mut builder = DisplayListBuilder::new(wrench.root_pipeline_id);
+        let root_pipeline_id = wrench.root_pipeline_id;
+        let mut builder = wrench.take_dl_builder(root_pipeline_id);
 
         if let Some(frames) = yaml["frames"].as_vec() {
             for frame in frames {
-                self.build_pipeline(wrench, &mut builder, wrench.root_pipeline_id, true, frame);
+                self.build_pipeline(wrench, &mut builder, root_pipeline_id, true, frame);
             }
         } else {
             let root_stacking_context = &yaml["root"];
             assert_ne!(*root_stacking_context, Yaml::BadValue);
-            self.build_pipeline(wrench, &mut builder, wrench.root_pipeline_id, true, root_stacking_context);
+            self.build_pipeline(wrench, &mut builder, root_pipeline_id, true, root_stacking_context);
         }
+
+        wrench.put_dl_builder(root_pipeline_id, builder);
 
         // If replaying the same frame during interactive use, the frame gets rebuilt,
         // but the external image handler has already been consumed by the renderer.
@@ -834,7 +855,7 @@ impl YamlFrameReader {
 
             let external_image_data =
                 self.external_image_handler.as_mut().unwrap().add_image(
-                    &wrench.renderer.device,
+                    wrench.gl(),
                     descriptor,
                     external_target,
                     image_data
@@ -855,28 +876,26 @@ impl YamlFrameReader {
 
     fn get_or_create_font(&mut self, desc: FontDescriptor, wrench: &mut Wrench) -> FontKey {
         let list_resources = self.list_resources;
-        *self.fonts
-            .entry(desc.clone())
-            .or_insert_with(|| match desc {
-                FontDescriptor::Path {
-                    ref path,
-                    font_index,
-                } => {
-                    if list_resources { println!("{}", path.to_string_lossy()); }
-                    let mut file = File::open(path).expect("Couldn't open font file");
-                    let mut bytes = vec![];
-                    file.read_to_end(&mut bytes)
-                        .expect("failed to read font file");
-                    wrench.font_key_from_bytes(bytes, font_index)
-                }
-                FontDescriptor::Family { ref name } => wrench.font_key_from_name(name),
-                FontDescriptor::Properties {
-                    ref family,
-                    weight,
-                    style,
-                    stretch,
-                } => wrench.font_key_from_properties(family, weight, style, stretch),
-            })
+        wrench.get_or_create_font(desc, |wrench, desc| match *desc {
+            FontDescriptor::Path {
+                ref path,
+                font_index,
+            } => {
+                if list_resources { println!("{}", path.to_string_lossy()); }
+                let mut file = File::open(path).expect("Couldn't open font file");
+                let mut bytes = vec![];
+                file.read_to_end(&mut bytes)
+                    .expect("failed to read font file");
+                wrench.font_key_from_bytes(bytes, font_index)
+            }
+            FontDescriptor::Family { ref name } => wrench.font_key_from_name(name),
+            FontDescriptor::Properties {
+                ref family,
+                weight,
+                style,
+                stretch,
+            } => wrench.font_key_from_properties(family, weight, style, stretch),
+        })
     }
 
     pub fn allow_mipmaps(&mut self, allow_mipmaps: bool) {
@@ -899,19 +918,13 @@ impl YamlFrameReader {
         synthetic_italics: SyntheticItalics,
         wrench: &mut Wrench,
     ) -> FontInstanceKey {
-        let font_render_mode = self.font_render_mode;
-
-        *self.font_instances
-            .entry((font_key, size.into(), flags, synthetic_italics))
-            .or_insert_with(|| {
-                wrench.add_font_instance(
-                    font_key,
-                    size,
-                    flags,
-                    font_render_mode,
-                    synthetic_italics,
-                )
-            })
+        wrench.get_or_create_font_instance(FontInstanceDescriptor {
+            font_key,
+            size: size.into(),
+            flags,
+            render_mode: self.font_render_mode,
+            synthetic_italics,
+        })
     }
 
     fn as_image_mask(&mut self, item: &Yaml, wrench: &mut Wrench) -> Option<ImageMask> {
@@ -1060,7 +1073,7 @@ impl YamlFrameReader {
             .as_rect()
             .expect("gradient must have bounds");
 
-        let gradient = item.as_gradient(dl);
+        let (gradient, stops) = item.as_gradient(dl);
         let tile_size = item["tile-size"].as_size().unwrap_or_else(|| bounds.size());
         let tile_spacing = item["tile-spacing"].as_size().unwrap_or_else(LayoutSize::zero);
 
@@ -1069,7 +1082,8 @@ impl YamlFrameReader {
             bounds,
             gradient,
             tile_size,
-            tile_spacing
+            tile_spacing,
+            &stops,
         );
     }
 
@@ -1087,7 +1101,7 @@ impl YamlFrameReader {
         let bounds = item[bounds_key]
             .as_rect()
             .expect("radial gradient must have bounds");
-        let gradient = item.as_radial_gradient(dl);
+        let (gradient, stops) = item.as_radial_gradient(dl);
         let tile_size = item["tile-size"].as_size().unwrap_or_else(|| bounds.size());
         let tile_spacing = item["tile-spacing"].as_size().unwrap_or_else(LayoutSize::zero);
 
@@ -1097,6 +1111,7 @@ impl YamlFrameReader {
             gradient,
             tile_size,
             tile_spacing,
+            &stops,
         );
     }
 
@@ -1114,7 +1129,7 @@ impl YamlFrameReader {
         let bounds = item[bounds_key]
             .as_rect()
             .expect("conic gradient must have bounds");
-        let gradient = item.as_conic_gradient(dl);
+        let (gradient, stops) = item.as_conic_gradient(dl);
         let tile_size = item["tile-size"].as_size().unwrap_or_else(|| bounds.size());
         let tile_spacing = item["tile-spacing"].as_size().unwrap_or_else(LayoutSize::zero);
 
@@ -1124,6 +1139,7 @@ impl YamlFrameReader {
             gradient,
             tile_size,
             tile_spacing,
+            &stops,
         );
     }
 
@@ -1134,6 +1150,9 @@ impl YamlFrameReader {
         item: &Yaml,
         info: &mut CommonItemProperties,
     ) {
+        // Set by a nine-patch gradient source; the stops travel with the
+        // gradient to `push_border` rather than being recorded separately.
+        let mut gradient_stops = Vec::new();
         let bounds_key = if item["type"].is_badvalue() {
             "border"
         } else {
@@ -1252,15 +1271,18 @@ impl YamlFrameReader {
                             NinePatchBorderSource::Image(image_key, ImageRendering::Auto)
                         }
                         "gradient" => {
-                            let gradient = item.as_gradient(dl);
+                            let (gradient, stops) = item.as_gradient(dl);
+                            gradient_stops = stops;
                             NinePatchBorderSource::Gradient(gradient)
                         }
                         "radial-gradient" => {
-                            let gradient = item.as_radial_gradient(dl);
+                            let (gradient, stops) = item.as_radial_gradient(dl);
+                            gradient_stops = stops;
                             NinePatchBorderSource::RadialGradient(gradient)
                         }
                         "conic-gradient" => {
-                            let gradient = item.as_conic_gradient(dl);
+                            let (gradient, stops) = item.as_conic_gradient(dl);
+                            gradient_stops = stops;
                             NinePatchBorderSource::ConicGradient(gradient)
                         }
                         _ => unreachable!("Unexpected border type"),
@@ -1286,7 +1308,7 @@ impl YamlFrameReader {
             None
         };
         if let Some(details) = border_details {
-            dl.push_border(info, bounds, widths, details);
+            dl.push_border(info, bounds, widths, details, &gradient_stops);
         }
     }
 

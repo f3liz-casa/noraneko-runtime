@@ -260,16 +260,17 @@ bool ClientWebGLContext::DispatchEvent(const nsAString& eventName) const {
   bool useDefaultHandler = true;
 
   if (mCanvasElement) {
-    nsContentUtils::DispatchTrustedEvent(mCanvasElement->OwnerDoc(),
-                                         mCanvasElement, eventName, kCanBubble,
+    const RefPtr<dom::HTMLCanvasElement> canvasElement = mCanvasElement;
+    nsContentUtils::DispatchTrustedEvent(canvasElement, eventName, kCanBubble,
                                          kIsCancelable, &useDefaultHandler);
   } else if (mOffscreenCanvas) {
     // OffscreenCanvas case
-    RefPtr<dom::Event> event =
+    const RefPtr<dom::Event> event =
         new dom::Event(mOffscreenCanvas, nullptr, nullptr);
     event->InitEvent(eventName, kCanBubble, kIsCancelable);
     event->SetTrusted(true);
-    useDefaultHandler = mOffscreenCanvas->DispatchEvent(
+    const RefPtr<dom::OffscreenCanvas> offscreenCanvas = mOffscreenCanvas;
+    useDefaultHandler = offscreenCanvas->DispatchEvent(
         *event, dom::CallerType::System, IgnoreErrors());
   }
   return useDefaultHandler;
@@ -318,7 +319,7 @@ void ClientWebGLContext::OnContextLoss(
   }
 
   const auto weak = WeakPtr<const ClientWebGLContext>(this);
-  const auto fnRun = [weak]() {
+  const auto fnRun = [weak]() MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
     const auto strong = RefPtr<const ClientWebGLContext>(weak);
     if (!strong) return;
     strong->Event_webglcontextlost();
@@ -356,7 +357,7 @@ void ClientWebGLContext::RestoreContext(
   mAwaitingRestore = true;
 
   const auto weak = WeakPtr<const ClientWebGLContext>(this);
-  const auto fnRun = [weak]() {
+  const auto fnRun = [weak]() MOZ_CAN_RUN_SCRIPT_BOUNDARY {
     const auto strong = RefPtr<const ClientWebGLContext>(weak);
     if (!strong) return;
     strong->Event_webglcontextrestored();
@@ -4737,18 +4738,6 @@ void ClientWebGLContext::TexImage(uint8_t funcDims, GLenum imageTarget,
                 std::string{"SurfaceDescriptorBuffer data is not Shmem."});
           }
         } break;
-        case layers::SurfaceDescriptor::TSurfaceDescriptorD3D10: {
-          MOZ_ASSERT(desc->image);
-          keepAliveImage = desc->image;
-        } break;
-        case layers::SurfaceDescriptor::TSurfaceDescriptorDXGIYCbCr: {
-          MOZ_ASSERT(desc->image);
-          keepAliveImage = desc->image;
-        } break;
-        case layers::SurfaceDescriptor::TSurfaceDescriptorMacIOSurface: {
-          MOZ_ASSERT(desc->image);
-          keepAliveImage = desc->image;
-        } break;
         case layers::SurfaceDescriptor::TSurfaceDescriptorGPUVideo: {
           MOZ_ASSERT(desc->image);
           keepAliveImage = desc->image;
@@ -4759,12 +4748,16 @@ void ClientWebGLContext::TexImage(uint8_t funcDims, GLenum imageTarget,
                 "SurfaceDescriptorGPUVideo does not contain RemoteDecoder."});
           }
           const auto& sdrd = sdv.get_SurfaceDescriptorRemoteDecoder();
-          const auto& subdesc = sdrd.subdesc();
-          if (subdesc.type() !=
-              layers::RemoteDecoderVideoSubDescriptor::Tnull_t) {
+          if (sdrd.videoType() == layers::RemoteDecoderVideoType::TypeNone) {
             return Some(
-                std::string{"SurfaceDescriptorGPUVideo does not contain "
-                            "RemoteDecoder null subdesc."});
+                std::string{"SurfaceDescriptorRemoteDecoder type is none."});
+          }
+          if (sdrd.videoType() == layers::RemoteDecoderVideoType::D3D10 ||
+              sdrd.videoType() == layers::RemoteDecoderVideoType::DXGIYCbCr ||
+              sdrd.videoType() ==
+                  layers::RemoteDecoderVideoType::MacIOSurface) {
+            MOZ_ASSERT(desc->image);
+            keepAliveImage = desc->image;
           }
         } break;
         case layers::SurfaceDescriptor::TSurfaceDescriptorExternalImage: {

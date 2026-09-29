@@ -40,6 +40,20 @@ function stateWithTrackers(trackersToday, sitesToday = 9) {
   };
 }
 
+function stateWithEtpOff(trackersToday = 0, extra = {}) {
+  return {
+    ...mockState,
+    PrivacyWidget: {
+      ...INITIAL_STATE.PrivacyWidget,
+      initialized: true,
+      etpOff: true,
+      trackersToday,
+      sitesToday: 9,
+      ...extra,
+    },
+  };
+}
+
 function stateWithMessage(message, trackersToday = 87, sitesToday = 9) {
   return {
     ...mockState,
@@ -49,6 +63,16 @@ function stateWithMessage(message, trackersToday = 87, sitesToday = 9) {
       trackersToday,
       sitesToday,
       ...message,
+    },
+  };
+}
+
+function atLargeSize(state) {
+  return {
+    ...state,
+    Prefs: {
+      ...state.Prefs,
+      values: { ...state.Prefs.values, "widgets.privacy.size": "large" },
     },
   };
 }
@@ -113,6 +137,16 @@ describe("Privacy widget", () => {
     expect(root.className).toContain("medium-widget");
   });
 
+  it("names the widget region for screen readers", () => {
+    // The widget has no visible title, so the article carries the accessible
+    // name itself via an attribute-only Fluent message.
+    const { container } = renderPrivacy();
+    const root = container.querySelector("article.privacy");
+    expect(root.getAttribute("data-l10n-id")).toBe(
+      "newtab-privacy-widget-label"
+    );
+  });
+
   it("fires widgets_impression once when the widget scrolls into view", () => {
     // beforeEach installs a firing IntersectionObserver, so the hook's
     // impression goes out on observe. This is the trigger the impression-time
@@ -152,13 +186,107 @@ describe("Privacy widget", () => {
     expect(container.querySelector(".privacy-count")).toBeFalsy();
   });
 
+  describe("is-count-only state class", () => {
+    const rootClassName = state =>
+      renderPrivacy(jest.fn(), {}, state).container.querySelector(
+        "article.privacy"
+      ).className;
+
+    it("is set on a count with no tip or streak copy", () => {
+      expect(rootClassName(stateWithTrackers(42))).toContain("is-count-only");
+    });
+
+    it("is set on the blank variant, which is a count plus a CTA", () => {
+      expect(
+        rootClassName(
+          stateWithMessage({
+            variant: "blank",
+            icon: "shieldCheck",
+            cta: { type: "OPEN_ABOUT_PAGE", data: { args: "protections" } },
+          })
+        )
+      ).toContain("is-count-only");
+    });
+
+    it("is not set when a tip shares the card", () => {
+      expect(
+        rootClassName(
+          stateWithMessage({
+            variant: "tip",
+            messageId: "newtab-privacy-message-info-4",
+            icon: "planet",
+          })
+        )
+      ).not.toContain("is-count-only");
+    });
+
+    it("is not set when a streak shares the card", () => {
+      expect(
+        rootClassName(
+          stateWithMessage({
+            variant: "streak",
+            messageId: "newtab-privacy-message-streak",
+            icon: "kit",
+            countArg: { count: 5 },
+          })
+        )
+      ).not.toContain("is-count-only");
+    });
+
+    it("is not set in the empty state", () => {
+      expect(rootClassName(stateWithTrackers(0))).not.toContain(
+        "is-count-only"
+      );
+    });
+
+    it("is not set when ETP is off", () => {
+      expect(rootClassName(stateWithEtpOff())).not.toContain("is-count-only");
+    });
+
+    it("is not set before the feed has initialized", () => {
+      // Needs a non-zero count: at the default of 0 the empty state would
+      // clear the class on its own and the initialized guard would go untested.
+      const pending = stateWithTrackers(42);
+      expect(
+        rootClassName({
+          ...pending,
+          PrivacyWidget: { ...pending.PrivacyWidget, initialized: false },
+        })
+      ).not.toContain("is-count-only");
+    });
+  });
+
   it("shows the empty state when no trackers are blocked today", () => {
     const { container } = renderPrivacy(jest.fn(), {}, stateWithTrackers(0));
     expect(container.querySelector("article.privacy").className).toContain(
       "is-empty"
     );
+    const messages = container.querySelectorAll(
+      ".privacy-empty-message-wrapper p"
+    );
+    expect([...messages].map(p => p.getAttribute("data-l10n-id"))).toEqual([
+      "newtab-privacy-empty-state",
+      "newtab-privacy-empty-state-tally",
+    ]);
     expect(container.querySelector(".privacy-empty-message")).toBeTruthy();
     expect(container.querySelector(".privacy-count")).toBeFalsy();
+  });
+
+  it("keeps the count but drops the across-sites line at zero sites", () => {
+    // Bug 2063207: the count is real, so only the "Across 0 sites" line goes.
+    const { container } = renderPrivacy(
+      jest.fn(),
+      {},
+      stateWithTrackers(34, 0)
+    );
+    expect(container.querySelector("article.privacy").className).not.toContain(
+      "is-empty"
+    );
+    expect(container.querySelector(".privacy-count-number").textContent).toBe(
+      "34"
+    );
+    expect(container.querySelector(".privacy-count-label")).toBeTruthy();
+    expect(container.querySelector(".privacy-count-sites")).toBeFalsy();
   });
 
   it("leaves the empty state once the count climbs, even with a stale empty variant", () => {
@@ -187,6 +315,54 @@ describe("Privacy widget", () => {
     const img = container.querySelector(".privacy-empty .privacy-image-icon");
     expect(img.getAttribute("src")).toContain("widget-privacy-shield.svg");
     expect(img.getAttribute("src")).not.toContain("shield-check");
+  });
+
+  it("shows the ETP-off card when protection is turned off", () => {
+    const { container } = renderPrivacy(jest.fn(), {}, stateWithEtpOff());
+    expect(container.querySelector("article.privacy").className).toContain(
+      "is-etp-off"
+    );
+    // The card carries two lines: a bold headline above the call to action.
+    const headline = container.querySelector(".privacy-etp-off-bold");
+    expect(headline).toBeTruthy();
+    expect(headline.getAttribute("data-l10n-id")).toBe(
+      "newtab-privacy-etp-off-faster-browsing"
+    );
+    const message = container.querySelector(".privacy-etp-off-message");
+    expect(message).toBeTruthy();
+    expect(message.getAttribute("data-l10n-id")).toBe(
+      "newtab-privacy-etp-off-turn-on-tracking"
+    );
+    const img = container.querySelector(".privacy-etp-off .privacy-image-icon");
+    expect(img.getAttribute("src")).toContain("widget-privacy-etp-off.svg");
+  });
+
+  it("replaces the count and any message while ETP is off", () => {
+    // Trackers blocked earlier today (and the decision picked for them) are
+    // still in state when protection is turned off — the card outranks both.
+    const { container } = renderPrivacy(
+      jest.fn(),
+      {},
+      stateWithEtpOff(87, {
+        variant: "tip",
+        messageId: "newtab-privacy-message-info-1",
+        icon: "shield",
+        cta: { type: "OPEN_ABOUT_PAGE", data: { args: "protections" } },
+      })
+    );
+    const root = container.querySelector("article.privacy");
+    expect(root.className).toContain("is-etp-off");
+    expect(root.className).not.toContain("has-tip-msg");
+    expect(container.querySelector(".privacy-count")).toBeFalsy();
+    expect(container.querySelector(".privacy-tip-message")).toBeFalsy();
+  });
+
+  it("shows the ETP-off card instead of the empty state at zero", () => {
+    const { container } = renderPrivacy(jest.fn(), {}, stateWithEtpOff(0));
+    const root = container.querySelector("article.privacy");
+    expect(root.className).toContain("is-etp-off");
+    expect(root.className).not.toContain("is-empty");
+    expect(container.querySelector(".privacy-empty")).toBeFalsy();
   });
 
   it("shows today's blocked-tracker count", () => {
@@ -345,9 +521,27 @@ describe("Privacy widget", () => {
     expect(button.getAttribute("data-l10n-id")).toBe(
       "newtab-privacy-message-info-1-cta"
     );
+    expect(button.getAttribute("size")).toBe("small");
     // Still no tip/divider — it's the count-only layout plus the CTA.
     expect(container.querySelector(".privacy-tip")).toBeFalsy();
     expect(container.querySelector(".privacy-divider")).toBeFalsy();
+  });
+
+  it("renders the blank state CTA at its default size when the widget is large", () => {
+    const { container } = renderPrivacy(
+      jest.fn(),
+      {},
+      atLargeSize(
+        stateWithMessage({
+          variant: "blank",
+          icon: "shieldCheck",
+          cta: { type: "OPEN_ABOUT_PAGE", data: { args: "protections" } },
+        })
+      )
+    );
+    const button = container.querySelector(".privacy-cta");
+    expect(button).toBeTruthy();
+    expect(button.hasAttribute("size")).toBe(false);
   });
 
   it("renders the tip variant via its l10n id and mapped icon", () => {
@@ -428,6 +622,25 @@ describe("Privacy widget", () => {
     expect(button.getAttribute("data-l10n-id")).toBe(
       "newtab-privacy-message-info-1-cta"
     );
+    expect(button.getAttribute("size")).toBe("small");
+  });
+
+  it("renders the tip CTA at its default size when the widget is large", () => {
+    const { container } = renderPrivacy(
+      jest.fn(),
+      {},
+      atLargeSize(
+        stateWithMessage({
+          variant: "tip",
+          messageId: "newtab-privacy-message-info-1",
+          icon: "shield",
+          cta: { type: "OPEN_ABOUT_PAGE", data: { args: "protections" } },
+        })
+      )
+    );
+    const button = container.querySelector(".privacy-cta");
+    expect(button).toBeTruthy();
+    expect(button.hasAttribute("size")).toBe(false);
   });
 
   it("renders no CTA button when the decision has no cta", () => {
@@ -532,6 +745,35 @@ describe("Privacy widget", () => {
     expect(clickEvent.data.widget_source).toBe("widget");
   });
 
+  it("opens the ETP section of the privacy pane when the ETP-off message is clicked", () => {
+    // about:protections can't turn protection back on, so this card is the one
+    // link in the widget that goes to settings rather than the dashboard.
+    const dispatch = jest.fn();
+    const { container } = renderPrivacy(dispatch, {}, stateWithEtpOff());
+    const link = container.querySelector("a.privacy-etp-off-details");
+    expect(link).toBeTruthy();
+    expect(link.getAttribute("href")).toBe(
+      "about:preferences#privacy-trackingprotection"
+    );
+    fireEvent.click(link);
+    const action = dispatch.mock.calls
+      .map(([call]) => call)
+      .find(call => call.type === at.WIDGETS_PRIVACY_CTA);
+    expect(action).toBeTruthy();
+    expect(action.data.action).toEqual({
+      type: "OPEN_PREFERENCES_PAGE",
+      data: { category: "privacy-trackingprotection" },
+    });
+    const clickEvent = findUserEvent(dispatch, "tracking_message_click");
+    expect(clickEvent).toBeTruthy();
+    expect(clickEvent.data.widget_source).toBe("widget");
+    // The destination distinguishes this click from the dashboard links, which
+    // share the same user_action but record no action_value.
+    expect(clickEvent.data.action_value).toBe(
+      "about:preferences#privacy-trackingprotection"
+    );
+  });
+
   describe("telemetry", () => {
     it("logs the trackers_blocked impression with 'blocked' when trackers are blocked", () => {
       const dispatch = jest.fn();
@@ -557,6 +799,17 @@ describe("Privacy widget", () => {
       const event = findUserEvent(dispatch, "trackers_blocked_impression");
       expect(event).toBeTruthy();
       expect(event.data.action_value).toBe("none");
+    });
+
+    it("logs the trackers_blocked impression as 'etp_off' while ETP is off", () => {
+      // Distinct from 'none': protection being off is not the same as
+      // protection being on with nothing blocked yet. A non-zero count is used
+      // so a regression to the plain count branch would report 'blocked'.
+      const dispatch = jest.fn();
+      renderPrivacy(dispatch, {}, stateWithEtpOff(87, { variant: "blank" }));
+      const event = findUserEvent(dispatch, "trackers_blocked_impression");
+      expect(event).toBeTruthy();
+      expect(event.data.action_value).toBe("etp_off");
     });
 
     it("waits for the widget to be seen before logging impressions", () => {
@@ -608,9 +861,9 @@ describe("Privacy widget", () => {
     });
 
     it("does not log a message impression in the empty state", () => {
-      // The selector sets messageId to "newtab-privacy-empty" in the empty
-      // state, so the fixture mirrors that — otherwise this passes vacuously and
-      // wouldn't catch a spurious empty-state impression (Dré).
+      // The selector sets messageId to "newtab-privacy-empty-state" in the
+      // empty state, so the fixture mirrors that — otherwise this passes
+      // vacuously and wouldn't catch a spurious empty-state impression (Dré).
       const dispatch = jest.fn();
       renderPrivacy(
         dispatch,
@@ -618,11 +871,27 @@ describe("Privacy widget", () => {
         stateWithMessage(
           {
             variant: "empty",
-            messageId: "newtab-privacy-empty",
+            messageId: "newtab-privacy-empty-state",
             icon: "shield",
           },
           0
         )
+      );
+      expect(findUserEvent(dispatch, "message_impression")).toBeUndefined();
+    });
+
+    it("does not log a message impression while ETP is off", () => {
+      // The card replaces the message, but the decision picked before the
+      // toggle is still in state — it must not be logged as shown.
+      const dispatch = jest.fn();
+      renderPrivacy(
+        dispatch,
+        {},
+        stateWithEtpOff(87, {
+          variant: "tip",
+          messageId: "newtab-privacy-message-info-1",
+          icon: "shield",
+        })
       );
       expect(findUserEvent(dispatch, "message_impression")).toBeUndefined();
     });
@@ -1069,6 +1338,151 @@ describe("Privacy widget celebration on a preloaded tab", () => {
     showTab();
     expect(container.querySelector(".privacy-celebration")).toBeTruthy();
     expect(container.querySelector(".privacy-celebration-ring")).toBeTruthy();
+  });
+
+  const visibleCalls = dispatch =>
+    dispatch.mock.calls.filter(
+      ([action]) => action.type === at.WIDGETS_PRIVACY_VISIBLE
+    );
+
+  // The global mock never fires. Install one reporting a given ratio, so "on
+  // screen", "scrolled past" and "only a sliver showing" are all reachable.
+  const withObserver = (ratio, run) => {
+    const saved = global.IntersectionObserver;
+    global.IntersectionObserver = class {
+      constructor(callback) {
+        this.callback = callback;
+      }
+      observe(el) {
+        this.callback([
+          { isIntersecting: ratio > 0, intersectionRatio: ratio, target: el },
+        ]);
+      }
+      unobserve() {}
+      disconnect() {}
+    };
+    try {
+      run();
+    } finally {
+      global.IntersectionObserver = saved;
+    }
+  };
+
+  it("reports on screen once the tab is shown", () => {
+    setVisibility("hidden");
+    const dispatch = jest.fn();
+    withObserver(1, () => {
+      renderPrivacy(dispatch, {}, stateWithTrackers(100));
+
+      // Nothing while preloaded: the user cannot see it yet.
+      expect(visibleCalls(dispatch)).toHaveLength(0);
+
+      showTab();
+
+      expect(visibleCalls(dispatch)).toHaveLength(1);
+    });
+  });
+
+  it("stays quiet while the widget is scrolled out of view", () => {
+    // A widget below the fold, or dropped from a collapsed row, is never seen,
+    // so it must not cost a count re-read.
+    const dispatch = jest.fn();
+    withObserver(0, () => {
+      renderPrivacy(dispatch, {}, stateWithTrackers(100));
+      expect(visibleCalls(dispatch)).toHaveLength(0);
+    });
+  });
+
+  it("stays quiet when only a sliver of the widget is showing", () => {
+    // isIntersecting is true for any non-zero overlap, so the ratio is what has
+    // to clear ON_SCREEN_THRESHOLD.
+    const dispatch = jest.fn();
+    withObserver(0.1, () => {
+      renderPrivacy(dispatch, {}, stateWithTrackers(100));
+      expect(visibleCalls(dispatch)).toHaveLength(0);
+    });
+  });
+
+  it("asks once per reveal, not once per render", () => {
+    // The ref callback is an inline arrow, so React reattaches it every render.
+    // If that churned rootEl the observer would be rebuilt — and an observer
+    // fires on observe() — so a plain re-render would re-ask.
+    const dispatch = jest.fn();
+    withObserver(1, () => {
+      const { rerenderWithState } = renderPrivacy(
+        dispatch,
+        {},
+        stateWithTrackers(100)
+      );
+      expect(visibleCalls(dispatch)).toHaveLength(1);
+      rerenderWithState(stateWithTrackers(101));
+      rerenderWithState(stateWithTrackers(102));
+      expect(visibleCalls(dispatch)).toHaveLength(1);
+    });
+  });
+
+  it("reports on screen for a tab that was visible from the start", () => {
+    const dispatch = jest.fn();
+    withObserver(1, () => {
+      renderPrivacy(dispatch, {}, stateWithTrackers(100));
+      expect(visibleCalls(dispatch)).toHaveLength(1);
+    });
+  });
+
+  it("drops the hold when the award is withdrawn while the tab is hidden", () => {
+    setVisibility("hidden");
+    const { container, rerenderWithState } = renderPrivacy(
+      jest.fn(),
+      {},
+      stateWithMessage(
+        { variant: "blank", celebration: anAward(100, 137) },
+        137
+      )
+    );
+    expect(container.querySelector(".privacy-count-number").textContent).toBe(
+      "100"
+    );
+
+    // Another tab played the award and acknowledged it, so the feed cleared it
+    // and the next broadcast carries no celebration. Nothing will ever pay off
+    // the hold now, so it has to be dropped here (Bug 2063963).
+    rerenderWithState(
+      stateWithMessage({ variant: "blank", celebration: null }, 150)
+    );
+    expect(container.querySelector(".privacy-count-number").textContent).toBe(
+      "150"
+    );
+
+    // Showing the tab must not resurrect the stale number either.
+    showTab();
+    expect(container.querySelector(".privacy-count-number").textContent).toBe(
+      "150"
+    );
+  });
+
+  it("keeps tracking the count after a withdrawn award, without a reload", () => {
+    setVisibility("hidden");
+    const { container, rerenderWithState } = renderPrivacy(
+      jest.fn(),
+      {},
+      stateWithMessage(
+        { variant: "blank", celebration: anAward(100, 137) },
+        137
+      )
+    );
+
+    rerenderWithState(
+      stateWithMessage({ variant: "blank", celebration: null }, 150)
+    );
+    showTab();
+    // A later count refresh still has to move the readout: the freeze used to
+    // survive for the life of the document, so only a reload fixed it.
+    rerenderWithState(
+      stateWithMessage({ variant: "blank", celebration: null }, 162)
+    );
+    expect(container.querySelector(".privacy-count-number").textContent).toBe(
+      "162"
+    );
   });
 });
 

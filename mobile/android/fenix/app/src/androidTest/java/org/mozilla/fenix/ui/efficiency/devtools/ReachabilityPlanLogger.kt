@@ -7,7 +7,6 @@ package org.mozilla.fenix.ui.efficiency.devtools
 import org.mozilla.fenix.ui.efficiency.generation.NavigationTestPlanner
 import org.mozilla.fenix.ui.efficiency.helpers.BasePage
 import org.mozilla.fenix.ui.efficiency.helpers.PageContext
-import org.mozilla.fenix.ui.efficiency.navigation.NavigationRegistry
 
 // TODO (Jackie J. 3/23/2026): fix all of these horrible names, they're temporary.
 object ReachabilityPlanLogger {
@@ -15,11 +14,11 @@ object ReachabilityPlanLogger {
     private const val TAG = "NavigationPlanner"
 
     /**
-     * Builds the reachability plan report without emitting it anywhere, so a future consumer
-     * (a debug UI, an export, etc.) can reuse the same computation [logReachabilityPlan] uses.
+     * Builds the reachability plan report without emitting it anywhere, so a future consumer (a debug UI, an export,
+     * etc.) can reuse the same computation [logReachabilityPlan] uses.
      */
     fun buildReachabilityPlanReport(context: PageContext): DevToolReport {
-        val cases = NavigationTestPlanner.buildReachabilityCases()
+        val cases = NavigationTestPlanner.buildReachabilityCases(context.navigationGraph)
 
         val lines = buildList {
             add("Built ${cases.size} reachability cases")
@@ -27,7 +26,7 @@ object ReachabilityPlanLogger {
             cases.forEachIndexed { index, case ->
                 val page: BasePage = case.page(context)
                 val pageName = page.pageName
-                val pathCount = NavigationRegistry.findAllPaths("AppEntry", pageName).size
+                val pathCount = context.navigationGraph.findAllPaths("AppEntry", pageName).size
 
                 add(" ${index + 1}. $pageName (property=${case.propertyName}, paths=$pathCount)")
             }

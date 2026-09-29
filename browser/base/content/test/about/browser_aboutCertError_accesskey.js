@@ -9,17 +9,10 @@ const DNS_NOT_FOUND = "https://nonexistent-domain-for-testing.invalid/";
 
 add_setup(async function () {
   await setSecurityCertErrorsFeltPrivacyToTrue();
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.netError.searchCTA.enabled", false]],
+  });
 });
-
-function getAccessKeyModifiers() {
-  const contentAccess = Services.prefs.getIntPref("ui.key.contentAccess", 5);
-  return {
-    shiftKey: !!(contentAccess & 1),
-    ctrlKey: !!(contentAccess & 2),
-    altKey: !!(contentAccess & 4),
-    metaKey: !!(contentAccess & 8),
-  };
-}
 
 add_task(async function test_goBackButton_accesskey() {
   info("Test Go Back button has correct accesskey attribute and activates");

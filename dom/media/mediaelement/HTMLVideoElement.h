@@ -46,6 +46,7 @@ class HTMLVideoElement final : public HTMLMediaElement {
 
   void Invalidate(ImageSizeChanged aImageSizeChanged,
                   const Maybe<nsIntSize>& aNewIntrinsicSize,
+                  const Maybe<VideoRotation>& aNewRotation,
                   ForceInvalidate aForceInvalidate) override;
 
   bool IsVideo() const override { return true; }
@@ -54,7 +55,7 @@ class HTMLVideoElement final : public HTMLMediaElement {
                       const nsAString& aValue,
                       nsIPrincipal* aMaybeScriptedPrincipal,
                       nsAttrValue& aResult) override;
-  NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const override;
+  bool IsNoNamespaceAttrMapped(const nsAtom* aAttribute) const override;
 
   void AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
                     const nsAttrValue* aValue, const nsAttrValue* aOldValue,
@@ -67,11 +68,12 @@ class HTMLVideoElement final : public HTMLMediaElement {
 
   nsresult CopyInnerTo(Element* aDest);
 
-  void UnbindFromTree(UnbindContext&) override;
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void UnbindFromTree(UnbindContext&) override;
 
   mozilla::Maybe<mozilla::CSSIntSize> GetVideoSize() const;
 
-  void UpdateMediaSize(const nsIntSize& aSize) override;
+  void UpdateMediaSize(const nsIntSize& aSize,
+                       VideoRotation aRotation) override;
 
   nsresult SetAcceptHeader(nsIHttpChannel* aChannel) override;
 
@@ -96,9 +98,9 @@ class HTMLVideoElement final : public HTMLMediaElement {
     SetUnsignedIntAttr(nsGkAtoms::height, aValue, 0, aRv);
   }
 
-  uint32_t VideoWidth();
+  uint32_t VideoWidth() const;
 
-  uint32_t VideoHeight();
+  uint32_t VideoHeight() const;
 
   VideoRotation RotationDegrees() const { return mMediaInfo.mVideo.mRotation; }
 
@@ -125,10 +127,10 @@ class HTMLVideoElement final : public HTMLMediaElement {
 
   already_AddRefed<VideoPlaybackQuality> GetVideoPlaybackQuality();
 
-  already_AddRefed<Promise> CloneElementVisually(HTMLVideoElement& aTarget,
-                                                 ErrorResult& rv);
+  MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> CloneElementVisually(
+      HTMLVideoElement& aTarget, ErrorResult& rv);
 
-  void StopCloningElementVisually();
+  MOZ_CAN_RUN_SCRIPT void StopCloningElementVisually();
 
   bool IsCloningElementVisually() const { return !!mVisualCloneTarget; }
 
@@ -179,7 +181,7 @@ class HTMLVideoElement final : public HTMLMediaElement {
   void CreateVideoWakeLockIfNeeded();
   void ReleaseVideoWakeLockIfExists();
 
-  gfx::IntSize GetVideoIntrinsicDimensions();
+  gfx::IntSize GetVideoIntrinsicDimensions() const;
 
   RefPtr<WakeLock> mScreenWakeLock;
 
@@ -257,7 +259,7 @@ class HTMLVideoElement final : public HTMLMediaElement {
   double TotalPlayTime() const;
 
   virtual void MaybeBeginCloningVisually() override;
-  void EndCloningVisually();
+  MOZ_CAN_RUN_SCRIPT void EndCloningVisually();
 };
 
 }  // namespace dom

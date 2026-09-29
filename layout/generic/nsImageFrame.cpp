@@ -31,6 +31,7 @@
 #include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/LargestContentfulPaint.h"
 #include "mozilla/dom/NameSpaceConstants.h"
+#include "mozilla/dom/PerformanceContainerTiming.h"
 #include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/dom/ResponsiveImageSelector.h"
 #include "mozilla/dom/ViewTransition.h"
@@ -119,11 +120,10 @@ class nsDisplayGradient final : public nsPaintedDisplayItem {
 
   void Paint(nsDisplayListBuilder*, gfxContext* aCtx) final;
 
-  bool CreateWebRenderCommands(wr::DisplayListBuilder&,
-                               wr::IpcResourceUpdateQueue&,
-                               const StackingContextHelper&,
-                               layers::RenderRootStateManager*,
-                               nsDisplayListBuilder*) final;
+  WebRenderCommandsResult CreateWebRenderCommands(
+      wr::DisplayListBuilder&, wr::IpcResourceUpdateQueue&,
+      const StackingContextHelper&, layers::RenderRootStateManager*,
+      nsDisplayListBuilder*) final;
 
   NS_DISPLAY_DECL_NAME("Gradient", TYPE_GRADIENT)
 };
@@ -148,7 +148,7 @@ void nsDisplayGradient::Paint(nsDisplayListBuilder* aBuilder,
   (void)result;
 }
 
-bool nsDisplayGradient::CreateWebRenderCommands(
+WebRenderCommandsResult nsDisplayGradient::CreateWebRenderCommands(
     wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
     const StackingContextHelper& aSc, layers::RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder) {
@@ -168,10 +168,10 @@ bool nsDisplayGradient::CreateWebRenderCommands(
         dest, dest.TopLeft(), dest, dest.Size(),
         /* aOpacity = */ 1.0f);
     if (result == ImgDrawResult::NOT_SUPPORTED) {
-      return false;
+      return Err("gradient image layer is not supported");
     }
   }
-  return true;
+  return Ok();
 }
 
 // sizes (pixels) for image icon, padding and border frame
@@ -1896,7 +1896,7 @@ class nsDisplayAltFeedback final : public nsPaintedDisplayItem {
                                 ToReferenceFrame(), flags);
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -1910,7 +1910,10 @@ class nsDisplayAltFeedback final : public nsPaintedDisplayItem {
         this, aBuilder, aResources, aSc, aManager, aDisplayListBuilder,
         ToReferenceFrame(), flags);
 
-    return result == ImgDrawResult::SUCCESS;
+    if (result != ImgDrawResult::SUCCESS) {
+      return Err("alt feedback could not be fully drawn");
+    }
+    return Ok();
   }
 
   NS_DISPLAY_DECL_NAME("AltFeedback", TYPE_ALT_FEEDBACK)
@@ -2452,7 +2455,7 @@ void nsDisplayImage::MaybeCreateWebRenderCommandsForViewTransition(
                      /* aForceAntiAliasing = */ false, rendering, key);
 }
 
-bool nsDisplayImage::CreateWebRenderCommands(
+WebRenderCommandsResult nsDisplayImage::CreateWebRenderCommands(
     wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
     const StackingContextHelper& aSc, RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder) {
@@ -2461,13 +2464,13 @@ bool nsDisplayImage::CreateWebRenderCommands(
   if (!image) {
     MaybeCreateWebRenderCommandsForViewTransition(
         aBuilder, aResources, aSc, aManager, aDisplayListBuilder);
-    return true;
+    return Ok();
   }
 
   if (nsImageMap* map = frame->GetImageMap(); map && map->HasFocus()) {
     // We can't draw some of the focus areas (in particular, PolyArea would be
     // somewhat hard to do).
-    return false;
+    return Err("focused image map area cannot be drawn");
   }
 
   auto* prevImage = frame->mPrevImage.get();
@@ -2501,10 +2504,14 @@ bool nsDisplayImage::CreateWebRenderCommands(
                               region, flags, getter_AddRefs(provider));
 
   if (nsCOMPtr<imgIRequest> currentRequest = frame->GetCurrentRequest()) {
+    Element* element = frame->GetContent()->AsElement();
+    nsRect rectRelativeToSelf = destAppUnits - ToReferenceFrame();
+
+    ContainerTimingHelpers::MaybeProcessPaintForContainer(element, frame,
+                                                          rectRelativeToSelf);
     LCPHelpers::FinalizeLCPEntryForImage(
-        frame->GetContent()->AsElement(),
-        static_cast<imgRequestProxy*>(currentRequest.get()),
-        destAppUnits - ToReferenceFrame());
+        element, static_cast<imgRequestProxy*>(currentRequest.get()),
+        rectRelativeToSelf);
   }
 
   // While we got a container, it may not contain a fully decoded surface. If
@@ -2548,7 +2555,7 @@ bool nsDisplayImage::CreateWebRenderCommands(
       }
       break;
     case ImgDrawResult::NOT_SUPPORTED:
-      return false;
+      return Err("image provider is not supported");
     default:
       updatePrevImage = prevImage != image;
       break;
@@ -2566,7 +2573,7 @@ bool nsDisplayImage::CreateWebRenderCommands(
   // help us. Hence we can ignore the return value from PushImage.
   aManager->CommandBuilder().PushImageProvider(
       this, provider, drawResult, aBuilder, aResources, destRect, destRect);
-  return true;
+  return Ok();
 }
 
 ImgDrawResult nsImageFrame::PaintImage(gfxContext& aRenderingContext,

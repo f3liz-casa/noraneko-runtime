@@ -1194,7 +1194,8 @@ ReferrerInfo::InitWithDocument(const Document* aDocument) {
 static ReferrerPolicy ReferrerPolicyFromAttribute(const Element& aElement) {
   if (!aElement.IsAnyOfHTMLElements(nsGkAtoms::a, nsGkAtoms::area,
                                     nsGkAtoms::script, nsGkAtoms::iframe,
-                                    nsGkAtoms::link, nsGkAtoms::img)) {
+                                    nsGkAtoms::link, nsGkAtoms::img) &&
+      !aElement.IsAnyOfSVGElements(nsGkAtoms::a)) {
     return ReferrerPolicy::_empty;
   }
   return aElement.GetReferrerPolicyAsEnum();
@@ -1715,25 +1716,6 @@ ReferrerInfo::Write(nsIObjectOutputStream* aStream) {
     return rv;
   }
   return NS_OK;
-}
-
-void ReferrerInfo::RecordTelemetry(nsIHttpChannel* aChannel) {
-#ifdef DEBUG
-  MOZ_ASSERT(!mTelemetryRecorded);
-  mTelemetryRecorded = true;
-#endif  // DEBUG
-
-  // The telemetry probe has 18 buckets. The first 9 buckets are for same-site
-  // requests and the rest 9 buckets are for cross-site requests.
-  uint32_t telemetryOffset =
-      IsCrossSiteRequest(aChannel)
-          ? UnderlyingValue(
-                MaxContiguousEnumValue<dom::ReferrerPolicy>::value) +
-                1
-          : 0;
-
-  glean::security::referrer_policy_count.AccumulateSingleSample(
-      static_cast<uint32_t>(mPolicy) + telemetryOffset);
 }
 
 }  // namespace mozilla::dom

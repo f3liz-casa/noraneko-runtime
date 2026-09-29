@@ -67,7 +67,7 @@ class SVGUseElement final : public SVGUseElementBase,
 
   // nsIContent interface
   nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
-  NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const override;
+  bool IsNoNamespaceAttrMapped(const nsAtom* aAttribute) const override;
 
   static NonCustomCSSPropertyId GetCSSPropertyIdForAttrEnum(uint8_t aAttrEnum);
 
@@ -85,7 +85,7 @@ class SVGUseElement final : public SVGUseElementBase,
 
   // Updates the internal shadow tree to be an up-to-date clone of the
   // referenced element.
-  void UpdateShadowTree();
+  MOZ_CAN_RUN_SCRIPT void UpdateShadowTree();
 
   // Shared code between AfterSetAttr and SVGUseFrame::AttributeChanged.
   //
@@ -153,7 +153,7 @@ class SVGUseElement final : public SVGUseElementBase,
    */
   bool OurWidthAndHeightAreUsed() const;
   void SyncWidthOrHeight(nsAtom* aName);
-  void LookupHref();
+  MOZ_CAN_RUN_SCRIPT void LookupHref();
   void TriggerReclone();
   void UnlinkSource();
 

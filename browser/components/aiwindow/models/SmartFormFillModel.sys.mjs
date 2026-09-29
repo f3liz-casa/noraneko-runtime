@@ -15,6 +15,14 @@ import {
 } from "moz-src:///browser/components/aiwindow/models/PromptLoader.sys.mjs";
 
 /**
+ * Reports the model and prompt version a request is about to be sent with.
+ * Called after both are resolved and before the request leaves, so callers can
+ * record it whether or not a response ever arrives.
+ *
+ * @typedef {(info: {model: string, promptVersion: string}) => void} ModelInfoCallback
+ */
+
+/**
  * @typedef {object} FieldClassification
  * @property {string} id The stable field ID
  * @property {string} type The classification type
@@ -164,12 +172,97 @@ import {
  */
 
 /**
- * @typedef {object} GenerateFormValuesResponse
+ * @typedef {object} GenerateFormValuesBatchResponse
  * @property {Array<FieldValue>} fields The field decisions from the LLM
- * @property {Array<string>} memories_used List of memories that were used
+ * @property {Array<string>} memories_used Ids of the memories the model says it
+ * used
+ * @property {Array<string>} tabs_used Urls of the context tabs the model says
+ * it used
+ */
+
+/**
+ * @typedef {object} GenerateFormValuesBatchSummary
+ * @property {number} total The total overall number of batches
+ * @property {number} failed The number of batches that failed
+ */
+
+/**
+ * @typedef {GenerateFormValuesBatchResponse & {batches: GenerateFormValuesBatchSummary}} GenerateFormValuesResponse
  */
 
 const MAX_FIELDS_PER_GENERATION_REQUEST = 20;
+const MAX_CONCURRENT_VALUES_BATCH_REQUESTS = 2;
+
+let activeValuesBatchRequests = 0;
+const pendingValuesBatchRequests = [];
+
+/**
+ * Starts executing queued batches from generateFormValues()
+ */
+function startPendingValuesBatchRequests() {
+  while (
+    activeValuesBatchRequests < MAX_CONCURRENT_VALUES_BATCH_REQUESTS &&
+    pendingValuesBatchRequests.length
+  ) {
+    const pendingRequest = pendingValuesBatchRequests.shift();
+    const { request, options, resolve, reject } = pendingRequest;
+
+    options.signal?.removeEventListener("abort", pendingRequest.onAbort);
+    activeValuesBatchRequests++;
+
+    generateFormValuesBatch(request, options).then(
+      value => {
+        activeValuesBatchRequests--;
+        resolve(value);
+        startPendingValuesBatchRequests();
+      },
+      error => {
+        activeValuesBatchRequests--;
+        reject(error);
+        startPendingValuesBatchRequests();
+      }
+    );
+  }
+}
+
+/**
+ * Adds a request to the queue for generating values.
+ *
+ * @param {GenerateFormValuesRequestBody} request
+ * @param {object} [options={}]
+ * @param {AbortSignal} [options.signal]
+ *
+ * @returns {Promise<GenerateFormValuesBatchResponse>}
+ */
+function queueValuesBatchRequest(request, options) {
+  const { signal } = options;
+  signal?.throwIfAborted();
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const pendingRequest = {
+    request,
+    options,
+    resolve,
+    reject,
+    onAbort: null,
+  };
+
+  if (signal) {
+    pendingRequest.onAbort = () => {
+      const index = pendingValuesBatchRequests.indexOf(pendingRequest);
+      if (index === -1) {
+        return;
+      }
+      pendingValuesBatchRequests.splice(index, 1);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", pendingRequest.onAbort, { once: true });
+  }
+
+  pendingValuesBatchRequests.push(pendingRequest);
+  startPendingValuesBatchRequests();
+  return promise;
+}
 
 const FIELD_CLASSIFICATION_RESPONSE_SCHEMA = {
   type: "object",
@@ -223,6 +316,10 @@ const FORM_VALUES_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
     memories_used: {
+      type: "array",
+      items: { type: "string" },
+    },
+    tabs_used: {
       type: "array",
       items: { type: "string" },
     },
@@ -301,7 +398,7 @@ const FORM_VALUES_RESPONSE_SCHEMA = {
       },
     },
   },
-  required: ["memories_used", "fields"],
+  required: ["memories_used", "tabs_used", "fields"],
   additionalProperties: false,
 };
 
@@ -311,10 +408,11 @@ const FORM_VALUES_RESPONSE_SCHEMA = {
  * @param {GenerateFormValuesRequestBody} request
  * @param {object} [param1={}]
  * @param {AbortSignal} [param1.signal]
+ * @param {ModelInfoCallback} [param1.onDispatch]
  *
- * @returns {Promise<GenerateFormValuesResponse>}
+ * @returns {Promise<GenerateFormValuesBatchResponse>}
  */
-async function generateFormValuesBatch(request, { signal } = {}) {
+async function generateFormValuesBatch(request, { signal, onDispatch } = {}) {
   signal?.throwIfAborted();
 
   const conversation = await buildConversation(MODEL_FEATURES.SMART_FORM_FILL);
@@ -350,6 +448,8 @@ async function generateFormValuesBatch(request, { signal } = {}) {
   });
   conversation.addUserMessage(userPrompt);
 
+  onDispatch?.({ model, promptVersion: version });
+
   const response = await conversation.run({
     fxAccountToken: await openAIEngine.getFxAccountToken(),
     tools: [],
@@ -364,6 +464,7 @@ async function generateFormValuesBatch(request, { signal } = {}) {
   signal?.throwIfAborted();
   return parseAndExtractJSON(response, {
     memories_used: [],
+    tabs_used: [],
     fields: [],
   });
 }
@@ -373,15 +474,27 @@ async function generateFormValuesBatch(request, { signal } = {}) {
  */
 export const SmartFormFillModel = {
   /**
+   * Checks whether a failed Smart Form Fill model request can be retried.
+   *
+   * @param {unknown} error The request failure to classify.
+   *
+   * @returns {boolean} Whether the error is worth retrying
+   */
+  isRetryableRequestError(error) {
+    return openAIEngine.isRetryableError(error);
+  },
+
+  /**
    * Trigger LLM request to classify form fields
    *
    * @param {ClassifyFieldsRequestBody} request
    * @param {object} [param1={}]
    * @param {AbortSignal} [param1.signal]
+   * @param {ModelInfoCallback} [param1.onDispatch]
    *
    * @returns {Promise<ClassificationResponse>}
    */
-  async classifyFields(request, { signal } = {}) {
+  async classifyFields(request, { signal, onDispatch } = {}) {
     signal?.throwIfAborted();
 
     const conversation = await buildConversation(
@@ -415,6 +528,8 @@ export const SmartFormFillModel = {
     });
     conversation.addUserMessage(userPrompt);
 
+    onDispatch?.({ model, promptVersion: version });
+
     const response = await conversation.run({
       fxAccountToken: await openAIEngine.getFxAccountToken(),
       tools: [],
@@ -436,10 +551,11 @@ export const SmartFormFillModel = {
    * @param {RelevantTabRequestBody} request
    * @param {object} [param1={}]
    * @param {AbortSignal} [param1.signal]
+   * @param {ModelInfoCallback} [param1.onDispatch]
    *
    * @returns {Promise<RelevantTabsResponse>}
    */
-  async findRelevantTabs(request, { signal } = {}) {
+  async findRelevantTabs(request, { signal, onDispatch } = {}) {
     signal?.throwIfAborted();
 
     const conversation = await buildConversation(
@@ -475,6 +591,8 @@ export const SmartFormFillModel = {
     });
     conversation.addUserMessage(userPrompt);
 
+    onDispatch?.({ model, promptVersion: version });
+
     const response = await conversation.run({
       fxAccountToken: await openAIEngine.getFxAccountToken(),
       tools: [],
@@ -498,10 +616,14 @@ export const SmartFormFillModel = {
    * @param {GenerateFormValuesRequestBody} request
    * @param {object} [param1={}]
    * @param {AbortSignal} [param1.signal]
+   * @param {ModelInfoCallback} [param1.onDispatch] Called by every batch that
+   * gets as far as sending, so a batch failing before that does not cost the
+   * caller its report. Every batch resolves the same feature config, so callers
+   * should keep the first call and ignore the rest.
    *
    * @returns {Promise<GenerateFormValuesResponse>}
    */
-  async generateFormValues(request, { signal } = {}) {
+  async generateFormValues(request, { signal, onDispatch } = {}) {
     signal?.throwIfAborted();
 
     const requests = [];
@@ -511,7 +633,7 @@ export const SmartFormFillModel = {
       index += MAX_FIELDS_PER_GENERATION_REQUEST
     ) {
       requests.push(
-        generateFormValuesBatch(
+        queueValuesBatchRequest(
           {
             ...request,
             fields: request.fields.slice(
@@ -519,20 +641,33 @@ export const SmartFormFillModel = {
               index + MAX_FIELDS_PER_GENERATION_REQUEST
             ),
           },
-          { signal }
+          { signal, onDispatch }
         )
       );
     }
 
-    // TODO - Bug 2059870 cap for fields/concurrency
-    const responses = await Promise.all(requests);
+    const results = await Promise.allSettled(requests);
     signal?.throwIfAborted();
 
+    // A batch that fails only costs its own fields, so the ones that answered
+    // still get filled. Nothing answering is a failed request, not an empty one.
+    const fulfilled = results.filter(({ status }) => status === "fulfilled");
+    if (!fulfilled.length) {
+      throw results[0].reason;
+    }
+
     return {
-      fields: responses.flatMap(response => response.fields),
+      fields: fulfilled.flatMap(({ value }) => value.fields ?? []),
       memories_used: [
-        ...new Set(responses.flatMap(response => response.memories_used)),
+        ...new Set(fulfilled.flatMap(({ value }) => value.memories_used ?? [])),
       ],
+      tabs_used: [
+        ...new Set(fulfilled.flatMap(({ value }) => value.tabs_used ?? [])),
+      ],
+      batches: {
+        total: results.length,
+        failed: results.length - fulfilled.length,
+      },
     };
   },
 };

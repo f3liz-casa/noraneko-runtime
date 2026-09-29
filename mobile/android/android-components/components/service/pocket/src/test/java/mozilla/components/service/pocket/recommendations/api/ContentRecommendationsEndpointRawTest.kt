@@ -5,6 +5,8 @@
 package mozilla.components.service.pocket.recommendations.api
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import java.io.IOException
+import java.util.Locale
 import mozilla.components.concept.fetch.Client
 import mozilla.components.concept.fetch.Request
 import mozilla.components.concept.fetch.Response
@@ -23,7 +25,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.IOException
 
 @RunWith(AndroidJUnit4::class)
 class ContentRecommendationsEndpointRawTest {
@@ -41,31 +42,35 @@ class ContentRecommendationsEndpointRawTest {
         successResponse = MockResponses.getSuccess()
         defaultResponse = errorResponse
 
-        client = mock<Client>().also {
-            whenever(it.fetch(any())).thenReturn(defaultResponse)
-        }
+        client =
+            mock<Client>().also {
+                whenever(it.fetch(any())).thenReturn(defaultResponse)
+            }
 
-        endpoint = ContentRecommendationEndpointRaw(
-            client = client,
-            config = ContentRecommendationsRequestConfig(),
-        )
+        endpoint =
+            ContentRecommendationEndpointRaw(
+                client = client,
+                config = ContentRecommendationsRequestConfig(),
+            )
     }
 
     @Test
     fun `WHEN requesting content recommendations with a custom request config THEN ensure the correct request parameters are used`() {
-        val locale = "en"
+        val locale = Locale.forLanguageTag("en-CA")
         val region = "ca"
         val count = 10
         val topics = listOf("business", "health")
-        val customEndpoint = ContentRecommendationEndpointRaw(
-            client = client,
-            config = ContentRecommendationsRequestConfig(
-                locale = locale,
-                region = region,
-                count = count,
-                topics = topics,
-            ),
-        )
+        val customEndpoint =
+            ContentRecommendationEndpointRaw(
+                client = client,
+                config =
+                    ContentRecommendationsRequestConfig(
+                        locale = locale,
+                        region = region,
+                        count = count,
+                        topics = topics,
+                    ),
+            )
 
         assertRequestParams(
             client = client,
@@ -77,16 +82,20 @@ class ContentRecommendationsEndpointRawTest {
                 assertEquals(Request.Method.POST, request.method)
                 assertTrue(request.conservative)
 
-                request.headers!!.first {
-                    it.name.equals("Content-Type", true)
-                }.value.contains("application/json", true)
+                request.headers!!
+                    .first {
+                        it.name.equals("Content-Type", true)
+                    }
+                    .value
+                    .contains("application/json", true)
 
-                val requestBody = JSONObject(
-                    request.body!!.useStream {
-                        it.bufferedReader().readText()
-                    },
-                )
-                assertEquals(locale, requestBody.get(REQUEST_BODY_LOCALE_KEY))
+                val requestBody =
+                    JSONObject(
+                        request.body!!.useStream {
+                            it.bufferedReader().readText()
+                        }
+                    )
+                assertEquals(locale.toLanguageTag(), requestBody.get(REQUEST_BODY_LOCALE_KEY))
                 assertEquals(region, requestBody.get(REQUEST_BODY_REGION_KEY))
                 assertEquals(count, requestBody.get(REQUEST_BODY_COUNT_KEY))
                 assertEquals(

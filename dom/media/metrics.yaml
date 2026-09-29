@@ -596,14 +596,34 @@ media.recorder:
     expires: never
 
 media:
+  background_audio_playback:
+    type: event
+    description: >
+      Android only. A temporary, coarse probe recorded when a media element
+      transitions to hidden while audibly playing (the app is backgrounded),
+      i.e. background media playback begins. Recorded at most once per background
+      episode and re-armed when the document becomes visible again;
+      Picture-in-Picture is excluded, since there the video stays visible to the
+      user. Because it only fires on the foreground-to-background transition, it
+      does NOT capture all background media playback (for example media that
+      starts or resumes while already backgrounded) and will under-count. It is
+      generic (not site-specific) and records no URL or site information.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2066141
+    data_reviews:
+      - https://phabricator.services.mozilla.com/D321331
+    data_sensitivity:
+      - technical
+    notification_emails:
+      - media-alerts@mozilla.com
+      - jbillman@mozilla.com
+    expires: 166
+
   element_in_page_count:
     type: counter
     description: >
       The number of times a document hierarchy contained at least one
-      HTMLMediaElement. In addition, the telemetry probe
-      'MIXED_CONTENT_UNBLOCK_COUNTER' records the total number of loaded
-      top level content documents, which can help us calculate the result
-      of the percentage of documents using media.
+      HTMLMediaElement.
       This metric was generated to correspond to the Legacy Telemetry
       scalar media.element_in_page_count.
     bugs:

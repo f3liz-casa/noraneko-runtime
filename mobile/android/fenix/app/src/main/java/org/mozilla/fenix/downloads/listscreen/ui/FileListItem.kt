@@ -6,6 +6,7 @@ package org.mozilla.fenix.downloads.listscreen.ui
 
 import androidx.annotation.FloatRange
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -15,10 +16,14 @@ import androidx.compose.foundation.progressSemantics
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxState
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -35,17 +40,21 @@ import androidx.compose.ui.unit.dp
 import mozilla.components.compose.base.button.IconButton
 import mozilla.components.compose.base.menu.DropdownMenu
 import mozilla.components.compose.base.menu.MenuItem
+import mozilla.components.compose.base.modifier.thenConditional
 import mozilla.components.compose.base.text.Text
+import mozilla.components.compose.base.theme.ThemedValue
+import mozilla.components.compose.base.theme.ThemedValueProvider
+import mozilla.components.feature.media.R as mediaR
+import mozilla.components.ui.icons.R as iconsR
 import org.mozilla.fenix.R
+import org.mozilla.fenix.compose.SwipeToDismissBackground
 import org.mozilla.fenix.compose.list.SelectableListItem
+import org.mozilla.fenix.compose.rememberSwipeToDismissBoxState
+import org.mozilla.fenix.compose.swipeToDismissFade
 import org.mozilla.fenix.downloads.listscreen.DownloadsListTestTag
 import org.mozilla.fenix.downloads.listscreen.store.FileItem
 import org.mozilla.fenix.downloads.listscreen.store.TimeCategory
 import org.mozilla.fenix.theme.FirefoxTheme
-import org.mozilla.fenix.theme.ThemedValue
-import org.mozilla.fenix.theme.ThemedValueProvider
-import mozilla.components.feature.media.R as mediaR
-import mozilla.components.ui.icons.R as iconsR
 
 /**
  * [SelectableListItem] used for displaying download items on the downloads screen.
@@ -53,11 +62,15 @@ import mozilla.components.ui.icons.R as iconsR
  * @param fileItem [FileItem] representing a download item.
  * @param isSelected The selected state of the item.
  * @param areAfterListItemIconsVisible Whether the menu icon is visible on the download item.
+ * @param swipingEnabled Whether swipe-to-dismiss is enabled.
  * @param modifier Modifier to be applied to the [SelectableListItem].
+ * @param onClick Invoked when the item is clicked.
+ * @param onLongClick Invoked when the item is long clicked.
  * @param onPauseClick Invoked when pause is clicked.
  * @param onResumeClick Invoked when resume is clicked.
  * @param onRetryClick Invoked when retry is clicked.
- * @param onDeleteClick Invoked when delete is clicked.
+ * @param onDeleteClick Invoked when delete is clicked. The boolean parameter indicates if the deletion was triggered by
+ *   a swipe gesture.
  * @param onShareUrlClick Invoked when share URL is clicked.
  * @param onShareFileClick Invoked when share file is clicked.
  * @param onRenameFileClick Invoked when rename file is clicked.
@@ -68,31 +81,94 @@ internal fun FileListItem(
     fileItem: FileItem,
     isSelected: Boolean,
     areAfterListItemIconsVisible: Boolean,
+    swipingEnabled: Boolean,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     onPauseClick: (id: String) -> Unit,
     onResumeClick: (id: String) -> Unit,
     onRetryClick: (id: String) -> Unit,
-    onDeleteClick: (FileItem) -> Unit,
+    onDeleteClick: (FileItem, Boolean) -> Unit,
     onShareUrlClick: (FileItem) -> Unit,
     onShareFileClick: (FileItem) -> Unit,
     onRenameFileClick: (FileItem) -> Unit,
 ) {
+    val swipeToDismissBoxState = rememberSwipeToDismissBoxState(id = fileItem.id)
+    val currentFileItem by rememberUpdatedState(fileItem)
+    val currentOnDeleteClick by rememberUpdatedState(onDeleteClick)
+    val onDismiss =
+        remember<(SwipeToDismissBoxValue) -> Unit> {
+            {
+                currentOnDeleteClick(currentFileItem, true)
+            }
+        }
+
+    SwipeToDismissBox(
+        modifier = modifier,
+        state = swipeToDismissBoxState,
+        backgroundContent = {
+            SwipeToDismissBackground(swipeToDismissBoxState)
+        },
+        gesturesEnabled = swipingEnabled,
+        onDismiss = onDismiss,
+    ) {
+        FileListItemMainContent(
+            fileItem = fileItem,
+            isSelected = isSelected,
+            areAfterListItemIconsVisible = areAfterListItemIconsVisible,
+            swipeToDismissBoxState = swipeToDismissBoxState,
+            onClick = onClick,
+            onLongClick = onLongClick,
+            onPauseClick = onPauseClick,
+            onResumeClick = onResumeClick,
+            onRetryClick = onRetryClick,
+            onDeleteClick = onDeleteClick,
+            onShareUrlClick = onShareUrlClick,
+            onShareFileClick = onShareFileClick,
+            onRenameFileClick = onRenameFileClick,
+        )
+    }
+}
+
+@Composable
+@Suppress("LongParameterList")
+private fun FileListItemMainContent(
+    fileItem: FileItem,
+    isSelected: Boolean,
+    areAfterListItemIconsVisible: Boolean,
+    swipeToDismissBoxState: SwipeToDismissBoxState,
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
+    onPauseClick: (id: String) -> Unit,
+    onResumeClick: (id: String) -> Unit,
+    onRetryClick: (id: String) -> Unit,
+    onDeleteClick: (FileItem, Boolean) -> Unit,
+    onShareUrlClick: (FileItem) -> Unit,
+    onShareFileClick: (FileItem) -> Unit,
+    onRenameFileClick: (FileItem) -> Unit,
+) {
+    val isFailed = fileItem.status == FileItem.Status.Failed
+    val colorScheme = MaterialTheme.colorScheme
+    val tint = if (isFailed) colorScheme.error else colorScheme.onSurfaceVariant
+
     SelectableListItem(
         label = fileItem.fileName ?: fileItem.url,
         description = fileItem.description,
-        icon = if (fileItem.status == FileItem.Status.Failed) iconsR.drawable.mozac_ic_critical_24 else fileItem.icon,
+        icon = if (isFailed) iconsR.drawable.mozac_ic_critical_24 else fileItem.icon,
         isSelected = isSelected,
-        modifier = modifier.selectableListItemProgressSemantics(status = fileItem.status),
-        descriptionTextColor = if (fileItem.status == FileItem.Status.Failed) {
-            MaterialTheme.colorScheme.error
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
-        iconTint = if (fileItem.status == FileItem.Status.Failed) {
-            MaterialTheme.colorScheme.error
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
+        modifier =
+            Modifier.swipeToDismissFade(swipeToDismissBoxState)
+                .selectableListItemProgressSemantics(status = fileItem.status)
+                .thenConditional(
+                    Modifier.combinedClickable(
+                        onClick = { onClick?.invoke() },
+                        onLongClick = { onLongClick?.invoke() },
+                    )
+                ) {
+                    onClick != null || onLongClick != null
+                },
+        descriptionTextColor = tint,
+        iconTint = tint,
         labelOverflow = TextOverflow.MiddleEllipsis,
         afterListItemAction = {
             if (areAfterListItemIconsVisible) {
@@ -109,22 +185,30 @@ internal fun FileListItem(
             }
         },
         belowListItemContent = {
-            when (fileItem.status) {
-                FileItem.Status.Initiated -> {
-                    DownloadProgressIndicator(progress = null)
-                }
-                is FileItem.Status.Downloading -> {
-                    DownloadProgressIndicator(progress = fileItem.status.progress)
-                }
-                is FileItem.Status.Paused -> {
-                    if (fileItem.status.progress != null) {
-                        DownloadProgressIndicator(progress = fileItem.status.progress)
-                    }
-                }
-                else -> {}
-            }
+            FileListItemProgressIndicator(status = fileItem.status)
         },
     )
+}
+
+@Composable
+private fun FileListItemProgressIndicator(status: FileItem.Status) {
+    when (status) {
+        FileItem.Status.Initiated -> {
+            DownloadProgressIndicator(progress = null)
+        }
+
+        is FileItem.Status.Downloading -> {
+            DownloadProgressIndicator(progress = status.progress)
+        }
+
+        is FileItem.Status.Paused -> {
+            if (status.progress != null) {
+                DownloadProgressIndicator(progress = status.progress)
+            }
+        }
+
+        else -> {}
+    }
 }
 
 @Composable
@@ -134,7 +218,7 @@ private fun AfterListItemAction(
     onPauseClick: (id: String) -> Unit,
     onResumeClick: (id: String) -> Unit,
     onRetryClick: (id: String) -> Unit,
-    onDeleteClick: (FileItem) -> Unit,
+    onDeleteClick: (FileItem, Boolean) -> Unit,
     onShareUrlClick: (FileItem) -> Unit,
     onShareFileClick: (FileItem) -> Unit,
     onRenameFileClick: (FileItem) -> Unit,
@@ -156,6 +240,7 @@ private fun AfterListItemAction(
                 )
             }
         }
+
         is FileItem.Status.Paused -> {
             IconButton(
                 onClick = { onResumeClick(fileItem.id) },
@@ -168,6 +253,7 @@ private fun AfterListItemAction(
                 )
             }
         }
+
         FileItem.Status.Cancelled -> {}
         FileItem.Status.Failed -> {
             IconButton(
@@ -188,9 +274,8 @@ private fun AfterListItemAction(
     IconButton(
         onClick = { menuExpanded = true },
         contentDescription = stringResource(id = R.string.content_description_menu),
-        modifier = Modifier
-            .size(24.dp)
-            .testTag("${DownloadsListTestTag.DOWNLOADS_LIST_ITEM_MENU}.${fileItem.fileName}"),
+        modifier =
+            Modifier.size(24.dp).testTag("${DownloadsListTestTag.DOWNLOADS_LIST_ITEM_MENU}.${fileItem.fileName}"),
     ) {
         Icon(
             painter = painterResource(id = iconsR.drawable.mozac_ic_ellipsis_vertical_24),
@@ -199,13 +284,14 @@ private fun AfterListItemAction(
         )
 
         DropdownMenu(
-            menuItems = getContextMenuItems(
-                status = fileItem.status,
-                onDeleteClick = { onDeleteClick(fileItem) },
-                onShareUrlClick = { onShareUrlClick(fileItem) },
-                onShareFileClick = { onShareFileClick(fileItem) },
-                onRenameFileClick = { onRenameFileClick(fileItem) },
-            ),
+            menuItems =
+                getContextMenuItems(
+                    status = fileItem.status,
+                    onDeleteClick = { onDeleteClick(fileItem, false) },
+                    onShareUrlClick = { onShareUrlClick(fileItem) },
+                    onShareFileClick = { onShareFileClick(fileItem) },
+                    onRenameFileClick = { onRenameFileClick(fileItem) },
+                ),
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
         )
@@ -213,16 +299,12 @@ private fun AfterListItemAction(
 }
 
 @Composable
-private fun DownloadProgressIndicator(
-    @FloatRange(from = 0.0, to = 1.0) progress: Float?,
-) {
+private fun DownloadProgressIndicator(@FloatRange(from = 0.0, to = 1.0) progress: Float?) {
     Column {
         Spacer(modifier = Modifier.height(6.dp))
 
         if (progress == null) {
-            LinearProgressIndicator(
-                modifier = Modifier.clearAndSetSemantics {},
-            )
+            LinearProgressIndicator(modifier = Modifier.clearAndSetSemantics {})
         } else {
             LinearProgressIndicator(
                 modifier = Modifier.clearAndSetSemantics {},
@@ -233,19 +315,17 @@ private fun DownloadProgressIndicator(
     }
 }
 
-private fun Modifier.selectableListItemProgressSemantics(status: FileItem.Status): Modifier = when (status) {
-    FileItem.Status.Cancelled,
-    FileItem.Status.Initiated,
-        -> semantics(mergeDescendants = true) {}
+private fun Modifier.selectableListItemProgressSemantics(status: FileItem.Status): Modifier =
+    when (status) {
+        FileItem.Status.Cancelled,
+        FileItem.Status.Initiated -> semantics(mergeDescendants = true) {}
 
-    FileItem.Status.Completed,
-    FileItem.Status.Failed,
-        -> semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
+        FileItem.Status.Completed,
+        FileItem.Status.Failed -> semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
 
-    is FileItem.Status.Downloading,
-    is FileItem.Status.Paused,
-        -> progressSemantics()
-}
+        is FileItem.Status.Downloading,
+        is FileItem.Status.Paused -> progressSemantics()
+    }
 
 private fun getContextMenuItems(
     status: FileItem.Status,
@@ -253,42 +333,46 @@ private fun getContextMenuItems(
     onShareUrlClick: () -> Unit,
     onShareFileClick: () -> Unit,
     onRenameFileClick: () -> Unit,
-) = when (status) {
-    FileItem.Status.Completed -> listOf(
-        MenuItem.TextItem(
-            text = Text.Resource(R.string.download_share_url),
-            onClick = onShareUrlClick,
-            level = MenuItem.FixedItem.Level.Default,
-        ),
-        MenuItem.TextItem(
-            text = Text.Resource(R.string.download_share_file),
-            onClick = onShareFileClick,
-            level = MenuItem.FixedItem.Level.Default,
-        ),
-        MenuItem.TextItem(
-            text = Text.Resource(R.string.download_rename_file),
-            onClick = onRenameFileClick,
-            level = MenuItem.FixedItem.Level.Default,
-        ),
-        MenuItem.TextItem(
-            text = Text.Resource(R.string.download_delete_item),
-            onClick = onDeleteClick,
-            level = MenuItem.FixedItem.Level.Critical,
-        ),
-    )
-    else -> listOf(
-        MenuItem.TextItem(
-            text = Text.Resource(R.string.download_share_url),
-            onClick = onShareUrlClick,
-            level = MenuItem.FixedItem.Level.Default,
-        ),
-        MenuItem.TextItem(
-            text = Text.Resource(R.string.download_delete_item),
-            onClick = onDeleteClick,
-            level = MenuItem.FixedItem.Level.Critical,
-        ),
-    )
-}
+) =
+    when (status) {
+        FileItem.Status.Completed ->
+            listOf(
+                MenuItem.TextItem(
+                    text = Text.Resource(R.string.download_share_url),
+                    onClick = onShareUrlClick,
+                    level = MenuItem.FixedItem.Level.Default,
+                ),
+                MenuItem.TextItem(
+                    text = Text.Resource(R.string.download_share_file),
+                    onClick = onShareFileClick,
+                    level = MenuItem.FixedItem.Level.Default,
+                ),
+                MenuItem.TextItem(
+                    text = Text.Resource(R.string.download_rename_file),
+                    onClick = onRenameFileClick,
+                    level = MenuItem.FixedItem.Level.Default,
+                ),
+                MenuItem.TextItem(
+                    text = Text.Resource(R.string.download_delete_item),
+                    onClick = onDeleteClick,
+                    level = MenuItem.FixedItem.Level.Critical,
+                ),
+            )
+
+        else ->
+            listOf(
+                MenuItem.TextItem(
+                    text = Text.Resource(R.string.download_share_url),
+                    onClick = onShareUrlClick,
+                    level = MenuItem.FixedItem.Level.Default,
+                ),
+                MenuItem.TextItem(
+                    text = Text.Resource(R.string.download_delete_item),
+                    onClick = onDeleteClick,
+                    level = MenuItem.FixedItem.Level.Critical,
+                ),
+            )
+    }
 
 private data class FileListItemPreviewState(
     val fileItem: FileItem,
@@ -296,283 +380,303 @@ private data class FileListItemPreviewState(
     val areAfterListItemIconsVisible: Boolean,
 )
 
-private class FileListItemParameterProvider : ThemedValueProvider<FileListItemPreviewState>(
-    sequenceOf(
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "1",
-                url = "https://www.mozilla.org",
-                fileName = "TestJPG.jpg",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "mozilla.org",
-                contentType = "image/jpg",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.IN_PROGRESS,
-                description = "3.4 MB • mozilla.org ",
+private class FileListItemParameterProvider :
+    ThemedValueProvider<FileListItemPreviewState>(
+        sequenceOf(
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "1",
+                        url = "https://www.mozilla.org",
+                        fileName = "TestJPG.jpg",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "mozilla.org",
+                        contentType = "image/jpg",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.IN_PROGRESS,
+                        description = "3.4 MB • mozilla.org ",
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "2",
-                url = "https://www.google.com",
-                fileName = "TestPDF.pdf",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "google.com",
-                contentType = "application/pdf",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.YESTERDAY,
-                description = "1.2 GB • example.com",
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "2",
+                        url = "https://www.google.com",
+                        fileName = "TestPDF.pdf",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "google.com",
+                        contentType = "application/pdf",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.YESTERDAY,
+                        description = "1.2 GB • example.com",
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "3",
-                url = "https://www.google.com",
-                fileName = "TestVideo.mp4",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "google.com",
-                contentType = "video/mp4",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.LAST_30_DAYS,
-                description = "63 MB • example.com",
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "3",
+                        url = "https://www.google.com",
+                        fileName = "TestVideo.mp4",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "google.com",
+                        contentType = "video/mp4",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.LAST_30_DAYS,
+                        description = "63 MB • example.com",
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "4",
-                url = "https://www.google.com",
-                fileName = "TestZIP.zip",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "google.com",
-                contentType = "application/zip",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.YESTERDAY,
-                description = "30 MB • example.com",
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "4",
+                        url = "https://www.google.com",
+                        fileName = "TestZIP.zip",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "google.com",
+                        contentType = "application/zip",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.YESTERDAY,
+                        description = "30 MB • example.com",
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "5",
-                url = "https://www.google.com",
-                fileName = "TestMSWordDoc.docx",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "google.com",
-                contentType = "application/msword",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.YESTERDAY,
-                description = "13 kB • example.com",
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "5",
+                        url = "https://www.google.com",
+                        fileName = "TestMSWordDoc.docx",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "google.com",
+                        contentType = "application/msword",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.YESTERDAY,
+                        description = "13 kB • example.com",
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "6",
-                url = "https://www.mozilla.org",
-                fileName = "TestJPG.jpg",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "mozilla.org",
-                contentType = "image/jpg",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.OLDER,
-                description = "10 MB • example.com",
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "6",
+                        url = "https://www.mozilla.org",
+                        fileName = "TestJPG.jpg",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "mozilla.org",
+                        contentType = "image/jpg",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.OLDER,
+                        description = "10 MB • example.com",
+                    ),
+                isSelected = true,
+                areAfterListItemIconsVisible = false,
             ),
-            isSelected = true,
-            areAfterListItemIconsVisible = false,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "7",
-                url = "https://www.google.com",
-                fileName = "TestPDF.pdf",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "google.com",
-                contentType = "application/pdf",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.YESTERDAY,
-                description = "20 MB • example.com",
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "7",
+                        url = "https://www.google.com",
+                        fileName = "TestPDF.pdf",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "google.com",
+                        contentType = "application/pdf",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.YESTERDAY,
+                        description = "20 MB • example.com",
+                    ),
+                isSelected = true,
+                areAfterListItemIconsVisible = false,
             ),
-            isSelected = true,
-            areAfterListItemIconsVisible = false,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "8",
-                url = "https://www.google.com",
-                fileName = "TestVideo.mp4",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "google.com",
-                contentType = "video/mp4",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.YESTERDAY,
-                description = "6 GB • example.com",
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "8",
+                        url = "https://www.google.com",
+                        fileName = "TestVideo.mp4",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "google.com",
+                        contentType = "video/mp4",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.YESTERDAY,
+                        description = "6 GB • example.com",
+                    ),
+                isSelected = true,
+                areAfterListItemIconsVisible = false,
             ),
-            isSelected = true,
-            areAfterListItemIconsVisible = false,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "9",
-                url = "https://www.google.com",
-                fileName = "TestZIP.zip",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "google.com",
-                contentType = "application/zip",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.TODAY,
-                description = "31 kB • example.com",
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "9",
+                        url = "https://www.google.com",
+                        fileName = "TestZIP.zip",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "google.com",
+                        contentType = "application/zip",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.TODAY,
+                        description = "31 kB • example.com",
+                    ),
+                isSelected = true,
+                areAfterListItemIconsVisible = false,
             ),
-            isSelected = true,
-            areAfterListItemIconsVisible = false,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "10",
-                url = "https://www.google.com",
-                fileName = "TestMSWordDoc.docx",
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                displayedShortUrl = "google.com",
-                contentType = "application/msword",
-                status = FileItem.Status.Completed,
-                timeCategory = TimeCategory.OLDER,
-                description = "66 MB • example.com",
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "10",
+                        url = "https://www.google.com",
+                        fileName = "TestMSWordDoc.docx",
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        displayedShortUrl = "google.com",
+                        contentType = "application/msword",
+                        status = FileItem.Status.Completed,
+                        timeCategory = TimeCategory.OLDER,
+                        description = "66 MB • example.com",
+                    ),
+                isSelected = true,
+                areAfterListItemIconsVisible = false,
             ),
-            isSelected = true,
-            areAfterListItemIconsVisible = false,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "11",
-                fileName = "File 11",
-                directoryPath = "/storage/emulated/0/Download",
-                url = "https://example.com/file11",
-                description = "5 MB / 10 MB • in 5s",
-                displayedShortUrl = "example.com",
-                contentType = "application/zip",
-                status = FileItem.Status.Downloading(progress = 0.5f),
-                filePath = "",
-                timeCategory = TimeCategory.IN_PROGRESS,
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "11",
+                        fileName = "File 11",
+                        directoryPath = "/storage/emulated/0/Download",
+                        url = "https://example.com/file11",
+                        description = "5 MB / 10 MB • in 5s",
+                        displayedShortUrl = "example.com",
+                        contentType = "application/zip",
+                        status = FileItem.Status.Downloading(progress = 0.5f),
+                        filePath = "",
+                        timeCategory = TimeCategory.IN_PROGRESS,
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "12",
-                fileName = "File 12",
-                url = "https://example.com/file12",
-                description = "5 MB / 10 MB • pending",
-                displayedShortUrl = "example.com",
-                contentType = "application/zip",
-                status = FileItem.Status.Downloading(progress = 0.5f),
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                timeCategory = TimeCategory.IN_PROGRESS,
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "12",
+                        fileName = "File 12",
+                        url = "https://example.com/file12",
+                        description = "5 MB / 10 MB • pending",
+                        displayedShortUrl = "example.com",
+                        contentType = "application/zip",
+                        status = FileItem.Status.Downloading(progress = 0.5f),
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        timeCategory = TimeCategory.IN_PROGRESS,
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "13",
-                fileName = "File 13",
-                url = "https://example.com/file13",
-                description = "5 MB / 10 MB • paused",
-                displayedShortUrl = "example.com",
-                contentType = "application/zip",
-                status = FileItem.Status.Paused(progress = 0.5f),
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                timeCategory = TimeCategory.IN_PROGRESS,
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "13",
+                        fileName = "File 13",
+                        url = "https://example.com/file13",
+                        description = "5 MB / 10 MB • paused",
+                        displayedShortUrl = "example.com",
+                        contentType = "application/zip",
+                        status = FileItem.Status.Paused(progress = 0.5f),
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        timeCategory = TimeCategory.IN_PROGRESS,
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "14",
-                fileName = "File 14",
-                url = "https://example.com/file14",
-                description = "Preparing download…",
-                displayedShortUrl = "example.com",
-                contentType = "application/zip",
-                status = FileItem.Status.Initiated,
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                timeCategory = TimeCategory.IN_PROGRESS,
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "14",
+                        fileName = "File 14",
+                        url = "https://example.com/file14",
+                        description = "Preparing download…",
+                        displayedShortUrl = "example.com",
+                        contentType = "application/zip",
+                        status = FileItem.Status.Initiated,
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        timeCategory = TimeCategory.IN_PROGRESS,
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "15",
-                fileName = "File 15",
-                url = "https://example.com/file15",
-                description = "Download Failed",
-                displayedShortUrl = "example.com",
-                contentType = "application/zip",
-                status = FileItem.Status.Failed,
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                timeCategory = TimeCategory.IN_PROGRESS,
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "15",
+                        fileName = "File 15",
+                        url = "https://example.com/file15",
+                        description = "Download Failed",
+                        displayedShortUrl = "example.com",
+                        contentType = "application/zip",
+                        status = FileItem.Status.Failed,
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        timeCategory = TimeCategory.IN_PROGRESS,
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-        FileListItemPreviewState(
-            fileItem = FileItem(
-                id = "16",
-                fileName = "Super Super Super Super Super Super Long File.pdf",
-                url = "https://example.com/file16",
-                description = "Download Failed",
-                displayedShortUrl = "example.com",
-                contentType = "application/zip",
-                status = FileItem.Status.Failed,
-                filePath = "",
-                directoryPath = "/storage/emulated/0/Download",
-                timeCategory = TimeCategory.IN_PROGRESS,
+            FileListItemPreviewState(
+                fileItem =
+                    FileItem(
+                        id = "16",
+                        fileName = "Super Super Super Super Super Super Long File.pdf",
+                        url = "https://example.com/file16",
+                        description = "Download Failed",
+                        displayedShortUrl = "example.com",
+                        contentType = "application/zip",
+                        status = FileItem.Status.Failed,
+                        filePath = "",
+                        directoryPath = "/storage/emulated/0/Download",
+                        timeCategory = TimeCategory.IN_PROGRESS,
+                    ),
+                isSelected = false,
+                areAfterListItemIconsVisible = true,
             ),
-            isSelected = false,
-            areAfterListItemIconsVisible = true,
-        ),
-    ),
-)
+        )
+    )
 
 @Preview
 @Composable
 private fun FileListItemPreview(
-    @PreviewParameter(FileListItemParameterProvider::class) state: ThemedValue<FileListItemPreviewState>,
+    @PreviewParameter(FileListItemParameterProvider::class) state: ThemedValue<FileListItemPreviewState>
 ) {
     FirefoxTheme(state.theme) {
         FileListItem(
             isSelected = state.value.isSelected,
             fileItem = state.value.fileItem,
             areAfterListItemIconsVisible = state.value.areAfterListItemIconsVisible,
+            swipingEnabled = true,
             modifier = Modifier.background(MaterialTheme.colorScheme.surface),
+            onClick = {},
+            onLongClick = {},
             onPauseClick = {},
             onResumeClick = {},
             onRetryClick = {},
             onShareFileClick = {},
-            onDeleteClick = {},
+            onDeleteClick = { _, _ -> },
             onShareUrlClick = {},
             onRenameFileClick = {},
         )

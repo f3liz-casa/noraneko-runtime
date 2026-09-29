@@ -27,9 +27,8 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/SHA1.h"
 #include "mozilla/SandboxSettings.h"
-#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/StaticPrefs_security.h"
-#include "mozilla/StaticPrefs_widget.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WinDllServices.h"
@@ -1230,6 +1229,16 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
     // that path to fall-back to the normal loading path.
     config->SetForceKnownDllLoadingFallback();
 
+    // If platform video encoding is not remote it requires the KsecDD device.
+    if (!StaticPrefs::media_use_remote_encoder_video_platform()) {
+      result = config->AllowFileAccess(sandbox::FileSemantics::kAllowAny,
+                                       LR"(\Device\KsecDD)");
+      if (sandbox::SBOX_ALL_OK != result) {
+        NS_ERROR("Failed to add rule for KsecDD.");
+        LOG_E("Failed (ResultCode %d) to add read access to KsecDD", result);
+      }
+    }
+
     // We should be able to remove access to these media registry keys below
     // once encoding has moved out of the content process (bug 1972552).
 
@@ -1335,11 +1344,15 @@ void SandboxBroker::SetSecurityLevelForGPUProcess(int32_t aSandboxLevel) {
   sandbox::IntegrityLevel initialIntegrityLevel = sandbox::INTEGRITY_LEVEL_LOW;
   sandbox::IntegrityLevel delayedIntegrityLevel = sandbox::INTEGRITY_LEVEL_LOW;
 
-  sandbox::JobLevel jobLevel = sandbox::JobLevel::kLimitedUser;
+  sandbox::JobLevel jobLevel = sandbox::JobLevel::kLockdown;
 
   uint32_t uiExceptions =
       JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS | JOB_OBJECT_UILIMIT_DESKTOP |
-      JOB_OBJECT_UILIMIT_EXITWINDOWS | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS;
+      JOB_OBJECT_UILIMIT_EXITWINDOWS | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS |
+      JOB_OBJECT_UILIMIT_HANDLES | JOB_OBJECT_UILIMIT_GLOBALATOMS;
+  if (StaticPrefs::security_sandbox_gpu_disable_job_uilimits()) {
+    uiExceptions |= JOB_OBJECT_UILIMIT_ALL;
+  }
 
   sandbox::MitigationFlags initialMitigations =
       sandbox::MITIGATION_BOTTOM_UP_ASLR | sandbox::MITIGATION_HEAP_TERMINATE |
@@ -1872,6 +1885,8 @@ bool SandboxBroker::SetSecurityLevelForUtilityProcess(
 #endif
     case mozilla::ipc::SandboxingKind::WINDOWS_UTILS:
       return BuildUtilitySandbox(config, WindowsUtilitySandboxProps());
+    case mozilla::ipc::SandboxingKind::HW_INFERENCE:
+      return BuildUtilitySandbox(config, GenericUtilitySandboxProps());
     default:
       MOZ_ASSERT_UNREACHABLE("Unknown sandboxing value");
       return false;

@@ -240,9 +240,6 @@ nsDNSRecord::GetAddresses(nsTArray<NetAddr>& aAddressArray) {
   mHostRecord->addr_info_lock.Lock();
   if (mHostRecord->addr_info) {
     for (const auto& address : mHostRecord->addr_info->Addresses()) {
-      if (mHostRecord->Blocklisted(&address)) {
-        continue;
-      }
       NetAddr* addr = aAddressArray.AppendElement(address);
       if (addr->raw.family == AF_INET) {
         addr->inet.port = 0;
@@ -366,6 +363,11 @@ nsDNSRecord::GetLastUpdate(mozilla::TimeStamp* aLastUpdate) {
   return mHostRecord->GetLastUpdate(aLastUpdate);
 }
 
+NS_IMETHODIMP
+nsDNSRecord::GetFromStaleCache(bool* aResult) {
+  return mHostRecord->GetFromStaleCache(aResult);
+}
+
 class nsDNSByTypeRecord : public nsIDNSByTypeRecord,
                           public nsIDNSTXTRecord,
                           public nsIDNSHTTPSSVCRecord {
@@ -459,6 +461,11 @@ NS_IMETHODIMP
 nsDNSByTypeRecord::GetResults(mozilla::net::TypeRecordResultType* aResults) {
   *aResults = mHostRecord->GetResults();
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDNSByTypeRecord::GetFromStaleCache(bool* aResult) {
+  return mHostRecord->GetFromStaleCache(aResult);
 }
 
 NS_IMETHODIMP

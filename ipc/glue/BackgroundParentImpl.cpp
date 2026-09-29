@@ -487,7 +487,7 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvCreateFileSystemManagerParent(
   // The inference process uses ChromeWorkers which have a system principal,
   // so system principals must be allowed there.
   EnumSet<dom::ValidatePrincipalOptions> options;
-  if (BackgroundParent::GetRemoteType(this) == INFERENCE_REMOTE_TYPE) {
+  if (BackgroundParent::GetRemoteType(this).IsInference()) {
     options += dom::ValidatePrincipalOptions::AllowSystemIfLoaded;
   }
   if (!BackgroundParent::ValidatePrincipalInfo(this, aPrincipalInfo, options)) {
@@ -626,15 +626,15 @@ IPCResult BackgroundParentImpl::RecvPSharedWorkerConstructor(
   }
 
   mozilla::dom::SharedWorkerParent* actor =
-      static_cast<mozilla::dom::SharedWorkerParent*>(aActor);
+      mozilla::ipc::ActorCast<mozilla::dom::SharedWorkerParent>(aActor);
   actor->Initialize(aData, aWindowID, aPortIdentifier);
   return IPC_OK();
 }
 
 bool BackgroundParentImpl::DeallocPSharedWorkerParent(
     mozilla::dom::PSharedWorkerParent* aActor) {
-  RefPtr<mozilla::dom::SharedWorkerParent> actor =
-      dont_AddRef(static_cast<mozilla::dom::SharedWorkerParent*>(aActor));
+  RefPtr<mozilla::dom::SharedWorkerParent> actor = dont_AddRef(
+      mozilla::ipc::ActorCast<mozilla::dom::SharedWorkerParent>(aActor));
   return true;
 }
 
@@ -660,10 +660,11 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvPFileCreatorConstructor(
   if (!parent) {
     isFileRemoteType = true;
   } else {
-    isFileRemoteType = parent->GetRemoteType() == FILE_REMOTE_TYPE;
+    isFileRemoteType = parent->GetRemoteType().IsFile();
   }
 
-  dom::FileCreatorParent* actor = static_cast<dom::FileCreatorParent*>(aActor);
+  dom::FileCreatorParent* actor =
+      mozilla::ipc::ActorCast<dom::FileCreatorParent>(aActor);
 
   // We allow the creation of File via this IPC call only for the 'file' process
   // or for testing.
@@ -680,7 +681,7 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvPFileCreatorConstructor(
 bool BackgroundParentImpl::DeallocPFileCreatorParent(
     dom::PFileCreatorParent* aActor) {
   RefPtr<dom::FileCreatorParent> actor =
-      dont_AddRef(static_cast<dom::FileCreatorParent*>(aActor));
+      dont_AddRef(mozilla::ipc::ActorCast<dom::FileCreatorParent>(aActor));
   return true;
 }
 
@@ -692,7 +693,7 @@ BackgroundParentImpl::AllocPTemporaryIPCBlobParent() {
 mozilla::ipc::IPCResult BackgroundParentImpl::RecvPTemporaryIPCBlobConstructor(
     dom::PTemporaryIPCBlobParent* aActor) {
   dom::TemporaryIPCBlobParent* actor =
-      static_cast<dom::TemporaryIPCBlobParent*>(aActor);
+      mozilla::ipc::ActorCast<dom::TemporaryIPCBlobParent>(aActor);
   return actor->CreateAndShareFile();
 }
 
@@ -866,8 +867,8 @@ bool BackgroundParentImpl::DeallocPCookieStoreParent(
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aActor);
 
-  RefPtr<mozilla::dom::CookieStoreParent> actor =
-      dont_AddRef(static_cast<mozilla::dom::CookieStoreParent*>(aActor));
+  RefPtr<mozilla::dom::CookieStoreParent> actor = dont_AddRef(
+      mozilla::ipc::ActorCast<mozilla::dom::CookieStoreParent>(aActor));
   return true;
 }
 
@@ -887,8 +888,8 @@ bool BackgroundParentImpl::DeallocPServiceWorkerManagerParent(
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aActor);
 
-  RefPtr<dom::ServiceWorkerManagerParent> parent =
-      dont_AddRef(static_cast<dom::ServiceWorkerManagerParent*>(aActor));
+  RefPtr<dom::ServiceWorkerManagerParent> parent = dont_AddRef(
+      mozilla::ipc::ActorCast<dom::ServiceWorkerManagerParent>(aActor));
   MOZ_ASSERT(parent);
   return true;
 }
@@ -936,7 +937,7 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvPMessagePortConstructor(
   AssertIsInMainProcess();
   AssertIsOnBackgroundThread();
 
-  MessagePortParent* mp = static_cast<MessagePortParent*>(aActor);
+  MessagePortParent* mp = mozilla::ipc::ActorCast<MessagePortParent>(aActor);
   if (!mp->Entangle(aDestinationUUID, aSequenceID)) {
     return IPC_FAIL_NO_REASON(this);
   }
@@ -949,7 +950,7 @@ bool BackgroundParentImpl::DeallocPMessagePortParent(
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aActor);
 
-  delete static_cast<MessagePortParent*>(aActor);
+  delete mozilla::ipc::ActorCast<MessagePortParent>(aActor);
   return true;
 }
 

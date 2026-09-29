@@ -41,8 +41,10 @@ use webrender::sw_compositor::SwCompositor;
 use webrender::{
     api::units::*, api::*, create_webrender_instance, render_api::*, set_profiler_hooks, AsyncPropertySampler,
     AsyncScreenshotHandle, ClipRadius, Compositor, CompositorCapabilities, CompositorConfig, CompositorInputConfig,
-    CompositorKind, CompositorSurfaceTransform, CompositorSurfaceUsage, Device, FrameBuilderConfig, LayerCompositor,
-    MappableCompositor, MappedTileInfo, NativeSurfaceId, NativeSurfaceInfo, NativeTileId, PartialPresentCompositor,
+    CompositorKind, CompositorSurfaceTransform, CompositorSurfaceUsage, Device, DeviceOptions, FrameBuilderConfig,
+    LayerCompositor,
+    MappableCompositor, MappedTileInfo, NativeSurfaceHandle, NativeSurfaceId, NativeSurfaceInfo, NativeTileId,
+    PartialPresentCompositor,
     PendingShadersToPrecache, PipelineInfo, ProfilerHooks, RecordedFrameHandle, RenderBackendHooks, Renderer,
     RendererStats, SWGLCompositeSurfaceInfo, SceneBuilderHooks, ShaderPrecacheFlags, Shaders, SharedShaders,
     TextureCacheConfig, UploadMethod, WebRenderOptions, WindowProperties, WindowVisibility, ONE_TIME_USAGE_HINT,
@@ -401,7 +403,7 @@ struct WrExternalImage {
     image_type: WrExternalImageType,
 
     // external texture handle
-    handle: u32,
+    handle: u64,
     // external texture coordinate
     u0: f32,
     v0: f32,
@@ -436,7 +438,7 @@ impl ExternalImageHandler for WrExternalImageHandler {
         ExternalImage {
             uv: TexelRect::new(image.u0, image.v0, image.u1, image.v1),
             source: match image.image_type {
-                WrExternalImageType::NativeTexture => ExternalImageSource::NativeTexture(image.handle),
+                WrExternalImageType::NativeTexture => ExternalImageSource::NativeTexture(ExternalTextureHandle(image.handle)),
                 WrExternalImageType::RawData => {
                     ExternalImageSource::RawData(unsafe { make_slice(image.buff, image.size) })
                 },
@@ -902,29 +904,53 @@ extern "C" {
     pub fn gecko_profiler_thread_is_being_profiled() -> bool;
 }
 
-pub fn gecko_profiler_start_marker(name: &str) {
+pub fn gecko_profiler_start_marker(name: &str, text: &str) {
     use gecko_profiler::{gecko_profiler_category, MarkerOptions, MarkerTiming, ProfilerTime, Tracing};
-    gecko_profiler::add_marker(
-        name,
-        gecko_profiler_category!(Graphics),
-        MarkerOptions {
-            timing: MarkerTiming::interval_start(ProfilerTime::now()),
-            ..Default::default()
-        },
-        Tracing::from_str("Webrender"),
-    );
+    if text.is_empty() {
+        gecko_profiler::add_marker(
+            name,
+            gecko_profiler_category!(Graphics),
+            MarkerOptions {
+                timing: MarkerTiming::interval_start(ProfilerTime::now()),
+                ..Default::default()
+            },
+            Tracing::from_static_str("Webrender"),
+        );
+    } else {
+        gecko_profiler::add_text_marker(
+            name,
+            gecko_profiler_category!(Graphics),
+            MarkerOptions {
+                timing: MarkerTiming::interval_start(ProfilerTime::now()),
+                ..Default::default()
+            },
+            text,
+        );
+    }
 }
-pub fn gecko_profiler_end_marker(name: &str) {
+pub fn gecko_profiler_end_marker(name: &str, text: &str) {
     use gecko_profiler::{gecko_profiler_category, MarkerOptions, MarkerTiming, ProfilerTime, Tracing};
-    gecko_profiler::add_marker(
-        name,
-        gecko_profiler_category!(Graphics),
-        MarkerOptions {
-            timing: MarkerTiming::interval_end(ProfilerTime::now()),
-            ..Default::default()
-        },
-        Tracing::from_str("Webrender"),
-    );
+    if text.is_empty() {
+        gecko_profiler::add_marker(
+            name,
+            gecko_profiler_category!(Graphics),
+            MarkerOptions {
+                timing: MarkerTiming::interval_end(ProfilerTime::now()),
+                ..Default::default()
+            },
+            Tracing::from_static_str("Webrender"),
+        );
+    } else {
+        gecko_profiler::add_text_marker(
+            name,
+            gecko_profiler_category!(Graphics),
+            MarkerOptions {
+                timing: MarkerTiming::interval_end(ProfilerTime::now()),
+                ..Default::default()
+            },
+            text,
+        );
+    }
 }
 
 pub fn gecko_profiler_event_marker(name: &str) {
@@ -933,7 +959,7 @@ pub fn gecko_profiler_event_marker(name: &str) {
         name,
         gecko_profiler_category!(Graphics),
         Default::default(),
-        Tracing::from_str("Webrender"),
+        Tracing::from_static_str("Webrender"),
     );
 }
 
@@ -969,12 +995,12 @@ impl ProfilerHooks for GeckoProfilerHooks {
         gecko_profiler::unregister_thread();
     }
 
-    fn begin_marker(&self, label: &str) {
-        gecko_profiler_start_marker(label);
+    fn begin_marker(&self, label: &str, text: &str) {
+        gecko_profiler_start_marker(label, text);
     }
 
-    fn end_marker(&self, label: &str) {
-        gecko_profiler_end_marker(label);
+    fn end_marker(&self, label: &str, text: &str) {
+        gecko_profiler_end_marker(label, text);
     }
 
     fn event_marker(&self, label: &str) {
@@ -1035,7 +1061,7 @@ impl SceneBuilderHooks for APZCallbacks {
     }
 
     fn pre_scene_build(&self) {
-        gecko_profiler_start_marker("SceneBuilding");
+        gecko_profiler_start_marker("SceneBuilding", "");
     }
 
     fn pre_scene_swap(&self) {
@@ -1053,16 +1079,16 @@ impl SceneBuilderHooks for APZCallbacks {
         if schedule_frame {
             unsafe { wr_schedule_frame_after_scene_build(self.window_id, &mut info) }
         }
-        gecko_profiler_end_marker("SceneBuilding");
+        gecko_profiler_end_marker("SceneBuilding", "");
     }
 
     fn post_resource_update(&self, _document_ids: &Vec<DocumentId>) {
         unsafe { wr_schedule_render(self.window_id, RenderReasons::POST_RESOURCE_UPDATES_HOOK) }
-        gecko_profiler_end_marker("SceneBuilding");
+        gecko_profiler_end_marker("SceneBuilding", "");
     }
 
     fn post_empty_scene_build(&self) {
-        gecko_profiler_end_marker("SceneBuilding");
+        gecko_profiler_end_marker("SceneBuilding", "");
     }
 
     fn poke(&self) {
@@ -1400,17 +1426,19 @@ fn wr_device_new(gl_context: *mut c_void, pc: Option<&mut WrProgramCache>) -> De
 
     Device::new(
         gl,
-        Some(Box::new(MozCrashAnnotator)),
-        resource_override_path,
-        use_optimized_shaders,
-        upload_method,
-        512 * 512,
-        cached_programs,
-        true,
-        true,
-        None,
-        false,
-        false,
+        DeviceOptions {
+            crash_annotator: Some(Box::new(MozCrashAnnotator)),
+            resource_override_path,
+            use_optimized_shaders,
+            upload_method,
+            batched_upload_threshold: 512 * 512,
+            cached_programs,
+            allow_texture_storage_support: true,
+            allow_texture_swizzling: true,
+            dump_shader_source: None,
+            surface_origin_is_top_left: false,
+            panic_on_gl_error: false,
+        },
     )
 }
 
@@ -1444,7 +1472,7 @@ extern "C" {
         compositor: *mut c_void,
         id: NativeTileId,
         offset: &mut DeviceIntPoint,
-        fbo_id: &mut u32,
+        handle: &mut u64,
         dirty_rect: DeviceIntRect,
         valid_rect: DeviceIntRect,
     );
@@ -1506,7 +1534,6 @@ pub struct WrCompositor(*mut c_void);
 impl Compositor for WrCompositor {
     fn create_surface(
         &mut self,
-        _device: &mut Device,
         id: NativeSurfaceId,
         virtual_offset: DeviceIntPoint,
         tile_size: DeviceIntSize,
@@ -1517,37 +1544,37 @@ impl Compositor for WrCompositor {
         }
     }
 
-    fn create_external_surface(&mut self, _device: &mut Device, id: NativeSurfaceId, is_opaque: bool) {
+    fn create_external_surface(&mut self, id: NativeSurfaceId, is_opaque: bool) {
         unsafe {
             wr_compositor_create_external_surface(self.0, id, is_opaque);
         }
     }
 
-    fn create_backdrop_surface(&mut self, _device: &mut Device, id: NativeSurfaceId, color: ColorF) {
+    fn create_backdrop_surface(&mut self, id: NativeSurfaceId, color: ColorF) {
         unsafe {
             wr_compositor_create_backdrop_surface(self.0, id, color);
         }
     }
 
-    fn destroy_surface(&mut self, _device: &mut Device, id: NativeSurfaceId) {
+    fn destroy_surface(&mut self, id: NativeSurfaceId) {
         unsafe {
             wr_compositor_destroy_surface(self.0, id);
         }
     }
 
-    fn create_tile(&mut self, _device: &mut Device, id: NativeTileId) {
+    fn create_tile(&mut self, id: NativeTileId) {
         unsafe {
             wr_compositor_create_tile(self.0, id.surface_id, id.x, id.y);
         }
     }
 
-    fn destroy_tile(&mut self, _device: &mut Device, id: NativeTileId) {
+    fn destroy_tile(&mut self, id: NativeTileId) {
         unsafe {
             wr_compositor_destroy_tile(self.0, id.surface_id, id.x, id.y);
         }
     }
 
-    fn attach_external_image(&mut self, _device: &mut Device, id: NativeSurfaceId, external_image: ExternalImageId) {
+    fn attach_external_image(&mut self, id: NativeSurfaceId, external_image: ExternalImageId) {
         unsafe {
             wr_compositor_attach_external_image(self.0, id, external_image);
         }
@@ -1555,14 +1582,13 @@ impl Compositor for WrCompositor {
 
     fn bind(
         &mut self,
-        _device: &mut Device,
         id: NativeTileId,
         dirty_rect: DeviceIntRect,
         valid_rect: DeviceIntRect,
     ) -> NativeSurfaceInfo {
         let mut surface_info = NativeSurfaceInfo {
             origin: DeviceIntPoint::zero(),
-            fbo_id: 0,
+            handle: NativeSurfaceHandle::DEFAULT,
         };
 
         unsafe {
@@ -1570,7 +1596,7 @@ impl Compositor for WrCompositor {
                 self.0,
                 id,
                 &mut surface_info.origin,
-                &mut surface_info.fbo_id,
+                &mut surface_info.handle.0,
                 dirty_rect,
                 valid_rect,
             );
@@ -1579,13 +1605,13 @@ impl Compositor for WrCompositor {
         surface_info
     }
 
-    fn unbind(&mut self, _device: &mut Device) {
+    fn unbind(&mut self) {
         unsafe {
             wr_compositor_unbind(self.0);
         }
     }
 
-    fn begin_frame(&mut self, _device: &mut Device) {
+    fn begin_frame(&mut self) {
         unsafe {
             wr_compositor_begin_frame(self.0);
         }
@@ -1593,7 +1619,6 @@ impl Compositor for WrCompositor {
 
     fn add_surface(
         &mut self,
-        _device: &mut Device,
         id: NativeSurfaceId,
         transform: CompositorSurfaceTransform,
         clip_rect: DeviceIntRect,
@@ -1616,7 +1641,6 @@ impl Compositor for WrCompositor {
 
     fn start_compositing(
         &mut self,
-        _device: &mut Device,
         clear_color: ColorF,
         dirty_rects: &[DeviceIntRect],
         opaque_rects: &[DeviceIntRect],
@@ -1633,21 +1657,21 @@ impl Compositor for WrCompositor {
         }
     }
 
-    fn end_frame(&mut self, _device: &mut Device) {
+    fn end_frame(&mut self) {
         unsafe {
             wr_compositor_end_frame(self.0);
         }
     }
 
-    fn enable_native_compositor(&mut self, _device: &mut Device, _enable: bool) {}
+    fn enable_native_compositor(&mut self, _enable: bool) {}
 
-    fn deinit(&mut self, _device: &mut Device) {
+    fn deinit(&mut self) {
         unsafe {
             wr_compositor_deinit(self.0);
         }
     }
 
-    fn get_capabilities(&self, _device: &mut Device) -> CompositorCapabilities {
+    fn get_capabilities(&self) -> CompositorCapabilities {
         unsafe {
             let mut caps: CompositorCapabilities = Default::default();
             wr_compositor_get_capabilities(self.0, &mut caps);
@@ -1655,7 +1679,7 @@ impl Compositor for WrCompositor {
         }
     }
 
-    fn get_window_visibility(&self, _device: &mut Device) -> WindowVisibility {
+    fn get_window_visibility(&self) -> WindowVisibility {
         unsafe {
             let mut visibility: WindowVisibility = Default::default();
             wr_compositor_get_window_visibility(self.0, &mut visibility);
@@ -2000,7 +2024,6 @@ impl MappableCompositor for WrCompositor {
     /// while supporting some form of native layers.
     fn map_tile(
         &mut self,
-        _device: &mut Device,
         id: NativeTileId,
         dirty_rect: DeviceIntRect,
         valid_rect: DeviceIntRect,
@@ -2030,7 +2053,7 @@ impl MappableCompositor for WrCompositor {
 
     /// Unmap a tile that was was previously mapped via map_tile to signal
     /// that SWGL is done rendering to the buffer.
-    fn unmap_tile(&mut self, _device: &mut Device) {
+    fn unmap_tile(&mut self) {
         unsafe {
             wr_compositor_unmap_tile(self.0);
         }
@@ -2038,14 +2061,13 @@ impl MappableCompositor for WrCompositor {
 
     fn lock_composite_surface(
         &mut self,
-        _device: &mut Device,
         ctx: *mut c_void,
         external_image_id: ExternalImageId,
         composite_info: *mut SWGLCompositeSurfaceInfo,
     ) -> bool {
         unsafe { wr_swgl_lock_composite_surface(ctx, external_image_id, composite_info) }
     }
-    fn unlock_composite_surface(&mut self, _device: &mut Device, ctx: *mut c_void, external_image_id: ExternalImageId) {
+    fn unlock_composite_surface(&mut self, ctx: *mut c_void, external_image_id: ExternalImageId) {
         unsafe { wr_swgl_unlock_composite_surface(ctx, external_image_id) }
     }
 }
@@ -4188,7 +4210,7 @@ pub extern "C" fn wr_dp_push_border(
     state
         .frame_builder
         .dl_builder
-        .push_border(&prim_info, rect, widths, border_details);
+        .push_border(&prim_info, rect, widths, border_details, &[]);
 }
 
 #[repr(C)]
@@ -4235,7 +4257,7 @@ pub extern "C" fn wr_dp_push_border_image(
     state
         .frame_builder
         .dl_builder
-        .push_border(&prim_info, rect, params.widths, border_details);
+        .push_border(&prim_info, rect, params.widths, border_details, &[]);
 }
 
 #[no_mangle]
@@ -4261,10 +4283,11 @@ pub extern "C" fn wr_dp_push_border_gradient(
     let stops_slice = unsafe { make_slice(stops, stops_count) };
     let stops_vector = stops_slice.to_owned();
 
-    let gradient = state
-        .frame_builder
-        .dl_builder
-        .create_gradient(start_point, end_point, stops_vector, extend_mode);
+    let (gradient, stops_vector) =
+        state
+            .frame_builder
+            .dl_builder
+            .create_gradient(start_point, end_point, stops_vector, extend_mode);
 
     let border_details = BorderDetails::NinePatch(NinePatchBorder {
         source: NinePatchBorderSource::Gradient(gradient),
@@ -4288,7 +4311,7 @@ pub extern "C" fn wr_dp_push_border_gradient(
     state
         .frame_builder
         .dl_builder
-        .push_border(&prim_info, rect, widths, border_details);
+        .push_border(&prim_info, rect, widths, border_details, &stops_vector);
 }
 
 #[no_mangle]
@@ -4318,10 +4341,11 @@ pub extern "C" fn wr_dp_push_border_radial_gradient(
         widths.left as i32,
     );
 
-    let gradient = state
-        .frame_builder
-        .dl_builder
-        .create_radial_gradient(center, radius, stops_vector, extend_mode);
+    let (gradient, stops_vector) =
+        state
+            .frame_builder
+            .dl_builder
+            .create_radial_gradient(center, radius, stops_vector, extend_mode);
 
     let border_details = BorderDetails::NinePatch(NinePatchBorder {
         source: NinePatchBorderSource::RadialGradient(gradient),
@@ -4345,7 +4369,7 @@ pub extern "C" fn wr_dp_push_border_radial_gradient(
     state
         .frame_builder
         .dl_builder
-        .push_border(&prim_info, rect, widths, border_details);
+        .push_border(&prim_info, rect, widths, border_details, &stops_vector);
 }
 
 #[no_mangle]
@@ -4375,10 +4399,11 @@ pub extern "C" fn wr_dp_push_border_conic_gradient(
         widths.left as i32,
     );
 
-    let gradient = state
-        .frame_builder
-        .dl_builder
-        .create_conic_gradient(center, angle, stops_vector, extend_mode);
+    let (gradient, stops_vector) =
+        state
+            .frame_builder
+            .dl_builder
+            .create_conic_gradient(center, angle, stops_vector, extend_mode);
 
     let border_details = BorderDetails::NinePatch(NinePatchBorder {
         source: NinePatchBorderSource::ConicGradient(gradient),
@@ -4402,7 +4427,7 @@ pub extern "C" fn wr_dp_push_border_conic_gradient(
     state
         .frame_builder
         .dl_builder
-        .push_border(&prim_info, rect, widths, border_details);
+        .push_border(&prim_info, rect, widths, border_details, &stops_vector);
 }
 
 #[no_mangle]
@@ -4425,10 +4450,11 @@ pub extern "C" fn wr_dp_push_linear_gradient(
     let stops_slice = unsafe { make_slice(stops, stops_count) };
     let stops_vector = stops_slice.to_owned();
 
-    let gradient = state
-        .frame_builder
-        .dl_builder
-        .create_gradient(start_point, end_point, stops_vector, extend_mode);
+    let (gradient, stops_vector) =
+        state
+            .frame_builder
+            .dl_builder
+            .create_gradient(start_point, end_point, stops_vector, extend_mode);
 
     let space_and_clip = parent.to_webrender(state.pipeline_id);
 
@@ -4442,7 +4468,7 @@ pub extern "C" fn wr_dp_push_linear_gradient(
     state
         .frame_builder
         .dl_builder
-        .push_gradient(&prim_info, rect, gradient, tile_size, tile_spacing);
+        .push_gradient(&prim_info, rect, gradient, tile_size, tile_spacing, &stops_vector);
 }
 
 #[no_mangle]
@@ -4465,10 +4491,11 @@ pub extern "C" fn wr_dp_push_radial_gradient(
     let stops_slice = unsafe { make_slice(stops, stops_count) };
     let stops_vector = stops_slice.to_owned();
 
-    let gradient = state
-        .frame_builder
-        .dl_builder
-        .create_radial_gradient(center, radius, stops_vector, extend_mode);
+    let (gradient, stops_vector) =
+        state
+            .frame_builder
+            .dl_builder
+            .create_radial_gradient(center, radius, stops_vector, extend_mode);
 
     let space_and_clip = parent.to_webrender(state.pipeline_id);
 
@@ -4479,10 +4506,14 @@ pub extern "C" fn wr_dp_push_radial_gradient(
         flags: prim_flags(is_backface_visible, /* prefer_compositor_surface */ false),
     };
 
-    state
-        .frame_builder
-        .dl_builder
-        .push_radial_gradient(&prim_info, rect, gradient, tile_size, tile_spacing);
+    state.frame_builder.dl_builder.push_radial_gradient(
+        &prim_info,
+        rect,
+        gradient,
+        tile_size,
+        tile_spacing,
+        &stops_vector,
+    );
 }
 
 #[no_mangle]
@@ -4505,10 +4536,11 @@ pub extern "C" fn wr_dp_push_conic_gradient(
     let stops_slice = unsafe { make_slice(stops, stops_count) };
     let stops_vector = stops_slice.to_owned();
 
-    let gradient = state
-        .frame_builder
-        .dl_builder
-        .create_conic_gradient(center, angle, stops_vector, extend_mode);
+    let (gradient, stops_vector) =
+        state
+            .frame_builder
+            .dl_builder
+            .create_conic_gradient(center, angle, stops_vector, extend_mode);
 
     let space_and_clip = parent.to_webrender(state.pipeline_id);
 
@@ -4519,10 +4551,14 @@ pub extern "C" fn wr_dp_push_conic_gradient(
         flags: prim_flags(is_backface_visible, /* prefer_compositor_surface */ false),
     };
 
-    state
-        .frame_builder
-        .dl_builder
-        .push_conic_gradient(&prim_info, rect, gradient, tile_size, tile_spacing);
+    state.frame_builder.dl_builder.push_conic_gradient(
+        &prim_info,
+        rect,
+        gradient,
+        tile_size,
+        tile_spacing,
+        &stops_vector,
+    );
 }
 
 #[no_mangle]
@@ -4739,8 +4775,7 @@ pub extern "C" fn wr_shaders_new(
     let mut options = WebRenderOptions::default();
     options.enable_dithering = static_prefs::pref!("gfx.webrender.dithering");
 
-    let gl_type = device.gl().get_type();
-    let mut shaders = match Shaders::new(&mut device, gl_type, &options) {
+    let mut shaders = match Shaders::new(&mut device, &options) {
         Ok(shaders) => shaders,
         Err(e) => {
             warn!(" Failed to create a Shaders: {:?}", e);

@@ -8,22 +8,22 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/CheckedInt.h"
-#include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Span.h"  // mozilla::{Span,Span}
-#include "mozilla/Sprintf.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/Vector.h"
 
 #include <algorithm>
 #include <new>
 #include <string.h>
+#include <string_view>
 #include <utility>
 
 #include "jstypes.h"
 
+#include "builtin/Number.h"  // js::Int32ToCStringBuf, js::Uint32ToCString
 #include "frontend/BytecodeSection.h"
 #include "frontend/CompilationStencil.h"  // frontend::CompilationStencil, frontend::InitialStencilAndDelazifications
 #include "frontend/FrontendContext.h"  // AutoReportFrontendContext
@@ -2088,26 +2088,36 @@ ScriptSource::ExclusiveSourceData::initializeUnretrievableUncompressedSource(
 // indicating code compiled by the call to 'eval' on line 7 of foo.js.
 UniqueChars js::FormatIntroducedFilename(const char* filename, uint32_t lineno,
                                          const char* introducer) {
+  static constexpr std::string_view LineSeparator = " line ";
+  static constexpr std::string_view IntroducerSeparator = " > ";
+
+  Int32ToCStringBuf linenoBuf;
+  size_t linenoLen;
+  const char* linenoChars = Uint32ToCString(&linenoBuf, lineno, &linenoLen);
+
   // Compute the length of the string in advance, so we can allocate a
   // buffer of the right size on the first shot.
-  //
-  // (JS_smprintf would be perfect, as that allocates the result
-  // dynamically as it formats the string, but it won't allocate from cx,
-  // and wants us to use a special free function.)
-  char linenoBuf[15];
   size_t filenameLen = strlen(filename);
-  size_t linenoLen = SprintfLiteral(linenoBuf, "%u", lineno);
   size_t introducerLen = strlen(introducer);
-  size_t len = filenameLen + 6 /* == strlen(" line ") */ + linenoLen +
-               3 /* == strlen(" > ") */ + introducerLen + 1 /* \0 */;
+  size_t len = filenameLen + LineSeparator.length() + linenoLen +
+               IntroducerSeparator.length() + introducerLen + 1 /* \0 */;
   UniqueChars formatted(js_pod_malloc<char>(len));
   if (!formatted) {
     return nullptr;
   }
 
-  mozilla::DebugOnly<size_t> checkLen = snprintf(
-      formatted.get(), len, "%s line %s > %s", filename, linenoBuf, introducer);
-  MOZ_ASSERT(checkLen == len - 1);
+  char* out = formatted.get();
+  auto append = [&out](const char* chars, size_t length) {
+    memcpy(out, chars, length);
+    out += length;
+  };
+  append(filename, filenameLen);
+  append(LineSeparator.data(), LineSeparator.length());
+  append(linenoChars, linenoLen);
+  append(IntroducerSeparator.data(), IntroducerSeparator.length());
+  append(introducer, introducerLen);
+  *out = '\0';
+  MOZ_ASSERT(size_t(out - formatted.get()) == len - 1);
 
   return formatted;
 }
@@ -2749,6 +2759,8 @@ JSScript* JSScript::fromStencil(JSContext* cx,
 void JSScript::assertValidJumpTargets() const {
   BytecodeLocation mainLoc = mainLocation();
   BytecodeLocation endLoc = endLocation();
+  uint32_t numSuspends = 0;
+  uint32_t numTableSwitchCases = 0;
   AllBytecodesIterable iter(this);
   for (BytecodeLocation loc : iter) {
     // Check jump instructions' target.
@@ -2792,8 +2804,22 @@ void JSScript::assertValidJumpTargets() const {
         MOZ_ASSERT(mainLoc <= switchCase && switchCase < endLoc);
         MOZ_ASSERT(switchCase.is(JSOp::JumpTarget));
       }
+      numTableSwitchCases += high - low + 1;
+    }
+
+    // Yield and await ops have the first entries in resumeOffsets(), in
+    // bytecode order, followed by the JSOp::TableSwitch case targets. Each of
+    // these entries is the offset of the op's JSOp::AfterYield.
+    if (loc.is(JSOp::InitialYield) || loc.is(JSOp::Yield) ||
+        loc.is(JSOp::Await)) {
+      MOZ_ASSERT(numSuspends < resumeOffsets().size());
+      MOZ_ASSERT(loc.getResumeIndex() == numSuspends);
+      MOZ_ASSERT(resumeOffsets()[numSuspends] ==
+                 loc.next().bytecodeToOffset(this));
+      numSuspends++;
     }
   }
+  MOZ_ASSERT(numSuspends + numTableSwitchCases == resumeOffsets().size());
 
   // Check catch/finally blocks as jump targets.
   for (const TryNote& tn : trynotes()) {
@@ -3827,8 +3853,6 @@ static const char* TryNoteName(TryNoteKind kind) {
       return "for-of";
     case TryNoteKind::Loop:
       return "loop";
-    case TryNoteKind::ForOfIterClose:
-      return "for-of-iterclose";
     case TryNoteKind::Destructuring:
       return "destructuring";
   }

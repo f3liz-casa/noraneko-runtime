@@ -189,6 +189,31 @@
   list-style-image: url("chrome://browser/skin/flame.svg");
 }
 
+#remote-control-toolbar-button {
+  list-style-image: url("chrome://browser/skin/remote-control.svg");
+
+  /* While running, tint the icon and display a colored dot. */
+  &[remote-control-running] {
+    --toolbarbutton-icon-fill: var(--icon-color-success);
+
+    /* Same dot styling as the .toolbarbutton-badge.feature-callout rule in
+     * toolbarbuttons.css, duplicated here because this badge is keyed off an
+     * attribute rather than a class. Keep both in sync. */
+    > .toolbarbutton-badge-stack > .toolbarbutton-badge {
+      width: 14px;
+      height: 14px;
+      min-width: auto;
+      box-shadow: none;
+      border: none;
+      padding: 0;
+      display: block;
+      margin: -7px 0 0 !important;
+      margin-inline-end: -6px !important;
+      background: url("chrome://global/skin/icons/badge-blue.svg");
+    }
+  }
+}
+
 #email-link-button {
   list-style-image: url("chrome://browser/skin/mail.svg");
 }
@@ -358,6 +383,11 @@
       stroke: var(--icon-color-success);
     }
 
+    &.ipprotection-included {
+      list-style-image: url("chrome://browser/content/ipprotection/assets/states/ipprotection-included.svg");
+      stroke: var(--icon-color-success);
+    }
+
     &.ipprotection-paused {
       list-style-image: url("chrome://browser/content/ipprotection/assets/states/ipprotection-paused.svg");
       fill: var(--toolbarbutton-icon-fill);
@@ -396,6 +426,10 @@
       list-style-image: url("chrome://browser/content/ipprotection/assets/toolbaricons/ipprotection-excluded.svg");
       stroke: var(--icon-color-success);
     }
+    .ipprotection-icon-layer[data-state="included"] {
+      list-style-image: url("chrome://browser/content/ipprotection/assets/toolbaricons/ipprotection-included.svg");
+      stroke: var(--icon-color-success);
+    }
     .ipprotection-icon-layer[data-state="paused"] {
       list-style-image: url("chrome://browser/content/ipprotection/assets/toolbaricons/ipprotection-paused.svg");
       fill: var(--toolbarbutton-icon-fill);
@@ -406,12 +440,14 @@
     &.ipprotection-network-error .ipprotection-icon-layer[data-state="network-error"],
     &.ipprotection-error .ipprotection-icon-layer[data-state="error"],
     &.ipprotection-excluded .ipprotection-icon-layer[data-state="excluded"],
+    &.ipprotection-included .ipprotection-icon-layer[data-state="included"],
     &.ipprotection-paused .ipprotection-icon-layer[data-state="paused"] {
       opacity: 1;
     }
 
     /* Icon Inactive State */
-    &:is(.ipprotection-on, .ipprotection-network-error, .ipprotection-error, .ipprotection-excluded, .ipprotection-paused) .toolbarbutton-icon {
+    &:is(.ipprotection-on, .ipprotection-network-error, .ipprotection-error, .ipprotection-excluded, .ipprotection-included, .ipprotection-paused)
+      .toolbarbutton-icon {
       opacity: 0;
     }
   }
@@ -453,8 +489,30 @@
   }
 }
 
-#smartwindow-group-tabs-button-inner {
+#smartwindow-group-tabs-button {
   list-style-image: url("chrome://browser/skin/grid-sparkle.svg");
+}
+
+#smartwindow-monitor-button {
+  list-style-image: url("chrome://browser/content/aiwindow/assets/agent-watch.svg");
+
+  /* A monitor matched its condition. Same badge dot as #PanelUI-button and
+     #downloads-button, tinted to say the watched condition was met rather than
+     the attention blue those two use to ask for a decision. */
+  &[monitor-attention] > .toolbarbutton-badge-stack > .toolbarbutton-badge {
+    display: block;
+    box-shadow: none;
+    /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
+    margin-top: -7px !important;
+    /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
+    margin-inline-end: -6px !important;
+    min-width: var(--icon-size-xsmall);
+    min-height: var(--icon-size-xsmall);
+    -moz-context-properties: fill;
+    fill: var(--tab-attention-dot-color);
+    background: url("chrome://browser/skin/notification-fill-12.svg") no-repeat center;
+    background-size: var(--icon-size-xsmall);
+  }
 }
 
 #document-pip-return-to-opener-button {

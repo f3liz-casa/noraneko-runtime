@@ -12,7 +12,9 @@
 
 #include "chrome/common/process_watcher.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_general.h"
+#include "nsXULAppAPI.h"
 
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
 #  include "mozilla/Sandbox.h"
@@ -67,13 +69,24 @@ UtilityProcessHost::UtilityProcessHost(SandboxingKind aSandbox,
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
   mDisableOSActivityMode = IsUtilitySandboxEnabled(aSandbox);
 #endif
+#if defined(MOZ_SANDBOX)
   mUtilitySandbox = aSandbox;
+#endif
 }
 
 UtilityProcessHost::~UtilityProcessHost() {
   MOZ_COUNT_DTOR(UtilityProcessHost);
+#if defined(MOZ_SANDBOX)
   LOGD("[%p] UtilityProcessHost::~UtilityProcessHost sandboxingKind=%" PRIu64,
        this, mUtilitySandbox);
+#else
+  LOGD("[%p] UtilityProcessHost::~UtilityProcessHost", this);
+#endif
+
+  // DestroyProcess is in charge of both of these: by the time we get here we
+  // are already doomed on the IPC background thread, so it would be too late.
+  MOZ_ASSERT(!mForceKillTimer);
+  MOZ_ASSERT(mShutdownPromise.IsEmpty());
 }
 
 bool UtilityProcessHost::Launch(geckoargs::ChildProcessArgs aExtraOpts) {
@@ -86,7 +99,7 @@ bool UtilityProcessHost::Launch(geckoargs::ChildProcessArgs aExtraOpts) {
 
   mPrefSerializer = MakeUnique<ipc::SharedPreferenceSerializer>();
   if (!mPrefSerializer->SerializeToSharedMemory(GeckoProcessType_Utility,
-                                                /* remoteType */ ""_ns)) {
+                                                /* remoteType */ {})) {
     return false;
   }
   mPrefSerializer->AddSharedPrefCmdLineArgs(*this, aExtraOpts);
@@ -188,6 +201,13 @@ void UtilityProcessHost::InitAfterConnect(bool aSucceeded) {
             GetActor()->OtherPid());
         break;
 
+#  ifndef ANDROID
+      case SandboxingKind::HW_INFERENCE:
+        policy = SandboxBrokerPolicyFactory::GetHWInferencePolicy(
+            GetActor()->OtherPid());
+        break;
+#  endif  // !ANDROID
+
       default:
         MOZ_ASSERT(false, "Invalid SandboxingKind");
         break;
@@ -222,10 +242,13 @@ void UtilityProcessHost::InitAfterConnect(bool aSucceeded) {
   // will send the InitCompleted message.
 }
 
-void UtilityProcessHost::Shutdown() {
+RefPtr<UtilityProcessHost::ShutdownPromiseType> UtilityProcessHost::Shutdown() {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(!mShutdownRequested);
   LOGD("[%p] UtilityProcessHost::Shutdown", this);
+
+  RefPtr<ShutdownPromiseType> shutdownPromise =
+      mShutdownPromise.Ensure(__func__);
 
   RejectPromise(LaunchError("aborted by UtilityProcessHost::Shutdown"));
 
@@ -239,14 +262,11 @@ void UtilityProcessHost::Shutdown() {
 
     // The channel might already be closed if we got here unexpectedly.
     if (mUtilityProcessParent->CanSend()) {
-      mUtilityProcessParent->Close();
+      (void)mUtilityProcessParent->SendShutdown();
+      // The Utility process will run its shutdown tasks and then ask us to
+      // close the channel.
+      StartForceKillTimer();
     }
-
-#ifndef NS_FREE_PERMANENT_DATA
-    // No need to communicate shutdown, the Utility process doesn't need to
-    // communicate anything back.
-    KillHard("NormalShutdown");
-#endif
 
     // If we're shutting down unexpectedly, we're in the middle of handling an
     // ActorDestroy for PUtilityProcessParent, which is still on the stack.
@@ -254,10 +274,40 @@ void UtilityProcessHost::Shutdown() {
     //
     // Otherwise, we'll wait for OnChannelClose to be called whenever
     // PUtilityProcessParent acknowledges shutdown.
-    return;
+    return shutdownPromise;
   }
 
   DestroyProcess();
+  return shutdownPromise;
+}
+
+void UtilityProcessHost::StartForceKillTimer() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (mForceKillTimer) {
+    return;
+  }
+
+  uint32_t timeoutSecs =
+      StaticPrefs::dom_ipc_utilityProcess_shutdownTimeoutSecs();
+  if (timeoutSecs == 0) {
+    return;
+  }
+
+  NS_NewTimerWithCallback(
+      getter_AddRefs(mForceKillTimer),
+      [this, liveToken = mLiveToken](nsITimer*) {
+        if (!*liveToken) {
+          // The UtilityProcessHost got deleted. Abort.
+          return;
+        }
+        LOGD("[%p] UtilityProcessHost force kill timer fired", this);
+        NS_WARNING(
+            "Utility process did not acknowledge shutdown in time, killing.");
+        KillHard("ShutdownTimeout");
+      },
+      timeoutSecs * 1000, nsITimer::TYPE_ONE_SHOT,
+      "ipc::UtilityProcessHost::StartForceKillTimer"_ns);
 }
 
 void UtilityProcessHost::OnChannelClosed(
@@ -283,14 +333,39 @@ void UtilityProcessHost::OnChannelClosed(
 
 void UtilityProcessHost::KillHard(const char* aReason) {
   MOZ_ASSERT(NS_IsMainThread());
-  LOGD("[%p] UtilityProcessHost::KillHard", this);
+  LOGD("[%p] UtilityProcessHost::KillHard %s", this, aReason);
 
-  ProcessHandle handle = GetChildProcessHandle();
-  if (!base::KillProcess(handle, base::PROCESS_END_KILLED_BY_USER)) {
+  if (mForceKillTimer) {
+    mForceKillTimer->Cancel();
+    mForceKillTimer = nullptr;
+  }
+
+  // SetAlreadyDead below closes the handle we own, so open our own one to hand
+  // over to EnsureProcessTerminated further down.
+  ProcessHandle handle = 0;
+  base::ProcessId pid = GetChildProcessId();
+  bool haveHandle = pid && base::OpenProcessHandle(pid, &handle);
+  if (!haveHandle) {
+    NS_WARNING("Failed to open subprocess handle when attempting kill!");
+  } else if (!base::KillProcess(handle, base::PROCESS_END_KILLED_BY_USER)) {
     NS_WARNING("failed to kill subprocess!");
   }
 
   SetAlreadyDead();
+
+  // Stop all IPC on this channel immediately, so that the shutdown sequence
+  // ends even if the kill above failed.
+  if (mUtilityProcessParent && mUtilityProcessParent->CanSend()) {
+    mUtilityProcessParent->GetIPCChannel()->InduceConnectionError();
+  }
+
+  if (haveHandle) {
+    // EnsureProcessTerminated has responsibility for closing handle.
+    XRE_GetAsyncIOEventTarget()->Dispatch(
+        NewRunnableFunction("EnsureProcessTerminatedRunnable",
+                            &ProcessWatcher::EnsureProcessTerminated, handle,
+                            /* force */ true));
+  }
 }
 
 void UtilityProcessHost::DestroyProcess() {
@@ -298,6 +373,14 @@ void UtilityProcessHost::DestroyProcess() {
   LOGD("[%p] UtilityProcessHost::DestroyProcess", this);
 
   RejectPromise(LaunchError("UtilityProcessHost::DestroyProcess"));
+
+  if (mForceKillTimer) {
+    mForceKillTimer->Cancel();
+    mForceKillTimer = nullptr;
+  }
+
+  // The shutdown sequence is over, graceful or not.
+  mShutdownPromise.ResolveIfExists(Ok{}, __func__);
 
   // Any pending tasks will be cancelled from now on.
   *mLiveToken = false;

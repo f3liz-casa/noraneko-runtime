@@ -1078,6 +1078,69 @@ export let ProfileDataUpgrader = {
       Services.prefs.clearUserBranch("browser.promo.cookiebanners.");
     }
 
+    if (existingDataVersion < 180) {
+      // Bug 2056232: the IP Protection UI is now gated on the l10n coverage of
+      // browser/ipProtection.ftl, and only for users who have never seen the
+      // feature. Existing profiles are assumed to have already seen it, so the
+      // gate never takes it away from them.
+      const IPP_HAS_SEEN_FEATURE_PREF = "browser.ipProtection.hasSeenFeature";
+      if (!Services.prefs.prefHasUserValue(IPP_HAS_SEEN_FEATURE_PREF)) {
+        Services.prefs.setBoolPref(IPP_HAS_SEEN_FEATURE_PREF, true);
+      }
+    }
+
+    if (existingDataVersion < 181) {
+      // Bug 2058359 - Re-enable "update service" setting for auto-disabled installations
+      if (
+        AppConstants.MOZ_MAINTENANCE_SERVICE &&
+        Services.prefs.prefHasUserValue("app.update.service.enabled") &&
+        !Services.prefs.getBoolPref("app.update.service.enabled", true)
+      ) {
+        Services.prefs.clearUserPref("app.update.service.enabled");
+        Glean.update.autoReenableStagedUpdates.record();
+      }
+    }
+
+    if (existingDataVersion < 182) {
+      // Bug 2031836 - Rename preferences related to a separate search engine
+      // in default private browsing mode.
+      const OLD_ENABLED_PREF = "browser.search.separatePrivateDefault";
+      const OLD_UI_ENABLED_PREF =
+        "browser.search.separatePrivateDefault.ui.enabled";
+
+      const uiEnabled = Services.prefs.getBoolPref(OLD_UI_ENABLED_PREF, false);
+
+      Services.prefs.setBoolPref(
+        "browser.search.separatePrivateDefault.featureGate",
+        uiEnabled
+      );
+      if (uiEnabled && Services.prefs.getBoolPref(OLD_ENABLED_PREF, true)) {
+        Services.prefs.setBoolPref(
+          "browser.search.separatePrivateDefault.enabled",
+          true
+        );
+      }
+
+      Services.prefs.clearUserPref(OLD_ENABLED_PREF);
+      Services.prefs.clearUserPref(OLD_UI_ENABLED_PREF);
+    }
+
+    if (existingDataVersion < 183) {
+      // Migrate old sidebar users to the switcher visibility setting
+      // We have two cases we can address: old sidebar users in beta & release who never switched/tried
+      // out the new sidebar OR users in Nightly who have flipped the pref to revert to the old one
+      if (
+        Services.prefs.getBoolPref("sidebar.old-sidebar.has-used") &&
+        (!Services.prefs.getBoolPref("sidebar.new-sidebar.has-used") ||
+          !Services.prefs.getBoolPref("sidebar.revamp", true))
+      ) {
+        Services.prefs.setCharPref("sidebar.visibility", "hide-launcher");
+      }
+
+      // We need to override this in order to roll the new sidebar out to everyone
+      Services.prefs.clearUserPref("sidebar.revamp");
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", newVersion);
   },

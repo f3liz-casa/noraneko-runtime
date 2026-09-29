@@ -8,8 +8,8 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
 import org.mozilla.fenix.helpers.TestAssetHelper.waitingTime
 import org.mozilla.fenix.ui.efficiency.helpers.BasePage
-import org.mozilla.fenix.ui.efficiency.helpers.Selector
-import org.mozilla.fenix.ui.efficiency.navigation.NavigationRegistry
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationGraph
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationOptions
 import org.mozilla.fenix.ui.efficiency.navigation.NavigationStep
 import org.mozilla.fenix.ui.efficiency.selectors.BrowserPageSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.DownloadsSelectors
@@ -19,44 +19,46 @@ import org.mozilla.fenix.ui.efficiency.selectors.MainMenuSelectors
 class DownloadsPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>) : BasePage(composeRule) {
     override val pageName = "DownloadsPage"
 
-    init {
-        NavigationRegistry.register(
+    internal override fun registerNavigation(builder: NavigationGraph.Builder) {
+        builder.register(
             from = "HomePage",
             to = pageName,
-            steps = listOf(
-                NavigationStep.Click(HomeSelectors.MAIN_MENU_BUTTON),
-                NavigationStep.Click(MainMenuSelectors.DOWNLOADS_BUTTON),
-            ),
+            steps =
+                listOf(
+                    NavigationStep.Click(HomeSelectors.MAIN_MENU_BUTTON),
+                    NavigationStep.Click(MainMenuSelectors.DOWNLOADS_BUTTON),
+                ),
         )
 
         // The downloads manager is also reachable from the browser's own three-dot menu, which is how
         // a download test gets there (routing browser -> home -> downloads would lose the loaded page).
-        NavigationRegistry.register(
+        builder.register(
             from = "BrowserPage",
             to = pageName,
-            steps = listOf(
-                NavigationStep.Click(BrowserPageSelectors.MAIN_MENU_BUTTON),
-                NavigationStep.Click(MainMenuSelectors.DOWNLOADS_BUTTON),
-            ),
+            steps =
+                listOf(
+                    NavigationStep.Click(BrowserPageSelectors.MAIN_MENU_BUTTON),
+                    NavigationStep.Click(MainMenuSelectors.DOWNLOADS_BUTTON),
+                ),
         )
 
-        NavigationRegistry.register(
+        builder.register(
             from = pageName,
             to = "BrowserPage",
-            steps = listOf(
-                NavigationStep.Click(DownloadsSelectors.NAVIGATE_BACK_TOOLBAR_BUTTON),
-            ),
+            steps = listOf(NavigationStep.Click(DownloadsSelectors.NAVIGATE_BACK_TOOLBAR_BUTTON)),
         )
     }
 
-    override fun mozGetSelectorsByGroup(group: String): List<Selector> {
-        return DownloadsSelectors.all.filter { it.groups.contains(group) }
-    }
+    override val selectorCatalog = DownloadsSelectors
 
     // Narrow the return type to this page so callers can chain page-specific helpers off
     // navigateToPage() (see SettingsAutofillPage for the same pattern).
-    override fun navigateToPage(url: String, forceNavigation: Boolean): DownloadsPage {
-        super.navigateToPage(url = url, forceNavigation = forceNavigation)
+    override fun navigateToPage(
+        url: String,
+        forceNavigation: Boolean,
+        navigationOptions: NavigationOptions,
+    ): DownloadsPage {
+        super.navigateToPage(url = url, forceNavigation = forceNavigation, navigationOptions = navigationOptions)
         return this
     }
 

@@ -236,12 +236,6 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
   void UpdateImageMap(nsImageFrame* aImageFrame);
 
   /**
-   * Update the label accessible tree when rendered @value is changed.
-   */
-  void UpdateLabelValue(mozilla::PresShell* aPresShell, nsIContent* aLabelElm,
-                        const nsString& aNewValue);
-
-  /**
    * Notify accessibility that anchor jump has been accomplished to the given
    * target. Used by layout.
    */
@@ -323,6 +317,13 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
   void NotifyARIAAttributeDefaultChanged(mozilla::dom::Element* aElement,
                                          nsAtom* aAttribute,
                                          AttrModType aModType);
+
+  /**
+   * Notify accessibility that an EditContext has been attached to or
+   * detached from aElement. Deliberately not called when aElement's EditContext
+   * is replaced with a different EditContext.
+   */
+  void NotifyOfEditContextAttachmentChange(mozilla::dom::Element* aElement);
 
   void AriaNotify(nsINode* aNode, const nsAString& aAnnouncement,
                   const mozilla::dom::AriaNotificationOptions& aOptions);

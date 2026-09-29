@@ -24,7 +24,6 @@
 #  endif
 #  include "mozilla/ScopeExit.h"
 #  include "mozilla/WinDllServices.h"
-#  include "mozilla/WindowsBCryptInitialization.h"
 #  include "WinUtils.h"
 #endif
 
@@ -487,13 +486,6 @@ nsresult XRE_InitChildProcess(int aArgc, char* aArgv[],
       break;
   }
 
-#if defined(XP_WIN)
-  {
-    DebugOnly<bool> result = mozilla::WindowsBCryptInitialization();
-    MOZ_ASSERT(result);
-  }
-#endif  // defined(XP_WIN)
-
   {
     // This is a lexical scope for the MessageLoop below.  We want it
     // to go out of scope before NS_LogTerm() so that we don't get
@@ -692,8 +684,8 @@ already_AddRefed<TestShellParent> GetOrCreateTestShellParent() {
     // this and you're sure you wouldn't be better off writing a "browser"
     // chrome mochitest where you can have multiple types of content
     // processes.
-    TestShellContentParent() =
-        ContentParent::GetNewOrUsedBrowserProcess(DEFAULT_REMOTE_TYPE);
+    TestShellContentParent() = ContentParent::GetNewOrUsedBrowserProcess(
+        mozilla::dom::RemoteType::SharedWeb({}));
   } else if (TestShellContentParent()->IsShuttingDown()) {
     return nullptr;
   }

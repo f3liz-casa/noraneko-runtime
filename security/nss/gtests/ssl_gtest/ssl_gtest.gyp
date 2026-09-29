@@ -61,6 +61,7 @@
         'tls_filter.cc',
         'tls_grease_unittest.cc',
         'tls_hkdf_unittest.cc',
+        'tls_mldsa_unittest.cc',
         'tls_mlkem_unittest.cc',
         'tls_protect.cc',
         'tls_psk_unittest.cc',
@@ -100,11 +101,6 @@
         [ 'disable_dbm==0', {
           'dependencies': [
             '<(DEPTH)/lib/dbm/src/src.gyp:dbm',
-          ],
-        }],
-        [ 'disable_kyber==0', {
-          'sources': [
-             'tls_xyber_unittest.cc',
           ],
         }],
         [ 'enable_sslkeylogfile==1 and sanitizer_flags==0', {

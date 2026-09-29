@@ -1057,6 +1057,13 @@ ImageTestCase LargeJXLTestCase() {
                        TEST_CASE_IGNORE_OUTPUT);
 }
 
+// The pixels of large.jxl, as libjxl decodes them, in a lossless format some
+// other decoder can read back exactly.
+ImageTestCase LargeJXLReferenceWebPTestCase() {
+  return ImageTestCase("large-jxl-reference.webp", "image/webp",
+                       IntSize(1200, 660), TEST_CASE_IGNORE_OUTPUT);
+}
+
 ImageTestCase TransparentJXLTestCase() {
   auto testCase = ImageTestCase("transparent.jxl", "image/jxl",
                                 IntSize(100, 100), TEST_CASE_IS_TRANSPARENT);
@@ -1101,6 +1108,14 @@ ImageTestCase ProgressiveAlphaMultiGroupJXLTestCase() {
 
 ImageTestCase ExifResolutionTestCase() {
   return ImageTestCase("exif_resolution.jpg", "image/jpeg", IntSize(100, 50));
+}
+
+ImageTestCase ExifOrientationDownscaleJPGTestCase() {
+  // EXIF orientation 6 (rotate 90 CW): stored 48x160, oriented 160x48. The
+  // 8x32 output is a non-aspect-preserving downscale exercising libjpeg-turbo
+  // IDCT scale-factor selection across the orientation axis swap (bug 2033250).
+  return ImageTestCase("green-exif-orient6.jpg", "image/jpeg", IntSize(160, 48),
+                       IntSize(8, 32), TEST_CASE_IS_FUZZY);
 }
 
 RefPtr<Image> TestCaseToDecodedImage(const ImageTestCase& aTestCase) {

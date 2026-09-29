@@ -8,7 +8,7 @@
 
 const QUICKACTIONS_PREF = "browser.urlbar.suggest.quickactions";
 const SUGGEST_ENABLED_PREF = "browser.search.suggest.enabled";
-const PRIVATE_SEARCH_PREF = "browser.search.separatePrivateDefault.ui.enabled";
+const PRIVATE_SEARCH_PREF = "browser.search.separatePrivateDefault.featureGate";
 
 // We make sure that restriction tokens and search terms are correctly
 // recognized when they are separated by each of these different types of spaces
@@ -390,11 +390,48 @@ add_task(async function () {
     ],
   });
 
-  info("Forced search through searchbar, keyword.enabled = false");
-  query = "bacon";
+  for (let sapName of ["searchbar", "newtab_searchbar"]) {
+    info(`Forced search through ${sapName}, keyword.enabled = false`);
+    query = "bacon";
+    context = createContext(query, { isPrivate: false, sapName });
+    await check_results({
+      context,
+      matches: [
+        makeSearchResult(context, {
+          engineName: SUGGESTIONS_ENGINE_NAME,
+          heuristic: true,
+          query: "bacon",
+        }),
+      ],
+    });
+  }
+
+  info(
+    "A URL is still a visit in the newtab search bar, keyword.enabled = false"
+  );
+  query = "https://mozilla.org";
   context = createContext(query, {
     isPrivate: false,
-    sapName: "searchbar",
+    sapName: "newtab_searchbar",
+  });
+  await check_results({
+    context,
+    matches: [
+      makeVisitResult(context, {
+        source: UrlbarShared.RESULT_SOURCE.OTHER_LOCAL,
+        uri: `${query}/`,
+        title: `${query}/`,
+        heuristic: true,
+      }),
+    ],
+  });
+
+  // The address bar gets no result at all for this; a search bar searches it.
+  info("Invalid URL through the newtab search bar, keyword.enabled = false");
+  query = "bacon *";
+  context = createContext(query, {
+    isPrivate: false,
+    sapName: "newtab_searchbar",
   });
   await check_results({
     context,
@@ -402,7 +439,7 @@ add_task(async function () {
       makeSearchResult(context, {
         engineName: SUGGESTIONS_ENGINE_NAME,
         heuristic: true,
-        query: "bacon",
+        query,
       }),
     ],
   });

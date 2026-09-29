@@ -6,13 +6,23 @@
 
 package org.mozilla.fenix.components.ipprotection
 
+import kotlin.test.assertNotNull
 import mozilla.components.ExperimentalAndroidComponentsApi
 import mozilla.components.concept.engine.ipprotection.ServiceState
+import mozilla.components.feature.ipprotection.store.ActivationOperation
+import mozilla.components.feature.ipprotection.store.CachedLocationStatus
 import mozilla.components.feature.ipprotection.store.IPProtectionAction
 import mozilla.components.feature.ipprotection.store.IPProtectionStore
 import mozilla.components.feature.ipprotection.store.state.AccountState
 import mozilla.components.feature.ipprotection.store.state.AccountStatus
+import mozilla.components.feature.ipprotection.store.state.Authorized
+import mozilla.components.feature.ipprotection.store.state.Country
 import mozilla.components.feature.ipprotection.store.state.IPProtectionState
+import mozilla.components.feature.ipprotection.store.state.Location
+import mozilla.components.feature.ipprotection.store.state.LocationState
+import mozilla.components.feature.ipprotection.store.state.ProxyStatus
+import mozilla.components.feature.ipprotection.store.state.Recommended
+import mozilla.components.feature.ipprotection.store.state.Uninitialized
 import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -22,15 +32,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.fenix.GleanMetrics.Vpn
 import org.mozilla.fenix.helpers.FenixGleanTestRule
-import org.mozilla.geckoview.IPProtectionController.IPProxyException
 import org.robolectric.RobolectricTestRunner
-import kotlin.test.assertNotNull
 
 @RunWith(RobolectricTestRunner::class)
 class IPProtectionTelemetryMiddlewareTest {
 
-    @get:Rule
-    val gleanTestRule = FenixGleanTestRule(testContext)
+    @get:Rule val gleanTestRule = FenixGleanTestRule(testContext)
 
     private var now = 0L
     private val middleware = IPProtectionTelemetryMiddleware(currentTimeInMillis = { now })
@@ -99,8 +106,8 @@ class IPProtectionTelemetryMiddlewareTest {
 
         val store = createStore(initialStatus = AccountStatus.EnrolledAndEntitled)
 
-        store.dispatch(IPProtectionAction.ToggleFailed())
-        store.dispatch(IPProtectionAction.ToggleFailed(RuntimeException("boom")))
+        store.dispatch(IPProtectionAction.ToggleFailed(ActivationOperation.Activate))
+        store.dispatch(IPProtectionAction.ToggleFailed(ActivationOperation.Activate, RuntimeException("boom")))
 
         val events = Vpn.errorEncountered.testGetValue()
         assertNotNull(events)
@@ -109,31 +116,252 @@ class IPProtectionTelemetryMiddlewareTest {
     }
 
     @Test
+    fun `GIVEN the location switch failed with no or a non-proxy error THEN no error code is recorded`() {
+        assertNull(Vpn.locationSwitchError.testGetValue())
+
+        val store = createStore(initialStatus = AccountStatus.EnrolledAndEntitled)
+
+        store.dispatch(IPProtectionAction.LocationSwitchFailed())
+        store.dispatch(IPProtectionAction.LocationSwitchFailed(RuntimeException("It's a null-pointer!")))
+
+        val events = Vpn.locationSwitchError.testGetValue()
+        assertNotNull(events)
+        assertEquals(2, events.size)
+        assertTrue(events.all { it.extra?.get("error_code") == "null" })
+    }
+
+    @Test
+    fun `GIVEN the location list update failed THEN the error class name is recorded`() {
+        assertNull(Vpn.locationUpdateError.testGetValue())
+
+        val store = createStore(initialStatus = AccountStatus.EnrolledAndEntitled)
+
+        store.dispatch(IPProtectionAction.LocationUpdateFailed(RuntimeException("generic-error")))
+
+        val events = Vpn.locationUpdateError.testGetValue()
+        assertNotNull(events)
+        assertEquals(1, events.size)
+        assertEquals("RuntimeException", events.first().extra?.get("error_code"))
+    }
+
+    @Test
     fun `GIVEN user has already finished auth flow successfully but service is still unauthenticated WHEN the VPN toggle failed THEN a generic network error telemetry is recorded`() {
         assertNull(Vpn.entitledAccountUnauthenticated.testGetValue())
 
-        val store = createStore(
-            initialStatus = AccountStatus.EnrolledAndEntitled,
-            serviceStatus = ServiceState.Unauthenticated,
-        )
+        val store =
+            createStore(
+                initialStatus = AccountStatus.EnrolledAndEntitled,
+                serviceStatus = ServiceState.Unauthenticated,
+            )
 
-        store.dispatch(IPProtectionAction.ToggleFailed())
+        store.dispatch(IPProtectionAction.ToggleFailed(ActivationOperation.Activate))
 
         val events = Vpn.entitledAccountUnauthenticated.testGetValue()
         assertNotNull(events)
         assertEquals(1, events.size)
     }
 
+    @Test
+    fun `GIVEN a failed activate THEN the operation is recorded as activate`() {
+        val store = createStore(initialStatus = AccountStatus.EnrolledAndEntitled)
+
+        store.dispatch(IPProtectionAction.ToggleFailed(ActivationOperation.Activate))
+
+        val events = Vpn.errorEncountered.testGetValue()
+        assertNotNull(events)
+        assertEquals("activate", events.single().extra?.get("operation"))
+    }
+
+    @Test
+    fun `GIVEN a failed deactivate THEN the operation is recorded as deactivate`() {
+        val store = createStore(initialStatus = AccountStatus.EnrolledAndEntitled)
+
+        store.dispatch(IPProtectionAction.ToggleFailed(ActivationOperation.Deactivate))
+
+        val events = Vpn.errorEncountered.testGetValue()
+        assertNotNull(events)
+        assertEquals("deactivate", events.single().extra?.get("operation"))
+    }
+
+    @Test
+    fun `GIVEN activate and deactivate both fail THEN each event keeps its own operation`() {
+        val store = createStore(initialStatus = AccountStatus.EnrolledAndEntitled)
+
+        store.dispatch(IPProtectionAction.ToggleFailed(ActivationOperation.Activate))
+        store.dispatch(IPProtectionAction.ToggleFailed(ActivationOperation.Deactivate))
+
+        val events = Vpn.errorEncountered.testGetValue()
+        assertNotNull(events)
+        assertEquals(2, events.size)
+        assertEquals(
+            listOf("activate", "deactivate"),
+            events.map { it.extra?.get("operation") },
+        )
+    }
+
+    @Test
+    fun `GIVEN a failed toggle THEN the state at failure time is recorded`() {
+        val store =
+            createStore(
+                initialStatus = AccountStatus.EnrolledAndEntitled,
+                serviceStatus = ServiceState.Ready,
+            )
+
+        store.dispatch(IPProtectionAction.ToggleFailed(ActivationOperation.Activate))
+
+        val extra = Vpn.errorEncountered.testGetValue()?.single()?.extra
+        assertNotNull(extra)
+        assertEquals("ready", extra["service_state"])
+        assertEquals("uninitialized", extra["proxy_state"])
+        assertEquals("enrolled_and_entitled", extra["account_state"])
+    }
+
+    @Test
+    fun `GIVEN the user picks a location THEN the new country is recorded as a user action`() {
+        val store = createStore(selectedLocation = Recommended)
+
+        store.dispatch(
+            IPProtectionAction.LocationChanged(Country(countryCode = "JP", available = true), userAction = true)
+        )
+        store.dispatch(IPProtectionAction.LocationChanged(Recommended, userAction = true))
+
+        val events = Vpn.locationChanged.testGetValue()
+        assertNotNull(events)
+        assertEquals(listOf("JP", "recommended"), events.map { it.extra?.get("to") })
+        assertEquals(listOf("user_action", "user_action"), events.map { it.extra?.get("operation") })
+    }
+
+    @Test
+    fun `GIVEN the proxy is active WHEN the user picks a location THEN proxy_state is recorded as active`() {
+        val store = createStore(proxyStatus = Authorized.Active)
+
+        store.dispatch(
+            IPProtectionAction.LocationChanged(Country(countryCode = "JP", available = true), userAction = true)
+        )
+
+        val extra = Vpn.locationChanged.testGetValue()?.single()?.extra
+        assertNotNull(extra)
+        assertEquals("active", extra["proxy_state"])
+    }
+
+    @Test
+    fun `GIVEN a persisted location is restored THEN the operation is recorded as restore`() {
+        val store = createStore(selectedLocation = Recommended)
+
+        store.dispatch(
+            IPProtectionAction.LocationChanged(
+                location = Country(countryCode = "JP", available = true),
+                userAction = false,
+            )
+        )
+
+        val extra = Vpn.locationChanged.testGetValue()?.single()?.extra
+        assertNotNull(extra)
+        assertEquals("restore", extra["operation"])
+        assertEquals("JP", extra["to"])
+    }
+
+    @Test
+    fun `GIVEN a location switch fails THEN the revert back to the previous country is recorded`() {
+        val store =
+            createStore(
+                selectedLocation = Country(countryCode = "JP", available = true),
+                proxyStatus = Authorized.Active,
+            )
+
+        store.dispatch(
+            IPProtectionAction.LocationChanged(Country(countryCode = "FR", available = true), userAction = true)
+        )
+        store.dispatch(IPProtectionAction.LocationSwitchFailed())
+
+        val events = Vpn.locationChanged.testGetValue()
+        assertNotNull(events)
+        assertEquals(listOf("FR", "JP"), events.map { it.extra?.get("to") })
+        assertEquals(listOf("user_action", "reset"), events.map { it.extra?.get("operation") })
+        assertNotNull(Vpn.locationSwitchError.testGetValue())
+    }
+
+    @Test
+    fun `GIVEN a location is reset THEN the reset reason is recorded as missing`() {
+        createStore().dispatch(IPProtectionAction.LocationReset("JP", CachedLocationStatus.Missing))
+
+        val events = Vpn.locationReset.testGetValue()
+        assertNotNull(events)
+        assertEquals(listOf("missing"), events.map { it.extra?.get("reason") })
+    }
+
+    @Test
+    fun `GIVEN a location is reset THEN the dropped country and the list counts are recorded`() {
+        val store =
+            createStore(
+                selectedLocation = Country(countryCode = "JP", available = true),
+                locations =
+                    listOf(
+                        Recommended,
+                        Country(countryCode = "CA", available = true),
+                        Country(countryCode = "GB", available = false),
+                    ),
+            )
+
+        store.dispatch(IPProtectionAction.LocationReset("JP", CachedLocationStatus.Missing))
+
+        val extra = Vpn.locationReset.testGetValue()?.single()?.extra
+        assertNotNull(extra)
+        assertEquals("JP", extra["location"])
+        assertEquals("refresh", extra["operation"])
+        assertEquals("2", extra["list_size"])
+        assertEquals("1", extra["available_count"])
+    }
+
+    @Test
+    fun `GIVEN a persisted location is unavailable at startup THEN operation is recorded as restore`() {
+        val store = createStore(locations = listOf(Recommended, Country(countryCode = "CA", available = true)))
+
+        store.dispatch(IPProtectionAction.PersistedLocationUnavailable("JP", CachedLocationStatus.Missing))
+
+        val extra = Vpn.locationReset.testGetValue()?.single()?.extra
+        assertNotNull(extra)
+        assertEquals("JP", extra["location"])
+        assertEquals("missing", extra["reason"])
+        assertEquals("restore", extra["operation"])
+    }
+
+    @Test
+    fun `GIVEN the proxy is active WHEN a location is reset THEN the state at reset time is recorded`() {
+        val store =
+            createStore(
+                selectedLocation = Country(countryCode = "JP", available = true),
+                proxyStatus = Authorized.Active,
+                serviceStatus = ServiceState.Ready,
+                initialStatus = AccountStatus.EnrolledAndEntitled,
+            )
+
+        store.dispatch(IPProtectionAction.LocationReset("JP", CachedLocationStatus.Missing))
+
+        val extra = Vpn.locationReset.testGetValue()?.single()?.extra
+        assertNotNull(extra)
+        assertEquals("active", extra["proxy_state"])
+        assertEquals("ready", extra["service_state"])
+        assertEquals("enrolled_and_entitled", extra["account_state"])
+    }
+
     private fun createStore(
-        initialStatus: AccountStatus,
+        initialStatus: AccountStatus = AccountStatus.Uninitialized,
         serviceStatus: ServiceState = ServiceState.Uninitialized,
-    ) = IPProtectionStore(
-        initialState = IPProtectionState(
-            accountState = AccountState(status = initialStatus),
-            serviceStatus = serviceStatus,
-        ),
-        middleware = listOf(middleware),
-    )
+        proxyStatus: ProxyStatus = Uninitialized,
+        selectedLocation: Location = Recommended,
+        locations: List<Location> = listOf(Recommended),
+    ) =
+        IPProtectionStore(
+            initialState =
+                IPProtectionState(
+                    accountState = AccountState(status = initialStatus),
+                    serviceStatus = serviceStatus,
+                    proxyStatus = proxyStatus,
+                    locationState = LocationState(selectedLocation = selectedLocation, locations = locations),
+                ),
+            middleware = listOf(middleware),
+        )
 
     private fun IPProtectionStore.transitionTo(status: AccountStatus) {
         dispatch(IPProtectionAction.AccountStateChanged(status))

@@ -4,7 +4,10 @@
 
 package org.mozilla.fenix.ui.efficiency.selectors
 
+import org.mozilla.fenix.ui.efficiency.helpers.PageReadinessProfiles
 import org.mozilla.fenix.ui.efficiency.helpers.Selector
+import org.mozilla.fenix.ui.efficiency.helpers.SelectorContainer
+import org.mozilla.fenix.ui.efficiency.helpers.SelectorGroup
 import org.mozilla.fenix.ui.efficiency.helpers.SelectorStrategy
 
 // The reader-view appearance controls are the legacy Android View bar from
@@ -18,80 +21,81 @@ import org.mozilla.fenix.ui.efficiency.helpers.SelectorStrategy
 // click is reliable. The font/color buttons are AppCompatRadioButtons, so their active state is asserted
 // with mozVerifyElementIsChecked (UiObject2.isChecked). Font size has no UI state at all — it lives only
 // in SharedPreferences — so it is asserted via ReaderViewPage.verifyFontSize.
-object ReaderViewSelectors {
+object ReaderViewSelectors : SelectorContainer {
+    enum class Group : SelectorGroup {
+        READER_VIEW_CONTROLS
+    }
 
-    val APPEARANCE_FONT_GROUP = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
-        value = "mozac_feature_readerview_font_group",
-        description = "Reader view font group",
-        groups = listOf("requiredForPage", "readerViewControls"),
-    )
+    val APPEARANCE_FONT_GROUP =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
+            value = "mozac_feature_readerview_font_group",
+            description = "Reader view font group",
+            groups = setOf(Group.READER_VIEW_CONTROLS),
+            readiness = PageReadinessProfiles.IDENTITY_ANCHOR,
+        )
 
-    val APPEARANCE_FONT_SANS_SERIF = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
-        value = "mozac_feature_readerview_font_sans_serif",
-        description = "Reader view sans serif font button",
-        groups = listOf("readerViewControls"),
-    )
+    val APPEARANCE_FONT_SANS_SERIF =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
+            value = "mozac_feature_readerview_font_sans_serif",
+            description = "Reader view sans serif font button",
+            groups = setOf(Group.READER_VIEW_CONTROLS),
+        )
 
-    val APPEARANCE_FONT_SERIF = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
-        value = "mozac_feature_readerview_font_serif",
-        description = "Reader view serif font button",
-        groups = listOf("readerViewControls"),
-    )
+    val APPEARANCE_FONT_SERIF =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
+            value = "mozac_feature_readerview_font_serif",
+            description = "Reader view serif font button",
+            groups = setOf(Group.READER_VIEW_CONTROLS),
+        )
 
-    val APPEARANCE_FONT_SIZE_INCREASE = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
-        value = "mozac_feature_readerview_font_size_increase",
-        description = "Reader view increase font size button",
-        groups = listOf("readerViewControls"),
-    )
+    val APPEARANCE_FONT_SIZE_INCREASE =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
+            value = "mozac_feature_readerview_font_size_increase",
+            description = "Reader view increase font size button",
+            groups = setOf(Group.READER_VIEW_CONTROLS),
+        )
 
-    val APPEARANCE_FONT_SIZE_DECREASE = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
-        value = "mozac_feature_readerview_font_size_decrease",
-        description = "Reader view decrease font size button",
-        groups = listOf("readerViewControls"),
-    )
+    val APPEARANCE_FONT_SIZE_DECREASE =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
+            value = "mozac_feature_readerview_font_size_decrease",
+            description = "Reader view decrease font size button",
+            groups = setOf(Group.READER_VIEW_CONTROLS),
+        )
 
-    val APPEARANCE_COLOR_GROUP = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
-        value = "mozac_feature_readerview_color_scheme_group",
-        description = "Reader view color scheme group",
-        groups = listOf("readerViewControls"),
-    )
+    val APPEARANCE_COLOR_GROUP =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
+            value = "mozac_feature_readerview_color_scheme_group",
+            description = "Reader view color scheme group",
+            groups = setOf(Group.READER_VIEW_CONTROLS),
+        )
 
-    val APPEARANCE_COLOR_DARK = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
-        value = "mozac_feature_readerview_color_dark",
-        description = "Reader view dark color scheme button",
-        groups = listOf("readerViewControls"),
-    )
+    val APPEARANCE_COLOR_DARK =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
+            value = "mozac_feature_readerview_color_dark",
+            description = "Reader view dark color scheme button",
+            groups = setOf(Group.READER_VIEW_CONTROLS),
+        )
 
-    val APPEARANCE_COLOR_LIGHT = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
-        value = "mozac_feature_readerview_color_light",
-        description = "Reader view light color scheme button",
-        groups = listOf("readerViewControls"),
-    )
+    val APPEARANCE_COLOR_LIGHT =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
+            value = "mozac_feature_readerview_color_light",
+            description = "Reader view light color scheme button",
+            groups = setOf(Group.READER_VIEW_CONTROLS),
+        )
 
-    val APPEARANCE_COLOR_SEPIA = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
-        value = "mozac_feature_readerview_color_sepia",
-        description = "Reader view sepia color scheme button",
-        groups = listOf("readerViewControls"),
-    )
-
-    val all = listOf(
-        APPEARANCE_FONT_GROUP,
-        APPEARANCE_FONT_SANS_SERIF,
-        APPEARANCE_FONT_SERIF,
-        APPEARANCE_FONT_SIZE_INCREASE,
-        APPEARANCE_FONT_SIZE_DECREASE,
-        APPEARANCE_COLOR_GROUP,
-        APPEARANCE_COLOR_DARK,
-        APPEARANCE_COLOR_LIGHT,
-        APPEARANCE_COLOR_SEPIA,
-    )
+    val APPEARANCE_COLOR_SEPIA =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_RES,
+            value = "mozac_feature_readerview_color_sepia",
+            description = "Reader view sepia color scheme button",
+            groups = setOf(Group.READER_VIEW_CONTROLS),
+        )
 }

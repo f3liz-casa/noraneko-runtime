@@ -175,7 +175,7 @@ class PeerConnectionImpl final
   struct RtpExtensionHeader {
     JsepMediaType mMediaType;
     SdpDirectionAttribute::Direction direction;
-    std::string extensionname;
+    nsCString extensionname;
   };
 
   JSObject* WrapObject(JSContext* aCx,
@@ -185,11 +185,6 @@ class PeerConnectionImpl final
   static already_AddRefed<PeerConnectionImpl> Constructor(
       const dom::GlobalObject& aGlobal);
 
-  static DefaultCodecPreferences GetDefaultCodecPreferences(
-      const OverrideRtxPreference aOverrideRtxPreference =
-          OverrideRtxPreference::NoOverride) {
-    return DefaultCodecPreferences(aOverrideRtxPreference);
-  }
   // DataConnection observers
   void NotifyDataChannel(already_AddRefed<DataChannel> aChannel,
                          const nsACString& aLabel, bool aOrdered,
@@ -489,6 +484,12 @@ class PeerConnectionImpl final
   RefPtr<dom::RTCRtpTransceiver> GetTransceiver(
       const std::string& aTransceiverId);
 
+  // See JsepSession::LocalOfferedRecvParamsChanged.
+  bool LocalOfferedRecvParamsChanged(const std::string& aMid) {
+    MOZ_ASSERT(NS_IsMainThread());
+    return mJsepSession && mJsepSession->LocalOfferedRecvParamsChanged(aMid);
+  }
+
   // Gets the RTC Signaling State of the JSEP session
   dom::RTCSignalingState GetSignalingState() const;
 
@@ -578,24 +579,13 @@ class PeerConnectionImpl final
 
   bool LongTermStatsIsDisabled() const { return mDisableLongTermStats; }
 
-  static void GetDefaultVideoCodecs(
-      std::vector<UniquePtr<JsepCodecDescription>>& aSupportedCodecs,
-      const OverrideRtxPreference aOverrideRtxPreference);
-
-  static void GetDefaultAudioCodecs(
-      std::vector<UniquePtr<JsepCodecDescription>>& aSupportedCodecs);
-
   static void GetDefaultRtpExtensions(
-      std::vector<RtpExtensionHeader>& aRtpExtensions);
+      const JsepCodecPreferences& aPrefs,
+      nsTArray<RtpExtensionHeader>* aRtpExtensions);
 
   static void GetCapabilities(const nsAString& aKind,
                               dom::Nullable<dom::RTCRtpCapabilities>& aResult,
                               sdp::Direction aDirection);
-  static void SetupPreferredCodecs(
-      std::vector<UniquePtr<JsepCodecDescription>>& aPreferredCodecs);
-
-  static void SetupPreferredRtpExtensions(
-      std::vector<RtpExtensionHeader>& aPreferredheaders);
 
   void BreakCycles();
 
@@ -872,6 +862,10 @@ class PeerConnectionImpl final
 
   RefPtr<WebrtcCallWrapper> mCall;
 
+ public:
+  const DefaultCodecPreferences mPrefs;
+
+ private:
   // See Bug 1642419, this can be removed when all sites are working with RTX.
   bool mRtxIsAllowed = true;
 

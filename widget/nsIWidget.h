@@ -1807,19 +1807,19 @@ class nsIWidget : public nsSupportsWeakReference {
   virtual void StartAsyncScrollbarDrag(const AsyncDragMetrics& aDragMetrics);
 
   /**
-   * Notify APZ to start autoscrolling.
+   * Notify APZ to start autoscrolling. APZ may still reject the autoscroll,
+   * in which case it notifies content itself.
    * @param aAnchorLocation the location of the autoscroll anchor
    * @param aGuid identifies the scroll frame to be autoscrolled
-   * @return true if APZ has been successfully notified
    */
-  virtual bool StartAsyncAutoscroll(const ScreenPoint& aAnchorLocation,
-                                    const ScrollableLayerGuid& aGuid);
+  void StartAsyncAutoscroll(const ScreenPoint& aAnchorLocation,
+                            const ScrollableLayerGuid& aGuid);
 
   /**
    * Notify APZ to stop autoscrolling.
    * @param aGuid identifies the scroll frame which is being autoscrolled.
    */
-  virtual void StopAsyncAutoscroll(const ScrollableLayerGuid& aGuid);
+  void StopAsyncAutoscroll(const ScrollableLayerGuid& aGuid);
 
   virtual LayersId GetRootLayerTreeId();
 

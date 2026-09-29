@@ -5,9 +5,13 @@
 package org.mozilla.samples.browser
 
 import android.app.Application
-import kotlinx.coroutines.DelicateCoroutinesApi
+import java.util.Calendar
+import java.util.TimeZone
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import mozilla.components.browser.state.action.SystemAction
 import mozilla.components.browser.storage.sync.GlobalPlacesDependencyProvider
@@ -27,9 +31,6 @@ import mozilla.components.support.webextensions.WebExtensionSupport
 import mozilla.telemetry.glean.BuildInfo
 import mozilla.telemetry.glean.Glean
 import mozilla.telemetry.glean.config.Configuration
-import java.util.Calendar
-import java.util.TimeZone
-import java.util.concurrent.TimeUnit
 
 @Suppress("MagicNumber")
 internal object GleanBuildInfo {
@@ -37,9 +38,8 @@ internal object GleanBuildInfo {
         BuildInfo(
             versionCode = "0.0.1",
             versionName = "0.0.1",
-            buildDate = Calendar.getInstance(
-                TimeZone.getTimeZone("GMT+0"),
-            ).also { cal -> cal.set(2019, 9, 23, 12, 52, 8) },
+            buildDate =
+                Calendar.getInstance(TimeZone.getTimeZone("GMT+0")).also { cal -> cal.set(2019, 9, 23, 12, 52, 8) },
         )
     }
 }
@@ -49,9 +49,10 @@ class SampleApplication : Application() {
 
     val components by lazy { Components(this) }
 
+    val applicationScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
     // Sample-only code with no injectable clock seam and no time-dependent behavior to test.
     @Suppress("NoSystemCurrentTimeMillis")
-    @OptIn(DelicateCoroutinesApi::class) // Usage of GlobalScope
     override fun onCreate() {
         super.onCreate()
 
@@ -83,7 +84,7 @@ class SampleApplication : Application() {
         components.engine.warmUp()
         restoreBrowserState()
 
-        GlobalScope.launch(Dispatchers.IO) {
+        applicationScope.launch(Dispatchers.IO) {
             components.webAppManifestStorage.warmUpScopes(System.currentTimeMillis())
         }
         components.downloadsUseCases.restoreDownloads()
@@ -123,15 +124,21 @@ class SampleApplication : Application() {
         }
     }
 
-    @DelicateCoroutinesApi
-    private fun restoreBrowserState() = GlobalScope.launch(Dispatchers.Main) {
-        components.tabsUseCases.restore(components.sessionStorage)
-
-        components.sessionStorage.autoSave(components.store)
-            .periodicallyInForeground(interval = 30, unit = TimeUnit.SECONDS)
-            .whenGoingToBackground()
-            .whenSessionsChange()
+    override fun onTerminate() {
+        super.onTerminate()
+        applicationScope.cancel()
     }
+
+    private fun restoreBrowserState() =
+        applicationScope.launch(Dispatchers.Main) {
+            components.tabsUseCases.restore(components.sessionStorage)
+
+            components.sessionStorage
+                .autoSave(components.store)
+                .periodicallyInForeground(interval = 30, unit = TimeUnit.SECONDS)
+                .whenGoingToBackground()
+                .whenSessionsChange()
+        }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)

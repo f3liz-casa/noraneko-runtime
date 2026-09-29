@@ -8,55 +8,50 @@ import mozilla.components.lib.state.Middleware
 import mozilla.components.lib.state.Store
 import org.mozilla.fenix.downloads.listscreen.store.DownloadUIState.Mode
 
-/**
- * The [Store] for holding the [DownloadUIState] and applying [DownloadUIAction]s.
- */
+/** The [Store] for holding the [DownloadUIState] and applying [DownloadUIAction]s. */
 class DownloadUIStore(
     initialState: DownloadUIState,
     middleware: List<Middleware<DownloadUIState, DownloadUIAction>> = emptyList(),
-) : Store<DownloadUIState, DownloadUIAction>(
-    initialState = initialState,
-    reducer = ::downloadStateReducer,
-    middleware = middleware,
-) {
+) :
+    Store<DownloadUIState, DownloadUIAction>(
+        initialState = initialState,
+        reducer = ::downloadStateReducer,
+        middleware = middleware,
+    ) {
 
     init {
         dispatch(DownloadUIAction.Init)
     }
 }
 
-/**
- * The DownloadState Reducer.
- */
+/** The DownloadState Reducer. */
 @Suppress("LongMethod")
 private fun downloadStateReducer(
     state: DownloadUIState,
     action: DownloadUIAction,
 ): DownloadUIState {
     return when (action) {
-        is DownloadUIAction.AddItemForRemoval ->
-            state.copy(
-                mode = Mode.Editing(state.mode.selectedItems + action.item),
-            )
+        is DownloadUIAction.AddItemForRemoval -> state.copy(mode = Mode.Editing(state.mode.selectedItems + action.item))
 
         is DownloadUIAction.AddAllItemsForRemoval -> {
             state.copy(
-                mode = Mode.Editing(
-                    selectedItems = state.itemsMatchingFilters
-                        .filter { it.status == FileItem.Status.Completed }
-                        .toSet(),
-                ),
+                mode =
+                    Mode.Editing(
+                        selectedItems =
+                            state.itemsMatchingFilters.filter { it.status == FileItem.Status.Completed }.toSet()
+                    )
             )
         }
 
         is DownloadUIAction.RemoveItemForRemoval -> {
             val selected = state.mode.selectedItems - action.item
             state.copy(
-                mode = if (selected.isEmpty()) {
-                    Mode.Normal
-                } else {
-                    Mode.Editing(selected)
-                },
+                mode =
+                    if (selected.isEmpty()) {
+                        Mode.Normal
+                    } else {
+                        Mode.Editing(selected)
+                    }
             )
         }
 
@@ -67,6 +62,7 @@ private fun downloadStateReducer(
                 deletionSnackbarState = DownloadUIState.SnackbarState.UndoDeletion(action.items),
                 dialogState = DownloadUIState.DialogState.None,
                 mode = Mode.Normal,
+                unconfirmedDeletionIds = state.unconfirmedDeletionIds - action.items.map { it.id }.toSet(),
             )
 
         is DownloadUIAction.UndoPendingDeletionSet ->
@@ -100,43 +96,66 @@ private fun downloadStateReducer(
         is DownloadUIAction.RenameFileFailed -> state.copy(renameFileError = action.error)
         is DownloadUIAction.RenameFileFailureDismissed -> state.copy(renameFileError = null)
         is DownloadUIAction.FileExtensionChangedByUser -> state
-        is DownloadUIAction.ShowChangeFileExtensionDialog -> state.copy(
-            isChangeFileExtensionDialogVisible = true,
-            itemToChangeExtension = action.item,
-        )
+        is DownloadUIAction.ShowChangeFileExtensionDialog ->
+            state.copy(
+                isChangeFileExtensionDialogVisible = true,
+                itemToChangeExtension = action.item,
+            )
 
         is DownloadUIAction.CloseChangeFileExtensionDialog -> state.copy(isChangeFileExtensionDialogVisible = false)
         is DownloadUIAction.UndoPendingDeletion -> state
         is DownloadUIAction.PauseDownload -> state
         is DownloadUIAction.ResumeDownload -> state
         is DownloadUIAction.RetryDownload -> state
-        is DownloadUIAction.CancelDownload -> state
+        is DownloadUIAction.CancelDownload ->
+            state.copy(
+                unconfirmedDeletionIds = state.unconfirmedDeletionIds - action.downloadId,
+                pendingDeletionIds = state.pendingDeletionIds - action.downloadId,
+            )
         is DownloadUIAction.NavigationIconClicked -> state
         is DownloadUIAction.SettingsIconClicked -> state
 
         is DownloadUIAction.RequestDeleteMultiple -> state
-        is DownloadUIAction.RequestDelete -> state
+        is DownloadUIAction.RequestDelete ->
+            if (action.isSwipe) {
+                state.copy(unconfirmedDeletionIds = state.unconfirmedDeletionIds + action.item.id)
+            } else {
+                state
+            }
+
         is DownloadUIAction.ShowDeleteDialog ->
             state.copy(dialogState = DownloadUIState.DialogState.DeleteConfirmation(action.items))
 
-        is DownloadUIAction.DismissDeleteDialog ->
-            state.copy(dialogState = DownloadUIState.DialogState.None)
+        is DownloadUIAction.DismissDeleteDialog -> {
+            val itemsToRestore =
+                when (val dialogState = state.dialogState) {
+                        is DownloadUIState.DialogState.DeleteConfirmation -> dialogState.items
+                        is DownloadUIState.DialogState.MultiSelectDeleteConfirmation -> dialogState.items
+                        else -> emptySet()
+                    }
+                    .map { it.id }
+                    .toSet()
+            state.copy(
+                dialogState = DownloadUIState.DialogState.None,
+                unconfirmedDeletionIds = state.unconfirmedDeletionIds - itemsToRestore,
+            )
+        }
 
-        is DownloadUIAction.SearchBarDismissRequest -> state.copy(
-            isSearchFieldRequested = false,
-            searchQuery = "",
-        )
+        is DownloadUIAction.SearchBarDismissRequest ->
+            state.copy(
+                isSearchFieldRequested = false,
+                searchQuery = "",
+            )
 
         is DownloadUIAction.SearchBarVisibilityRequest -> state.copy(isSearchFieldRequested = true)
 
         is DownloadUIAction.ShowMultiSelectDeleteDialog ->
-            state.copy(
-                dialogState = DownloadUIState.DialogState.MultiSelectDeleteConfirmation(
-                    items = action.items,
-                ),
-            )
+            state.copy(dialogState = DownloadUIState.DialogState.MultiSelectDeleteConfirmation(items = action.items))
 
         is DownloadUIAction.ConfirmMultiSelectDelete ->
-            state.copy(dialogState = DownloadUIState.DialogState.None)
+            state.copy(
+                dialogState = DownloadUIState.DialogState.None,
+                unconfirmedDeletionIds = state.unconfirmedDeletionIds - action.items.map { it.id }.toSet(),
+            )
     }
 }

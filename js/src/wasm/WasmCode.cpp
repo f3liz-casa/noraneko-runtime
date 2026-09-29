@@ -510,7 +510,10 @@ bool Code::createManyLazyEntryStubs(const WriteGuard& guard,
     if (BinarySearchIf(
             guard->lazyExports, 0, guard->lazyExports.length(),
             [targetFunctionIndex](const LazyFuncExport& funcExport) {
-              return targetFunctionIndex - funcExport.funcIndex;
+              if (targetFunctionIndex == funcExport.funcIndex) {
+                return 0;
+              }
+              return targetFunctionIndex < funcExport.funcIndex ? -1 : 1;
             },
             &exportIndex)) {
       DebugOnly<CodeBlockKind> oldKind =
@@ -881,7 +884,10 @@ const LazyFuncExport* Code::lookupLazyFuncExport(const WriteGuard& guard,
   if (!BinarySearchIf(
           guard->lazyExports, 0, guard->lazyExports.length(),
           [funcIndex](const LazyFuncExport& funcExport) {
-            return funcIndex - funcExport.funcIndex;
+            if (funcIndex == funcExport.funcIndex) {
+              return 0;
+            }
+            return funcIndex < funcExport.funcIndex ? -1 : 1;
           },
           &match)) {
     return nullptr;
@@ -1000,7 +1006,7 @@ void CodeBlock::sendToProfiler(
     }
     uintptr_t start = uintptr_t(base() + codeRange.begin());
     uintptr_t size = codeRange.end() - codeRange.begin();
-    funcIonSpewer.spewer.saveWasmProfile(start, size, desc);
+    funcIonSpewer.spewer.saveWasmProfile(start, size, std::move(desc));
   }
 
   // Save the collected baseline perf spewers with their IR/source information.
@@ -1013,7 +1019,7 @@ void CodeBlock::sendToProfiler(
     }
     uintptr_t start = uintptr_t(base() + codeRange.begin());
     uintptr_t size = codeRange.end() - codeRange.begin();
-    funcBaselineSpewer.spewer.saveProfile(start, size, desc);
+    funcBaselineSpewer.spewer.saveProfile(start, size, std::move(desc));
   }
 
   // Save the rest of the code ranges.

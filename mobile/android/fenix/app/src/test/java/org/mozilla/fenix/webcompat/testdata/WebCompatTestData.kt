@@ -9,7 +9,8 @@ import org.json.JSONObject
 
 object WebCompatTestData {
 
-    val basicDataJson = """
+    val basicDataJson =
+        """
         {
           "antitracking": {
             "blockList": {
@@ -22,6 +23,10 @@ object WebCompatTestData {
             "btpHasPurgedSite": {
               "isTabSpecific": true,
               "value": false
+            },
+            "btpPurgeHistory": {
+              "isTabSpecific": true,
+              "value": []
             },
             "etpCategory": {
               "value": "standard"
@@ -191,7 +196,8 @@ object WebCompatTestData {
             }
           }
         }
-    """.trimIndent()
+        """
+            .trimIndent()
 
     /**
      * Creates a pre-fabbed JSONObject which we use in multiple places in the tests.

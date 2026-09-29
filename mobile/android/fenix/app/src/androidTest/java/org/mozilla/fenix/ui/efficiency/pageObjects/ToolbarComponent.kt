@@ -13,35 +13,35 @@ import org.mozilla.fenix.helpers.TestAssetHelper
 import org.mozilla.fenix.helpers.TestHelper.mDevice
 import org.mozilla.fenix.helpers.TestHelper.packageName
 import org.mozilla.fenix.ui.efficiency.helpers.BasePage
-import org.mozilla.fenix.ui.efficiency.helpers.Selector
-import org.mozilla.fenix.ui.efficiency.navigation.NavigationRegistry
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationArrival
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationGraph
 import org.mozilla.fenix.ui.efficiency.selectors.ToolbarSelectors
 
 class ToolbarComponent(composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>) : BasePage(composeRule) {
     override val pageName = "ToolbarComponent"
 
-    init {
-        NavigationRegistry.register(
+    internal override fun registerNavigation(builder: NavigationGraph.Builder) {
+        builder.register(
             from = "HomePage",
             to = pageName,
             steps = listOf(),
+            arrival = NavigationArrival.EDGE_COMPLETION,
         )
 
-        NavigationRegistry.register(
+        builder.register(
             from = "BrowserPage",
             to = pageName,
             steps = listOf(),
+            arrival = NavigationArrival.EDGE_COMPLETION,
         )
     }
 
-    override fun mozGetSelectorsByGroup(group: String): List<Selector> {
-        return ToolbarSelectors.all.filter { it.groups.contains(group) }
-    }
+    override val selectorCatalog = ToolbarSelectors
 
     /**
-     * Assert the address-bar toolbar sits in the top half of the screen. With shouldUseExpandedToolbar the
-     * toolbar is at the bottom in portrait, but moves to the top in landscape and when the tab strip is
-     * enabled. Ports the legacy HomeScreenRobot.verifyToolbarPosition(bottomPosition = false) geometry.
+     * Assert the address-bar toolbar sits in the top half of the screen. With shouldUseExpandedToolbar the toolbar is
+     * at the bottom in portrait, but moves to the top in landscape and when the tab strip is enabled. Ports the legacy
+     * HomeScreenRobot.verifyToolbarPosition(bottomPosition = false) geometry.
      */
     fun verifyToolbarIsAtTop(): ToolbarComponent {
         val toolbar = mDevice.findObject(UiSelector().resourceId("$packageName:id/composable_toolbar"))

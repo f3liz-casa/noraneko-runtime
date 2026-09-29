@@ -7,10 +7,44 @@
 
 #include "jit/loong64/MacroAssembler-loong64.h"
 
+#include "mozilla/MathAlgorithms.h"
+
+#include <bit>
+#include <optional>
+#include <utility>
+
 namespace js {
 namespace jit {
 
 //{{{ check_macroassembler_style
+
+// If |mask| is a contiguous run of one-bits, return its [msb, lsb] range.
+static inline constexpr std::optional<std::pair<uint32_t, uint32_t>>
+GetContiguousMaskRange(uint64_t mask) {
+  if (mask == 0) {
+    return std::nullopt;
+  }
+  const uint32_t lsb = std::countr_zero(mask);
+  const uint64_t shifted = mask >> lsb;
+  if (!std::has_single_bit(shifted + 1)) {
+    return std::nullopt;
+  }
+  return std::make_pair(lsb + mozilla::FloorLog2(shifted), lsb);
+}
+
+static void And32ForBranch(MacroAssembler& masm, Register scratch, Register lhs,
+                           Imm32 rhs, bool preserveMagnitude) {
+  if (const auto maybeRange = GetContiguousMaskRange(rhs.value)) {
+    const auto [msb, lsb] = *maybeRange;
+    masm.as_bstrpick_d(scratch, lhs, msb, lsb);
+    if (preserveMagnitude && lsb != 0) {
+      // Only shift when the exact magnitude is interesting.
+      masm.as_slli_d(scratch, scratch, lsb);
+    }
+  } else {
+    masm.ma_and(scratch, lhs, rhs);
+  }
+}
 
 void MacroAssembler::move64(Register64 src, Register64 dest) {
   movePtr(src.reg, dest.reg);
@@ -259,6 +293,10 @@ void MacroAssembler::xor32(const Address& src, Register dest) {
   Register scratch = temps.Acquire();
   load32(src, scratch);
   xor32(scratch, dest);
+}
+
+void MacroAssembler::nor32(Imm32 imm, Register src, Register dest) {
+  ma_nor(dest, src, imm);
 }
 
 // ===============================================================
@@ -697,6 +735,11 @@ void MacroAssembler::lshift64(Imm32 imm, Register64 dest) {
   as_slli_d(dest.reg, dest.reg, imm.value);
 }
 
+void MacroAssembler::lshift64(Imm32 imm, Register64 src, Register64 dest) {
+  MOZ_ASSERT(0 <= imm.value && imm.value < 64);
+  as_slli_d(dest.reg, src.reg, imm.value);
+}
+
 void MacroAssembler::lshiftPtr(Register shift, Register dest) {
   as_sll_d(dest, dest, shift);
 }
@@ -756,9 +799,20 @@ void MacroAssembler::rshift64(Imm32 imm, Register64 dest) {
   as_srli_d(dest.reg, dest.reg, imm.value);
 }
 
+void MacroAssembler::rshift64(Imm32 imm, Register64 src, Register64 dest) {
+  MOZ_ASSERT(0 <= imm.value && imm.value < 64);
+  as_srli_d(dest.reg, src.reg, imm.value);
+}
+
 void MacroAssembler::rshift64Arithmetic(Imm32 imm, Register64 dest) {
   MOZ_ASSERT(0 <= imm.value && imm.value < 64);
   as_srai_d(dest.reg, dest.reg, imm.value);
+}
+
+void MacroAssembler::rshift64Arithmetic(Imm32 imm, Register64 src,
+                                        Register64 dest) {
+  MOZ_ASSERT(0 <= imm.value && imm.value < 64);
+  as_srai_d(dest.reg, src.reg, imm.value);
 }
 
 void MacroAssembler::rshift64Arithmetic(Register shift, Register64 dest) {
@@ -865,7 +919,7 @@ void MacroAssembler::popcnt64(Register64 input, Register64 output,
                               Register tmp) {
   UseScratchRegisterScope temps(asMasm());
   Register scratch = temps.Acquire();
-  as_or(output.reg, input.reg, zero);
+  ma_move(output.reg, input.reg);
   as_srai_d(tmp, input.reg, 1);
   ma_li(scratch, Imm32(0x55555555));
   as_bstrins_d(scratch, scratch, 63, 32);
@@ -898,7 +952,7 @@ void MacroAssembler::ctz32(Register src, Register dest, bool knownNotZero) {
 
 void MacroAssembler::popcnt32(Register input, Register output, Register tmp) {
   // Equivalent to GCC output of std::popcount()
-  as_or(output, input, zero);
+  ma_move(output, input);
   as_srai_w(tmp, input, 1);
   ma_and(tmp, tmp, Imm32(0x55555555));
   as_sub_w(output, output, tmp);
@@ -1049,8 +1103,6 @@ void MacroAssembler::branch8(Condition cond, const BaseIndex& lhs, Register rhs,
   Register scratch = temps.Acquire();
   MOZ_ASSERT(scratch != lhs.base);
 
-  computeScaledAddress(lhs, scratch);
-
   switch (cond) {
     case Assembler::Equal:
     case Assembler::NotEqual:
@@ -1058,7 +1110,7 @@ void MacroAssembler::branch8(Condition cond, const BaseIndex& lhs, Register rhs,
     case Assembler::AboveOrEqual:
     case Assembler::Below:
     case Assembler::BelowOrEqual:
-      load8ZeroExtend(Address(scratch, lhs.offset), scratch);
+      load8ZeroExtend(lhs, scratch);
       branch32(cond, scratch, rhs, label);
       break;
 
@@ -1066,7 +1118,7 @@ void MacroAssembler::branch8(Condition cond, const BaseIndex& lhs, Register rhs,
     case Assembler::GreaterThanOrEqual:
     case Assembler::LessThan:
     case Assembler::LessThanOrEqual:
-      load8SignExtend(Address(scratch, lhs.offset), scratch);
+      load8SignExtend(lhs, scratch);
       branch32(cond, scratch, rhs, label);
       break;
 
@@ -1551,7 +1603,8 @@ void MacroAssembler::branchTest32(Condition cond, Register lhs, Imm32 rhs,
              cond == NotSigned);
   UseScratchRegisterScope temps(asMasm());
   Register scratch = temps.Acquire();
-  ma_and(scratch, lhs, rhs);
+  And32ForBranch(asMasm(), scratch, lhs, rhs,
+                 !(cond == Zero || cond == NonZero));
   ma_b(scratch, scratch, label, cond);
 }
 
@@ -1562,7 +1615,8 @@ void MacroAssembler::branchTest32(Condition cond, const Address& lhs, Imm32 rhs,
   UseScratchRegisterScope temps(asMasm());
   Register scratch = temps.Acquire();
   load32(lhs, scratch);
-  and32(rhs, scratch);
+  And32ForBranch(asMasm(), scratch, scratch, rhs,
+                 !(cond == Zero || cond == NonZero));
   ma_b(scratch, scratch, label, cond);
 }
 
@@ -1573,7 +1627,8 @@ void MacroAssembler::branchTest32(Condition cond, const AbsoluteAddress& lhs,
   UseScratchRegisterScope temps(asMasm());
   Register scratch = temps.Acquire();
   load32(lhs, scratch);
-  and32(rhs, scratch);
+  And32ForBranch(asMasm(), scratch, scratch, rhs,
+                 !(cond == Zero || cond == NonZero));
   ma_b(scratch, scratch, label, cond);
 }
 
@@ -1597,7 +1652,8 @@ void MacroAssembler::branchTestPtr(Condition cond, Register lhs, Imm32 rhs,
              cond == NotSigned);
   UseScratchRegisterScope temps(asMasm());
   Register scratch = temps.Acquire();
-  ma_and(scratch, lhs, rhs);
+  And32ForBranch(asMasm(), scratch, lhs, rhs,
+                 !(cond == Zero || cond == NonZero));
   ma_b(scratch, scratch, label, cond);
 }
 
@@ -1607,8 +1663,22 @@ void MacroAssembler::branchTestPtr(Condition cond, Register lhs, ImmWord rhs,
              cond == NotSigned);
   UseScratchRegisterScope temps(asMasm());
   Register scratch = temps.Acquire();
-  ma_li(scratch, rhs);
-  as_and(scratch, lhs, scratch);
+
+  if (is_uintN(rhs.value, 12)) {
+    as_andi(scratch, lhs, static_cast<int32_t>(rhs.value));
+  } else if (const auto maybeRange = GetContiguousMaskRange(
+                 mozilla::BitwiseCast<uint64_t>(rhs.value))) {
+    const auto [msb, lsb] = *maybeRange;
+    as_bstrpick_d(scratch, lhs, msb, lsb);
+    if (!(cond == Zero || cond == NonZero) && lsb != 0) {
+      // Only shift when the exact magnitude is interesting.
+      as_slli_d(scratch, scratch, lsb);
+    }
+  } else {
+    ma_li(scratch, rhs);
+    as_and(scratch, lhs, scratch);
+  }
+
   ma_b(scratch, scratch, label, cond);
 }
 

@@ -18,6 +18,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import kotlinx.coroutines.flow.map
 import mozilla.components.compose.base.button.TextButton
+import mozilla.components.compose.base.theme.PreviewThemeProvider
+import mozilla.components.compose.base.theme.Theme
 import org.mozilla.fenix.R
 import org.mozilla.fenix.settings.address.store.AddressState
 import org.mozilla.fenix.settings.address.store.AddressStore
@@ -25,8 +27,6 @@ import org.mozilla.fenix.settings.address.store.DeleteDialogAction
 import org.mozilla.fenix.settings.address.store.DialogState
 import org.mozilla.fenix.settings.address.store.ViewAppeared
 import org.mozilla.fenix.theme.FirefoxTheme
-import org.mozilla.fenix.theme.PreviewThemeProvider
-import org.mozilla.fenix.theme.Theme
 
 /**
  * Dialog that is presented when deleting an address.
@@ -37,7 +37,8 @@ import org.mozilla.fenix.theme.Theme
 internal fun DeleteAddressDialog(store: AddressStore) {
     val dialogState by remember {
         store.stateFlow.map { it.deleteDialog }
-    }.collectAsState(store.state.deleteDialog)
+    }
+        .collectAsState(store.state.deleteDialog)
 
     if (dialogState is DialogState.Presenting) {
         AlertDialog(
@@ -68,13 +69,13 @@ internal fun DeleteAddressDialog(store: AddressStore) {
 
 @Preview
 @Composable
-private fun DeleteAddressDialogPreview(
-    @PreviewParameter(PreviewThemeProvider::class) theme: Theme,
-) {
-    val store = AddressStore(
-        AddressState.initial().copy(deleteDialog = DialogState.Presenting),
-        listOf(),
-    ).also { it.dispatch(ViewAppeared) }
+private fun DeleteAddressDialogPreview(@PreviewParameter(PreviewThemeProvider::class) theme: Theme) {
+    val store =
+        AddressStore(
+                AddressState.initial().copy(deleteDialog = DialogState.Presenting),
+                listOf(),
+            )
+            .also { it.dispatch(ViewAppeared) }
 
     FirefoxTheme(theme) {
         Surface {

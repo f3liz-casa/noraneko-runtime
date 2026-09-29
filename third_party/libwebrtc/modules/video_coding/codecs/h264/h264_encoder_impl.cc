@@ -138,6 +138,28 @@ std::optional<ScalabilityMode> ScalabilityModeFromTemporalLayers(
   return std::nullopt;
 }
 
+bool IsValidResolution(int width, int height) {
+  // H.264 Level 5.2 limits:
+  // Max macroblocks per frame (MaxFS) = 36864
+  // Max width/height in macroblocks = Sqrt(MaxFS * 8) = 543
+  // A macroblock is 16x16.
+  const int64_t width_in_mbs = (static_cast<int64_t>(width) + 15) / 16;
+  const int64_t height_in_mbs = (static_cast<int64_t>(height) + 15) / 16;
+
+  if (width_in_mbs * height_in_mbs > 36864) {
+    return false;
+  }
+
+  // Aspect ratio check:
+  // PicWidthInMbs <= Sqrt(MaxFS * 8)
+  // FrameHeightInMbs <= Sqrt(MaxFS * 8)
+  if (width_in_mbs > 543 || height_in_mbs > 543) {
+    return false;
+  }
+
+  return true;
+}
+
 }  // namespace
 
 // Helper method used by H264EncoderImpl::Encode.
@@ -264,6 +286,18 @@ int32_t H264EncoderImpl::InitEncode(const VideoCodec* inst,
     codec_.simulcastStream[0].height = codec_.height;
   }
 
+  for (int i = 0; i < number_of_streams; ++i) {
+    if (!IsValidResolution(codec_.simulcastStream[i].width,
+                           codec_.simulcastStream[i].height)) {
+      RTC_LOG(LS_ERROR) << "InitEncode: Invalid stream resolution: "
+                        << codec_.simulcastStream[i].width << "x"
+                        << codec_.simulcastStream[i].height;
+      Release();
+      ReportError();
+      return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
+    }
+  }
+
   for (int i = 0, idx = number_of_streams - 1; i < number_of_streams;
        ++i, --idx) {
     ISVCEncoder* openh264_encoder;
@@ -301,9 +335,7 @@ int32_t H264EncoderImpl::InitEncode(const VideoCodec* inst,
     // Create downscaled image buffers.
     if (i > 0) {
       downscaled_buffers_[i - 1] = I420Buffer::Create(
-          configurations_[i].width, configurations_[i].height,
-          configurations_[i].width, configurations_[i].width / 2,
-          configurations_[i].width / 2);
+          configurations_[i].width, configurations_[i].height);
     }
 
     // Codec_settings uses kbits/second; encoder uses bits/second.

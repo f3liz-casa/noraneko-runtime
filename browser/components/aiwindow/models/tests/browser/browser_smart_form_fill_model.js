@@ -7,6 +7,7 @@ const { SmartFormFillModel } = ChromeUtils.importESModule(
 const { MockEngineManager } = ChromeUtils.importESModule(
   "resource://testing-common/AIWindowTestUtils.sys.mjs"
 );
+
 const {
   MODEL_FEATURES,
   getRemoteClient,
@@ -78,6 +79,28 @@ async function useValueGenerationPrompts() {
       ...VALUE_GENERATION_MODULES,
     ],
   });
+}
+
+function makeRequest(id) {
+  return {
+    task: "generate",
+    page: {
+      title: "Example form",
+      url: "https://example.com/form",
+    },
+    fields: [
+      {
+        id,
+        label: id,
+        inputType: "text",
+        options: [],
+        type: "unknown",
+        classificationConfidence: "low",
+      },
+    ],
+    candidates: [],
+    context: {},
+  };
 }
 
 describe("SmartFormFillModel", () => {
@@ -338,6 +361,7 @@ describe("SmartFormFillModel", () => {
       Assert.equal(responseFormat.json_schema.name, "SmartFormFillFormValues");
       Assert.deepEqual(responseFormat.json_schema.schema.required, [
         "memories_used",
+        "tabs_used",
         "fields",
       ]);
 
@@ -363,6 +387,8 @@ describe("SmartFormFillModel", () => {
 
       Assert.deepEqual(await requestPromise, {
         memories_used: [],
+        // Absent from the answer above, so the merged result reports it empty.
+        tabs_used: [],
         fields: [
           {
             id: "field-email",
@@ -377,7 +403,67 @@ describe("SmartFormFillModel", () => {
             confidence: "high",
           },
         ],
+        // One batch, because the form fits in a single request.
+        batches: { total: 1, failed: 0 },
       });
+    });
+
+    it("limits concurrent value generation requests globally", async () => {
+      const requestPromises = ["field-1", "field-2", "field-3"].map(id =>
+        SmartFormFillModel.generateFormValues(makeRequest(id))
+      );
+
+      const engine = await TestUtils.waitForCondition(
+        () => mockEngineMan.engines.get(PURPOSE),
+        "Wait for the value generation engine"
+      );
+      await TestUtils.waitForCondition(
+        () => engine.runRequests.size === 2,
+        "Wait for two concurrent value generation requests"
+      );
+      await TestUtils.waitForTick();
+
+      Assert.equal(
+        engine.runRequests.size,
+        2,
+        "The third request remains queued"
+      );
+
+      const [firstRequestId] = engine.getNextRequest();
+      engine.respond(
+        firstRequestId,
+        JSON.stringify({
+          memories_used: [],
+          tabs_used: [],
+          fields: [],
+        })
+      );
+
+      await TestUtils.waitForCondition(
+        () => engine.runRequests.size === 2,
+        "The queued request starts when a slot becomes available"
+      );
+
+      for (const requestId of [...engine.runRequests.keys()]) {
+        engine.respond(
+          requestId,
+          JSON.stringify({
+            memories_used: [],
+            tabs_used: [],
+            fields: [],
+          })
+        );
+      }
+
+      const results = await Promise.all(requestPromises);
+      Assert.deepEqual(
+        results.map(result => result.batches),
+        [
+          { total: 1, failed: 0 },
+          { total: 1, failed: 0 },
+          { total: 1, failed: 0 },
+        ]
+      );
     });
   });
 });

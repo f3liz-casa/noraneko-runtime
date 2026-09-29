@@ -7,6 +7,10 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   cleanupCacheBypassState:
     "chrome://remote/content/shared/NetworkCacheManager.sys.mjs",
+  ConnectionPrompt:
+    "chrome://remote/content/shared/webdriver/ConnectionPrompt.sys.mjs",
+  ConnectionPromptResult:
+    "chrome://remote/content/shared/webdriver/ConnectionPrompt.sys.mjs",
   error: "chrome://remote/content/shared/webdriver/Errors.sys.mjs",
   Log: "chrome://remote/content/shared/Log.sys.mjs",
   RecommendedPreferences:
@@ -39,6 +43,7 @@ export class WebDriverBiDi {
   #bidiServerPath;
   #running;
   #session;
+  #sessionCreationPending;
   #sessionlessConnections;
   #userPromptHandlerManager;
 
@@ -54,6 +59,9 @@ export class WebDriverBiDi {
 
     this.#bidiServerPath;
     this.#session = null;
+    // Set when creating sessions for dynamic non-automation servers, while we
+    // wait for the user to accept or deny the connection.
+    this.#sessionCreationPending = false;
     this.#sessionlessConnections = new Set();
   }
 
@@ -124,6 +132,26 @@ export class WebDriverBiDi {
       throw new lazy.error.SessionNotCreatedError(
         "Maximum number of active sessions"
       );
+    }
+
+    if (this.#sessionCreationPending) {
+      throw new lazy.error.SessionNotCreatedError(
+        "Maximum number of active sessions (session creation in progress)"
+      );
+    }
+
+    if (!this.#agent.isBrowserAutomationRunning) {
+      this.#sessionCreationPending = true;
+      try {
+        const promptResult = await lazy.ConnectionPrompt.show();
+        if (promptResult === lazy.ConnectionPromptResult.DENY) {
+          throw new lazy.error.SessionNotCreatedError(
+            "The connection was denied by the user"
+          );
+        }
+      } finally {
+        this.#sessionCreationPending = false;
+      }
     }
 
     this.#session = new lazy.WebDriverSession(
@@ -220,7 +248,12 @@ export class WebDriverBiDi {
 
     this.#running = true;
 
-    lazy.RecommendedPreferences.applyPreferences(RECOMMENDED_PREFS);
+    // Only apply the recommended preferences when using WebDriver BiDi for
+    // regular browser automation. Dynamically starting the server for tooling
+    // or ai remote control should not modify the preferences of the profile.
+    if (this.#agent.isBrowserAutomationRunning) {
+      lazy.RecommendedPreferences.applyPreferences(RECOMMENDED_PREFS);
+    }
 
     // Install a HTTP handler for direct WebDriver BiDi connection requests.
     this.#agent.server.registerPathHandler(

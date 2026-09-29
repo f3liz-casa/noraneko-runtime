@@ -39,3 +39,13 @@ scale(*) != small-inset-outset.yaml small-inset-outset-notref.yaml
 fuzzy(1,90) == no-aa.yaml green-square.yaml
 fuzzy(1,20) skip_on(android,device) == border-double-1px.yaml border-double-1px-ref.yaml  # Fails on Pixel2
 == max-scale.yaml max-scale-ref.yaml
+platform(linux,mac) == border-shape.yaml border-shape.png
+platform(linux,mac) == border-shape-2.yaml border-shape-2.png
+platform(linux,mac) == border-shape-3.yaml border-shape-3.png
+platform(linux,mac) == border-shape-4.yaml border-shape-4.png
+platform(linux,mac) == border-shape-inset.yaml border-shape-inset.png
+== border-corner-fractional-radius.yaml border-corner-fractional-radius-ref.yaml
+
+# The interior split of an over-thick border must land at the same device pixel
+# for both neighbouring segments (bug 2059620).
+fuzzy(1,40) == border-overlap-split.yaml border-overlap-split.png

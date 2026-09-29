@@ -30,6 +30,7 @@
 #include "mozilla/dom/NavigationUtils.h"
 #include "mozilla/dom/ProcessIsolation.h"
 #include "mozilla/dom/SessionHistoryEntry.h"
+#include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/nsHTTPSOnlyUtils.h"
 #include "mozilla/net/DocumentLoadListener.h"
 #include "mozilla/StaticPrefs_browser.h"
@@ -48,9 +49,11 @@ using namespace mozilla::dom;
 // Global reference to the URI fixup service.
 static mozilla::StaticRefPtr<nsIURIFixup> sURIFixup;
 
-static bool ContentTriggeredURILoadIsAllowed(
-    nsIURI* aURI, const nsACString& aEffectiveRemoteType) {
-  MOZ_ASSERT(aEffectiveRemoteType != NOT_REMOTE_TYPE);
+namespace mozilla::dom {
+
+bool ContentTriggeredURILoadIsAllowed(nsIURI* aURI,
+                                      const RemoteType& aEffectiveRemoteType) {
+  MOZ_ASSERT(!aEffectiveRemoteType.IsNotRemote());
   MOZ_ASSERT(!aURI->SchemeIs("javascript"), "Should have been blocked already");
 
   // view-source: URIs are not linkable from web content, but the "View Page
@@ -107,6 +110,8 @@ static bool ContentTriggeredURILoadIsAllowed(
       principal, aEffectiveRemoteType,
       {ValidatePrincipalOptions::AllowNotLoadedOrigin});
 }
+
+}  // namespace mozilla::dom
 
 nsDocShellLoadState::nsDocShellLoadState(nsIURI* aURI)
     : nsDocShellLoadState(aURI, nsContentUtils::GenerateLoadIdentifier()) {}
@@ -192,14 +197,11 @@ nsDocShellLoadState::nsDocShellLoadState(
   // If we're in the parent process, potentially validate against a LoadState
   // which we sent to the source content process.
   if (XRE_IsParentProcess()) {
-    mozilla::ipc::IToplevelProtocol* top = aActor->ToplevelProtocol();
-    if (!top ||
-        top->GetProtocolId() != mozilla::ipc::ProtocolId::PContentMsgStart ||
-        top->GetSide() != mozilla::ipc::ParentSide) {
+    ContentParent* cp = ActorDynCast<ContentParent>(aActor->ToplevelProtocol());
+    if (!cp) {
       aActor->FatalError("nsDocShellLoadState must be received over PContent");
       return;
     }
-    ContentParent* cp = static_cast<ContentParent*>(top);
 
     // If this load was sent down to the content process as a navigation
     // request, ensure it still matches the one we sent down.
@@ -226,7 +228,7 @@ nsDocShellLoadState::nsDocShellLoadState(
       return;
     }
 
-    if (mTriggeringRemoteType != NOT_REMOTE_TYPE) {
+    if (!mTriggeringRemoteType.IsNotRemote()) {
       if (mURI->SchemeIs("javascript")) {
         aActor->FatalError("Illegal cross-process javascript: load attempt");
         return;
@@ -238,8 +240,8 @@ nsDocShellLoadState::nsDocShellLoadState(
       }
     }
 
-    const nsCString& effectiveRemoteType = GetEffectiveTriggeringRemoteType();
-    if (effectiveRemoteType != NOT_REMOTE_TYPE &&
+    const RemoteType& effectiveRemoteType = GetEffectiveTriggeringRemoteType();
+    if (!effectiveRemoteType.IsNotRemote() &&
         !ContentTriggeredURILoadIsAllowed(mURI, effectiveRemoteType)) {
       nsAutoCString aboutModuleOrScheme;
       if (mURI->SchemeIs("about")) {
@@ -249,10 +251,10 @@ nsDocShellLoadState::nsDocShellLoadState(
         mURI->GetScheme(aboutModuleOrScheme);
         aboutModuleOrScheme.AppendLiteral(":");
       }
-      nsCString remotePrefix(RemoteTypePrefix(effectiveRemoteType));
       aActor->FatalError(
           nsPrintfCString("Illegal load attempt of %s URL from %s",
-                          aboutModuleOrScheme.get(), remotePrefix.get())
+                          aboutModuleOrScheme.get(),
+                          effectiveRemoteType.StringifyKind().get())
               .get());
       return;
     }
@@ -274,6 +276,30 @@ nsDocShellLoadState::nsDocShellLoadState(
              ValidatePrincipalOptions::AllowNotLoadedOrigin})) {
       aActor->FatalError("nsDocShellLoadState with invalid principalToInherit");
       return;
+    }
+
+    if (!effectiveRemoteType.IsNotRemote()) {
+      // Result and Original URI are mostly used by channels to track redirect
+      // information, which gets stored in session history.
+      // Content uses them rarely for meta-refresh or session history and
+      // should pass these checks.
+      if (mResultPrincipalURI) {
+        bool equal = false;
+        if (!mResultPrincipalURIIsSome ||
+            NS_FAILED(mResultPrincipalURI->Equals(mURI, &equal)) || !equal) {
+          aActor->FatalError(
+              "nsDocShellLoadState with invalid mResultPrincipalURI");
+          return;
+        }
+      }
+
+      if (mOriginalURI && !mResultPrincipalURI) {
+        bool equal = false;
+        if (NS_FAILED(mOriginalURI->Equals(mURI, &equal)) || !equal) {
+          aActor->FatalError("nsDocShellLoadState with invalid mOriginalURI");
+          return;
+        }
+      }
     }
   }
 
@@ -395,7 +421,7 @@ nsDocShellLoadState::nsDocShellLoadState(nsIURI* aURI, uint64_t aLoadIdentifier)
       mWasCreatedRemotely(false),
       mTriggeringRemoteType(XRE_IsContentProcess()
                                 ? ContentChild::GetSingleton()->GetRemoteType()
-                                : NOT_REMOTE_TYPE),
+                                : RemoteType::NotRemote()),
       mSchemelessInput(nsILoadInfo::SchemelessInputTypeUnset),
       mIsInitialAboutBlankHandlingProhibited(false) {
   MOZ_ASSERT(aURI, "Cannot create a LoadState with a null URI!");
@@ -644,19 +670,31 @@ nsresult nsDocShellLoadState::CreateFromLoadURIOptions(
   }
 
   if (aLoadURIOptions.mTriggeringRemoteType.WasPassed()) {
+    RemoteType triggeringRemoteType =
+        RemoteType::Parse(aLoadURIOptions.mTriggeringRemoteType.Value());
+    if (!triggeringRemoteType) {
+      NS_WARNING("Invalid TriggeringRemoteType from LoadURIOptions");
+      return NS_ERROR_INVALID_ARG;
+    }
+
     if (XRE_IsParentProcess()) {
-      loadState->SetTriggeringRemoteType(
-          aLoadURIOptions.mTriggeringRemoteType.Value());
+      loadState->SetTriggeringRemoteType(triggeringRemoteType);
     } else if (ContentChild::GetSingleton()->GetRemoteType() !=
-               aLoadURIOptions.mTriggeringRemoteType.Value()) {
+               triggeringRemoteType) {
       NS_WARNING("Invalid TriggeringRemoteType from LoadURIOptions in content");
       return NS_ERROR_INVALID_ARG;
     }
   }
 
   if (aLoadURIOptions.mRemoteTypeOverride.WasPassed()) {
-    loadState->SetRemoteTypeOverride(
-        aLoadURIOptions.mRemoteTypeOverride.Value());
+    RemoteType remoteTypeOverride =
+        RemoteType::Parse(aLoadURIOptions.mRemoteTypeOverride.Value());
+    if (!remoteTypeOverride) {
+      NS_WARNING("Invalid RemoteTypeOverride from LoadURIOptions");
+      return NS_ERROR_INVALID_ARG;
+    }
+
+    loadState->SetRemoteTypeOverride(remoteTypeOverride);
   }
 
   loadState->SetSchemelessInput(static_cast<nsILoadInfo::SchemelessInputType>(
@@ -1197,27 +1235,28 @@ nsDocShellLoadState::TakeSpeculativeListener() {
 }
 
 void nsDocShellLoadState::SetRemoteTypeOverride(
-    const nsCString& aRemoteTypeOverride) {
+    const RemoteType& aRemoteTypeOverride) {
   MOZ_DIAGNOSTIC_ASSERT(
       NS_IsAboutBlank(mURI),
       "Should only have aRemoteTypeOverride for about:blank URIs");
   mRemoteTypeOverride = mozilla::Some(aRemoteTypeOverride);
 }
 
-const nsCString& nsDocShellLoadState::GetEffectiveTriggeringRemoteType() const {
+const RemoteType& nsDocShellLoadState::GetEffectiveTriggeringRemoteType()
+    const {
   // Consider non-errorpage loads from session history as being triggred by the
   // parent process, as we'll validate them against the history entry.
   //
   // NOTE: Keep this check in-sync with the session-history validation check in
   // `DocumentLoadListener::Open`!
   if (LoadIsFromSessionHistory() && LoadType() != LOAD_ERROR_PAGE) {
-    return NOT_REMOTE_TYPE;
+    return RemoteType::NotRemote();
   }
   return mTriggeringRemoteType;
 }
 
 void nsDocShellLoadState::SetTriggeringRemoteType(
-    const nsACString& aTriggeringRemoteType) {
+    const RemoteType& aTriggeringRemoteType) {
   MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess(), "only settable in parent");
   mTriggeringRemoteType = aTriggeringRemoteType;
 }
@@ -1230,7 +1269,7 @@ void nsDocShellLoadState::AssertProcessCouldTriggerLoadIfSystem() {
   // nsContentSecurityManager checks, however this assertion should happen
   // closer to whichever caller is triggering the system-principal load.
   if (TriggeringPrincipal()->IsSystemPrincipal() &&
-      mozilla::dom::IsWebRemoteType(GetEffectiveTriggeringRemoteType())) {
+      GetEffectiveTriggeringRemoteType().IsWeb()) {
     bool localFile = false;
     if (NS_SUCCEEDED(NS_URIChainHasFlags(
             URI(), nsIProtocolHandler::URI_IS_LOCAL_FILE, &localFile)) &&
@@ -1487,6 +1526,16 @@ nsLoadFlags nsDocShellLoadState::CalculateChannelLoadFlags(
   // interception to occur. See step 12.1 of the SW HandleFetch algorithm.
   if (IsForceReloadType(loadType)) {
     loadFlags |= nsIChannel::LOAD_BYPASS_SERVICE_WORKER;
+  } else if (aBrowsingContext->IsTopContent()) {
+    // For the top-level site the uri to load determines whether service workers
+    // are blocked by policy.
+    if (dom::IsServiceWorkersDisabledByPolicy(mURI)) {
+      loadFlags |= nsIChannel::LOAD_BYPASS_SERVICE_WORKER;
+    }
+  } else if (aBrowsingContext->Top()->ServiceWorkersDisabledByPolicy()) {
+    // Otherwise use the state of the top-level site to determine whether
+    // service workers are blocked.
+    loadFlags |= nsIChannel::LOAD_BYPASS_SERVICE_WORKER;
   }
 
   return loadFlags;
@@ -1549,8 +1598,8 @@ const char* nsDocShellLoadState::ValidateWithOriginalState(
     return "HasSpeculativeListener";
   }
 
-  // FIXME: Consider calculating less information in the target process so that
-  // we can validate more properties more easily.
+  // FIXME: Consider calculating less information in the target process so
+  // that we can validate more properties more easily.
   // FIXME: Identify what other flags will not change when sent through a
   // content process.
 
@@ -1626,13 +1675,8 @@ DocShellLoadStateInit nsDocShellLoadState::Serialize(
   loadState.NavigationAPIState() = mNavigationAPIState;
 
   if (XRE_IsParentProcess()) {
-    mozilla::ipc::IToplevelProtocol* top = aActor->ToplevelProtocol();
-    MOZ_RELEASE_ASSERT(top &&
-                           top->GetProtocolId() ==
-                               mozilla::ipc::ProtocolId::PContentMsgStart &&
-                           top->GetSide() == mozilla::ipc::ParentSide,
-                       "nsDocShellLoadState must be sent over PContent");
-    ContentParent* cp = static_cast<ContentParent*>(top);
+    ContentParent* cp = ActorDynCast<ContentParent>(aActor->ToplevelProtocol());
+    MOZ_RELEASE_ASSERT(cp, "nsDocShellLoadState must be sent over PContent");
     cp->StorePendingLoadState(this);
   }
 

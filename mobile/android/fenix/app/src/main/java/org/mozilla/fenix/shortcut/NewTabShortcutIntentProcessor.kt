@@ -12,7 +12,7 @@ import mozilla.components.support.utils.SafeIntent
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.home.intent.StartSearchIntentProcessor
 
-class NewTabShortcutIntentProcessor : IntentProcessor {
+class NewTabShortcutIntentProcessor(private val isHomepageAsNewTabEnabled: Boolean) : IntentProcessor {
 
     /**
      * Processes the given [Intent].
@@ -22,13 +22,18 @@ class NewTabShortcutIntentProcessor : IntentProcessor {
      */
     override fun process(intent: Intent): Boolean {
         val safeIntent = SafeIntent(intent)
-        val (searchExtra, startPrivateMode) = when (safeIntent.action) {
-            ACTION_OPEN_TAB -> StartSearchIntentProcessor.STATIC_SHORTCUT_NEW_TAB to false
-            ACTION_OPEN_PRIVATE_TAB -> StartSearchIntentProcessor.STATIC_SHORTCUT_NEW_PRIVATE_TAB to true
-            else -> return false
-        }
+        val (searchExtra, startPrivateMode) =
+            when (safeIntent.action) {
+                ACTION_OPEN_TAB -> StartSearchIntentProcessor.STATIC_SHORTCUT_NEW_TAB to false
+                ACTION_OPEN_PRIVATE_TAB -> StartSearchIntentProcessor.STATIC_SHORTCUT_NEW_PRIVATE_TAB to true
+                else -> return false
+            }
 
-        intent.putExtra(HomeActivity.OPEN_TO_SEARCH, searchExtra)
+        if (isHomepageAsNewTabEnabled) {
+            intent.putExtra(HomeActivity.OPEN_TO_HOME, true)
+        } else {
+            intent.putExtra(HomeActivity.OPEN_TO_SEARCH, searchExtra)
+        }
         intent.putExtra(HomeActivity.PRIVATE_BROWSING_MODE, startPrivateMode)
         intent.flags = intent.flags or FLAG_ACTIVITY_NEW_TASK or FLAG_ACTIVITY_CLEAR_TASK
 

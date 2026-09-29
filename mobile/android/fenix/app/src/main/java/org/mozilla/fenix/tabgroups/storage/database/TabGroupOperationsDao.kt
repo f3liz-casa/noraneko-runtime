@@ -22,44 +22,34 @@ internal interface TabGroupOperationsDao : StoredTabGroupDao, TabGroupAssignment
     @Query("SELECT * FROM $TAB_GROUP_TABLE_NAME")
     fun getAllTabGroupsWithAssignments(): Flow<List<StoredTabGroupWithAssignments>>
 
-    /**
-     * Creates a new [tabGroup] instance in the database with a list of [assignments].
-     */
+    /** Creates a new [tabGroup] instance in the database with a list of [assignments]. */
     @Transaction
     suspend fun createTabGroup(tabGroup: StoredTabGroup, assignments: List<TabGroupAssignment>) {
         upsertTabGroup(tabGroup = tabGroup)
         upsertTabGroupAssignments(assignments = assignments)
     }
 
-    /**
-     * Updates or inserts the provided [TabGroupAssignment] and updates the group's timestamp..
-     */
+    /** Updates or inserts the provided [TabGroupAssignment] and updates the group's timestamp.. */
     @Transaction
     suspend fun upsertTabGroupAssignment(assignment: TabGroupAssignment, currentTime: Long) {
         upsertTabGroupAssignment(assignment = assignment)
         touchGroupsForTabs(tabIds = listOf(assignment.id), currentTime = currentTime)
     }
 
-    /**
-     * Updates or inserts the provided [TabGroupAssignment]s and updates the group's timestamp.
-     */
+    /** Updates or inserts the provided [TabGroupAssignment]s and updates the group's timestamp. */
     @Transaction
     suspend fun upsertTabGroupAssignments(assignments: List<TabGroupAssignment>, currentTime: Long) {
         upsertTabGroupAssignments(assignments = assignments)
         touchGroupsForTabs(tabIds = assignments.map { it.id }, currentTime = currentTime)
     }
 
-    /**
-     * Deletes the specified [TabGroupAssignment] and updates the group's timestamp.
-     */
+    /** Deletes the specified [TabGroupAssignment] and updates the group's timestamp. */
     @Transaction
     suspend fun deleteTabGroupAssignment(assignment: TabGroupAssignment, currentTime: Long) {
         deleteTabGroupAssignmentById(tabId = assignment.id, currentTime = currentTime)
     }
 
-    /**
-     * Deletes all of the [TabGroupAssignment]s who are tied to [tabGroupId].
-     */
+    /** Deletes all of the [TabGroupAssignment]s who are tied to [tabGroupId]. */
     @Transaction
     suspend fun deleteTabGroupAssignmentsByTabGroupId(tabGroupId: String, currentTime: Long) {
         deleteTabGroupAssignmentsByTabGroupId(tabGroupId = tabGroupId)
@@ -67,8 +57,16 @@ internal interface TabGroupOperationsDao : StoredTabGroupDao, TabGroupAssignment
     }
 
     /**
-     * Deletes the [TabGroupAssignment] corresponding to [tabId] and updates the group's timestamp.
+     * Deletes the [StoredTabGroup] corresponding to [tabGroupId] along with its [TabGroupAssignment]'s, leaving the
+     * previously assigned tabs in place.
      */
+    @Transaction
+    suspend fun ungroupTabGroup(tabGroupId: String) {
+        deleteTabGroupAssignmentsByTabGroupId(tabGroupId = tabGroupId)
+        deleteTabGroupById(id = tabGroupId)
+    }
+
+    /** Deletes the [TabGroupAssignment] corresponding to [tabId] and updates the group's timestamp. */
     @Transaction
     suspend fun deleteTabGroupAssignmentById(tabId: String, currentTime: Long) {
         touchGroupForTab(tabId = tabId, currentTime = currentTime)

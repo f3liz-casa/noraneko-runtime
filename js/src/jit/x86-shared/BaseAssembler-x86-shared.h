@@ -2147,6 +2147,10 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void testl_ir(int32_t rhs, RegisterID lhs) {
+    if (rhs == -1) {
+      testl_rr(lhs, lhs);
+      return;
+    }
     // If the mask fits in an 8-bit immediate, we can use testb with an
     // 8-bit subreg.
     if (CAN_ZERO_EXTEND_8_32(rhs) && HasSubregL(lhs)) {
@@ -2215,6 +2219,10 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void testb_ir(int32_t rhs, RegisterID lhs) {
+    if ((rhs & 0xff) == 0xff && lhs != rax) {
+      testb_rr(lhs, lhs);
+      return;
+    }
     spew(currentOffset(), "testb      $0x%x, %s", uint32_t(rhs),
          GPReg8Name(lhs));
     if (lhs == rax) {
@@ -3937,14 +3945,16 @@ class BaseAssembler : public GenericAssembler {
     twoByteOpSimd("vsqrtss", VEX_SS, OP2_SQRTSS_VssWss, src1, src0, dst);
   }
 
-  void vroundsd_irr(RoundingMode mode, XMMRegisterID src, XMMRegisterID dst) {
+  void vroundsd_irr(RoundingMode mode, XMMRegisterID src1, XMMRegisterID src0,
+                    XMMRegisterID dst) {
     threeByteOpImmSimd("vroundsd", VEX_PD, OP3_ROUNDSD_VsdWsd, ESCAPE_3A, mode,
-                       src, invalid_xmm, dst);
+                       src1, src0, dst);
   }
 
-  void vroundss_irr(RoundingMode mode, XMMRegisterID src, XMMRegisterID dst) {
+  void vroundss_irr(RoundingMode mode, XMMRegisterID src1, XMMRegisterID src0,
+                    XMMRegisterID dst) {
     threeByteOpImmSimd("vroundss", VEX_PD, OP3_ROUNDSS_VsdWsd, ESCAPE_3A, mode,
-                       src, invalid_xmm, dst);
+                       src1, src0, dst);
   }
   void vroundps_irr(SSERoundingMode mode, XMMRegisterID src,
                     XMMRegisterID dst) {

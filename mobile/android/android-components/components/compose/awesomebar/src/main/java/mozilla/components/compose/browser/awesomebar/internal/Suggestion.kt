@@ -34,8 +34,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import mozilla.components.compose.base.theme.AcornTheme
 import mozilla.components.compose.browser.awesomebar.AwesomeBarColors
 import mozilla.components.compose.browser.awesomebar.AwesomeBarOrientation
+import mozilla.components.compose.browser.awesomebar.AwesomeBarTestTags
 import mozilla.components.compose.browser.awesomebar.R
 import mozilla.components.concept.awesomebar.AwesomeBar
 import mozilla.components.ui.icons.R as iconsR
@@ -54,27 +56,28 @@ internal fun Suggestion(
     onRemoveClicked: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .clickable { onSuggestionClicked() }
-            .defaultMinSize(minHeight = 56.dp)
-            .testTag("mozac.awesomebar.suggestion")
-            .padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 8.dp),
+        modifier =
+            Modifier.clickable { onSuggestionClicked() }
+                .defaultMinSize(minHeight = AcornTheme.layout.space.static600)
+                .testTag(AwesomeBarTestTags.SUGGESTION)
+                .padding(start = AcornTheme.layout.space.dynamic200, end = AcornTheme.layout.space.dynamic50)
     ) {
         val icon = suggestion.icon
         if (icon != null) {
             SuggestionIcon(
                 icon = icon,
                 indicator = suggestion.indicatorIcon,
-                modifier = Modifier.align(Alignment.CenterVertically),
+                modifier = Modifier.align(Alignment.CenterVertically).padding(end = 10.dp),
             )
         }
         SuggestionTitleAndDescription(
             title = suggestion.title?.take(SUGGESTION_TEXT_MAX_LENGTH),
             description = suggestion.description?.take(SUGGESTION_TEXT_MAX_LENGTH),
             colors = colors,
-            modifier = Modifier
-                .weight(1f)
-                .align(Alignment.CenterVertically),
+            modifier =
+                Modifier.weight(1f)
+                    .align(Alignment.CenterVertically)
+                    .padding(vertical = AcornTheme.layout.space.static100),
         )
         if (suggestion.editSuggestion != null) {
             AutocompleteButton(
@@ -101,22 +104,19 @@ private fun SuggestionTitleAndDescription(
     colors: AwesomeBarColors,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier,
-    ) {
+    Column(modifier = modifier) {
         Text(
-            text = if (title.isNullOrEmpty()) {
-                description ?: ""
-            } else {
-                title
-            },
+            text =
+                if (title.isNullOrEmpty()) {
+                    description ?: ""
+                } else {
+                    title
+                },
             color = colors.title,
             fontSize = 15.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .width(IntrinsicSize.Max)
-                .padding(start = 2.dp, end = 8.dp),
+            modifier = Modifier.width(IntrinsicSize.Max).padding(start = 2.dp, end = 8.dp),
         )
         if (description?.isNotEmpty() == true) {
             Text(
@@ -125,9 +125,7 @@ private fun SuggestionTitleAndDescription(
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .width(IntrinsicSize.Max)
-                    .padding(start = 2.dp, end = 8.dp),
+                modifier = Modifier.width(IntrinsicSize.Max).padding(start = 2.dp, end = 8.dp),
             )
         }
     }
@@ -139,29 +137,18 @@ private fun SuggestionIcon(
     indicator: Drawable?,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = modifier
-            .width(30.dp)
-            .height(38.dp),
-    ) {
+    Box(modifier = modifier.width(30.dp).height(38.dp)) {
         Image(
             icon.asImageBitmap(),
             contentDescription = null,
-            modifier = Modifier
-                .padding(top = 8.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .width(24.dp)
-                .height(24.dp),
+            modifier = Modifier.padding(top = 8.dp).clip(RoundedCornerShape(2.dp)).width(24.dp).height(24.dp),
             contentScale = ContentScale.Crop,
         )
         if (indicator != null) {
             Image(
                 indicator.toBitmap().asImageBitmap(),
                 contentDescription = null,
-                modifier = Modifier
-                    .padding(top = 22.dp, start = 14.dp)
-                    .width(16.dp)
-                    .height(16.dp),
+                modifier = Modifier.padding(top = 22.dp, start = 14.dp).width(16.dp).height(16.dp),
             )
         }
     }
@@ -179,17 +166,18 @@ private fun AutocompleteButton(
         painterResource(iconsR.drawable.mozac_ic_append_up_left_24),
         colorFilter = ColorFilter.tint(colors.autocompleteIcon),
         contentDescription = stringResource(R.string.mozac_browser_awesomebar_edit_suggestion),
-        modifier = modifier
-            .size(48.dp)
-            .rotate(
-                if (orientation == AwesomeBarOrientation.BOTTOM) {
-                    270f
-                } else {
-                    0f
-                },
-            )
-            .clickable { onAutoComplete() }
-            .padding(12.dp),
+        modifier =
+            modifier
+                .size(48.dp)
+                .rotate(
+                    if (orientation == AwesomeBarOrientation.BOTTOM) {
+                        270f
+                    } else {
+                        0f
+                    }
+                )
+                .clickable { onAutoComplete() }
+                .padding(12.dp),
     )
 }
 
@@ -203,9 +191,6 @@ private fun RemoveButton(
         painterResource(iconsR.drawable.mozac_ic_cross_24),
         colorFilter = ColorFilter.tint(colors.autocompleteIcon),
         contentDescription = stringResource(R.string.mozac_browser_awesomebar_remove_suggestion),
-        modifier = modifier
-            .size(48.dp)
-            .clickable { onRemoveClicked() }
-            .padding(12.dp),
+        modifier = modifier.size(48.dp).clickable { onRemoveClicked() }.padding(12.dp),
     )
 }

@@ -15,7 +15,8 @@ const SHIMMABLE_TEST_PAGE_2 = `${TEST_ROOT}shims_test_2.html`;
 const SHIMMABLE_TEST_PAGE_3 = `${TEST_ROOT}shims_test_3.html`;
 const EMBEDDING_TEST_PAGE = `${THIRD_PARTY_ROOT}iframe_test.html`;
 const TEST_PAGE_WITH_SMARTBLOCK_COMPATIBLE_EMBED = `${TEST_ROOT}smartblock_embed_test.html`;
-
+const TEST_PAGE_WITH_SMARTBLOCK_LINK_CONTAINER_EMBED = `${TEST_ROOT}smartblock_embed_link_container_test.html`;
+const TEST_PAGE_WITH_SMARTBLOCK_COMPATIBLE_IFRAME_EMBED = `${TEST_ROOT}smartblock_embed_iframe_test.html`;
 const BLOCKED_TRACKER_URL =
   "//trackertest.org/tests/toolkit/components/url-classifier/tests/mochitest/evil.js";
 
@@ -364,7 +365,10 @@ async function openProtectionsPanel(win = window) {
   await popupShownPromise;
 }
 
-async function loadSmartblockPageOnTab(tab) {
+async function loadSmartblockPageOnTab(
+  tab,
+  url = TEST_PAGE_WITH_SMARTBLOCK_COMPATIBLE_EMBED
+) {
   let smartblockScriptFinished = BrowserTestUtils.waitForContentEvent(
     tab.linkedBrowser,
     "smartblockEmbedScriptFinished",
@@ -373,10 +377,7 @@ async function loadSmartblockPageOnTab(tab) {
     true
   );
 
-  BrowserTestUtils.startLoadingURIString(
-    tab.linkedBrowser,
-    TEST_PAGE_WITH_SMARTBLOCK_COMPATIBLE_EMBED
-  );
+  BrowserTestUtils.startLoadingURIString(tab.linkedBrowser, url);
 
   return smartblockScriptFinished;
 }
@@ -606,6 +607,13 @@ async function generateTestShims() {
       file: "empty-script.js",
       matches: [
         "https://itisatracker.org/browser/browser/extensions/webcompat/tests/browser/embed_test.js",
+        {
+          patterns: [
+            "https://itisatracker.org/browser/browser/extensions/webcompat/tests/browser/embed_test_iframe.html",
+          ],
+          types: ["sub_frame"],
+          target: "empty-page.html",
+        },
       ],
       // Use instagram logo as an example
       logos: ["instagram.svg"],

@@ -2689,6 +2689,26 @@ TEST_F(WebRtcVideoChannelBaseTest, RequestEncoderSwitchWithNullopt) {
   EXPECT_EQ("VP8", codec->name);
 }
 
+TEST_F(WebRtcVideoChannelBaseTest, RequestEncoderSwitchWithNoCodecs) {
+  VideoSenderParameters parameters;
+  parameters.codecs.push_back(GetEngineCodec("VP9"));
+  EXPECT_TRUE(send_channel_->SetSenderParameters(parameters));
+
+  std::optional<Codec> codec = send_channel_->GetSendCodec();
+  ASSERT_TRUE(codec);
+  EXPECT_EQ("VP9", codec->name);
+
+  // RequestEncoderSwitch with std::nullopt and allow_default_fallback=false.
+  // Codec should still switch to the next available codec.
+  // Since there's no other codec it should stay the same.
+  SendImpl()->RequestEncoderSwitch(std::nullopt,
+                                   /*allow_default_fallback=*/false);
+  time_controller_.AdvanceTime(kFrameDuration);
+  codec = send_channel_->GetSendCodec();
+  ASSERT_TRUE(codec);
+  EXPECT_EQ("VP9", codec->name);
+}
+
 TEST_F(WebRtcVideoChannelBaseTest, RequestEncoderSwitchDefaultFallback) {
   VideoSenderParameters parameters;
   parameters.codecs.push_back(GetEngineCodec("VP9"));
@@ -3001,26 +3021,6 @@ class WebRtcVideoChannelTest : public WebRtcVideoEngineTest {
               parameters.extensions);
   }
 
-  void TestLossNotificationState(bool expect_lntf_enabled) {
-    AssignDefaultCodec();
-    VerifyCodecHasDefaultFeedbackParams(*default_codec_, expect_lntf_enabled);
-
-    VideoSenderParameters parameters;
-    parameters.codecs = engine_->LegacySendCodecs();
-    EXPECT_TRUE(send_channel_->SetSenderParameters(parameters));
-    EXPECT_TRUE(send_channel_->SetSend(true));
-
-    // Send side.
-    FakeVideoSendStream* send_stream =
-        AddSendStream(StreamParams::CreateLegacy(1));
-    EXPECT_EQ(send_stream->GetConfig().rtp.lntf.enabled, expect_lntf_enabled);
-
-    // Receiver side.
-    FakeVideoReceiveStream* recv_stream =
-        AddRecvStream(StreamParams::CreateLegacy(1));
-    EXPECT_EQ(recv_stream->GetConfig().rtp.lntf.enabled, expect_lntf_enabled);
-  }
-
   void TestExtensionFilter(const std::vector<std::string>& extensions,
                            const std::string& expected_extension) {
     VideoSenderParameters parameters = send_parameters_;
@@ -3135,6 +3135,26 @@ class WebRtcVideoChannelTest : public WebRtcVideoEngineTest {
   VideoReceiverParameters recv_parameters_;
   uint32_t last_ssrc_;
 };
+
+// SetReceiveNonSenderRttEnabled may toggle the value after a receive stream
+// has started: false->true enables it, true->false disables it.
+TEST_F(WebRtcVideoChannelTest, ToggleReceiveNonSenderRttAfterStreamStart) {
+  FakeVideoReceiveStream* recv_stream =
+      AddRecvStream(StreamParams::CreateLegacy(kSsrc));
+  // Not negotiated yet -> disabled.
+  EXPECT_FALSE(
+      recv_stream->GetConfig().rtp.rtcp_xr.receiver_reference_time_report);
+
+  // false -> true: enabled on the already-running stream.
+  receive_channel_->SetReceiveNonSenderRttEnabled(true);
+  EXPECT_TRUE(
+      recv_stream->GetConfig().rtp.rtcp_xr.receiver_reference_time_report);
+
+  // true -> false: disabled immediately.
+  receive_channel_->SetReceiveNonSenderRttEnabled(false);
+  EXPECT_FALSE(
+      recv_stream->GetConfig().rtp.rtcp_xr.receiver_reference_time_report);
+}
 
 TEST_F(WebRtcVideoChannelTest, SetsSyncGroupFromSyncLabel) {
   const uint32_t kVideoSsrc = 123;
@@ -3434,22 +3454,6 @@ TEST_F(WebRtcVideoChannelTest, AddRecvStreamOnlyUsesOneReceiveStream) {
 TEST_F(WebRtcVideoChannelTest, RtcpIsCompoundByDefault) {
   FakeVideoReceiveStream* stream = AddRecvStream();
   EXPECT_EQ(RtcpMode::kCompound, stream->GetConfig().rtp.rtcp_mode);
-}
-
-TEST_F(WebRtcVideoChannelTest, LossNotificationIsDisabledByDefault) {
-  TestLossNotificationState(false);
-}
-
-class WebRtcVideoChannelWithRtcpLossNotificationTest
-    : public WebRtcVideoChannelTest {
- public:
-  WebRtcVideoChannelWithRtcpLossNotificationTest()
-      : WebRtcVideoChannelTest("WebRTC-RtcpLossNotification/Enabled/") {}
-};
-
-TEST_F(WebRtcVideoChannelWithRtcpLossNotificationTest,
-       LossNotificationIsEnabledByFieldTrial) {
-  TestLossNotificationState(true);
 }
 
 TEST_F(WebRtcVideoChannelTest, NackIsEnabledByDefault) {
@@ -5302,7 +5306,8 @@ TEST_F(WebRtcVideoChannelTest, SetRecvCodecsWithPacketization) {
   EXPECT_EQ(config.rtp.raw_payload_types.count(vp8_codec.id), 1U);
 }
 
-TEST_F(WebRtcVideoChannelTest, SetRecvCodecsWithPacketizationRecreatesStream) {
+TEST_F(WebRtcVideoChannelTest,
+       SetRecvCodecsWithPacketizationDoesNotRecreateStream) {
   VideoReceiverParameters parameters;
   parameters.codecs = {GetEngineCodec("VP8"), GetEngineCodec("VP9")};
   parameters.codecs.back().packetization = kPacketizationParamRaw;
@@ -5312,10 +5317,17 @@ TEST_F(WebRtcVideoChannelTest, SetRecvCodecsWithPacketizationRecreatesStream) {
   AddRecvStream(params);
   ASSERT_THAT(fake_call_->GetVideoReceiveStreams(), testing::SizeIs(1));
   EXPECT_EQ(fake_call_->GetNumCreatedReceiveStreams(), 1);
+  EXPECT_EQ(fake_call_->GetVideoReceiveStreams()[0]
+                ->GetConfig()
+                .rtp.raw_payload_types.count(parameters.codecs.back().id),
+            1U);
 
   parameters.codecs.back().packetization.reset();
   EXPECT_TRUE(receive_channel_->SetReceiverParameters(parameters));
-  EXPECT_EQ(fake_call_->GetNumCreatedReceiveStreams(), 2);
+  EXPECT_EQ(fake_call_->GetNumCreatedReceiveStreams(), 1);
+  EXPECT_TRUE(fake_call_->GetVideoReceiveStreams()[0]
+                  ->GetConfig()
+                  .rtp.raw_payload_types.empty());
 }
 
 TEST_F(WebRtcVideoChannelTest, DuplicateUlpfecCodecIsDropped) {
@@ -6745,10 +6757,11 @@ TEST_F(WebRtcVideoChannelTest, GetStatsTranslatesDecodeStatsCorrectly) {
   stats.render_delay_ms = 8;
   stats.width = 9;
   stats.height = 10;
-  stats.frame_counts.key_frames = 11;
-  stats.frame_counts.delta_frames = 12;
+  stats.received_frame_counts.key_frames = 11;
+  stats.received_frame_counts.delta_frames = 12;
   stats.frames_rendered = 13;
   stats.frames_decoded = 14;
+  stats.key_frames_decoded = 4;
   stats.qp_sum = 15;
   stats.corruption_score_sum = 0.3;
   stats.corruption_score_squared_sum = 0.05;
@@ -6788,12 +6801,13 @@ TEST_F(WebRtcVideoChannelTest, GetStatsTranslatesDecodeStatsCorrectly) {
   EXPECT_EQ(stats.render_delay_ms, receive_info.receivers[0].render_delay_ms);
   EXPECT_EQ(stats.width, receive_info.receivers[0].frame_width);
   EXPECT_EQ(stats.height, receive_info.receivers[0].frame_height);
-  EXPECT_EQ(checked_cast<unsigned int>(stats.frame_counts.key_frames +
-                                       stats.frame_counts.delta_frames),
-            receive_info.receivers[0].frames_received);
+  EXPECT_EQ(
+      checked_cast<unsigned int>(stats.received_frame_counts.key_frames +
+                                 stats.received_frame_counts.delta_frames),
+      receive_info.receivers[0].frames_received);
   EXPECT_EQ(stats.frames_rendered, receive_info.receivers[0].frames_rendered);
   EXPECT_EQ(stats.frames_decoded, receive_info.receivers[0].frames_decoded);
-  EXPECT_EQ(checked_cast<unsigned int>(stats.frame_counts.key_frames),
+  EXPECT_EQ(stats.key_frames_decoded,
             receive_info.receivers[0].key_frames_decoded);
   EXPECT_EQ(stats.qp_sum, receive_info.receivers[0].qp_sum);
   EXPECT_EQ(stats.corruption_score_sum,

@@ -8,11 +8,10 @@ import org.junit.Test
 import org.mozilla.fenix.customannotations.SmokeTest
 import org.mozilla.fenix.helpers.TestAssetHelper.getGenericAsset
 import org.mozilla.fenix.ui.efficiency.helpers.BaseTest
+import org.mozilla.fenix.ui.efficiency.navigation.LaunchConfig
 import org.mozilla.fenix.ui.efficiency.selectors.HomeSelectors
 
-class HomeTest : BaseTest(isPocketEnabled = false, isRecentlyVisitedFeatureEnabled = false) {
-    private val mockWebServer get() = fenixTestRule.mockWebServer
-
+class HomeTest : BaseTest(LaunchConfig(isPocketEnabled = false, isRecentlyVisitedFeatureEnabled = false)) {
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/235396
     @Test
     fun homeScreenItemsTest() {
@@ -24,34 +23,37 @@ class HomeTest : BaseTest(isPocketEnabled = false, isRecentlyVisitedFeatureEnabl
         on.home.navigateToPage()
 
         // Then: the browser chrome, page components, and elements should load
-        on.home.mozVerifyElementsByGroup("topSitesCompose")
+        on.home.mozVerifyElementsByGroup(HomeSelectors.Group.TOP_SITES_COMPOSE)
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/1364362
     @SmokeTest
     @Test
-    fun verifyJumpBackInSectionTest() {
+    fun verifyContinueSectionTest() {
         val firstWebPage = mockWebServer.getGenericAsset(4)
         val secondWebPage = mockWebServer.getGenericAsset(1)
 
         on.browserPage.navigateToPage(firstWebPage.url.toString())
-        on.home.navigateToPage()
-            .mozVerify(HomeSelectors.JUMP_BACK_IN_SECTION)
-            .mozVerifyElementsByGroup("jumpBackIn")
+        on.home
+            .navigateToPage()
+            .mozVerify(HomeSelectors.CONTINUE_SECTION)
+            .mozVerifyElementsByGroup(HomeSelectors.Group.CONTINUE)
 
         on.browserPage.navigateToPage(secondWebPage.url.toString())
-        on.home.navigateToPage()
-            .mozVerify(HomeSelectors.JUMP_BACK_IN_SECTION)
-            .mozVerifyElementsByGroup("jumpBackIn")
+        on.home
+            .navigateToPage()
+            .mozVerify(HomeSelectors.CONTINUE_SECTION)
+            .mozVerifyElementsByGroup(HomeSelectors.Group.CONTINUE)
 
         on.tabDrawer.navigateToPage()
         on.tabDrawer.closeTabWithTitle(secondWebPage.title)
-        on.home.navigateToPage()
-            .mozVerify(HomeSelectors.JUMP_BACK_IN_SECTION)
-            .mozVerifyElementsByGroup("jumpBackIn")
+        on.home
+            .navigateToPage()
+            .mozVerify(HomeSelectors.CONTINUE_SECTION)
+            .mozVerifyElementsByGroup(HomeSelectors.Group.CONTINUE)
 
         on.tabDrawer.navigateToPage()
         on.tabDrawer.closeTabWithTitle(firstWebPage.title)
-        on.home.mozVerifyElementAbsent(HomeSelectors.JUMP_BACK_IN_SECTION)
+        on.home.mozVerifyElementAbsent(HomeSelectors.CONTINUE_SECTION)
     }
 }

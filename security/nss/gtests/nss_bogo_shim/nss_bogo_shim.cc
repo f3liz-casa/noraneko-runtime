@@ -225,8 +225,9 @@ static PRFileDesc* CreatePacketAdaptor(PacketAdaptorData* data) {
 }
 
 std::string FormatError(PRErrorCode code) {
-  return std::string(":") + PORT_ErrorToName(code) + ":" + ":" +
-         PORT_ErrorToString(code);
+  const char* name = PORT_ErrorToName(code);
+  const char* str = PORT_ErrorToString(code);
+  return std::string(":") + (name ? name : "") + ":" + ":" + (str ? str : "");
 }
 
 static void StringRemoveNewlines(std::string& str) {
@@ -667,12 +668,9 @@ class TestAgent {
       if (rv != SECSuccess) {
         return false;
       }
-      // Xyber768 and ML-KEM-1024 are disabled by policy by default, so if
-      // they're requested we need to update the policy flags as well.
+      // ML-KEM-1024 is disabled by policy by default, so if it's requested we
+      // need to update the policy flags as well.
       for (auto group : groups) {
-        if (group == ssl_grp_kem_xyber768d00) {
-          NSS_SetAlgorithmPolicy(SEC_OID_XYBER768D00, NSS_USE_ALG_IN_SSL_KX, 0);
-        }
         if (group == ssl_grp_kem_mlkem1024) {
           NSS_SetAlgorithmPolicy(SEC_OID_ML_KEM_1024, NSS_USE_ALG_IN_SSL_KX, 0);
         }
@@ -755,9 +753,13 @@ class TestAgent {
   // flip all the bits, and send them back.
   SECStatus ReadWrite() {
     for (;;) {
-      uint8_t block[512];
+      uint8_t block[1 << 14];
       int32_t rv = PR_Read(ssl_fd_.get(), block, sizeof(block));
       if (rv < 0) {
+        // DTLS drops invalid records (e.g. oversized ciphertext) before
+        // authentication and returns WOULD_BLOCK rather than failing; read the
+        // next datagram instead of treating it as an error.
+        if (PR_GetError() == PR_WOULD_BLOCK_ERROR) continue;
         std::cerr << "Failure reading\n";
         return SECFailure;
       }
@@ -1363,6 +1365,7 @@ std::unique_ptr<const Config> ReadConfig(int argc, char** argv) {
   cfg->AddEntry<int>("resume-count", 0);
   cfg->AddEntry<std::string>("key-file", "");
   cfg->AddEntry<std::string>("cert-file", "");
+  cfg->AddEntry<std::string>("trust-cert", "");
   cfg->AddEntry<int>("min-version", 0);
   cfg->AddEntry<int>("max-version", 0xffff);
   for (auto flag : kVersionDisableFlags) {

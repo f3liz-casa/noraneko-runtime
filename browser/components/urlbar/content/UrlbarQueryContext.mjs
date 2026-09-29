@@ -256,6 +256,36 @@ export class UrlbarQueryContext {
   sapName;
 
   /**
+   * Whether the query runs in a bar dedicated to search.
+   *
+   * @see {UrlbarShared.isSearchbarSAP}
+   * @type {boolean}
+   */
+  get isSearchbarSAP() {
+    return UrlbarShared.isSearchbarSAP(this.sapName);
+  }
+
+  /**
+   * Whether a string that isn't a URL may be searched for.
+   *
+   * @see {UrlbarShared.keywordEnabled}
+   * @type {boolean}
+   */
+  get keywordEnabled() {
+    return UrlbarShared.keywordEnabled(this.sapName);
+  }
+
+  /**
+   * Whether a string that is a URL may be navigated to.
+   *
+   * @see {UrlbarShared.navigationEnabled}
+   * @type {boolean}
+   */
+  get navigationEnabled() {
+    return UrlbarShared.navigationEnabled(this.sapName);
+  }
+
+  /**
    * @type {UrlbarSearchModeData}
    *   Details about the search mode associated with this context.
    */
@@ -319,12 +349,17 @@ export class UrlbarQueryContext {
    * Only returns a subset of the properties from URIFixup. This is both to
    * reduce the memory footprint of UrlbarQueryContexts and to keep them
    * serializable so they can be sent to extensions.
+   *
+   * IMPORTANT: This uses `Services`, so it only works in privileged code.
    */
   get fixupInfo() {
     if (!this._fixupError && !this._fixupInfo && this.trimmedSearchString) {
       let flags =
         Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS |
         Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP;
+      if (this.isSearchbarSAP) {
+        flags |= Ci.nsIURIFixup.FIXUP_FLAG_FORCE_KEYWORD_LOOKUP;
+      }
       if (this.isPrivate) {
         flags |= Ci.nsIURIFixup.FIXUP_FLAG_PRIVATE_CONTEXT;
       }
@@ -403,9 +438,10 @@ export class UrlbarQueryContext {
 
     // Disallow remote results for strings containing tokens that look like URIs
     // to avoid disclosing information about networks and passwords.
-    // (Unless the search is happening in the searchbar.)
+    // A SAP that can't navigate has nothing to disclose: a URL typed there is
+    // only ever a search string.
     if (
-      this.sapName != "searchbar" &&
+      this.navigationEnabled &&
       this.fixupInfo?.href &&
       !this.fixupInfo?.isSearch
     ) {
@@ -444,7 +480,7 @@ export class UrlbarQueryContext {
    */
   static fromWire(wire) {
     Object.setPrototypeOf(wire, UrlbarQueryContext.prototype);
-    wire.results = wire.results?.map(UrlbarResult.fromWire) ?? [];
+    wire.results = wire.results?.map(r => UrlbarResult.fromWire(r)) ?? [];
     if (wire.heuristicResult) {
       wire.heuristicResult = UrlbarResult.fromWire(wire.heuristicResult);
     }

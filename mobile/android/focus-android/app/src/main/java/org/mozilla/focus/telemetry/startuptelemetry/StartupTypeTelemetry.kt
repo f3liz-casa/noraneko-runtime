@@ -9,9 +9,7 @@ import androidx.annotation.VisibleForTesting.Companion.NONE
 import androidx.annotation.VisibleForTesting.Companion.PRIVATE
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleCoroutineScope
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,20 +25,25 @@ private val activityClass = MainActivity::class.java
 private val logger = Logger("StartupTypeTelemetry")
 
 /**
- * Records telemetry for the number of start ups. See the
- * [Fenix perf glossary](https://wiki.mozilla.org/index.php?title=Performance/Fenix/Glossary)
- * for specific definitions.
+ * Records telemetry for the number of start-ups. See the
+ * [Fenix perf glossary](https://wiki.mozilla.org/index.php?title=Performance/Fenix/Glossary) for specific definitions.
  *
- * This should be a member variable of [MainActivity] because its data is tied to the lifecycle of an
- * Activity. Call [attachOnMainActivityOnCreate] for this class to work correctly.
+ * This should be a member variable of [MainActivity] to correctly observe the Activity lifecycle events. Call
+ * [attachOnMainActivityOnCreate] for this class to work correctly. Telemetry recording is performed using the provided
+ * [applicationScope] to ensure it completes even if the Activity is destroyed.
  *
  * N.B.: this class is lightly hardcoded to MainActivity.
+ *
  * @param startupStateProvider Provides the startup state for the activity.
  * @param startupPathProvider Provides the startup path for the activity.
+ * @param applicationScope The [CoroutineScope] used for recording telemetry.
+ * @param ioDispatcher The [CoroutineDispatcher] used for recording telemetry.
  */
 class StartupTypeTelemetry(
     private val startupStateProvider: StartupStateProvider,
     private val startupPathProvider: StartupPathProvider,
+    private val applicationScope: CoroutineScope,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
     /**
@@ -61,22 +64,23 @@ class StartupTypeTelemetry(
         val startupState = startupStateProvider.getStartupStateForStartedActivity(activityClass)
         val startupPath = startupPathProvider.startupPathForActivity
         // We don't use the enum name directly to avoid unintentional changes when refactoring.
-        val stateLabel = when (startupState) {
-            StartupState.COLD -> "cold"
-            StartupState.WARM -> "warm"
-            StartupState.HOT -> "hot"
-            StartupState.UNKNOWN -> "unknown"
-        }
+        val stateLabel =
+            when (startupState) {
+                StartupState.COLD -> "cold"
+                StartupState.WARM -> "warm"
+                StartupState.HOT -> "hot"
+                StartupState.UNKNOWN -> "unknown"
+            }
 
-        val pathLabel = when (startupPath) {
-            StartupPath.MAIN -> "main"
-            StartupPath.VIEW -> "view"
+        val pathLabel =
+            when (startupPath) {
+                StartupPath.MAIN -> "main"
+                StartupPath.VIEW -> "view"
 
-            // To avoid combinatorial explosion in label names, we bucket NOT_SET into UNKNOWN.
-            StartupPath.NOT_SET,
-            StartupPath.UNKNOWN,
-            -> "unknown"
-        }
+                // To avoid combinatorial explosion in label names, we bucket NOT_SET into UNKNOWN.
+                StartupPath.NOT_SET,
+                StartupPath.UNKNOWN -> "unknown"
+            }
 
         return "${stateLabel}_$pathLabel"
     }
@@ -86,43 +90,20 @@ class StartupTypeTelemetry(
      *
      * @return A new instance of `StartupTypeLifecycleObserver`.
      */
-    @VisibleForTesting(otherwise = NONE)
-    fun getTestCallbacks() = StartupTypeLifecycleObserver()
+    @VisibleForTesting(otherwise = NONE) fun getTestCallbacks() = StartupTypeLifecycleObserver()
 
-    /**
-     * Records startup telemetry based on the available [startupStateProvider] and [startupPathProvider].
-     *
-     * @param owner The [LifecycleOwner] whose [LifecycleCoroutineScope] is to be used for recording telemetry.
-     * @param dispatcher The dispatcher used to control the thread on which telemetry will be recorded.
-     * Defaults to [Dispatchers.IO].
-     */
+    /** Records startup telemetry based on the available [startupStateProvider] and [startupPathProvider]. */
     @VisibleForTesting(otherwise = PRIVATE)
-    fun recordStartupTelemetry(
-        owner: LifecycleOwner,
-        dispatcher: CoroutineDispatcher = Dispatchers.IO,
-    ) {
+    fun recordStartupTelemetry() {
         val label = getStartupTelemetryLabel()
-        val scope = getScope(owner)
 
-        scope.launch(dispatcher) {
+        applicationScope.launch(ioDispatcher) {
             PerfStartup.startupType[label].add(1)
             logger.info("Recorded start up: $label")
         }
     }
 
-    /**
-     * Retrieves the `CoroutineScope` associated with the given `LifecycleOwner`.
-     *
-     * @param owner The [LifecycleOwner] whose [LifecycleCoroutineScope] is to be retrieved.
-     * @return The [LifecycleCoroutineScope] associated with the given [LifecycleOwner].
-     */
-    internal fun getScope(owner: LifecycleOwner): CoroutineScope {
-        return owner.lifecycleScope
-    }
-
-    /**
-     * Lifecycle observer that records startup telemetry when the activity starts and resumes.
-     */
+    /** Lifecycle observer that records startup telemetry when the activity starts and resumes. */
     @VisibleForTesting(otherwise = PRIVATE)
     inner class StartupTypeLifecycleObserver : DefaultLifecycleObserver {
         private var shouldRecordStart = false
@@ -138,7 +119,7 @@ class StartupTypeTelemetry(
             // We only record if start was called for this resume to avoid recording
             // for onPause -> onResume states.
             if (shouldRecordStart) {
-                recordStartupTelemetry(owner)
+                recordStartupTelemetry()
                 shouldRecordStart = false
             }
         }

@@ -7,102 +7,108 @@ package org.mozilla.fenix.ui.efficiency.selectors
 import org.mozilla.fenix.R
 import org.mozilla.fenix.helpers.DataGenerationHelper.getStringResource
 import org.mozilla.fenix.ui.efficiency.helpers.Selector
+import org.mozilla.fenix.ui.efficiency.helpers.SelectorContainer
+import org.mozilla.fenix.ui.efficiency.helpers.SelectorGroup
 import org.mozilla.fenix.ui.efficiency.helpers.SelectorStrategy
 
-object CollectionsSelectors {
+object CollectionsSelectors : SelectorContainer {
+    enum class Group : SelectorGroup {
+        TABS_TRAY_COLLECTIONS_SECTION,
+        SELECT_COLLECTION_VIEW,
+        COLLECTION_ITEM,
+        COLLECTION_TAB_ITEM,
+        COLLECTION_CONTROLS,
+        COLLECTION_THREE_DOT_MENU,
+    }
 
-    val ADD_NEW_COLLECTION_BUTTON = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR_WITH_TEXT,
-        value = "Add new collection",
-        description = "Add new collection from tabs tray collections section",
-        groups = listOf("tabsTrayCollectionsSection"),
-    )
+    val ADD_NEW_COLLECTION_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR_WITH_TEXT,
+            value = "Add new collection",
+            description = "Add new collection from tabs tray collections section",
+            groups = setOf(Group.TABS_TRAY_COLLECTIONS_SECTION),
+        )
 
-    @Suppress("ktlint:standard:function-naming", "FunctionName")
-    fun EXISTING_COLLECTION_WITH_TITLE(collectionTitle: String = "") = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR_WITH_TEXT,
-        value = collectionTitle,
-        description = "Existing collection: $collectionTitle from the select collection view",
-        groups = listOf("selectCollectionView"),
-    )
+    @Suppress("FunctionName")
+    fun EXISTING_COLLECTION_WITH_TITLE(collectionTitle: String = "") =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR_WITH_TEXT,
+            value = collectionTitle,
+            description = "Existing collection: $collectionTitle from the select collection view",
+            groups = setOf(Group.SELECT_COLLECTION_VIEW),
+        )
 
-    val TAB_SAVED_SNACK_BAR = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR_WITH_TEXT,
-        value = getStringResource(R.string.create_collection_tab_saved_2),
-        description = "Tab saved snackbar",
-        groups = listOf(),
-    )
+    val TAB_SAVED_SNACK_BAR =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR_WITH_TEXT,
+            value = getStringResource(R.string.create_collection_tab_saved_2),
+            description = "Tab saved snackbar",
+        )
 
-    @Suppress("ktlint:standard:function-naming", "FunctionName")
-    fun COLLECTION_WITH_TITLE(collectionTitle: String = "") = Selector(
-        strategy = SelectorStrategy.COMPOSE_BY_TEXT,
-        value = collectionTitle,
-        description = "Home screen collection with title: $collectionTitle ",
-        groups = listOf("collectionItem"),
-    )
+    @Suppress("FunctionName")
+    fun COLLECTION_WITH_TITLE(collectionTitle: String = "") =
+        Selector(
+            strategy = SelectorStrategy.COMPOSE_BY_TEXT,
+            value = collectionTitle,
+            description = "Home screen collection with title: $collectionTitle ",
+            groups = setOf(Group.COLLECTION_ITEM),
+        )
 
-    @Suppress("ktlint:standard:function-naming", "FunctionName")
-    fun COLLECTION_TAB_WITH_TITLE(tabTitle: String = "") = Selector(
-        strategy = SelectorStrategy.COMPOSE_BY_TEXT,
-        value = tabTitle,
-        description = "Collection tab with title: $tabTitle ",
-        groups = listOf("collectionTabItem"),
-    )
+    @Suppress("FunctionName")
+    fun COLLECTION_TAB_WITH_TITLE(tabTitle: String = "") =
+        Selector(
+            strategy = SelectorStrategy.COMPOSE_BY_TEXT,
+            value = tabTitle,
+            description = "Collection tab with title: $tabTitle ",
+            groups = setOf(Group.COLLECTION_TAB_ITEM),
+        )
 
-    @Suppress("ktlint:standard:function-naming", "FunctionName")
-    fun COLLECTION_TAB_WITH_URL(url: String = "") = Selector(
-        strategy = SelectorStrategy.COMPOSE_BY_TEXT_SUBSTRING,
-        value = url,
-        description = "Collection tab with url: $url",
-        groups = listOf("collectionTabItem"),
-    )
+    @Suppress("FunctionName")
+    fun COLLECTION_TAB_WITH_URL(url: String = "") =
+        Selector(
+            strategy = SelectorStrategy.COMPOSE_BY_TEXT_SUBSTRING,
+            value = url,
+            description = "Collection tab with url: $url",
+            groups = setOf(Group.COLLECTION_TAB_ITEM),
+        )
 
-    val COLLECTION_ITEM_REMOVE_BUTTON = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR_WITH_DESCRIPTION_CONTAINS,
-        value = "Remove tab from collection",
-        description = "Collection item remove button",
-        groups = listOf("collectionControls"),
-    )
+    val COLLECTION_ITEM_REMOVE_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR_WITH_DESCRIPTION_CONTAINS,
+            value = "Remove tab from collection",
+            description = "Collection item remove button",
+            groups = setOf(Group.COLLECTION_CONTROLS),
+        )
 
-    val COLLECTION_TAB_SHARE_BUTTON = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR_WITH_DESCRIPTION_CONTAINS,
-        value = "Share",
-        description = "Collection tab share button",
-        groups = listOf("collectionControls"),
-    )
+    val COLLECTION_TAB_SHARE_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR_WITH_DESCRIPTION_CONTAINS,
+            value = "Share",
+            description = "Collection tab share button",
+            groups = setOf(Group.COLLECTION_CONTROLS),
+        )
 
-    val COLLECTION_TAB_MAIN_MENU_BUTTON = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR_WITH_DESCRIPTION_CONTAINS,
-        value = "Collection menu",
-        description = "Collection tab main menu button",
-        groups = listOf("collectionControls"),
-    )
+    val COLLECTION_TAB_MAIN_MENU_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR_WITH_DESCRIPTION_CONTAINS,
+            value = "Collection menu",
+            description = "Collection tab main menu button",
+            groups = setOf(Group.COLLECTION_CONTROLS),
+        )
 
-    val OPEN_TABS_BUTTON = Selector(
-        strategy = SelectorStrategy.COMPOSE_BY_TEXT,
-        value = "Open tabs",
-        description = "Collection tab Open tabs menu button",
-        groups = listOf("collectionThreeDotMenu"),
-    )
+    val OPEN_TABS_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.COMPOSE_BY_TEXT,
+            value = "Open tabs",
+            description = "Collection tab Open tabs menu button",
+            groups = setOf(Group.COLLECTION_THREE_DOT_MENU),
+        )
 
-    val DELETE_COLLECTION_BUTTON = Selector(
-        strategy = SelectorStrategy.COMPOSE_BY_TEXT,
-        value = "Delete collection",
-        description = "Collection tab Delete Collection menu button",
-        groups = listOf("collectionThreeDotMenu"),
-    )
-
-    val all = listOf(
-        ADD_NEW_COLLECTION_BUTTON,
-        EXISTING_COLLECTION_WITH_TITLE(),
-        TAB_SAVED_SNACK_BAR,
-        COLLECTION_WITH_TITLE(),
-        COLLECTION_TAB_WITH_TITLE(),
-        COLLECTION_TAB_WITH_URL(),
-        COLLECTION_ITEM_REMOVE_BUTTON,
-        COLLECTION_TAB_SHARE_BUTTON,
-        COLLECTION_TAB_MAIN_MENU_BUTTON,
-        OPEN_TABS_BUTTON,
-        DELETE_COLLECTION_BUTTON,
-    )
+    val DELETE_COLLECTION_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.COMPOSE_BY_TEXT,
+            value = "Delete collection",
+            description = "Collection tab Delete Collection menu button",
+            groups = setOf(Group.COLLECTION_THREE_DOT_MENU),
+        )
 }

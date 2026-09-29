@@ -220,7 +220,8 @@ nsContentSink::StyleSheetLoaded(StyleSheet* aSheet, bool aWasDeferred,
 
     if (loadedAllSheets &&
         mDocument->GetReadyStateEnum() >= Document::READYSTATE_INTERACTIVE) {
-      mScriptLoader->DeferCheckpointReached();
+      const RefPtr<ScriptLoader> scriptLoader = mScriptLoader;
+      scriptLoader->DeferCheckpointReached();
     }
   }
 
@@ -848,10 +849,10 @@ void nsContentSink::DidBuildModelImpl(bool aTerminated) {
              "Bad readyState");
   mDocument->SetReadyStateInternal(Document::READYSTATE_INTERACTIVE);
 
-  if (mScriptLoader) {
-    mScriptLoader->ParsingComplete(aTerminated);
+  if (const RefPtr<ScriptLoader> scriptLoader = mScriptLoader) {
+    scriptLoader->ParsingComplete(aTerminated);
     if (!mPendingSheetCount) {
-      mScriptLoader->DeferCheckpointReached();
+      scriptLoader->DeferCheckpointReached();
     }
   }
 
@@ -966,6 +967,15 @@ void nsContentSink::NotifyDocElementCreated(Document* aDoc) {
 
   // This process just created a document. Ensure it's been marked as untrusted.
   mozilla::dom::ContentChild::MaybeBecomeUntrusted();
+
+  // Data documents with a content principal (DOMParser, XHR responseXML,
+  // createDocument) are never displayed, cannot run scripts and have no
+  // window. None of the observers of these notifications act on them, so
+  // skip the notification overhead. Only CustomElementListener with
+  // SystemPrincipals actually make use of this.
+  if (aDoc->IsLoadedAsData() && !aDoc->NodePrincipal()->IsSystemPrincipal()) {
+    return;
+  }
 
   nsCOMPtr<nsIObserverService> observerService =
       mozilla::services::GetObserverService();

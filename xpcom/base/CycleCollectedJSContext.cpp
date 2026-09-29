@@ -73,6 +73,9 @@ CycleCollectedJSContext::CycleCollectedJSContext()
 
 CycleCollectedJSContext::~CycleCollectedJSContext() {
   MOZ_COUNT_DTOR(CycleCollectedJSContext);
+  MOZ_ASSERT(mWebTaskSchedulingStateCount == 0,
+             "A global leaked a WebTaskSchedulingState, which would have "
+             "permanently disabled the getHostDefinedData fast path");
   // If the allocation failed, here we are.
   if (!mJSContext) {
     return;
@@ -173,17 +176,13 @@ size_t CycleCollectedJSContext::SizeOfExcludingThis(
   return 0;
 }
 
-enum { SCHEDULING_STATE_SLOT, SCHEDULING_STATE_SLOT_COUNT };
-
 void FinalizeSchedulingStateWrapper(JS::GCContext* aGCX, JSObject* aObjSelf) {
-  JS::Value slotEvent = JS::GetReservedSlot(aObjSelf, SCHEDULING_STATE_SLOT);
-  if (slotEvent.isUndefined()) {
+  nsISupports* schedulingState = JS::GetObjectISupports<nsISupports>(aObjSelf);
+  if (!schedulingState) {
     return;
   }
 
-  WebTaskSchedulingState* schedulingState =
-      static_cast<WebTaskSchedulingState*>(slotEvent.toPrivate());
-  JS_SetReservedSlot(aObjSelf, SCHEDULING_STATE_SLOT, JS::UndefinedValue());
+  JS::SetObjectISupports(aObjSelf, nullptr);
   schedulingState->Release();
 }
 
@@ -191,11 +190,13 @@ static const JSClassOps sSchedulingStateWrapper = {
     .finalize = FinalizeSchedulingStateWrapper,
 };
 
-static const JSClass sSchedulingStateClass = {
-    "SchedulingStateWrapper",
-    JSCLASS_HAS_RESERVED_SLOTS(SCHEDULING_STATE_SLOT_COUNT) |
-        JSCLASS_FOREGROUND_FINALIZE,
-    &sSchedulingStateWrapper};
+// The only slot holds the WebTaskSchedulingState as an nsISupports, which is
+// how the cycle collector sees the strong reference.
+static const JSClass sSchedulingStateClass = {"SchedulingStateWrapper",
+                                              JSCLASS_HAS_RESERVED_SLOTS(1) |
+                                                  JSCLASS_SLOT0_IS_NSISUPPORTS |
+                                                  JSCLASS_FOREGROUND_FINALIZE,
+                                              &sSchedulingStateWrapper};
 
 bool CycleCollectedJSContext::getHostDefinedGlobal(
     JSContext* aCx, JS::MutableHandle<JSObject*> out) const {
@@ -243,7 +244,13 @@ bool CycleCollectedJSContext::getHostDefinedData(
 
   // A performance note: On promise heavy benchmarks the allocation of an
   // object can be heavy, which is why this is conditional on the existence
-  // of schedulingState.
+  // of schedulingState. Checking the count first avoids walking the script
+  // settings stack (and the principal check in GetEntryGlobal) when no global
+  // on this thread has a scheduling state at all.
+  if (!MayHaveWebTaskSchedulingState()) {
+    return true;
+  }
+
   mozilla::dom::WebTaskSchedulingState* schedulingState =
       mozilla::dom::GetWebTaskSchedulingState();
   if (!schedulingState) {
@@ -260,8 +267,8 @@ bool CycleCollectedJSContext::getHostDefinedData(
 
   // This ref will be removed by FinalizeSchedulingStateWrapper.
   schedulingState->AddRef();
-  JS_SetReservedSlot(schedulingStateResult, SCHEDULING_STATE_SLOT,
-                     JS::PrivateValue(schedulingState));
+  JS::SetObjectISupports(schedulingStateResult,
+                         static_cast<nsISupports*>(schedulingState));
   aOptionalHostDefinedData.set(schedulingStateResult);
 
   return true;
@@ -793,12 +800,8 @@ void ExtractIncumbentAndSchedulingState(
     if (aOptionalHostDefinedData) {
       MOZ_ASSERT(JS::GetClass(aOptionalHostDefinedData) ==
                  &sSchedulingStateClass);
-      JS::Value state =
-          JS::GetReservedSlot(aOptionalHostDefinedData, SCHEDULING_STATE_SLOT);
-      if (!state.isUndefined()) {
-        aSchedulingState =
-            static_cast<WebTaskSchedulingState*>(state.toPrivate());
-      }
+      aSchedulingState = static_cast<WebTaskSchedulingState*>(
+          JS::GetObjectISupports<nsISupports>(aOptionalHostDefinedData));
     }
   }
 }

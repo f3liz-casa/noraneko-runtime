@@ -487,6 +487,24 @@
 #endif
 
 /**
+ * MOZ_LIFETIME_CAPTURE_BY_THIS is the equivalent of
+ * MOZ_LIFETIME_CAPTURE_BY(this). It needs to be spelled differently because
+ * clang 23 deprecated passing `this` to lifetime_capture_by in favor of the
+ * dedicated lifetime_capture_by_this attribute.
+ */
+#if defined(__clang__) && defined(__has_cpp_attribute)
+#  if __has_cpp_attribute(clang::lifetime_capture_by_this)
+#    define MOZ_LIFETIME_CAPTURE_BY_THIS [[clang::lifetime_capture_by_this]]
+#  elif __has_cpp_attribute(clang::lifetime_capture_by)
+#    define MOZ_LIFETIME_CAPTURE_BY_THIS [[clang::lifetime_capture_by(this)]]
+#  else
+#    define MOZ_LIFETIME_CAPTURE_BY_THIS /* nothing */
+#  endif
+#else
+#  define MOZ_LIFETIME_CAPTURE_BY_THIS /* nothing */
+#endif
+
+/**
  * MOZ_REINITIALIZES tells static analyser that a call to the associated
  * method leave it in an initialized state, typically after a std::move.
  */
@@ -982,7 +1000,8 @@
  * Should be constinit per C++20 standard, but we sometimes link with an older
  * libstdc++
  */
-#    if defined(__GLIBCXX__) && (__GLIBCXX__ <= 20230707)
+#    if defined(__GLIBCXX__) && (__cpp_lib_constexpr_string < 201907L || \
+                                 __cpp_lib_constexpr_vector < 201907L)
 #      define MOZ_GLIBCXX_CONSTINIT MOZ_RUNINIT
 #    else
 #      define MOZ_GLIBCXX_CONSTINIT constinit

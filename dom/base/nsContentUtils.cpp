@@ -108,7 +108,6 @@
 #include "mozilla/Result.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/ScrollContainerFrame.h"
-#include "mozilla/ScrollbarPreferences.h"
 #include "mozilla/ShutdownPhase.h"
 #include "mozilla/Span.h"
 #include "mozilla/StaticAnalysisFunctions.h"
@@ -116,6 +115,7 @@
 #include "mozilla/StaticPrefs_clipboard.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_network.h"
+#include "mozilla/StaticPrefs_pdfjs.h"
 #include "mozilla/dom/ReportDeliver.h"
 #include "mozilla/extensions/WebExtensionPolicy.h"
 #include "nsIOService.h"
@@ -934,18 +934,6 @@ struct GetParentBrowserParent {
     return false;
   }
 };
-
-template <TreeKind aKind>
-static bool AreNodesInSameSlot(const nsINode* aNode1, const nsINode* aNode2) {
-  if (const auto* content1 = nsIContent::FromNodeOrNull(aNode1)) {
-    if (auto* slot = content1->GetAssignedSlot<aKind>()) {
-      if (const auto* content2 = nsIContent::FromNodeOrNull(aNode2)) {
-        return slot == content2->GetAssignedSlot<aKind>();
-      }
-    }
-  }
-  return false;
-}
 
 template <TreeKind aKind>
 static bool ChildNodeIsInShadowDOMHostedByParent(const nsINode* aParent,
@@ -2852,6 +2840,28 @@ inline bool SchemeSaysShouldNotResistFingerprinting(nsIPrincipal* aPrincipal) {
   return !isContentAccessibleAboutURI;
 }
 
+// mFirstPartyDomain and mPartitionKey are serialized either as a bare host
+// ("example.com") or in site format ("(https,example.com[,port][,f])"),
+// depending on privacy.firstparty.isolate.use_site and
+// privacy.dynamic_firstparty.use_site respectively. Those two prefs are
+// independent, and ParsePartitionKey() only consults the latter, so detect the
+// format here instead of letting it decide for a first-party domain.
+inline void TopLevelInfoToBaseDomain(const nsAString& aInfo,
+                                     nsAString& aBaseDomain) {
+  if (aInfo.IsEmpty() || aInfo.First() != '(') {
+    aBaseDomain = aInfo;
+    return;
+  }
+
+  nsAutoString scheme;
+  int32_t port;
+  bool foreignByAncestorContext;
+  if (!OriginAttributes::ParsePartitionKey(aInfo, scheme, aBaseDomain, port,
+                                           foreignByAncestorContext)) {
+    aBaseDomain.Truncate();
+  }
+}
+
 inline bool PartionKeyIsAlsoExempted(
     const mozilla::OriginAttributes& aOriginAttributes) {
   // If we've gotten here we have (probably) passed the CookieJarSettings
@@ -2862,15 +2872,18 @@ inline bool PartionKeyIsAlsoExempted(
   // instatiated from a state where we could have been partitioned.
   // So perform this last-ditch check for that scenario.
   // We arbitrarily use https as the scheme, but it doesn't matter.
-  nsresult rv = NS_ERROR_NOT_INITIALIZED;
-  nsCOMPtr<nsIURI> uri;
+  nsAutoString baseDomain;
   if (StaticPrefs::privacy_firstparty_isolate() &&
       !aOriginAttributes.mFirstPartyDomain.IsEmpty()) {
-    rv = NS_NewURI(getter_AddRefs(uri),
-                   u"https://"_ns + aOriginAttributes.mFirstPartyDomain);
+    TopLevelInfoToBaseDomain(aOriginAttributes.mFirstPartyDomain, baseDomain);
   } else if (!aOriginAttributes.mPartitionKey.IsEmpty()) {
-    rv = NS_NewURI(getter_AddRefs(uri),
-                   u"https://"_ns + aOriginAttributes.mPartitionKey);
+    TopLevelInfoToBaseDomain(aOriginAttributes.mPartitionKey, baseDomain);
+  }
+
+  nsresult rv = NS_ERROR_NOT_INITIALIZED;
+  nsCOMPtr<nsIURI> uri;
+  if (!baseDomain.IsEmpty()) {
+    rv = NS_NewURI(getter_AddRefs(uri), u"https://"_ns + baseDomain);
   }
 
   if (!NS_FAILED(rv)) {
@@ -6284,6 +6297,10 @@ nsresult nsContentUtils::DispatchEvent(
   event->WidgetEventPtr()->mFlags.mOnlySystemGroupDispatch =
       aSystemGroupOnly == SystemGroupOnly::eYes;
 
+  // For the performance reason, aDoc may be set to a raw pointer because it's
+  // used only before dispatching the event. Therefore, we should not use aDoc
+  // anymore.
+  aDoc = nullptr;
   bool doDefault = aTarget->DispatchEvent(*event, CallerType::System, err);
   if (aDefaultAction) {
     *aDefaultAction = doDefault;
@@ -6292,13 +6309,10 @@ nsresult nsContentUtils::DispatchEvent(
 }
 
 // static
-nsresult nsContentUtils::DispatchEvent(Document* aDoc, EventTarget* aTarget,
-                                       WidgetEvent& aEvent,
-                                       EventMessage aEventMessage,
-                                       CanBubble aCanBubble,
-                                       Cancelable aCancelable, Trusted aTrusted,
-                                       bool* aDefaultAction,
-                                       ChromeOnlyDispatch aOnlyChromeDispatch) {
+nsresult nsContentUtils::DispatchEvent(
+    EventTarget* aTarget, WidgetEvent& aEvent, EventMessage aEventMessage,
+    CanBubble aCanBubble, Cancelable aCancelable, Trusted aTrusted,
+    bool* aDefaultAction, ChromeOnlyDispatch aOnlyChromeDispatch) {
   MOZ_ASSERT_IF(aOnlyChromeDispatch == ChromeOnlyDispatch::eYes,
                 aTrusted == Trusted::eYes);
 
@@ -6538,9 +6552,10 @@ void nsContentUtils::RequestFrameFocus(Element& aFrameElement, bool aCanRaise,
   RefPtr<Element> target = &aFrameElement;
   bool defaultAction = true;
   if (aCanRaise) {
-    DispatchEventOnlyToChrome(target->OwnerDoc(), target,
-                              u"framefocusrequested"_ns, CanBubble::eYes,
-                              Cancelable::eYes, &defaultAction);
+    RefPtr<Document> doc = target->OwnerDoc();
+    DispatchEventOnlyToChrome(doc, target, u"framefocusrequested"_ns,
+                              CanBubble::eYes, Cancelable::eYes,
+                              &defaultAction);
   }
   if (!defaultAction) {
     return;
@@ -6931,10 +6946,15 @@ static void SetAndFilterHTML(
   int32_t flags =
       aSafe ? nsContentUtils::kParseFragmentNoSanitization
             : nsContentUtils::kParseFragmentPrivilegedDefaultSanitization;
+
+  const bool sanitizeWhileParsing =
+      StaticPrefs::dom_security_sanitizer_while_parsing();
+
   aError = nsContentUtils::ParseFragmentHTML(
       aHTML, fragment, contextLocalName, contextNameSpaceID,
       /* aQuirks */ false, /* aPreventScriptExecution */ true, flags,
-      mozilla::Nothing());
+      mozilla::Nothing(), sanitizeWhileParsing ? sanitizer.get() : nullptr,
+      aSafe);
   if (aError.Failed()) {
     return;
   }
@@ -6944,10 +6964,12 @@ static void SetAndFilterHTML(
   // mutation listeners on the fragment that comes from the parser.
   nsAutoScriptBlockerSuppressNodeRemoved scriptBlocker;
 
-  // Step 6. Run sanitize on fragment using sanitizer and safe.
-  sanitizer->Sanitize(fragment, aSafe, aError);
-  if (aError.Failed()) {
-    return;
+  if (!sanitizeWhileParsing) {
+    // Step 6. Run sanitize on fragment using sanitizer and safe.
+    sanitizer->Sanitize(fragment, aSafe, aError);
+    if (aError.Failed()) {
+      return;
+    }
   }
 
   // Step 7. Replace all with fragment within target.
@@ -7105,7 +7127,10 @@ nsresult nsContentUtils::ParseFragmentHTML(
     nsAtom* aContextLocalName, int32_t aContextNamespace, bool aQuirks,
     bool aPreventScriptExecution, int32_t aFlags,
     mozilla::Maybe<RefPtr<mozilla::dom::CustomElementRegistry>>
-        aCustomElementRegistry) {
+        aCustomElementRegistry,
+    Sanitizer* aSanitizer, bool aSanitizerSafe) {
+  MOZ_ASSERT(!aSanitizer ||
+             StaticPrefs::dom_security_sanitizer_while_parsing());
   if (nsContentUtils::sFragmentParsingActive) {
     MOZ_ASSERT_UNREACHABLE("Re-entrant fragment parsing attempted.");
     return NS_ERROR_DOM_INVALID_STATE_ERR;
@@ -7152,7 +7177,8 @@ nsresult nsContentUtils::ParseFragmentHTML(
 
   nsresult rv = sHTMLFragmentParser->ParseFragment(
       aSourceBuffer, target, aContextLocalName, aContextNamespace, aQuirks,
-      aPreventScriptExecution, false, std::move(aCustomElementRegistry));
+      aPreventScriptExecution, false, std::move(aCustomElementRegistry),
+      aSanitizer, aSanitizerSafe);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (fragment) {
@@ -7174,7 +7200,10 @@ nsresult nsContentUtils::ParseFragmentHTML(
 /* static */
 nsresult nsContentUtils::ParseDocumentHTML(
     const nsAString& aSourceBuffer, Document* aTargetDocument,
-    bool aScriptingEnabledForNoscriptParsing) {
+    bool aScriptingEnabledForNoscriptParsing, Sanitizer* aSanitizer,
+    bool aSanitizerSafe) {
+  MOZ_ASSERT(!aSanitizer ||
+             StaticPrefs::dom_security_sanitizer_while_parsing());
   if (nsContentUtils::sFragmentParsingActive) {
     MOZ_ASSERT_UNREACHABLE("Re-entrant fragment parsing attempted.");
     return NS_ERROR_DOM_INVALID_STATE_ERR;
@@ -7186,7 +7215,8 @@ nsresult nsContentUtils::ParseDocumentHTML(
     // Now sHTMLFragmentParser owns the object
   }
   nsresult rv = sHTMLFragmentParser->ParseDocument(
-      aSourceBuffer, aTargetDocument, aScriptingEnabledForNoscriptParsing);
+      aSourceBuffer, aTargetDocument, aScriptingEnabledForNoscriptParsing,
+      aSanitizer, aSanitizerSafe);
   return rv;
 }
 
@@ -7420,38 +7450,35 @@ nsresult nsContentUtils::SetNodeTextContent(
   return rv.StealNSResult();
 }
 
+template <typename CharT>
 static bool AppendNodeTextContentsRecurse(const nsINode* aNode,
-                                          nsAString& aResult,
+                                          nsTSubstring<CharT>& aResult,
                                           const fallible_t& aFallible) {
   for (nsIContent* child = aNode->GetFirstChild(); child;
        child = child->GetNextSibling()) {
     if (child->IsElement()) {
-      bool ok = AppendNodeTextContentsRecurse(child, aResult, aFallible);
-      if (!ok) {
+      if (!AppendNodeTextContentsRecurse(child, aResult, aFallible)) {
         return false;
       }
     } else if (Text* text = child->GetAsText()) {
-      bool ok = text->AppendTextTo(aResult, aFallible);
-      if (!ok) {
+      if (!text->AppendTextTo(aResult, aFallible)) {
         return false;
       }
     }
   }
-
   return true;
 }
 
-/* static */
-bool nsContentUtils::AppendNodeTextContent(const nsINode* aNode, bool aDeep,
-                                           nsAString& aResult,
-                                           const fallible_t& aFallible) {
+template <typename CharT>
+static bool AppendNodeTextContent(const nsINode* aNode, bool aDeep,
+                                  nsTSubstring<CharT>& aResult,
+                                  const fallible_t& aFallible) {
   if (const Text* text = aNode->GetAsText()) {
     return text->AppendTextTo(aResult, aFallible);
   }
   if (aDeep) {
     return AppendNodeTextContentsRecurse(aNode, aResult, aFallible);
   }
-
   for (nsIContent* child = aNode->GetFirstChild(); child;
        child = child->GetNextSibling()) {
     if (Text* text = child->GetAsText()) {
@@ -7462,6 +7489,19 @@ bool nsContentUtils::AppendNodeTextContent(const nsINode* aNode, bool aDeep,
     }
   }
   return true;
+}
+
+/* static */
+bool nsContentUtils::AppendNodeTextContent(const nsINode* aNode, bool aDeep,
+                                           nsAString& aResult,
+                                           const fallible_t& aFallible) {
+  return ::AppendNodeTextContent(aNode, aDeep, aResult, aFallible);
+}
+
+bool nsContentUtils::AppendNodeTextContent(const nsINode* aNode, bool aDeep,
+                                           nsACString& aResult,
+                                           const fallible_t& aFallible) {
+  return ::AppendNodeTextContent(aNode, aDeep, aResult, aFallible);
 }
 
 bool nsContentUtils::HasNonEmptyTextContent(
@@ -8680,20 +8720,16 @@ bool nsContentUtils::AllowXULXBLForPrincipal(nsIPrincipal* aPrincipal) {
   return xpc::IsInAutomation() && IsSitePermAllow(aPrincipal, "allowXULXBL"_ns);
 }
 
-bool nsContentUtils::IsPDFJSEnabled() {
-  nsCOMPtr<nsIStreamConverter> conv = do_CreateInstance(
-      "@mozilla.org/streamconv;1?from=application/pdf&to=text/html");
-  return conv;
-}
+bool nsContentUtils::IsPDFJSEnabled() { return !StaticPrefs::pdfjs_disabled(); }
 
 bool nsContentUtils::IsPDFJS(nsIPrincipal* aPrincipal) {
   if (!aPrincipal || !aPrincipal->SchemeIs("resource")) {
     return false;
   }
-  nsAutoCString spec;
-  nsresult rv = aPrincipal->GetAsciiSpec(spec);
+  nsAutoCString originNoSuffix;
+  nsresult rv = aPrincipal->GetOriginNoSuffix(originNoSuffix);
   NS_ENSURE_SUCCESS(rv, false);
-  return spec.EqualsLiteral("resource://pdf.js/web/viewer.html");
+  return originNoSuffix.Equals("resource://pdf.js"_ns);
 }
 
 bool nsContentUtils::IsSystemOrPDFJS(JSContext* aCx, JSObject*) {
@@ -9395,8 +9431,22 @@ bool nsContentUtils::GetNodeTextContent(const nsINode* aNode, bool aDeep,
   return AppendNodeTextContent(aNode, aDeep, aResult, aFallible);
 }
 
+bool nsContentUtils::GetNodeTextContent(const nsINode* aNode, bool aDeep,
+                                        nsACString& aResult,
+                                        const fallible_t& aFallible) {
+  aResult.Truncate();
+  return AppendNodeTextContent(aNode, aDeep, aResult, aFallible);
+}
+
 void nsContentUtils::GetNodeTextContent(const nsINode* aNode, bool aDeep,
                                         nsAString& aResult) {
+  if (!GetNodeTextContent(aNode, aDeep, aResult, fallible)) {
+    NS_ABORT_OOM(0);  // Unfortunately we don't know the allocation size
+  }
+}
+
+void nsContentUtils::GetNodeTextContent(const nsINode* aNode, bool aDeep,
+                                        nsACString& aResult) {
   if (!GetNodeTextContent(aNode, aDeep, aResult, fallible)) {
     NS_ABORT_OOM(0);  // Unfortunately we don't know the allocation size
   }
@@ -10654,8 +10704,8 @@ void nsContentUtils::FirePageHideEventForFrameLoaderSwap(
 
   for (uint32_t i = 0; i < kids.Length(); ++i) {
     if (kids[i]) {
-      FirePageHideEventForFrameLoaderSwap(kids[i], aChromeEventHandler,
-                                          aOnlySystemGroup);
+      FirePageHideEventForFrameLoaderSwap(
+          MOZ_KnownLive(kids[i]), aChromeEventHandler, aOnlySystemGroup);
     }
   }
 }
@@ -10678,8 +10728,9 @@ void nsContentUtils::FirePageShowEventForFrameLoaderSwap(
 
   for (uint32_t i = 0; i < kids.Length(); ++i) {
     if (kids[i]) {
-      FirePageShowEventForFrameLoaderSwap(kids[i], aChromeEventHandler,
-                                          aFireIfShowing, aOnlySystemGroup);
+      FirePageShowEventForFrameLoaderSwap(MOZ_KnownLive(kids[i]),
+                                          aChromeEventHandler, aFireIfShowing,
+                                          aOnlySystemGroup);
     }
   }
 
@@ -11858,16 +11909,6 @@ bool nsContentUtils::IsSpecificAboutPage(JSObject* aGlobal, const char* aUri) {
 }
 
 /* static */
-void nsContentUtils::SetScrollbarsVisibility(nsIDocShell* aDocShell,
-                                             bool aVisible) {
-  if (!aDocShell) {
-    return;
-  }
-  auto pref = aVisible ? ScrollbarPreference::Auto : ScrollbarPreference::Never;
-  nsDocShell::Cast(aDocShell)->SetScrollbarPreference(pref);
-}
-
-/* static */
 nsIDocShell* nsContentUtils::GetDocShellForEventTarget(EventTarget* aTarget) {
   if (!aTarget) {
     return nullptr;
@@ -12198,7 +12239,7 @@ nsresult nsContentUtils::NewXULOrHTMLElement(
       if (registry) {
         (*aResult)->SetCustomElementRegistry(registry);
       } else {
-        (*aResult)->SetKeepCustomElementRegistryNull();
+        (*aResult)->SetNullCustomElementRegistry();
       }
     } else {
       Document* doc = (*aResult)->OwnerDoc();
@@ -12330,7 +12371,7 @@ nsresult nsContentUtils::NewXULOrHTMLElement(
                     aCustomElementRegistry.ref()) {
               (*aResult)->SetCustomElementRegistry(registry);
             } else {
-              (*aResult)->SetKeepCustomElementRegistryNull();
+              (*aResult)->SetNullCustomElementRegistry();
             }
           }
         }
@@ -12937,9 +12978,10 @@ uint32_t nsContentUtils::HtmlObjectContentTypeForMIMEType(
     return nsIObjectLoadingContent::TYPE_DOCUMENT;
   }
 
-  // Faking support of the PDF content as a document for EMBED tags
-  // when internal PDF viewer is enabled.
-  if (aMIMEType.LowerCaseEqualsLiteral(APPLICATION_PDF) && IsPDFJSEnabled()) {
+  // Faking support of the PDF content as a document for EMBED tags when the
+  // internal PDF viewer or the embedded PDF fallback is enabled.
+  if (aMIMEType.LowerCaseEqualsLiteral(APPLICATION_PDF) &&
+      (IsPDFJSEnabled() || StaticPrefs::pdfjs_embedFallback())) {
     // Sandboxed iframes are just never allowed to display plugins. In the
     // modern world, this just means "application/pdf".
     return aIsSandboxed ? nsIObjectLoadingContent::TYPE_FALLBACK
@@ -13944,6 +13986,13 @@ nsIContent* nsContentUtils::AttachDeclarativeShadowRoot(
   if (shadowRoot) {
     shadowRoot->SetIsDeclarative(
         nsGenericHTMLFormControlElement::ShadowRootDeclarative::Yes);
+    // https://html.spec.whatwg.org/#parsing-main-inhead
+    // 7. If templateStartTag has a shadowrootcustomelementregistry attribute,
+    //    set shadow's keep custom element registry null to true.
+    if (StaticPrefs::dom_scoped_custom_element_registries_enabled() &&
+        aCustomElementRegistry) {
+      shadowRoot->SetKeepCustomElementRegistryNull();
+    }
     // https://html.spec.whatwg.org/#parsing-main-inhead:available-to-element-internals
     shadowRoot->SetAvailableToElementInternals();
     shadowRoot->SetReferenceTarget(aReferenceTarget);

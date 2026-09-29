@@ -8,7 +8,12 @@
 #include "mozilla/Logging.h"
 #include "nsLocalFile.h"
 #include "nsXPCOMPrivate.h"
+#include "nsXULAppAPI.h"
 #include "prlink.h"
+
+#ifdef XP_WIN
+#  include <windows.h>
+#endif
 
 mozilla::LazyLogModule gLlamaLinkerLog("LlamaRuntimeLinker");
 
@@ -48,8 +53,16 @@ static PRLibrary* LoadLlamaLib(nsIFile* aFile) {
   PRLibrary* lib = PR_LoadLibraryWithFlags(lspec, PR_LD_NOW | PR_LD_LOCAL);
 #endif
   if (!lib) {
-    LOG(LogLevel::Error, "unable to load library %s",
-        aFile->HumanReadablePath().get());
+    bool exists = false;
+    aFile->Exists(&exists);
+#ifdef XP_WIN
+    LOG(LogLevel::Error,
+        "unable to load library %s (exists=%d, GetLastError=%lu)",
+        aFile->HumanReadablePath().get(), exists, GetLastError());
+#else
+    LOG(LogLevel::Error, "unable to load library %s (exists=%d)",
+        aFile->HumanReadablePath().get(), exists);
+#endif
   }
   return lib;
 }
@@ -159,6 +172,17 @@ bool LlamaRuntimeLinker::Init() {
     LOG(LogLevel::Error, "Failed to link llama library: %d", (int)res);
     return false;
   }
+
+#ifdef XP_MACOSX
+  // Content-process inference is CPU-only. Attempting to register a metal
+  // device there triggers the compilation of a lot of shaders, and they cannot
+  // be cached because the process cannot access the required directory.
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=2046856 is the fix for this:
+  // running the inference workload in the HWInference process.
+  if (XRE_IsContentProcess()) {
+    sLlamaLib.ggml_backend_metal_disable();
+  }
+#endif
 
   sLinkStatus = LinkStatus_SUCCEEDED;
   LOG(LogLevel::Info, "Successfully initialized llama runtime linker");

@@ -411,13 +411,6 @@ class AndroidEmulatorTest(
                 )
             )
 
-        if self.java_code_coverage_enabled:
-            cmd.extend([
-                "--enable-coverage",
-                "--coverage-output-dir",
-                self.java_coverage_output_dir,
-            ])
-
         if self.config.get("restartAfterFailure", False):
             cmd.append("--restartAfterFailure")
 
@@ -582,6 +575,7 @@ class AndroidEmulatorTest(
                     parser.formatter = ref_formatter.ReftestFormatter()
 
                 self.run_command(final_cmd, cwd=cwd, env=env, output_parser=parser)
+                self.append_test_summary(self.query_abs_dirs()["abs_blob_upload_dir"])
                 tbpl_status, log_level, summary = parser.evaluate_parser(
                     0, previous_summary=summary
                 )

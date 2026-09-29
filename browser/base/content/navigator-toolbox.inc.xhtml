@@ -2,12 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-<toolbox id="navigator-toolbox" class="chrome-block">
+<toolbox id="navigator-toolbox">
   <script src="chrome://browser/content/navigator-toolbox.js" />
 
   <!-- Menu -->
   <toolbar type="menubar" id="toolbar-menubar"
-           class="browser-toolbar chromeclass-menubar browser-titlebar"
+           class="browser-toolbar browser-titlebar"
            customizable="true"
            mode="icons"
            autohide="true"
@@ -107,7 +107,7 @@
   </toolbar>
 
   <toolbar id="nav-bar"
-           class="browser-toolbar chromeclass-location"
+           class="browser-toolbar"
            data-l10n-id="navbar-accessible"
            fullscreentoolbar="true" mode="icons" customizable="true"
            customizationtarget="nav-bar-customization-target"
@@ -161,26 +161,10 @@
                    class="urlbar-container"
                    removable="false"
                    overflows="false">
-        <menupopup id="urlbarView-context-menu">
-          <menuitem id="urlbar-view-context-menu-open-in-tab"
-                    data-l10n-id="urlbar-view-context-menu-open-in-tab"/>
-          <menu id="urlbarView-context-menu-open-in-container-tab"
-                data-l10n-id="urlbar-view-context-menu-open-in-container-tab"
-                selection-type="single"
-                node-type="link"
-                hide-if-private-browsing="true"
-                hide-if-usercontext-disabled="true">
-            <menupopup id="urlbarView-context-menu-open-in-container-tab-popup"/>
-          </menu>
-          <menuitem id="urlbarView-context-menu-open-in-window"
-                    data-l10n-id="urlbar-view-context-menu-open-in-window"/>
-          <menuitem id="urlbarView-context-menu-open-in-private-window"
-                    data-l10n-id="urlbar-view-context-menu-open-in-private-window"/>
-        </menupopup>
         <toolbartabstop/>
         <html:moz-urlbar id="urlbar"
               class="urlbar"
-              popover="manual"
+              role="group"
               pageproxystate="invalid"
               unifiedsearchbutton-available=""
               sap-name="urlbar">
@@ -432,6 +416,8 @@
             <hbox id="share-button"
                   class="urlbar-page-action"
                   role="button"
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
                   data-l10n-id="urlbar-share-button"
                   hidden="true">
               <image class="urlbar-icon"/>
@@ -518,19 +504,6 @@
     <toolbarbutton id="taskbar-tabs-audio" class="toolbarbutton-1 chromeclass-toolbar-additional"
                     removable="false" overflows="false"/>
 
-    <toolbaritem id="smartwindow-group-tabs-button"
-                 class="chromeclass-toolbar-additional"
-                 hidden="true"
-                 overflows="false"
-                 removable="false">
-      <toolbarbutton id="smartwindow-group-tabs-button-inner"
-                      class="toolbarbutton-1"
-                      aria-haspopup="dialog"
-                      aria-expanded="false"
-                      data-l10n-id="smartwindow-organize-tabs-button">
-      </toolbarbutton>
-    </toolbaritem>
-
     <toolbaritem id="smartwindow-ask-button"
                  class="chromeclass-toolbar-additional"
                  hidden="true"
@@ -570,7 +543,7 @@
 
   <toolbar id="PersonalToolbar"
            mode="icons"
-           class="browser-toolbar chromeclass-directories"
+           class="browser-toolbar"
            context="toolbar-context-menu"
            data-l10n-id="bookmarks-toolbar"
            data-l10n-attrs="toolbarname"
@@ -733,13 +706,13 @@
                  persist="width">
       <toolbartabstop/>
       <searchbar id="searchbar" flex="1"/>
-      <html:moz-urlbar id="searchbar-new"
+      <html:moz-searchbar id="searchbar-new"
               class="urlbar"
-              popover="manual"
+              role="group"
               pageproxystate="invalid"
               unifiedsearchbutton-available=""
               sap-name="searchbar">
-      </html:moz-urlbar>
+      </html:moz-searchbar>
       <toolbartabstop/>
     </toolbaritem>
 

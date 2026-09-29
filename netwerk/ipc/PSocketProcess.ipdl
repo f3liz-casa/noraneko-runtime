@@ -28,7 +28,6 @@ include PrefsTypes;
 
 include "mozilla/ipc/ByteBufUtils.h";
 
-using mozilla::dom::NativeThreadId from "mozilla/dom/NativeThreadId.h";
 using mozilla::dom::TabId from "mozilla/dom/ipc/IdType.h";
 using mozilla::Telemetry::HistogramAccumulation from "mozilla/TelemetryComms.h";
 using mozilla::Telemetry::KeyedHistogramAccumulation from "mozilla/TelemetryComms.h";
@@ -51,7 +50,7 @@ using nsIDNSService::DNSFlags from "nsIDNSService.h";
 
 #if defined(XP_WIN)
 [MoveOnly] using mozilla::UntrustedModulesData from "mozilla/UntrustedModulesData.h";
-[MoveOnly] using mozilla::ModulePaths from "mozilla/UntrustedModulesData.h";
+[MoveOnly] using mozilla::ModuleIdentifiers from "mozilla/UntrustedModulesData.h";
 [MoveOnly] using mozilla::ModulesMapResult from "mozilla/UntrustedModulesData.h";
 #endif  // defined(XP_WIN)
 
@@ -80,7 +79,7 @@ struct SocketDataArgs
   SocketInfo[] info;
 };
 
-struct SocketPorcessInitAttributes {
+struct SocketProcessInitAttributes {
   bool mOffline;
   bool mConnectivity;
   bool mInitSandbox;
@@ -128,7 +127,8 @@ parent:
                             nsCString aExtraStringData);
   async InitSocketBackground(Endpoint<PSocketProcessBackgroundParent> aEndpoint);
   async PAltService();
-  async PProxyConfigLookup(nullable nsIURI aUri, uint32_t aFlags);
+  async PProxyConfigLookup(nullable nsIURI aUri, uint32_t aFlags,
+                           bool aIsTRRServiceChannel);
 
   async ExcludeHttp2OrHttp3(HttpConnectionInfoCloneArgs aArgs);
 
@@ -149,12 +149,12 @@ parent:
   async AppleFastDatapathProbeResult(bool aAvailable);
 #endif
 #if defined(XP_WIN)
-  async GetModulesTrust(ModulePaths aModPaths, bool aRunAtNormalPriority)
+  async GetModulesTrust(ModuleIdentifiers aModIdents, bool aRunAtNormalPriority)
       returns (ModulesMapResult? modMapResult);
 #endif  // defined(XP_WIN)
 
 child:
-  async Init(SocketPorcessInitAttributes aAttributes);
+  async Init(SocketProcessInitAttributes aAttributes);
   async PreferenceUpdate(Pref pref);
   async RequestMemoryReport(uint32_t generation,
                             bool anonymize,
@@ -213,11 +213,11 @@ child:
   async FlushFOGData() returns (ByteBuf buf);
 
   // Parent sends persisted TLS session tokens to the socket process on startup.
-  async LoadSSLTokensCache(ByteBuf aBuf);
+  async LoadSSLTokensCache(SSLTokensCacheRecordInfo[] aRecords);
 
   // Parent requests a final TLS session token flush from the socket process
   // before shutdown.
-  async FlushSSLTokensCache() returns (ByteBuf buf);
+  async FlushSSLTokensCache() returns (SSLTokensCacheRecordInfo[] records);
 
   // Test-only method.
   // Asks the Socket process to trigger test-only instrumentation.

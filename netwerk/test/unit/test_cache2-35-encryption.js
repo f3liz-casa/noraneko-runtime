@@ -14,16 +14,25 @@ function run_test() {
   // encryption key (a runtime setBoolPref here would be too late).
   do_get_profile();
 
+  let testingInterface = Services.cache2.QueryInterface(Ci.nsICacheTesting);
+
+  // A truncated entry is handed to the consumer before its file has been
+  // opened, so metadata and data are normally written into memory first and
+  // the file catches up later. Block the I/O thread at the OPEN level to make
+  // that ordering deterministic instead of leaving it to how busy the machine
+  // is. Levels below OPEN still run, so the key load -- dispatched at
+  // OPEN_PRIORITY -- completes before this takes hold.
+  testingInterface.suspendCacheIOThread(3);
+
   asyncOpenCacheEntry(
     "http://encrypted/",
     "disk",
     Ci.nsICacheStorage.OPEN_TRUNCATE,
     null,
     new OpenCallback(NEW | WAITFORWRITE, META, DATA, function () {
+      testingInterface.resumeCacheIOThread();
       // Force pending metadata and data to disk before inspecting the files.
-      Services.cache2
-        .QueryInterface(Ci.nsICacheTesting)
-        .flush(makeFlushObserver(afterFlush));
+      testingInterface.flush(makeFlushObserver(afterFlush));
     })
   );
 
@@ -31,6 +40,16 @@ function run_test() {
 }
 
 function afterFlush() {
+  // Check first that the entry really reached the disk. If it had fallen back
+  // to memory-only -- which is what happens when the cache is used before the
+  // encryption key is loaded -- there would be nothing on disk to scan and the
+  // marker assertion below would pass for the wrong reason.
+  Assert.greater(
+    diskCacheEntryFileCount(),
+    0,
+    "the entry must have been written to disk, not kept memory-only"
+  );
+
   Assert.ok(
     !cacheDirContainsMarker(MARKER),
     "encrypted cache must not contain the plaintext marker on disk"
@@ -55,6 +74,25 @@ function makeFlushObserver(callback) {
       executeSoon(callback);
     },
   };
+}
+
+function diskCacheEntryFileCount() {
+  let dir = getDiskCacheDirectory();
+  if (!dir.exists()) {
+    return 0;
+  }
+  dir.append("entries");
+  if (!dir.exists()) {
+    return 0;
+  }
+  let count = 0;
+  let entries = dir.directoryEntries;
+  while (entries.hasMoreElements()) {
+    if (entries.nextFile.fileSize > 0) {
+      count++;
+    }
+  }
+  return count;
 }
 
 function cacheDirContainsMarker(marker) {

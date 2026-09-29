@@ -34,7 +34,7 @@ MInstruction* jit::NewWasmDefaultConstant(TempAllocator& alloc,
     case wasm::ValType::F64:
       return MWasmFloatConstant::NewDouble(alloc, 0.0);
     case wasm::ValType::V128:
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
       return MWasmFloatConstant::NewSimd128(alloc, SimdConstant::Zero());
 #else
       MOZ_CRASH();
@@ -48,7 +48,7 @@ MInstruction* jit::NewWasmDefaultConstant(TempAllocator& alloc,
 }
 
 HashNumber MWasmFloatConstant::valueHash() const {
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
   return ConstantValueHash(type(), u.bits_[0] ^ u.bits_[1]);
 #else
   return ConstantValueHash(type(), u.bits_[0]);
@@ -57,7 +57,7 @@ HashNumber MWasmFloatConstant::valueHash() const {
 
 bool MWasmFloatConstant::congruentTo(const MDefinition* ins) const {
   return ins->isWasmFloatConstant() && type() == ins->type() &&
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
          u.bits_[1] == ins->toWasmFloatConstant()->u.bits_[1] &&
 #endif
          u.bits_[0] == ins->toWasmFloatConstant()->u.bits_[0];
@@ -401,7 +401,7 @@ bool MWasmLoadGlobalCell::congruentTo(const MDefinition* ins) const {
   return congruentIfOperandsEqual(other);
 }
 
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
 MDefinition* MWasmTernarySimd128::foldsTo(TempAllocator& alloc) {
   if (simdOp() == wasm::SimdOp::V128Bitselect) {
     if (v2()->op() == MDefinition::Opcode::WasmFloatConstant) {
@@ -744,27 +744,7 @@ MDefinition* MWasmReduceSimd128::foldsTo(TempAllocator& alloc) {
 #  endif
   return this;
 }
-#endif  // ENABLE_WASM_SIMD
-
-MDefinition* MWasmUnsignedToDouble::foldsTo(TempAllocator& alloc) {
-  if (input()->isConstant()) {
-    return MConstant::NewDouble(alloc,
-                                uint32_t(input()->toConstant()->toInt32()));
-  }
-
-  return this;
-}
-
-MDefinition* MWasmUnsignedToFloat32::foldsTo(TempAllocator& alloc) {
-  if (input()->isConstant()) {
-    double dval = double(uint32_t(input()->toConstant()->toInt32()));
-    if (IsFloat32Representable(dval)) {
-      return MConstant::NewFloat32(alloc, float(dval));
-    }
-  }
-
-  return this;
-}
+#endif  // ENABLE_JIT_SIMD
 
 MWasmCallCatchable* MWasmCallCatchable::New(
     TempAllocator& alloc, const wasm::CallSiteDesc& desc,
@@ -882,6 +862,10 @@ bool MWasmResume::initHandler(size_t index, uint32_t tagInstanceDataOffset,
   handlers_[index].resultsAreaOffset = resultsAreaOffset;
   return true;
 }
+
+AliasSet MWasmSuspend::getAliasSet() const {
+  return MWasmCallBase::wasmCallAliasSet();
+}
 #endif  // ENABLE_WASM_JSPI
 
 MIonToWasmCall* MIonToWasmCall::New(TempAllocator& alloc,
@@ -922,7 +906,7 @@ bool MWasmShuffleSimd128::congruentTo(const MDefinition* ins) const {
          congruentIfOperandsEqual(ins);
 }
 
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
 MWasmShuffleSimd128* jit::BuildWasmShuffleSimd128(TempAllocator& alloc,
                                                   const int8_t* control,
                                                   MDefinition* lhs,
@@ -945,11 +929,12 @@ MWasmShuffleSimd128* jit::BuildWasmShuffleSimd128(TempAllocator& alloc,
   }
   return MWasmShuffleSimd128::New(alloc, lhs, rhs, s);
 }
-#endif  // ENABLE_WASM_SIMD
+#endif  // ENABLE_JIT_SIMD
 
 static MDefinition* FoldTrivialWasmTests(TempAllocator& alloc,
                                          wasm::RefType sourceType,
                                          wasm::RefType destType) {
+  // Ignore everything involving uninhabitable types, because they are weird.
   if (!sourceType.isInhabitable() || !destType.isInhabitable()) {
     return nullptr;
   }
@@ -971,6 +956,7 @@ static MDefinition* FoldTrivialWasmTests(TempAllocator& alloc,
 static MDefinition* FoldTrivialWasmCasts(MDefinition* ref,
                                          wasm::RefType sourceType,
                                          wasm::RefType destType) {
+  // Ignore everything involving uninhabitable types, because they are weird.
   if (!sourceType.isInhabitable() || !destType.isInhabitable()) {
     return nullptr;
   }

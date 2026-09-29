@@ -12,6 +12,7 @@ from functools import cache
 
 import mozpack.path as mozpath
 from manifestparser import TestManifest, combine_fields
+from manifestparser.filters import chunk_by_runtime
 from mozbuild.base import MozbuildObject
 from mozbuild.testing import REFTEST_FLAVORS, TEST_MANIFESTS, install_test_files
 from mozpack.files import FileFinder
@@ -225,6 +226,20 @@ TEST_SUITES = {
         "kwargs": {"flavor": "plain", "subsuite": "media", "test_paths": None},
         "task_regex": [
             "mochitest-media($|.*(-1|[^0-9])$)",
+            "test-verify($|.*(-1|[^0-9])$)",
+        ],
+    },
+    "mochitest-speech-recognition": {
+        "aliases": ("msr", "speech-recognition"),
+        "build_flavor": "mochitest",
+        "mach_command": "mochitest",
+        "kwargs": {
+            "flavor": "plain",
+            "subsuite": "speech-recognition",
+            "test_paths": None,
+        },
+        "task_regex": [
+            "mochitest-speech-recognition($|.*(-1|[^0-9])$)",
             "test-verify($|.*(-1|[^0-9])$)",
         ],
     },
@@ -542,6 +557,7 @@ _test_subsuites = {
     ("marionette", "unittest"): "marionette-unittest",
     ("mochitest", "gpu"): "mochitest-plain-gpu",
     ("mochitest", "media"): "mochitest-media",
+    ("mochitest", "speech-recognition"): "mochitest-speech-recognition",
     ("mochitest", "webgl1-core"): "mochitest-webgl1-core",
     ("mochitest", "webgl1-ext"): "mochitest-webgl1-ext",
     ("mochitest", "webgl2-core"): "mochitest-webgl2-core",
@@ -594,6 +610,10 @@ def rewrite_test_base(test, new_base):
     test["here"] = mozpath.join(new_base, test["dir_relpath"])
     test["path"] = mozpath.join(new_base, test["file_relpath"])
     return test
+
+
+def _is_under(path, prefix):
+    return path == prefix or path.startswith(prefix.rstrip("/") + "/")
 
 
 class TestLoader(MozbuildObject, metaclass=ABCMeta):
@@ -844,6 +864,42 @@ class TestResolver(MozbuildObject):
                     )
                     self._tests_by_manifest[test["manifest_relpath"]].append(relpath)
         return self._tests_by_manifest
+
+    @cache
+    def get_test_paths_by_manifest(self, suite, paths):
+        """Find the manifests of ``suite`` that contain tests under ``paths``.
+
+        Args:
+            suite (str): The suite to look at. Values are keys of `TEST_SUITES`.
+            paths (frozenset): Source directories or test files, relative to the
+                source root.
+
+        Returns:
+            A dict mapping each manifest holding at least one test under ``paths``
+            to the paths that should be run from it. A manifest maps to itself when
+            it lives under one of ``paths``, and to the requested paths when they
+            are narrower than the manifest (a single test file, or a subdirectory
+            of the manifest's directory).
+        """
+        suite_definition = TEST_SUITES[suite]
+        kwargs = {
+            "flavor": suite_definition["build_flavor"],
+            "subsuite": suite_definition.get("kwargs", {}).get("subsuite", "undefined"),
+        }
+
+        by_manifest = {}
+        for path in paths:
+            for test in self.resolve_tests(paths=[path], **kwargs):
+                manifest = chunk_by_runtime.get_manifest(test)
+                # Run the manifest itself when it is entirely under the requested
+                # path, and the requested path when it is the narrower of the two.
+                test_path = manifest if _is_under(manifest, path) else path
+                by_manifest.setdefault(manifest, set()).add(test_path)
+
+        return {
+            manifest: [manifest] if manifest in test_paths else sorted(test_paths)
+            for manifest, test_paths in by_manifest.items()
+        }
 
     @property
     def test_dirs(self):

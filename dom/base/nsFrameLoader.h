@@ -25,6 +25,7 @@
 #include "mozilla/dom/Nullable.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/ReferrerPolicyBinding.h"
+#include "mozilla/dom/RemoteType.h"
 #include "mozilla/dom/WindowProxyHolder.h"
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/layers/LayersTypes.h"
@@ -161,9 +162,9 @@ class nsFrameLoader final : public nsStubMutationObserver,
   // After the parent document has been fully cloned, a new frameloader will be
   // created for the cloned iframe, and `FinishStaticClone` will be called on
   // it, which will clone the inner document of the source nsFrameLoader.
-  nsresult FinishStaticClone(nsFrameLoader* aStaticCloneOf,
-                             nsIPrintSettings* aPrintSettings,
-                             bool* aOutHasInProcessPrintCallbacks);
+  MOZ_CAN_RUN_SCRIPT nsresult FinishStaticClone(
+      nsFrameLoader* aStaticCloneOf, nsIPrintSettings* aPrintSettings,
+      bool* aOutHasInProcessPrintCallbacks);
 
   nsresult DoRemoteStaticClone(nsFrameLoader* aStaticCloneOf,
                                nsIPrintSettings* aPrintSettings);
@@ -300,9 +301,9 @@ class nsFrameLoader final : public nsStubMutationObserver,
   // The guts of an nsFrameLoaderOwner::SwapFrameLoader implementation.  A
   // frame loader owner needs to call this, and pass in the two references to
   // nsRefPtrs for frame loaders that need to be swapped.
-  nsresult SwapWithOtherLoader(nsFrameLoader* aOther,
-                               nsFrameLoaderOwner* aThisOwner,
-                               nsFrameLoaderOwner* aOtherOwner);
+  MOZ_CAN_RUN_SCRIPT nsresult
+  SwapWithOtherLoader(nsFrameLoader* aOther, nsFrameLoaderOwner* aThisOwner,
+                      nsFrameLoaderOwner* aOtherOwner);
 
   nsresult SwapWithOtherRemoteLoader(nsFrameLoader* aOther,
                                      nsFrameLoaderOwner* aThisOwner,
@@ -406,7 +407,7 @@ class nsFrameLoader final : public nsStubMutationObserver,
   // `TryRemoteBrowser`, and a script blocker must be on the stack.
   //
   // |aContentParent|, if set, must have the remote type |aRemoteType|.
-  void ConfigRemoteProcess(const nsACString& aRemoteType,
+  void ConfigRemoteProcess(const mozilla::dom::RemoteType& aRemoteType,
                            mozilla::dom::ContentParent* aContentParent);
 
   // TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230)
@@ -526,7 +527,7 @@ class nsFrameLoader final : public nsStubMutationObserver,
   // refcounted cycles early.
   RefPtr<mozilla::dom::SessionStoreChild> mSessionStoreChild;
 
-  nsCString mRemoteType;
+  mozilla::dom::RemoteType mRemoteType;
 
   bool mInitialized : 1;
   bool mDepthTooGreat : 1;

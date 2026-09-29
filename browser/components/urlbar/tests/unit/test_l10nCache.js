@@ -330,11 +330,17 @@ add_task(async function comprehensive() {
       "Expected message for obj: " + JSON.stringify(obj)
     );
   }
+});
 
-  // Ensure the cache is cleared after the app locale changes
-  Assert.greater(cache.size(), 0, "The cache has messages in it.");
-  Services.obs.notifyObservers(null, "intl:app-locales-changed");
-  Assert.equal(cache.size(), 0, "The cache is empty on app locale change");
+add_task(async function nullMessage() {
+  let l10n = {
+    formatMessages: async () => [null],
+  };
+  let cache = new L10nCache(l10n);
+
+  await cache.add({ id: "unknown" });
+
+  Assert.equal(cache.size(), 0, "A null message should not be cached");
 });
 
 // Tests cache eviction.
@@ -616,6 +622,23 @@ add_task(async function eviction() {
       }
     }
   }
+});
+
+add_task(async function appLocalesChanged() {
+  let cache = new L10nCache(initL10n({ args0: "Zero args value" }));
+  await cache.add({ id: "args0" });
+  Assert.greater(cache.size(), 0, "The cache has messages in it.");
+
+  let controller = new UrlbarParentController({
+    sapName: "urlbar",
+    manager: {},
+  });
+  controller.setChild({ view: { clearL10nCache: () => cache.clear() } });
+
+  Services.obs.notifyObservers(null, "intl:app-locales-changed");
+  Assert.equal(cache.size(), 0, "The cache is empty on app locale change");
+
+  controller.destroy();
 });
 
 /**

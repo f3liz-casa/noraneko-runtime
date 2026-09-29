@@ -107,6 +107,8 @@ class MacroAssemblerLOONG64 : public Assembler {
                             FPConditionBit fcc = FCC0);
 
  public:
+  void ma_move(Register dest, Register src);
+
   void ma_li(Register dest, CodeLabel* label);
   void ma_li(Register dest, ImmWord imm);
   void ma_liPatchable(Register dest, ImmPtr imm);
@@ -264,6 +266,8 @@ class MacroAssemblerLOONG64 : public Assembler {
   void ma_or(Register rd, Register rj, Imm32 imm);
 
   void ma_xor(Register rd, Register rj, Imm32 imm);
+
+  void ma_nor(Register rd, Register rj, Imm32 imm);
 
   // load
   FaultingCodeRange ma_load(Register dest, const BaseIndex& src,
@@ -519,7 +523,7 @@ class MacroAssemblerLOONG64Compat : public MacroAssemblerLOONG64 {
 
   void j(Label* dest) { ma_b(dest); }
 
-  void mov(Register src, Register dest) { as_ori(dest, src, 0); }
+  void mov(Register src, Register dest) { ma_move(dest, src); }
   void mov(ImmWord imm, Register dest) { ma_li(dest, imm); }
   void mov(ImmPtr imm, Register dest) {
     mov(ImmWord(uintptr_t(imm.value)), dest);

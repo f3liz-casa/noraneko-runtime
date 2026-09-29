@@ -30,6 +30,11 @@ const PREF_LOGLEVEL = "browser.policies.loglevel";
 
 const lazy = {};
 
+ChromeUtils.defineESModuleGetters(lazy, {
+  PolicyFailures: "resource://gre/modules/PoliciesHelpers.sys.mjs",
+  ReaderMode: "moz-src:///toolkit/components/reader/ReaderMode.sys.mjs",
+});
+
 ChromeUtils.defineLazyGetter(lazy, "log", () => {
   let { ConsoleAPI } = ChromeUtils.importESModule(
     "resource://gre/modules/Console.sys.mjs"
@@ -42,6 +47,17 @@ ChromeUtils.defineLazyGetter(lazy, "log", () => {
     maxLogLevelPref: PREF_LOGLEVEL,
   });
 });
+
+/**
+ * Reports an operation of a policy that failed, so that the policy is flagged
+ * as only partially applied in about:policies.
+ *
+ * @param {string} message A description of what failed.
+ */
+function reportFailure(message) {
+  lazy.log.error(message);
+  lazy.PolicyFailures.report("WebsiteFilter", message);
+}
 
 export let WebsiteFilter = {
   _observerAdded: false,
@@ -58,7 +74,7 @@ export let WebsiteFilter = {
           `Pattern added to WebsiteFilter. Block: ${blocklist[i]}`
         );
       } catch (e) {
-        lazy.log.error(
+        reportFailure(
           `Invalid pattern on WebsiteFilter. Block: ${blocklist[i]}`
         );
       }
@@ -74,7 +90,7 @@ export let WebsiteFilter = {
           `Pattern added to WebsiteFilter. Exception: ${exceptionlist[i]}`
         );
       } catch (e) {
-        lazy.log.error(
+        reportFailure(
           `Invalid pattern on WebsiteFilter. Exception: ${exceptionlist[i]}`
         );
       }
@@ -116,14 +132,14 @@ export let WebsiteFilter = {
     let url = contentLocation.spec.toLowerCase();
     if (contentLocation.scheme == "view-source") {
       url = contentLocation.pathQueryRef;
-    } else if (url.startsWith("about:reader?url=")) {
-      url = decodeURIComponent(url.substr(17));
+    } else if (url.startsWith("about:reader?")) {
+      url = lazy.ReaderMode.getOriginalUrl(url);
     }
     if (
       contentType == Ci.nsIContentPolicy.TYPE_DOCUMENT ||
       contentType == Ci.nsIContentPolicy.TYPE_SUBDOCUMENT
     ) {
-      if (!this.isAllowed(url)) {
+      if (!url || !this.isAllowed(url)) {
         return Ci.nsIContentPolicy.REJECT_POLICY;
       }
     }

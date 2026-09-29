@@ -168,6 +168,9 @@ public class GeckoSession {
   @OptIn(markerClass = ExperimentalGeckoViewApi.class)
   private PageExtractionController.SessionPageExtractor mPageExtractor;
 
+  @OptIn(markerClass = ExperimentalGeckoViewApi.class)
+  private PdfViewerController.SessionEditor mPdfViewerEditor;
+
   /** {@code SessionMagnifier} handles magnifying glass. */
   /* package */ interface SessionMagnifier {
     /**
@@ -2773,6 +2776,20 @@ public class GeckoSession {
       mPdfFileSaver = new SessionPdfFileSaver(this);
     }
     return mPdfFileSaver;
+  }
+
+  /**
+   * Get the PDF viewer editor for this GeckoSession.
+   *
+   * @return The current PDF viewer editor session coordinator.
+   */
+  @AnyThread
+  @ExperimentalGeckoViewApi
+  public @NonNull PdfViewerController.SessionEditor getPdfViewerEditor() {
+    if (mPdfViewerEditor == null) {
+      mPdfViewerEditor = new PdfViewerController.SessionEditor(this);
+    }
+    return mPdfViewerEditor;
   }
 
   /** Represent the result of a save-pdf operation. */
@@ -8491,15 +8508,52 @@ public class GeckoSession {
   }
 
   /**
-   * Saves a PDF of the currently displayed page.
+   * Saves a PDF of the currently displayed webpage. Uses the Gecko print machinery to generate the
+   * PDF.
+   *
+   * <p>When the page is a PDF loaded by PDF JS, then the PDF JS tools are used to acquire the PDF
+   * directly.
    *
    * @return A GeckoResult with an InputStream containing the PDF. The result could
    *     CompleteExceptionally with a {@link GeckoPrintException}s, if there are any issues while
-   *     generating the PDF.
+   *     generating the PDF, or with the PDF JS error, if PDF JS is displaying the document and
+   *     cannot provide it.
    */
   @HandlerThread
   public @NonNull GeckoResult<InputStream> saveAsPdf() {
-    return saveAsPdfByBrowsingContext(null);
+    return isPdfJs()
+        .then(
+            isPdfJs -> {
+              if (Boolean.TRUE.equals(isPdfJs)) {
+                return savePdfDocument();
+              }
+              return saveAsPdfByBrowsingContext(null);
+            },
+            // Could not determine PDF status, use Gecko.
+            exception -> {
+              Log.w(LOGTAG, "PDF status could not be determined.", exception);
+              return saveAsPdfByBrowsingContext(null);
+            });
+  }
+
+  /**
+   * Saves the original bytes of the PDF document that PDF JS is displaying.
+   *
+   * @return A GeckoResult with an InputStream containing the PDF. The result could
+   *     CompleteExceptionally, if PDF JS cannot provide the document.
+   */
+  @HandlerThread
+  private @NonNull GeckoResult<InputStream> savePdfDocument() {
+    return getPdfFileSaver()
+        .save()
+        .then(
+            response -> {
+              if (response == null || response.body == null) {
+                return GeckoResult.fromException(
+                    new IllegalStateException("PDF did not provide a response."));
+              }
+              return GeckoResult.fromValue(response.body);
+            });
   }
 
   /**

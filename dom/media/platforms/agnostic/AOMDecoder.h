@@ -64,6 +64,7 @@ class AOMDecoder final : public MediaDataDecoder,
   struct OBUInfo {
     OBUType mType = OBUType::Reserved;
     bool mExtensionFlag = false;
+    uint8_t mTemporalId = 0;
     Span<const uint8_t> mContents;
 
     bool IsValid() const {
@@ -143,13 +144,7 @@ class AOMDecoder final : public MediaDataDecoder,
     // seq_tier[ i ]: The tier for the selected operating point.
     uint8_t mTier = 0;
 
-    bool operator==(const OperatingPoint& aOther) const {
-      return mLayers == aOther.mLayers && mLevel == aOther.mLevel &&
-             mTier == aOther.mTier;
-    }
-    bool operator!=(const OperatingPoint& aOther) const {
-      return !(*this == aOther);
-    }
+    bool operator==(const OperatingPoint& aOther) const = default;
   };
 
   struct AV1SequenceInfo {

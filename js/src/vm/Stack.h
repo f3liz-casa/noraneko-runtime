@@ -170,12 +170,7 @@ class AbstractFramePtr {
     return AbstractFramePtr(reinterpret_cast<uintptr_t>(raw));
   }
 
-  bool operator==(const AbstractFramePtr& other) const {
-    return ptr_ == other.ptr_;
-  }
-  bool operator!=(const AbstractFramePtr& other) const {
-    return ptr_ != other.ptr_;
-  }
+  bool operator==(const AbstractFramePtr& other) const = default;
 
   explicit operator bool() const { return !!ptr_; }
 

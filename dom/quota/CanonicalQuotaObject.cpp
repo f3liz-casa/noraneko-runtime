@@ -85,7 +85,8 @@ bool CanonicalQuotaObject::MaybeUpdateSize(int64_t aSize, bool aTruncate) {
 
   DirtyTrackingAutoLock lock(quotaManager->mQuotaMutex, std::move(originInfo));
   if (!lock.IsValid()) {
-    return false;
+    mSize = aSize;
+    return true;
   }
 
   return LockedMaybeUpdateSize(aSize, aTruncate, lock);
@@ -101,7 +102,9 @@ bool CanonicalQuotaObject::IncreaseSize(int64_t aDelta) {
 
   DirtyTrackingAutoLock lock(quotaManager->mQuotaMutex, std::move(originInfo));
   if (!lock.IsValid()) {
-    return false;
+    AssertNoOverflow(mSize, aDelta);
+    mSize = mSize + aDelta;
+    return true;
   }
 
   AssertNoOverflow(mSize, aDelta);
@@ -169,7 +172,7 @@ bool CanonicalQuotaObject::LockedMaybeUpdateSize(
 
   MOZ_ASSERT(mSize < aSize);
 
-  uint64_t delta = aSize - mSize;
+  const int64_t delta = aSize - mSize;
 
   // Temporary storage has no limit for origin usage (there's a group and the
   // global limit though).
@@ -188,12 +191,16 @@ bool CanonicalQuotaObject::LockedMaybeUpdateSize(
   AutoTArray<RefPtr<OriginDirectoryLock>, 10> locks;
   uint64_t sizeToBeFreed;
 
+  // Make sure we don't pass an underflow number to CollectOriginsForEviction
+  const auto deltaToFree = QM_CLAMP_TO_ZERO(delta);
+
   if (::mozilla::ipc::IsOnBackgroundThread()) {
     DirtyTrackingAutoLock::PauseLock pauseLock(aProofOfLock);
 
-    sizeToBeFreed = quotaManager->CollectOriginsForEviction(delta, locks);
+    sizeToBeFreed = quotaManager->CollectOriginsForEviction(deltaToFree, locks);
   } else {
-    sizeToBeFreed = quotaManager->LockedCollectOriginsForEviction(delta, locks);
+    sizeToBeFreed =
+        quotaManager->LockedCollectOriginsForEviction(deltaToFree, locks);
   }
 
   if (!sizeToBeFreed) {
@@ -206,7 +213,7 @@ bool CanonicalQuotaObject::LockedMaybeUpdateSize(
     return false;
   }
 
-  NS_ASSERTION(sizeToBeFreed >= delta, "Huh?");
+  NS_ASSERTION(sizeToBeFreed >= deltaToFree, "Huh?");
 
   {
     DirtyTrackingAutoLock::PauseLock pauseLock(aProofOfLock);
@@ -229,8 +236,8 @@ bool CanonicalQuotaObject::LockedMaybeUpdateSize(
   // We unlocked and relocked several times so we need to recompute all the
   // essential variables and recheck the group limit.
 
-  QM_ASSERT_NO_UNDERFLOW(aSize, mSize);
-  const uint64_t increase = aSize - mSize;
+  const int64_t increase = aSize - mSize;
+  QM_ASSERT_NOT_NEGATIVE(increase);
 
   if (!originInfo->LockedUpdateUsagesForEviction(mClientType, increase,
                                                  aProofOfLock)) {

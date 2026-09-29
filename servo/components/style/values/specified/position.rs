@@ -7,6 +7,7 @@
 //!
 //! [position]: https://drafts.csswg.org/css-backgrounds-3/#position
 
+use crate::Atom;
 use crate::derives::*;
 use crate::logical_geometry::{LogicalAxis, LogicalSide, PhysicalSide, WritingMode};
 use crate::parser::{Parse, ParserContext};
@@ -26,13 +27,12 @@ use crate::values::specified::align::AlignFlags;
 use crate::values::specified::percentage::NoCalcPercentage;
 use crate::values::specified::{AllowQuirks, Integer, LengthPercentage, NonNegativeNumber};
 use crate::values::{AtomIdent, DashedIdent};
-use crate::Atom;
-use cssparser::{match_ignore_ascii_case, Parser};
+use cssparser::{Parser, match_ignore_ascii_case};
+use hashbrown::hash_map::Entry;
 use num_traits::FromPrimitive;
 use selectors::parser::SelectorParseErrorKind;
 use servo_arc::Arc;
-use smallvec::{smallvec, SmallVec};
-use std::collections::hash_map::Entry;
+use smallvec::{SmallVec, smallvec};
 use std::fmt::{self, Write};
 use style_traits::arc_slice::ArcSlice;
 use style_traits::values::specified::AllowedNumericType;
@@ -110,13 +110,10 @@ pub enum VerticalPositionKeyword {
 }
 
 impl Parse for Position {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         let position = Self::parse_three_value_quirky(context, input, AllowQuirks::No)?;
         if position.is_three_value_syntax() {
-            return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(position)
     }
@@ -124,11 +121,11 @@ impl Parse for Position {
 
 impl Position {
     /// Parses a `<bg-position>`, with quirks.
-    pub fn parse_three_value_quirky<'i, 't>(
+    pub fn parse_three_value_quirky(
         context: &ParserContext,
-        input: &mut Parser<'i, 't>,
+        input: &mut Parser,
         allow_quirks: AllowQuirks,
-    ) -> Result<Self, ParseError<'i>> {
+    ) -> Result<Self, ParseError> {
         match input.try_parse(|i| PositionComponent::parse_quirky(context, i, allow_quirks)) {
             Ok(x_pos @ PositionComponent::Center) => {
                 if let Ok(y_pos) =
@@ -224,18 +221,12 @@ impl ToCss for Position {
         W: Write,
     {
         match (&self.horizontal, &self.vertical) {
-            (
-                x_pos @ &PositionComponent::Side(_, Some(_)),
-                &PositionComponent::Length(ref y_lp),
-            ) => {
+            (x_pos @ &PositionComponent::Side(_, Some(_)), PositionComponent::Length(y_lp)) => {
                 x_pos.to_css(dest)?;
                 dest.write_str(" top ")?;
                 y_lp.to_css(dest)
             },
-            (
-                &PositionComponent::Length(ref x_lp),
-                y_pos @ &PositionComponent::Side(_, Some(_)),
-            ) => {
+            (PositionComponent::Length(x_lp), y_pos @ &PositionComponent::Side(_, Some(_))) => {
                 dest.write_str("left ")?;
                 x_lp.to_css(dest)?;
                 dest.write_char(' ')?;
@@ -251,21 +242,18 @@ impl ToCss for Position {
 }
 
 impl<S: Parse> Parse for PositionComponent<S> {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         Self::parse_quirky(context, input, AllowQuirks::No)
     }
 }
 
 impl<S: Parse> PositionComponent<S> {
     /// Parses a component of a CSS position, with quirks.
-    pub fn parse_quirky<'i, 't>(
+    pub fn parse_quirky(
         context: &ParserContext,
-        input: &mut Parser<'i, 't>,
+        input: &mut Parser,
         allow_quirks: AllowQuirks,
-    ) -> Result<Self, ParseError<'i>> {
+    ) -> Result<Self, ParseError> {
         if input
             .try_parse(|i| i.expect_ident_matching("center"))
             .is_ok()
@@ -384,19 +372,14 @@ impl AnchorNameIdent {
 }
 
 impl Parse for AnchorNameIdent {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
-        let location = input.current_source_location();
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         let first = input.expect_ident()?;
         if first.eq_ignore_ascii_case("none") {
             return Ok(Self::none());
         }
         // The common case is probably just to have a single anchor name, so
         // space for four on the stack should be plenty.
-        let mut idents: SmallVec<[DashedIdent; 4]> =
-            smallvec![DashedIdent::from_ident(location, first,)?];
+        let mut idents: SmallVec<[DashedIdent; 4]> = smallvec![DashedIdent::from_ident(first,)?];
         while input.try_parse(|input| input.expect_comma()).is_ok() {
             idents.push(DashedIdent::parse(context, input)?);
         }
@@ -436,6 +419,7 @@ impl AnchorName {
 #[repr(transparent)]
 #[css(comma)]
 #[typed(todo_derive_fields)]
+#[value_info(other_values = "all")]
 pub struct ScopedNameList(
     /// `none | all | <dashed-ident>#`
     #[css(iterable, if_empty = "none")]
@@ -466,11 +450,7 @@ impl ScopedNameList {
 }
 
 impl Parse for ScopedNameList {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
-        let location = input.current_source_location();
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         let first = input.expect_ident()?;
         if first.eq_ignore_ascii_case("none") {
             return Ok(Self::none());
@@ -481,7 +461,7 @@ impl Parse for ScopedNameList {
         // Authors using more than a handful of anchored elements is likely
         // uncommon, so we only pre-allocate for 8 on the stack here.
         let mut idents = SmallVec::<[AtomIdent; 8]>::new();
-        idents.push(AtomIdent::new(DashedIdent::from_ident(location, first)?.0));
+        idents.push(AtomIdent::new(DashedIdent::from_ident(first)?.0));
         while input.try_parse(|input| input.expect_comma()).is_ok() {
             idents.push(AtomIdent::new(DashedIdent::parse(context, input)?.0));
         }
@@ -610,16 +590,13 @@ pub struct PositionTryFallbacksTryTactic(
 );
 
 impl Parse for PositionTryFallbacksTryTactic {
-    fn parse<'i, 't>(
-        _context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         let mut result = ThinVec::with_capacity(5);
         // Collect up to 5 keywords, disallowing duplicates.
         for _ in 0..5 {
             if let Ok(kw) = input.try_parse(PositionTryFallbacksTryTacticKeyword::parse) {
                 if result.contains(&kw) {
-                    return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
                 }
                 result.push(kw);
             } else {
@@ -627,7 +604,7 @@ impl Parse for PositionTryFallbacksTryTactic {
             }
         }
         if result.is_empty() {
-            return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(Self(result))
     }
@@ -669,37 +646,33 @@ pub struct DashedIdentAndOrTryTactic {
 }
 
 impl Parse for DashedIdentAndOrTryTactic {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         let mut result = Self {
             ident: DashedIdent::empty(),
             try_tactic: PositionTryFallbacksTryTactic::default(),
         };
 
         loop {
-            if result.ident.is_empty() {
-                if let Ok(ident) = input.try_parse(|i| DashedIdent::parse(context, i)) {
-                    result.ident = ident;
-                    continue;
-                }
+            if result.ident.is_empty()
+                && let Ok(ident) = input.try_parse(|i| DashedIdent::parse(context, i))
+            {
+                result.ident = ident;
+                continue;
             }
-            if result.try_tactic.is_empty() {
-                if let Ok(try_tactic) =
+            if result.try_tactic.is_empty()
+                && let Ok(try_tactic) =
                     input.try_parse(|i| PositionTryFallbacksTryTactic::parse(context, i))
-                {
-                    result.try_tactic = try_tactic;
-                    continue;
-                }
+            {
+                result.try_tactic = try_tactic;
+                continue;
             }
             break;
         }
 
         if result.ident.is_empty() && result.try_tactic.is_empty() {
-            return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
-        return Ok(result);
+        Ok(result)
     }
 }
 
@@ -769,10 +742,7 @@ impl PositionTryFallbacksList {
 }
 
 impl Parse for PositionTryFallbacksList {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
             return Ok(Self::none());
         }
@@ -1343,10 +1313,10 @@ impl PositionArea {
     }
 
     /// Parses a <position-area> without allowing `none`.
-    pub fn parse_except_none<'i, 't>(
+    pub fn parse_except_none(
         context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+        input: &mut Parser,
+    ) -> Result<Self, ParseError> {
         Self::parse_internal(context, input, /*allow_none*/ false)
     }
 
@@ -1372,25 +1342,23 @@ impl PositionArea {
         first
     }
 
-    fn parse_internal<'i, 't>(
+    fn parse_internal(
         _: &ParserContext,
-        input: &mut Parser<'i, 't>,
+        input: &mut Parser,
         allow_none: bool,
-    ) -> Result<Self, ParseError<'i>> {
-        let mut location = input.current_source_location();
+    ) -> Result<Self, ParseError> {
         let mut first = PositionAreaKeyword::parse(input)?;
         if first.is_none() {
             if allow_none {
                 return Ok(Self::none());
             }
-            return Err(location.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
 
-        location = input.current_source_location();
         let second = input.try_parse(PositionAreaKeyword::parse);
         if let Ok(PositionAreaKeyword::None) = second {
             // `none` is only allowed as a single value
-            return Err(location.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         let mut second = second.unwrap_or(PositionAreaKeyword::None);
         if second.is_none() {
@@ -1405,7 +1373,7 @@ impl PositionArea {
         let pair_type = Self { first, second }.get_type();
         if pair_type == PositionAreaType::None {
             // Mismatched types or what not.
-            return Err(location.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         // For types that have a canonical order, remove 'span-all' (the default behavior;
         // unnecessary for keyword pairs with a known order).
@@ -1531,10 +1499,7 @@ impl PositionArea {
 }
 
 impl Parse for PositionArea {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         Self::parse_internal(context, input, /* allow_none = */ true)
     }
 }
@@ -1737,15 +1702,11 @@ impl MasonryAutoFlow {
 
 impl Parse for MasonryAutoFlow {
     /// [ definite-first | ordered ] || [ pack | next ]
-    fn parse<'i, 't>(
-        _context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<MasonryAutoFlow, ParseError<'i>> {
+    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<MasonryAutoFlow, ParseError> {
         let mut value = MasonryAutoFlow::initial();
         let mut got_placement = false;
         let mut got_order = false;
         while !input.is_exhausted() {
-            let location = input.current_source_location();
             let ident = input.expect_ident()?;
             let success = match_ignore_ascii_case! { &ident,
                 "pack" if !got_placement => {
@@ -1769,16 +1730,77 @@ impl Parse for MasonryAutoFlow {
                 _ => false
             };
             if !success {
-                return Err(location
-                    .new_custom_error(SelectorParseErrorKind::UnexpectedIdent(ident.clone())));
+                return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
             }
         }
 
         if got_placement || got_order {
             Ok(value)
         } else {
-            Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError))
+            Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
         }
+    }
+}
+
+/// Whether the `balance` value of `flex-wrap` is enabled.
+#[inline]
+fn flex_wrap_balance_enabled() -> bool {
+    crate::pref!("layout.flexbox.balance", gecko = false)
+}
+
+/// The specified and computed value of the `flex-wrap` property:
+/// `nowrap | [ wrap | wrap-reverse ] || balance`
+///
+/// <https://drafts.csswg.org/css-flexbox-2/#flex-wrap-property>
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[css(bitflags(
+    single = "nowrap",
+    mixed = "wrap,wrap-reverse,balance",
+    validate_mixed = "Self::validate_and_simplify"
+))]
+#[repr(C)]
+pub struct FlexWrap(u8);
+bitflags! {
+    impl FlexWrap: u8 {
+        /// `nowrap`
+        const NOWRAP = 0;
+        /// `wrap` - mutually exclusive with `wrap-reverse`
+        const WRAP = 1 << 0;
+        /// `wrap-reverse` - mutually exclusive with `wrap`
+        const WRAP_REVERSE = 1 << 1;
+        /// `balance`
+        const BALANCE = 1 << 2;
+    }
+}
+
+impl FlexWrap {
+    /// `nowrap | [ wrap | wrap-reverse ] || balance`
+    fn validate_and_simplify(&mut self) -> bool {
+        if self.contains(Self::WRAP | Self::WRAP_REVERSE) {
+            return false;
+        }
+        if self.contains(Self::BALANCE) {
+            if !flex_wrap_balance_enabled() {
+                return false;
+            }
+            // `wrap balance` computes to `balance`.
+            self.remove(Self::WRAP);
+        }
+        true
     }
 }
 
@@ -1822,13 +1844,10 @@ pub struct TemplateAreasParser {
 
 impl TemplateAreasParser {
     /// Parse a single string.
-    pub fn try_parse_string<'i>(
-        &mut self,
-        input: &mut Parser<'i, '_>,
-    ) -> Result<(), ParseError<'i>> {
+    pub fn try_parse_string(&mut self, input: &mut Parser) -> Result<(), ParseError> {
         input.try_parse(|input| {
             self.parse_string(input.expect_string()?)
-                .map_err(|()| input.new_custom_error(StyleParseErrorKind::UnspecifiedError))
+                .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
         })
     }
 
@@ -1847,10 +1866,10 @@ impl TemplateAreasParser {
                 simplified_string.push_str(token);
                 Atom::from(token)
             } else {
-                if let Some(index) = current_area_index.take() {
-                    if self.areas[index].columns.end != column {
-                        return Err(());
-                    }
+                if let Some(index) = current_area_index.take()
+                    && self.areas[index].columns.end != column
+                {
+                    return Err(());
                 }
                 simplified_string.push('.');
                 continue;
@@ -1901,11 +1920,11 @@ impl TemplateAreasParser {
             // https://github.com/w3c/csswg-drafts/issues/5110
             return Err(());
         }
-        if let Some(index) = current_area_index {
-            if self.areas[index].columns.end != column + 1 {
-                debug_assert_ne!(self.areas[index].rows.start, self.row);
-                return Err(());
-            }
+        if let Some(index) = current_area_index
+            && self.areas[index].columns.end != column + 1
+        {
+            debug_assert_ne!(self.areas[index].rows.start, self.row);
+            return Err(());
         }
         if self.row == 1 {
             self.width = column;
@@ -1939,12 +1958,9 @@ impl TemplateAreas {
 }
 
 impl Parse for TemplateAreas {
-    fn parse<'i, 't>(
-        _: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(_: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         Self::parse_internal(input)
-            .map_err(|()| input.new_custom_error(StyleParseErrorKind::UnspecifiedError))
+            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
     }
 }
 
@@ -1964,10 +1980,7 @@ impl Parse for TemplateAreas {
 pub struct TemplateAreasArc(#[ignore_malloc_size_of = "Arc"] pub Arc<TemplateAreas>);
 
 impl Parse for TemplateAreasArc {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         let parsed = TemplateAreas::parse(context, input)?;
         Ok(TemplateAreasArc(Arc::new(parsed)))
     }
@@ -2042,11 +2055,11 @@ impl<'a> Iterator for TemplateAreasTokenizer<'a> {
 }
 
 fn is_name_code_point(c: char) -> bool {
-    c >= 'A' && c <= 'Z'
-        || c >= 'a' && c <= 'z'
+    c.is_ascii_uppercase()
+        || c.is_ascii_lowercase()
         || c >= '\u{80}'
         || c == '_'
-        || c >= '0' && c <= '9'
+        || c.is_ascii_digit()
         || c == '-'
 }
 
@@ -2092,14 +2105,10 @@ pub type ZIndex = GenericZIndex<Integer>;
 pub type AspectRatio = GenericAspectRatio<NonNegativeNumber>;
 
 impl Parse for AspectRatio {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         use crate::values::generics::position::PreferredRatio;
         use crate::values::specified::Ratio;
 
-        let location = input.current_source_location();
         let mut auto = input.try_parse(|i| i.expect_ident_matching("auto"));
         let ratio = input.try_parse(|i| Ratio::parse(context, i));
         if auto.is_err() {
@@ -2107,7 +2116,7 @@ impl Parse for AspectRatio {
         }
 
         if auto.is_err() && ratio.is_err() {
-            return Err(location.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
 
         Ok(AspectRatio {
@@ -2142,11 +2151,11 @@ impl Inset {
     /// Parses an inset type, allowing the unitless length quirk.
     /// <https://quirks.spec.whatwg.org/#the-unitless-length-quirk>
     #[inline]
-    pub fn parse_quirky<'i, 't>(
+    pub fn parse_quirky(
         context: &ParserContext,
-        input: &mut Parser<'i, 't>,
+        input: &mut Parser,
         allow_quirks: AllowQuirks,
-    ) -> Result<Self, ParseError<'i>> {
+    ) -> Result<Self, ParseError> {
         if let Ok(l) = input.try_parse(|i| LengthPercentage::parse_quirky(context, i, allow_quirks))
         {
             return Ok(Self::LengthPercentage(l));
@@ -2157,10 +2166,10 @@ impl Inset {
         Self::parse_anchor_functions_quirky(context, input, allow_quirks)
     }
 
-    fn parse_as_anchor_function_fallback<'i, 't>(
+    fn parse_as_anchor_function_fallback(
         context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+        input: &mut Parser,
+    ) -> Result<Self, ParseError> {
         if let Ok(l) =
             input.try_parse(|i| LengthPercentage::parse_quirky(context, i, AllowQuirks::No))
         {
@@ -2169,11 +2178,11 @@ impl Inset {
         Self::parse_anchor_functions_quirky(context, input, AllowQuirks::No)
     }
 
-    fn parse_anchor_functions_quirky<'i, 't>(
+    fn parse_anchor_functions_quirky(
         context: &ParserContext,
-        input: &mut Parser<'i, 't>,
+        input: &mut Parser,
         allow_quirks: AllowQuirks,
-    ) -> Result<Self, ParseError<'i>> {
+    ) -> Result<Self, ParseError> {
         if let Ok(inner) = input.try_parse(|i| AnchorFunction::parse(context, i)) {
             return Ok(Self::AnchorFunction(Box::new(inner)));
         }
@@ -2189,10 +2198,7 @@ impl Inset {
 }
 
 impl Parse for Inset {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         Self::parse_quirky(context, input, AllowQuirks::No)
     }
 }
@@ -2201,10 +2207,7 @@ impl Parse for Inset {
 pub type AnchorFunction = GenericAnchorFunction<specified::Percentage, Inset>;
 
 impl Parse for AnchorFunction {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         input.expect_function_matching("anchor")?;
         input.parse_nested_block(|i| {
             let target_element = i.try_parse(|i| DashedIdent::parse(context, i)).ok();

@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import annotations
+
 import datetime
 import errno
 import json
@@ -639,10 +641,14 @@ class TestInfoReport(TestInfo):
             show_summary = True
 
         trunk = False
-        if os.environ.get("GECKO_HEAD_REPOSITORY", "") in [
-            "https://hg.mozilla.org/mozilla-central",
-            "https://hg.mozilla.org/try",
-        ]:
+        if (
+            os.environ.get("GECKO_HEAD_REPOSITORY", "")
+            in [
+                "https://hg.mozilla.org/mozilla-central",
+                "https://hg.mozilla.org/try",
+            ]
+            or os.environ.get("GECKO_HEAD_REF", "") == "refs/heads/main"
+        ):
             trunk = True
         else:
             show_testruns = False

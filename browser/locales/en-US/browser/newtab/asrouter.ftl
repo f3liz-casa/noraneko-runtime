@@ -249,22 +249,6 @@ pdf-default-notification-set-default-button =
 pdf-default-notification-decline-button =
     .label = Not now
 
-## Launch on login infobar notification
-
-launch-on-login-infobar-message = <strong>Open { -brand-short-name } every time you restart your computer?</strong> Now you can set { -brand-short-name } to open automatically when you restart your device.
-launch-on-login-learnmore = Learn more
-launch-on-login-infobar-confirm-button = Yes, open { -brand-short-name }
-  .accesskey = Y
-launch-on-login-infobar-reject-button = Not now
-  .accesskey = N
-
-## These string variants are used when the “launch on login” infobar
-## notification is displayed for a second time.
-
-launch-on-login-infobar-final-message = <strong>Open { -brand-short-name } every time you restart your computer?</strong> To manage your Startup preferences, search “startup” in settings.
-launch-on-login-infobar-final-reject-button = No thanks
-  .accesskey = N
-
 ## Launch on login "show and tell" infobar notification
 ##
 ## Shown after Firefox has automatically launched at Windows sign-in (an
@@ -495,3 +479,21 @@ launch-options-spotlight-checkbox-restore-previous = Reopen previous windows and
 launch-options-spotlight-primary-button-close = Save and close { -brand-short-name }
 # Primary button on the browser-launch prompt
 launch-options-spotlight-primary-button-launch = Save and continue
+
+## Lapsed-user Windows toast notification for the Nova Fall 2026 campaign
+##
+## These strings will be displayed by the Windows operating system in a
+## native toast shown by the background task to users who have Firefox
+## installed but haven't opened it recently. The message itself is hosted
+## off-train on Remote Settings via Nimbus; the strings are landed here so
+## localization can begin.
+##
+## The button labels are fitted into narrow fixed-width buttons by
+## Windows and therefore must be as narrow as possible.
+
+# "has your back" is an idiom meaning support and protection; adapt freely
+# rather than translating literally.
+lapsed-user-toast-title = { -brand-product-name } still has your back
+lapsed-user-toast-subtitle = Check out new ways you can browse with more choice, privacy, and control.
+lapsed-user-toast-whats-new-button = See what’s new
+lapsed-user-toast-dismiss-button = Dismiss

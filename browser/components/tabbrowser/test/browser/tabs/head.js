@@ -113,10 +113,7 @@ async function toggleMuteAudio(tab, expectMuted) {
 }
 
 async function pressIcon(icon) {
-  let tooltip = document.getElementById("tabbrowser-tab-tooltip");
-  await hover_icon(icon, tooltip);
   EventUtils.synthesizeMouseAtCenter(icon, { button: 0 });
-  leave_icon(icon);
 }
 
 async function wait_for_tab_playing_event(tab, expectPlaying) {
@@ -208,32 +205,6 @@ function disable_non_test_mouse(disable) {
   utils.disableNonTestMouseEvents(disable);
 }
 
-function hover_icon(icon, tooltip) {
-  disable_non_test_mouse(true);
-
-  let popupShownPromise = BrowserTestUtils.waitForEvent(tooltip, "popupshown");
-  EventUtils.synthesizeMouse(icon, 1, 1, { type: "mouseover" });
-  EventUtils.synthesizeMouse(icon, 2, 2, { type: "mousemove" });
-  EventUtils.synthesizeMouse(icon, 3, 3, { type: "mousemove" });
-  EventUtils.synthesizeMouse(icon, 4, 4, { type: "mousemove" });
-  return popupShownPromise;
-}
-
-function leave_icon(icon) {
-  EventUtils.synthesizeMouse(icon, 0, 0, { type: "mouseout" });
-  EventUtils.synthesizeMouseAtCenter(document.documentElement, {
-    type: "mousemove",
-  });
-  EventUtils.synthesizeMouseAtCenter(document.documentElement, {
-    type: "mousemove",
-  });
-  EventUtils.synthesizeMouseAtCenter(document.documentElement, {
-    type: "mousemove",
-  });
-
-  disable_non_test_mouse(false);
-}
-
 // The set of tabs which have ever had their mute state changed.
 // Used to determine whether the tab should have a muteReason value.
 let everMutedTabs = new WeakSet();
@@ -276,11 +247,17 @@ async function test_mute_tab(tab, icon, expectMuted) {
 
   let activeTab = gBrowser.selectedTab;
 
-  let tooltip = document.getElementById("tabbrowser-tab-tooltip");
+  // Sometimes, the tab's audio state is slow to update. If neither activemedia-blocked, soundplaying
+  // nor muted attribute is applied to the button, the audio button won't be rendered on the tab.
+  // To reduce flakiness, wait for any late attribute updates to ensure it is visible before attempting to click it.
+  await BrowserTestUtils.waitForMutationCondition(
+    tab,
+    { attributes: true, subtree: true },
+    () => BrowserTestUtils.isVisible(icon),
+    { msg: "audio button is visible before clicking it" }
+  );
 
-  await hover_icon(icon, tooltip);
   EventUtils.synthesizeMouseAtCenter(icon, { button: 0 });
-  leave_icon(icon);
 
   is(
     gBrowser.selectedTab,
@@ -505,4 +482,29 @@ async function closeContextMenu(contextMenu) {
   let menuHidden = BrowserTestUtils.waitForPopupEvent(contextMenu, "hidden");
   contextMenu.hidePopup();
   await menuHidden;
+}
+
+/**
+ * Loads two tabs in a split view, executes a task, then closes the split view.
+ *
+ * @param {MozTabbrowserTab} tab1
+ *   The first tab in the split view. It will be selected.
+ * @param {MozTabbrowserTab} tab2
+ *   The second tab in the split view.
+ * @param {Function} taskFn
+ */
+async function withSplitView(tab1, tab2, taskFn) {
+  await BrowserTestUtils.switchTab(gBrowser, tab1);
+  const splitView = gBrowser.addTabSplitView([tab1, tab2], {
+    insertBefore: tab1,
+  });
+  const splitter = gBrowser.tabpanels.splitViewSplitter;
+  await BrowserTestUtils.waitForMutationCondition(
+    splitter,
+    { attributes: true },
+    () => !splitter.hidden
+  );
+  await taskFn({ tab1, tab2, splitter, splitView });
+  // Closes both tabs.
+  splitView.close();
 }

@@ -85,7 +85,7 @@ class ABIResult {
   static constexpr size_t StackSizeOfFloat = sizeof(double);
 #endif
   static constexpr size_t StackSizeOfDouble = sizeof(double);
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
   static constexpr size_t StackSizeOfV128 = sizeof(V128);
 #endif
 
@@ -370,10 +370,8 @@ extern void GenerateDirectCallFromJit(jit::MacroAssembler& masm,
 // When the callee returns, the results are converted again to the `resume`
 // stack arguments ABI and the stub performs a stack switch to the enclosing
 // handler.
-//
-// There will need to be a unique stub for each function type passed to
-// `cont.new`. Right now we only support `[] -> []`, so we take no func type.
 extern bool GenerateContBaseFrameStub(jit::MacroAssembler& masm,
+                                      const FuncType& funcType,
                                       Offsets* offsets);
 #endif
 

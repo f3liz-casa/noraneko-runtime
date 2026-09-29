@@ -26,6 +26,7 @@ components/pagedata/docs/index
 places/index
 components/asrouter/docs/index
 search/index
+components/sessionstore/docs/index
 components/tabbrowser/docs/index
 touchbar/index
 components/uitour/docs/index
@@ -42,7 +43,6 @@ components/backup/docs/index
 components/sidebar/docs/index
 components/mozcachedohttp/docs/index
 desktop-launcher/index
-tabunloader/index
 app/pbproxy/private-browsing-proxy/index
 /installation_dir_layout/index
 ```

@@ -54,19 +54,19 @@ var localProviderModules = [
     name: "UrlbarProviderGlobalActions",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderGlobalActions.sys.mjs",
-    supportedSAPs: ["searchbar", "urlbar"],
+    supportedSAPs: ["searchbar", "urlbar", "smartbar"],
   },
   {
     name: "UrlbarProviderAliasEngines",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderAliasEngines.sys.mjs",
-    supportedSAPs: ["searchbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "searchbar", "urlbar"],
   },
   {
     name: "UrlbarProviderAutofill",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderAutofill.sys.mjs",
-    supportedSAPs: ["smartbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "smartbar", "urlbar"],
   },
   {
     name: "UrlbarProviderBookmarkKeywords",
@@ -78,7 +78,7 @@ var localProviderModules = [
     name: "UrlbarProviderCalculator",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderCalculator.sys.mjs",
-    supportedSAPs: ["searchbar", "smartbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "searchbar", "smartbar", "urlbar"],
   },
   {
     name: "UrlbarProviderAiChat",
@@ -95,13 +95,13 @@ var localProviderModules = [
     name: "UrlbarProviderHeuristicFallback",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderHeuristicFallback.sys.mjs",
-    supportedSAPs: ["searchbar", "smartbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "searchbar", "smartbar", "urlbar"],
   },
   {
     name: "UrlbarProviderHistoryUrlHeuristic",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderHistoryUrlHeuristic.sys.mjs",
-    supportedSAPs: ["smartbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "smartbar", "urlbar"],
   },
   {
     name: "UrlbarProviderInputHistory",
@@ -136,7 +136,7 @@ var localProviderModules = [
     name: "UrlbarProviderQuickSuggest",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderQuickSuggest.sys.mjs",
-    supportedSAPs: ["smartbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "smartbar", "urlbar"],
   },
   {
     name: "UrlbarProviderQuickSuggestContextualOptIn",
@@ -148,7 +148,7 @@ var localProviderModules = [
     name: "UrlbarProviderRecentSearches",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderRecentSearches.sys.mjs",
-    supportedSAPs: ["searchbar", "smartbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "searchbar", "smartbar", "urlbar"],
   },
   {
     name: "UrlbarProviderRemoteTabs",
@@ -178,7 +178,7 @@ var localProviderModules = [
     name: "UrlbarProviderSearchSuggestions",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderSearchSuggestions.sys.mjs",
-    supportedSAPs: ["searchbar", "smartbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "searchbar", "smartbar", "urlbar"],
   },
   {
     name: "UrlbarProviderSemanticHistorySearch",
@@ -196,7 +196,7 @@ var localProviderModules = [
     name: "UrlbarProviderTokenAliasEngines",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderTokenAliasEngines.sys.mjs",
-    supportedSAPs: ["searchbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "searchbar", "urlbar"],
   },
   {
     name: "UrlbarProviderTopSites",
@@ -208,7 +208,7 @@ var localProviderModules = [
     name: "UrlbarProviderUnitConversion",
     module:
       "moz-src:///browser/components/urlbar/UrlbarProviderUnitConversion.sys.mjs",
-    supportedSAPs: ["searchbar", "smartbar", "urlbar"],
+    supportedSAPs: ["newtab_searchbar", "searchbar", "smartbar", "urlbar"],
   },
 ];
 
@@ -589,7 +589,8 @@ export class ProvidersManager {
 
     // On the message path the parent's view has no results; the caller passes
     // the results shown content-side. Fall back to the view for the direct path.
-    visibleResults = visibleResults ?? controller.view?.visibleResults ?? [];
+    visibleResults ??=
+      "visibleResults" in controller.view ? controller.view.visibleResults : [];
     const visibleResultsByProviderName = new Map();
 
     visibleResults.forEach((result, index) => {
@@ -978,7 +979,8 @@ export class Query {
     // synchronously later without calling back into the provider, which may
     // live in another process.
     if (result.type == lazy.UrlbarShared.RESULT_TYPE.DYNAMIC) {
-      result.viewTemplate = provider.getViewTemplate(result);
+      result.payload.viewTemplate = provider.getViewTemplate(result);
+      result.payload.viewUpdate = provider.getViewUpdate(result);
     }
     let commands = provider.tryMethod(
       "getResultCommands",

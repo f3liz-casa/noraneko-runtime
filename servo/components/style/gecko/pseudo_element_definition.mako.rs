@@ -49,14 +49,10 @@ impl PseudoElement {
     /// Whether this pseudo-element is tree pseudo-element.
     #[inline]
     pub fn is_tree_pseudo_element(&self) -> bool {
-        match *self {
-            % for pseudo in PSEUDOS:
-            % if pseudo.name.startswith("-moz-tree-"):
-            ${pseudo_element_variant(pseudo)} => true,
-            % endif
-            % endfor
-            _ => false,
-        }
+        matches!(
+            *self,
+            ${" | ".join(capture(pseudo_element_variant, pseudo) for pseudo in PSEUDOS if pseudo.name.startswith("-moz-tree-"))}
+        )
     }
 
     #[inline]
@@ -72,6 +68,34 @@ impl PseudoElement {
         ),
         ];
         FLAGS[i]
+    }
+
+    /// Property flag that properties must have to apply to this pseudo-element, or empty if there
+    /// are no restrictions.
+    #[inline]
+    pub fn property_restriction(&self) -> PropertyFlags {
+        static FLAGS: [PropertyFlags; PSEUDO_COUNT + 1] = [
+            % for pseudo in PSEUDOS:
+            % if pseudo.name == "first-letter":
+            PropertyFlags::APPLIES_TO_FIRST_LETTER,
+            % elif pseudo.name == "first-line":
+            PropertyFlags::APPLIES_TO_FIRST_LINE,
+            % elif pseudo.name == "marker":
+            PropertyFlags::APPLIES_TO_MARKER,
+            % elif pseudo.name == "cue":
+            PropertyFlags::APPLIES_TO_CUE,
+            % elif pseudo.name == "placeholder":
+            PropertyFlags::APPLIES_TO_PLACEHOLDER,
+            % elif pseudo.name in ["selection", "highlight", "target-text"]:
+            PropertyFlags::APPLIES_TO_HIGHLIGHT,
+            % else:
+            PropertyFlags::empty(),
+            % endif
+            % endfor
+            // Unknown ::-webkit pseudos have no restrictions.
+            PropertyFlags::empty()
+        ];
+        FLAGS[self.index()]
     }
 
     /// Gets the flags associated to this pseudo-element or anon box.
@@ -178,7 +202,7 @@ impl PseudoElement {
         match *self {
             % for pseudo in PSEUDOS:
             % if pseudo.name.startswith("-moz-tree-"):
-            PseudoElement::${pseudo.capitalized}(ref args) => &args,
+            PseudoElement::${pseudo.capitalized}(ref args) => args,
             % endif
             % endfor
             _ => &[],
@@ -274,7 +298,7 @@ impl ToCss for PseudoElement {
                 let mut iter = args.iter();
                 if let Some(first) = iter.next() {
                     dest.write_char('(')?;
-                    serialize_atom_identifier(&first, dest)?;
+                    serialize_atom_identifier(first, dest)?;
                     for item in iter {
                         dest.write_str(", ")?;
                         serialize_atom_identifier(item, dest)?;

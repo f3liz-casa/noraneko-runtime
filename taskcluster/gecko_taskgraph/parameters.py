@@ -82,10 +82,12 @@ class GeckoParametersSchema(Schema, kw_only=True, rename=None):
     release_partner_build_number: int
     release_type: str
     release_product: Optional[str]
+    shipping: bool
     test_manifest_loader: str
     try_mode: Optional[str]
     try_task_config: TryTaskConfig
     version: str
+    head_git_ref: Optional[str] = None
     head_git_repository: Optional[str] = None
     head_git_rev: Optional[str] = None
     pull_request_number: Optional[int] = None
@@ -136,6 +138,7 @@ def get_defaults(repo_root=None):
         # This refers to the upstream repo rather than the local checkout, so
         # should be hardcoded to 'hg' even with git-cinnabar.
         "repository_type": "hg",
+        "shipping": False,
         "test_manifest_loader": "default",
         "try_mode": None,
         "try_task_config": {},

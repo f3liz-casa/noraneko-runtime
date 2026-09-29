@@ -15,6 +15,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "resource://devtools/shared/network-observer/NetworkOverride.sys.mjs",
 });
 
+const xmlSerializer = new XMLSerializer();
+
 export const NetworkLocalMode = {
   /**
    * Intercept a early channel that hasn't established a remote connection yet,
@@ -25,7 +27,11 @@ export const NetworkLocalMode = {
    * @param {string} localFolderPath
    */
   interceptChannelWithPath(channel, localFolderPath) {
-    const path = decodeURI(channel.URI.filePath.replace(/^\//, ""));
+    if (channel.URI.spec.includes("%00")) {
+      overrideChannelIntoCustomCode(channel, 400, "400 Bad request");
+      return;
+    }
+    const path = decodeURI(channel.URI.filePath).replace(/^\/+/, "");
 
     // On Windows, replace all URI's '/' path separators with '\'
     let systemPath = path;
@@ -85,14 +91,56 @@ export const NetworkLocalMode = {
  * @param {nsIHttpChannel} channel
  */
 function overrideChannelInto404(channel) {
+  overrideChannelIntoCustomCode(
+    channel,
+    404,
+    "404 Not Found",
+    `No local file for: ${channel.URI.filePath}`
+  );
+}
+
+/**
+ * Make it so that an in-flight channel that just started
+ * is converted into a custom response with a custom HTTP status code.
+ *
+ * @param {nsIHttpChannel} channel
+ * @param {number} status
+ *        The returned status code
+ * @param {string} statusText
+ *        The returned status text
+ * @param {undefined|string} message
+ *        The message displayed in the returned HTML page. Will default to status text if omitted.
+ */
+function overrideChannelIntoCustomCode(
+  channel,
+  status,
+  statusText,
+  message = statusText
+) {
   const replacedHttpResponse = Cc[
     "@mozilla.org/network/replaced-http-response;1"
   ].createInstance(Ci.nsIReplacedHttpResponse);
 
-  replacedHttpResponse.responseStatus = 404;
-  replacedHttpResponse.responseStatusText = "404 Not Found";
-  const body = `<h1>DevTools Local Mode</h1><p>No local file for: ${channel.URI.filePath}</p>`;
-  replacedHttpResponse.responseBody = body;
+  replacedHttpResponse.responseStatus = status;
+  replacedHttpResponse.responseStatusText = statusText;
+
+  // We don't have access to a document, and we can't create a DocumentFragment from here,
+  // so use DOMParser to create a new document that we can use to build our listing page.
+  const doc = new DOMParser().parseFromString(
+    "<!DOCTYPE html><html/>",
+    "text/html"
+  );
+
+  // Compute a simple, but meaningful HTML file for the error
+  const h1 = doc.createElement("h1");
+  h1.append("DevTools Local Mode");
+  const p = doc.createElement("p");
+  p.textContent = message;
+  doc.body.append(h1, p);
+
+  const serializedDoc = xmlSerializer.serializeToString(doc);
+
+  replacedHttpResponse.responseBody = serializedDoc;
 
   channel
     .QueryInterface(Ci.nsIHttpChannelInternal)
@@ -123,8 +171,18 @@ async function overrideChannelWithDirectoryListing(channel, folderPath, file) {
   // the directory listing content
   channel.suspend();
 
+  // We don't have access to a document, and we can't create a DocumentFragment from here,
+  // so use DOMParser to create a new document that we can use to build our listing page.
+  const doc = new DOMParser().parseFromString(
+    "<!DOCTYPE html><html/>",
+    "text/html"
+  );
+
   // Compute a simple, but meaningful HTML file for the listing
-  const links = [];
+  const h2 = doc.createElement("h2");
+  h2.append(PathUtils.filename(file.path));
+  const ul = doc.createElement("ul");
+
   const children = await IOUtils.getChildren(file.path);
   for (const childPath of children.sort()) {
     const filename = PathUtils.filename(childPath);
@@ -133,16 +191,18 @@ async function overrideChannelWithDirectoryListing(channel, folderPath, file) {
       folderPath +
       (!folderPath || folderPath.endsWith("/") ? "" : "/") +
       filename;
-    links.push(`<li><a href="${absolutePath}">${filename}</a></li>`);
+    const li = doc.createElement("li");
+    const a = doc.createElement("a");
+    a.href = absolutePath;
+    a.append(filename);
+    li.append(a);
+    ul.append(li);
   }
-  const body =
-    "<h2>" +
-    PathUtils.filename(file.path) +
-    ":</h2><ul>" +
-    links.join("") +
-    "</ul>";
+  doc.body.append(h2, ul);
 
-  replacedHttpResponse.responseBody = body;
+  const serializedDoc = xmlSerializer.serializeToString(doc);
+
+  replacedHttpResponse.responseBody = serializedDoc;
 
   channel
     .QueryInterface(Ci.nsIHttpChannelInternal)

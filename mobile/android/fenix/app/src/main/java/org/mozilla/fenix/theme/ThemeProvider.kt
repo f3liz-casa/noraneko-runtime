@@ -7,36 +7,29 @@ package org.mozilla.fenix.theme
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import mozilla.components.compose.base.theme.Theme
+import mozilla.components.compose.base.theme.Theme.Dark
+import mozilla.components.compose.base.theme.Theme.Light
 import mozilla.components.compose.base.utils.inComposePreview
-import org.mozilla.fenix.theme.Theme.Dark
-import org.mozilla.fenix.theme.Theme.Light
 
-/**
- * Abstraction for providing the current [Theme] that is to be displayed.
- */
+/** Abstraction for providing the current [Theme] that is to be displayed. */
 interface ThemeProvider {
-    /**
-     * Returns the current [Theme] that is to be displayed.
-     */
-    @Composable
-    fun provideTheme(): Theme
+    /** Returns the current [Theme] that is to be displayed. */
+    @Composable fun provideTheme(): Theme
 }
 
-/**
- * The default [ThemeProvider]. Used when [Theme.Private] is not needed or when in a Compose Preview.
- */
+/** The default [ThemeProvider]. Used when [Theme.Private] is not needed or when in a Compose Preview. */
 object DefaultThemeProvider : ThemeProvider {
     @Composable
-    override fun provideTheme() = if (isSystemInDarkTheme()) {
-        Dark
-    } else {
-        Light
-    }
+    override fun provideTheme() =
+        if (isSystemInDarkTheme()) {
+            Dark
+        } else {
+            Light
+        }
 }
 
-/**
- * Gets the [ThemeProvider] for the current context.
- */
+/** Gets the [ThemeProvider] for the current context. */
 @Composable
 fun getThemeProvider(): ThemeProvider {
     return if (inComposePreview) {

@@ -235,10 +235,6 @@ class GeneratorObject : public AbstractGeneratorObject {
   static GeneratorObject* create(JSContext* cx, HandleFunction fun);
 };
 
-bool GeneratorThrowOrReturn(JSContext* cx, AbstractFramePtr frame,
-                            Handle<AbstractGeneratorObject*> obj,
-                            HandleValue val, GeneratorResumeKind resumeKind);
-
 /**
  * Resume a suspended generator, async function, async generator, or async
  * module.
@@ -265,6 +261,13 @@ bool ResumeGenerator(JSContext* cx, Handle<AbstractGeneratorObject*> genObj,
  */
 AbstractGeneratorObject* GetGeneratorObjectForFrame(JSContext* cx,
                                                     AbstractFramePtr frame);
+
+/**
+ * Return the top-level-await generator object of `module`, or nullptr if
+ * `module` has no top-level await, or it is not linked yet, or its generator
+ * object hasn't been created yet.
+ */
+AbstractGeneratorObject* GetGeneratorObjectForModule(ModuleObject* module);
 
 /**
  * If `env` or any enclosing environment is a `CallObject` associated with a

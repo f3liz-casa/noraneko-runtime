@@ -5,6 +5,7 @@
 #include "mozilla/dom/BrowsingContext.h"
 
 #include "ipc/IPCMessageUtils.h"
+#include "mozilla/GfxMessageUtils.h"
 
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/DocAccessibleParent.h"
@@ -77,6 +78,7 @@
 #include "nsIXULRuntime.h"
 
 #include "mozilla/dom/WorkerCommon.h"
+#include "nsAboutProtocolUtils.h"
 #include "nsExternalHelperAppService.h"
 #include "nsDocShell.h"
 #include "nsDocShellLoadState.h"
@@ -894,6 +896,10 @@ const char* BrowsingContext::BrowsingContextCoherencyChecks(
     return "Content cannot create chrome BCs";
   }
 
+  if (aOriginProcess && GetServiceWorkersTestingEnabled()) {
+    return "Content cannot enable ServiceWorkersTestingEnabled";
+  }
+
   // LoadContext should generally match our opener or parent.
   if (IsContent()) {
     if (RefPtr<BrowsingContext> opener = GetOpener()) {
@@ -1655,8 +1661,7 @@ bool BrowsingContext::CrossOriginIsolated() {
              nsILoadInfo::
                  OPENER_POLICY_SAME_ORIGIN_EMBEDDER_POLICY_REQUIRE_CORP &&
          XRE_IsContentProcess() &&
-         StringBeginsWith(ContentChild::GetSingleton()->GetRemoteType(),
-                          WITH_COOP_COEP_REMOTE_TYPE_PREFIX);
+         ContentChild::GetSingleton()->GetRemoteType().IsWebCoopCoep();
 }
 
 void BrowsingContext::SetTriggeringAndInheritPrincipals(
@@ -2330,6 +2335,31 @@ nsresult BrowsingContext::LoadURI(nsDocShellLoadState* aLoadState,
     MOZ_DIAGNOSTIC_ASSERT(!sourceBC,
                           "Should never see a cross-process javascript: load "
                           "triggered from content");
+  } else {
+    // We do the same check in the nsDocShellLoadState constructor when
+    // deserializing, but that check causes parent processes crashes for loads
+    // started in the parent with a remote effectiveRemoteType.
+    const RemoteType& effectiveRemoteType =
+        aLoadState->GetEffectiveTriggeringRemoteType();
+    if (!effectiveRemoteType.IsNotRemote() &&
+        !ContentTriggeredURILoadIsAllowed(aLoadState->URI(),
+                                          effectiveRemoteType)) {
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
+      nsAutoCString aboutModuleOrScheme;
+      if (aLoadState->URI()->SchemeIs("about")) {
+        (void)NS_GetAboutModuleName(aLoadState->URI(), aboutModuleOrScheme);
+        aboutModuleOrScheme.InsertLiteral("about:", 0);
+      } else {
+        aLoadState->URI()->GetScheme(aboutModuleOrScheme);
+        aboutModuleOrScheme.AppendLiteral(":");
+      }
+      MOZ_CRASH_UNSAFE_PRINTF("Illegal load attempt of %s URL from %s",
+                              aboutModuleOrScheme.get(),
+                              effectiveRemoteType.StringifyKind().get());
+#endif
+
+      return NS_ERROR_UNEXPECTED;
+    }
   }
 
   // Note: We do this check both here and in `nsDocShell::InternalLoad`.
@@ -2348,6 +2378,20 @@ nsresult BrowsingContext::LoadURI(nsDocShellLoadState* aLoadState,
     }
   } else if (XRE_IsParentProcess()) {
     if (ContentParent* cp = Canonical()->GetContentParent()) {
+      // nsDocShell::LoadURI does this too, but for a process switching load
+      // the entry this load adds can be committed before its notification
+      // arrives, and the flag would land on that entry instead. This has to
+      // stay above SendLoadURI: PContent is FIFO, so the content process then
+      // sees the field already set and skips its own notification.
+      if (!aLoadState->LoadIsFromSessionHistory() &&
+          aLoadState->TriggeringPrincipal() &&
+          aLoadState->TriggeringPrincipal()->IsSystemPrincipal()) {
+        WindowContext* topWc = GetTopWindowContext();
+        if (topWc && !topWc->IsDiscarded()) {
+          MOZ_ALWAYS_SUCCEEDS(topWc->SetSHEntryHasUserInteraction(true));
+        }
+      }
+
       // Attempt to initiate this load immediately in the parent, if it
       // succeeds, aLoadState will have a reference to the pending
       // DocumentLoadListener, which will be recovered when the DocumentChannel
@@ -2573,15 +2617,6 @@ void BrowsingContext::Navigate(
     dom::NavigationAPIMethodTracker* aNavigationAPIMethodTracker) {
   MOZ_LOG_FMT(gNavigationAPILog, LogLevel::Debug, "Navigate to {} as {}", *aURI,
               aHistoryHandling);
-  CallerType callerType = aSubjectPrincipal.IsSystemPrincipal()
-                              ? CallerType::System
-                              : CallerType::NonSystem;
-
-  nsresult rv = CheckNavigationRateLimit(callerType);
-  if (NS_FAILED(rv)) {
-    aRv.Throw(rv);
-    return;
-  }
 
   RefPtr<nsDocShellLoadState> loadState =
       CheckURLAndCreateLoadState(aURI, aSubjectPrincipal, aSourceDocument, aRv);
@@ -2633,7 +2668,7 @@ void BrowsingContext::Navigate(
   loadState->SetNavigationAPIState(aNavigationAPIState);
   loadState->SetNavigationAPIMethodTracker(aNavigationAPIMethodTracker);
 
-  rv = LoadURI(loadState);
+  nsresult rv = LoadURI(loadState);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     if (rv == NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI &&
         loadState->URI()->SchemeIs("javascript")) {
@@ -2700,8 +2735,9 @@ void BrowsingContext::Close(CallerType aCallerType, ErrorResult& aError) {
   }
 
   if (GetDOMWindow()) {
-    nsGlobalWindowOuter::Cast(GetDOMWindow())
-        ->CloseOuter(aCallerType == CallerType::System);
+    const RefPtr<nsGlobalWindowOuter> win =
+        nsGlobalWindowOuter::Cast(GetDOMWindow());
+    win->CloseOuter(aCallerType == CallerType::System);
     return;
   }
 
@@ -3347,36 +3383,39 @@ void BrowsingContext::DidSet(FieldIndex<IDX_HasOrientationOverride>,
   OrientationType type = GetCurrentOrientationType();
   float angle = GetCurrentOrientationAngle();
 
-  PreOrderWalk([&](BrowsingContext* aBrowsingContext) {
-    if (RefPtr<WindowContext> windowContext =
-            aBrowsingContext->GetCurrentWindowContext()) {
-      if (nsCOMPtr<nsPIDOMWindowInner> window =
-              windowContext->GetInnerWindow()) {
-        ScreenOrientation* orientation =
-            nsGlobalWindowInner::Cast(window)->Screen()->Orientation();
+  PreOrderWalk(
+      [&](BrowsingContext* aBrowsingContext)
+          MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
+            if (RefPtr<WindowContext> windowContext =
+                    aBrowsingContext->GetCurrentWindowContext()) {
+              if (nsCOMPtr<nsPIDOMWindowInner> window =
+                      windowContext->GetInnerWindow()) {
+                const RefPtr<ScreenOrientation> orientation =
+                    nsGlobalWindowInner::Cast(window)->Screen()->Orientation();
 
-        float screenOrientationAngle =
-            orientation->DeviceAngle(CallerType::System);
-        OrientationType screenOrientationType =
-            orientation->DeviceType(CallerType::System);
+                float screenOrientationAngle =
+                    orientation->DeviceAngle(CallerType::System);
+                OrientationType screenOrientationType =
+                    orientation->DeviceType(CallerType::System);
 
-        bool overrideIsDifferentThanDevice =
-            screenOrientationType != type || screenOrientationAngle != angle;
+                bool overrideIsDifferentThanDevice =
+                    screenOrientationType != type ||
+                    screenOrientationAngle != angle;
 
-        // Reset orientation override.
-        if (!hasOrientationOverride && aOldValue) {
-          (void)aBrowsingContext->SetCurrentOrientation(screenOrientationType,
-                                                        screenOrientationAngle);
-        } else if (!aBrowsingContext->IsTop()) {
-          // Sync orientation override in the existing frames.
-          (void)aBrowsingContext->SetCurrentOrientation(type, angle);
-        }
+                // Reset orientation override.
+                if (!hasOrientationOverride && aOldValue) {
+                  (void)aBrowsingContext->SetCurrentOrientation(
+                      screenOrientationType, screenOrientationAngle);
+                } else if (!aBrowsingContext->IsTop()) {
+                  // Sync orientation override in the existing frames.
+                  (void)aBrowsingContext->SetCurrentOrientation(type, angle);
+                }
 
-        orientation->MaybeDispatchEventsForOverride(
-            aBrowsingContext, aOldValue, overrideIsDifferentThanDevice);
-      }
-    }
-  });
+                orientation->MaybeDispatchEventsForOverride(
+                    aBrowsingContext, aOldValue, overrideIsDifferentThanDevice);
+              }
+            }
+          });
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_ForceDesktopViewport>,
@@ -3470,6 +3509,14 @@ void BrowsingContext::DidSet(FieldIndex<IDX_TouchEventsOverrideInternal>,
 void BrowsingContext::DidSet(FieldIndex<IDX_EmbedderColorSchemes>,
                              EmbedderColorSchemes&& aOldValue) {
   if (GetEmbedderColorSchemes() == aOldValue) {
+    return;
+  }
+  PresContextAffectingFieldChanged();
+}
+
+void BrowsingContext::DidSet(FieldIndex<IDX_EmbedderScrollbarInset>,
+                             LayoutDeviceIntMargin&& aOldValue) {
+  if (GetEmbedderScrollbarInset() == aOldValue) {
     return;
   }
   PresContextAffectingFieldChanged();
@@ -3722,11 +3769,13 @@ void BrowsingContext::DidSet(FieldIndex<IDX_IsActiveBrowserWindowInternal>,
   // The browser window containing this context has changed
   // activation state so update window inactive document states
   // for all in-process documents.
-  PreOrderWalk([isActivateEvent](BrowsingContext* aContext) {
+  PreOrderWalk([isActivateEvent](
+                   BrowsingContext* aContext) MOZ_CAN_RUN_SCRIPT_BOUNDARY {
     if (RefPtr<Document> doc = aContext->GetExtantDocument()) {
       doc->UpdateDocumentStates(DocumentState::WINDOW_INACTIVE, true);
 
-      RefPtr<nsPIDOMWindowInner> win = doc->GetInnerWindow();
+      const RefPtr<nsGlobalWindowInner> win =
+          nsGlobalWindowInner::Cast(doc->GetInnerWindow());
       if (win) {
         RefPtr<MediaDevices> devices;
         if (isActivateEvent && (devices = win->GetExtantMediaDevices())) {
@@ -3739,8 +3788,7 @@ void BrowsingContext::DidSet(FieldIndex<IDX_IsActiveBrowserWindowInternal>,
           // the context is the top of a sub-tree of in-process
           // contexts.
           nsContentUtils::DispatchEventOnlyToChrome(
-              doc, nsGlobalWindowInner::Cast(win),
-              isActivateEvent ? u"activate"_ns : u"deactivate"_ns,
+              doc, win, isActivateEvent ? u"activate"_ns : u"deactivate"_ns,
               CanBubble::eYes, Cancelable::eYes, nullptr);
         }
       }
@@ -4363,15 +4411,17 @@ void BrowsingContext::DidSet(FieldIndex<IDX_ForceOffline>, bool aOldValue) {
   if (newValue == aOldValue) {
     return;
   }
-  PreOrderWalk([&](BrowsingContext* aBrowsingContext) {
-    if (RefPtr<WindowContext> windowContext =
-            aBrowsingContext->GetCurrentWindowContext()) {
-      if (nsCOMPtr<nsPIDOMWindowInner> window =
-              windowContext->GetInnerWindow()) {
-        nsGlobalWindowInner::Cast(window)->FireOfflineStatusEventIfChanged();
-      }
-    }
-  });
+  PreOrderWalk([&](BrowsingContext* aBrowsingContext)
+                   MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
+                     if (RefPtr<WindowContext> windowContext =
+                             aBrowsingContext->GetCurrentWindowContext()) {
+                       if (const RefPtr<nsGlobalWindowInner> window =
+                               nsGlobalWindowInner::Cast(
+                                   windowContext->GetInnerWindow())) {
+                         window->FireOfflineStatusEventIfChanged();
+                       }
+                     }
+                   });
 }
 
 bool BrowsingContext::IsPopupAllowed() {
@@ -4579,10 +4629,10 @@ bool BrowsingContext::ShouldUpdateSessionHistory(uint32_t aLoadType) {
           (IsForceReloadType(aLoadType) && IsSubframe()));
 }
 
-nsresult BrowsingContext::CheckNavigationRateLimit(CallerType aCallerType) {
+bool BrowsingContext::CheckNavigationRateLimit(CallerType aCallerType) {
   // We only rate limit non system callers
   if (aCallerType == CallerType::System) {
-    return NS_OK;
+    return true;
   }
 
   // Fetch rate limiting preferences
@@ -4592,7 +4642,7 @@ nsresult BrowsingContext::CheckNavigationRateLimit(CallerType aCallerType) {
 
   // Disable throttling if either of the preferences is set to 0.
   if (limitCount == 0 || timeSpanSeconds == 0) {
-    return NS_OK;
+    return true;
   }
 
   TimeDuration throttleSpan = TimeDuration::FromSeconds(timeSpanSeconds);
@@ -4602,24 +4652,24 @@ nsresult BrowsingContext::CheckNavigationRateLimit(CallerType aCallerType) {
     // Initial call or timespan exceeded, reset counter and timespan.
     mNavigationRateLimitSpanStart = TimeStamp::Now();
     mNavigationRateLimitCount = 1;
-    return NS_OK;
+    return true;
   }
 
-  if (mNavigationRateLimitCount >= limitCount) {
+  if (NS_WARN_IF(mNavigationRateLimitCount >= limitCount)) {
     // Rate limit reached
-
     Document* doc = GetDocument();
     if (doc) {
       nsContentUtils::ReportToConsole(nsIScriptError::errorFlag, "DOM"_ns, doc,
                                       PropertiesFile::DOM_PROPERTIES,
-                                      "LocChangeFloodingPrevented");
+                                      "NavigationChangeFloodingPrevented");
     }
 
-    return NS_ERROR_DOM_SECURITY_ERR;
+    return false;
   }
 
   mNavigationRateLimitCount++;
-  return NS_OK;
+
+  return true;
 }
 
 void BrowsingContext::ResetNavigationRateLimit() {

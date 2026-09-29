@@ -334,6 +334,87 @@ def filter_out_shippable(task):
     return not task.attributes.get("shippable", False)
 
 
+def _restricts_tests(parameters):
+    """Whether try asked for a subset of each suite's tests."""
+    env = parameters["try_task_config"].get("env", {})
+    return "MOZHARNESS_TEST_PATHS" in env or "MOZHARNESS_TEST_TAG" in env
+
+
+def _chunk_number(label, base):
+    if not label.startswith(base + "-"):
+        return None
+    suffix = label[len(base) + 1 :]
+    return suffix if suffix.isnumeric() else None
+
+
+def _drop_redundant_chunks(full_task_graph, labels):
+    """Keep only the first chunk of the tasks whose manifests were not
+    restricted to what try asked for: the harness filters the whole suite down
+    for those, so every chunk of one runs the same tests."""
+    kept = []
+    for label in labels:
+        task = full_task_graph.tasks.get(label)
+        if task and task.attributes.get("test-manifests-restricted", False):
+            kept.append(label)
+        elif label.endswith("-1") or not label.rsplit("-", 1)[-1].isnumeric():
+            kept.append(label)
+    return kept
+
+
+def _renumbered_chunks(full_task_graph, labels, restricted):
+    """Map explicitly requested test labels that no longer exist onto the chunks
+    their task ends up with.
+
+    A task's chunk count is only known once the decision task has resolved it
+    from the manifest runtime data and from what try asked for, so a caller that
+    picked labels from a graph built with different counts can name a chunk that
+    doesn't exist. `mach try fuzzy` generates its task list with `taskgraph.fast`
+    set, which skips manifest loading and falls back to the hardcoded chunk
+    counts; `mach try coverage` builds an unrestricted graph; `mach try again`
+    replays the labels of an older push.
+
+    Such a label either names a chunk of a task that now has a different number
+    of them, or, when the graph it came from had the task down to a single
+    chunk, names the task without any chunk suffix at all.
+    """
+    recovered = []
+    for label in labels:
+        if label in full_task_graph.tasks:
+            recovered.append(label)
+            continue
+
+        # A numeric suffix means the label names a chunk of the task before it,
+        # anything else means the label is the whole (unchunked) task name.
+        base = label.rsplit("-", 1)[0]
+        if _chunk_number(label, base) is None:
+            base = label
+
+        chunks = [
+            t for t in full_task_graph.graph.nodes if _chunk_number(t, base) is not None
+        ] or [t for t in [base] if t in full_task_graph.graph.nodes]
+        # Only test tasks get renumbered, so anything else that happens to have a
+        # numeric suffix, like a toolchain version, is left to be reported as
+        # requested but missing.
+        chunks = [t for t in chunks if full_task_graph.tasks[t].kind in TEST_KINDS]
+        if not chunks:
+            recovered.append(label)
+            continue
+
+        # The chunks of a task that wasn't restricted to the request all run the
+        # same tests, so substituting them all would schedule identical jobs.
+        # Without a restriction each chunk runs its own share of the suite and
+        # they are all wanted.
+        if restricted:
+            chunks = _drop_redundant_chunks(full_task_graph, chunks)
+
+        logger.info(
+            f"{label} no longer exists, replacing it with the chunks the task "
+            f"was split into: {', '.join(sorted(chunks))}"
+        )
+        recovered.extend(chunks)
+    return recovered
+
+
 def _try_task_config(full_task_graph, parameters, graph_config):
     requested_tasks = parameters["try_task_config"]["tasks"]
     pattern_tasks = [x for x in requested_tasks if x.endswith("-*")]
@@ -357,19 +438,10 @@ def _try_task_config(full_task_graph, parameters, graph_config):
         else:
             missing.add(pattern)
 
-        if "MOZHARNESS_TEST_PATHS" in parameters["try_task_config"].get("env", {}):
-            matched_tasks = [
-                x
-                for x in matched_tasks
-                if x.endswith("-1") or not x.rsplit("-", 1)[-1].isnumeric()
-            ]
-
-        if "MOZHARNESS_TEST_TAG" in parameters["try_task_config"].get("env", {}):
-            matched_tasks = [
-                x
-                for x in matched_tasks
-                if x.endswith("-1") or not x.rsplit("-", 1)[-1].isnumeric()
-            ]
+    restricted = _restricts_tests(parameters)
+    if restricted:
+        matched_tasks = _drop_redundant_chunks(full_task_graph, matched_tasks)
+    tasks = _renumbered_chunks(full_task_graph, tasks, restricted)
 
     selected_tasks = set(tasks) | set(matched_tasks)
     missing.update(selected_tasks - set(full_task_graph.tasks))
@@ -447,6 +519,7 @@ def target_tasks_mozilla_central(full_task_graph, parameters, graph_config):
         build_platform = task.attributes.get("build_platform")
         build_type = task.attributes.get("build_type")
         shippable = task.attributes.get("shippable", False)
+        ccov = task.attributes.get("ccov", False)
 
         if not build_platform or not build_type:
             return True
@@ -456,11 +529,11 @@ def target_tasks_mozilla_central(full_task_graph, parameters, graph_config):
         # (which is to say, not shippable, asan, tsan, or any other opt build
         # with other properties). There's no positive test for this, so we have to
         # do it somewhat hackily. Android doesn't have variants other than shippable
-        # so it is pretty straightforward to check for. Other platforms have many
-        # variants, but none of the regular opt builds we're looking for have a "-"
-        # in their platform name, so this works (for now).
+        # and ccov so it is pretty straightforward to check for. Other platforms
+        # have many variants, but none of the regular opt builds we're looking for
+        # have a "-" in their platform name, so this works (for now).
         is_regular_opt = (
-            family == "android" and not shippable
+            family == "android" and not shippable and not ccov
         ) or "-" not in build_platform
 
         if build_type != "opt" or not is_regular_opt:
@@ -783,21 +856,6 @@ def target_tasks_custom_car_perf_testing(full_task_graph, parameters, graph_conf
                 # Bug 2008058 Linux CaR tp6 tests are broken
                 if "tp6" in try_name and "linux" in platform:
                     return False
-                # Bug 2038340: temporarily limit CaR benchmarks on Windows
-                # to sp3/js3/motionmark during PSU replacement
-                if "windows" in platform and "benchmark" in try_name:
-                    if not any(
-                        x in try_name
-                        for x in ["speedometer3", "jetstream3", "motionmark"]
-                    ):
-                        return False
-                # Bug 1928416
-                # For ARM coverage, this will only run on M2 machines at the moment.
-                if "jetstream2" in try_name:
-                    # Bug 1963732 - Disable js2 on 1500 mac for custom-car due to near perma
-                    if "m-car" in try_name and "1500" in platform:
-                        return False
-                    return True
                 return True
         elif accept_raptor_android_build(platform):
             if "browsertime" in try_name and "cstm-car-m" in try_name:
@@ -805,8 +863,6 @@ def target_tasks_custom_car_perf_testing(full_task_graph, parameters, graph_conf
                     return False
                 if "hw-s24" in platform and "speedometer3" not in try_name:
                     return False
-                if "jetstream2" in try_name:
-                    return True
                 if "jetstream3" in try_name:
                     return True
                 # Bug 1898514 - Avoid tp6m or non-essential tp6 jobs in cron on non-a55 platform
@@ -883,14 +939,6 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
                 if "chrome" in try_name:
                     if "tp6" in try_name and "essential" not in try_name:
                         return False
-                    # Bug 2038340: temporarily limit Chrome benchmarks on Windows
-                    # to sp3/js3/motionmark during PSU replacement
-                    if "windows" in platform and "benchmark" in try_name:
-                        if not any(
-                            x in try_name
-                            for x in ["speedometer3", "jetstream3", "motionmark"]
-                        ):
-                            return False
                     if "wasm-godot" in try_name:
                         return False
                     return True
@@ -904,17 +952,11 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
                 if "linux" in platform:
                     if "speedometer3" in try_name:
                         return True
-                # Bug 2038340: temporarily limit Firefox benchmarks on Windows
-                # to sp3/js3/motionmark during PSU replacement
-                if "windows" in platform and "benchmark" in try_name:
-                    if not any(
-                        x in try_name
-                        for x in ["speedometer3", "jetstream3", "motionmark"]
-                    ):
-                        return False
+                # Labels for this suite carry no "benchmark" token, so the
+                # check below cannot match them.
+                if "safari" in try_name and "video-playback-latency" in try_name:
+                    return True
                 if "safari" and "benchmark" in try_name:
-                    if "jetstream2" in try_name and "safari" in try_name:
-                        return False
                     # JetStream 3 fails with Safari 18.3 but not Safari-TP.
                     # See bug 1996277.
                     if (
@@ -969,8 +1011,6 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
                 # Don't run android CaR sp tests as we already have a cron for this.
                 if "m-car" in try_name:
                     return False
-                if "jetstream2" in try_name:
-                    return True
                 if "jetstream3" in try_name:
                     return True
                 if "fenix" in try_name:
@@ -1737,6 +1777,19 @@ def target_tasks_perftest_autoland(full_task_graph, parameters, graph_config):
             yield name
 
 
+APPLINK_PROFILING_LABELS = {
+    "perftest-android-hw-a55-aarch64-shippable-startup-fenix-newssite-applink-startup",
+}
+
+
+@register_target_task("perftest-applink-profiling")
+def target_tasks_perftest_applink_profiling(full_task_graph, parameters, graph_config):
+    """
+    Select the applink startup tasks and run them with profiling
+    """
+    return [name for name in full_task_graph.tasks if name in APPLINK_PROFILING_LABELS]
+
+
 @register_target_task("retrigger-perftests-autoland")
 def retrigger_perftests_autoland_commits(full_task_graph, parameters, graph_config):
     """
@@ -1745,8 +1798,7 @@ def retrigger_perftests_autoland_commits(full_task_graph, parameters, graph_conf
     - "perftest-android-hw-a55-aarch64-shippable-startup-fenix-cold-view-nav-start",
     - "perftest-android-hw-a55-aarch64-shippable-startup-fenix-homeview-startup",
     - "perftest-android-hw-a55-aarch64-shippable-startup-fenix-newssite-applink-startup",
-    - "perftest-android-hw-a55-aarch64-shippable-startup-fenix-shopify-applink-startup",
-    - "perftest-android-hw-a55-aarch64-shippable-startup-fenix-tab-restore-shopify"
+    - "perftest-android-hw-a55-aarch64-shippable-startup-fenix-tab-restore-newssite"
     - "test-windows11-64-24h2-shippable/opt-browsertime-benchmark-firefox-speedometer3",
     """
     retrigger_count = 4

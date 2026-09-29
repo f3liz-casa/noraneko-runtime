@@ -782,6 +782,37 @@ void RTCRtpTransceiver::NegotiatedDetailsToAudioCodecConfigs(
   }
 }
 
+/*static*/
+void RTCRtpTransceiver::EarlyRecvCodecsToAudioCodecConfigs(
+    JsepTrack& aTrack, std::vector<AudioCodecConfig>* aConfigs) {
+  Maybe<AudioCodecConfig> telephoneEvent;
+
+  aTrack.ForEachEarlyRecvCodec(
+      [&](const UniquePtr<JsepCodecDescription>& codec) {
+        if (!codec->mEnabled || codec->Type() != SdpMediaSection::kAudio ||
+            !codec->DirectionSupported(sdp::kRecv)) {
+          return;
+        }
+        Maybe<AudioCodecConfig> config;
+        const JsepAudioCodecDescription& audio =
+            static_cast<const JsepAudioCodecDescription&>(*codec);
+        JsepCodecDescToAudioCodecConfig(audio, &config);
+        if (!config) {
+          return;
+        }
+        if (config->mName == "telephone-event") {
+          telephoneEvent = std::move(config);
+        } else {
+          aConfigs->push_back(std::move(*config));
+        }
+      });
+
+  // Put telephone event at the back, because webrtc.org crashes if we don't
+  if (telephoneEvent) {
+    aConfigs->push_back(std::move(*telephoneEvent));
+  }
+}
+
 auto RTCRtpTransceiver::GetActivePayloadTypes() const
     -> RefPtr<ActivePayloadTypesPromise> {
   if (!mConduit) {
@@ -903,6 +934,25 @@ void RTCRtpTransceiver::NegotiatedDetailsToVideoCodecConfigs(
   }
 }
 
+/*static*/
+void RTCRtpTransceiver::EarlyRecvCodecsToVideoCodecConfigs(
+    JsepTrack& aTrack, std::vector<VideoCodecConfig>* aConfigs) {
+  aTrack.ForEachEarlyRecvCodec(
+      [&](const UniquePtr<JsepCodecDescription>& codec) {
+        if (!codec->mEnabled || codec->Type() != SdpMediaSection::kVideo ||
+            !codec->DirectionSupported(sdp::kRecv)) {
+          return;
+        }
+        const JsepVideoCodecDescription& video =
+            static_cast<const JsepVideoCodecDescription&>(*codec);
+
+        JsepCodecDescToVideoCodecConfig(video).apply(
+            [&](VideoCodecConfig config) {
+              aConfigs->push_back(std::move(config));
+            });
+      });
+}
+
 /* static */
 void RTCRtpTransceiver::ToDomRtpCodec(const JsepCodecDescription& aCodec,
                                       RTCRtpCodec* aDomCodec) {
@@ -980,8 +1030,7 @@ void RTCRtpTransceiver::ToDomHeaderExtensions(
   aDetails.ForEachRTPHeaderExtension(
       [&](const SdpExtmapAttributeList::Extmap& aExtmap) {
         RTCRtpHeaderExtensionParameters ext;
-        ext.mUri.Construct(
-            NS_ConvertUTF8toUTF16(aExtmap.extensionname.c_str()));
+        ext.mUri.Construct(NS_ConvertUTF8toUTF16(aExtmap.extensionname));
         ext.mId.Construct(aExtmap.entry);
         // We do not negotiate RFC 6904 encrypted header extensions. When we do,
         // this should report encrypted=true with the inner (unwrapped) URI.
@@ -1009,7 +1058,6 @@ void RTCRtpTransceiver::SetCodecPreferences(
   nsTArray<RTCRtpCodec> aCodecsFiltered;
   OverrideRtxPreference rtxOverride =
       OverrideRtxPreference::OverrideWithDisabled;
-  ;
   bool useableCodecs = false;
 
   // kind = transciever's kind.
@@ -1076,13 +1124,17 @@ void RTCRtpTransceiver::SetCodecPreferences(
   // If we passed an empty list, we should restore the default list, including
   // RTX
 
-  mPreferredCodecs.clear();
-  std::vector<UniquePtr<JsepCodecDescription>> defaultCodecs;
+  mPreferredCodecs.Clear();
+  AutoTArray<UniquePtr<JsepCodecDescription>, 16> defaultCodecs;
 
   if (kind.EqualsLiteral("video")) {
-    PeerConnectionImpl::GetDefaultVideoCodecs(defaultCodecs, rtxOverride);
+    EnumerateDefaultVideoCodecs(
+        &defaultCodecs,
+        DefaultCodecPreferencesWithRtxOverride(mPc->mPrefs, rtxOverride));
   } else if (kind.EqualsLiteral("audio")) {
-    PeerConnectionImpl::GetDefaultAudioCodecs(defaultCodecs);
+    EnumerateDefaultAudioCodecs(
+        &defaultCodecs,
+        DefaultCodecPreferencesWithRtxOverride(mPc->mPrefs, rtxOverride));
   }
 
   if (!aCodecsFiltered.IsEmpty()) {
@@ -1122,13 +1174,13 @@ void RTCRtpTransceiver::SetCodecPreferences(
         if ((mimeType.Find(defaultCodec->mName) != kNotFound) &&
             (inputCodec.mClockRate == defaultCodec->mClock) && channelsMatch &&
             sdpFmtpLinesMatch) {
-          mPreferredCodecs.emplace_back(defaultCodec->Clone());
+          mPreferredCodecs.EmplaceBack(defaultCodec->Clone());
           break;
         }
       }
     }
   } else {
-    mPreferredCodecs.swap(defaultCodecs);
+    mPreferredCodecs = std::move(defaultCodecs);
     mPreferredCodecsInUse = false;
   }
 }

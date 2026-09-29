@@ -8,7 +8,6 @@
 #ifdef DEBUG
 #  include "js/friend/DumpFunctions.h"  // js::DumpObject, js::DumpValue
 #endif
-#include "js/friend/UsageStatistics.h"  // JSUseCounter
 #include "js/PropertySpec.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
@@ -28,15 +27,10 @@ AbstractGeneratorObject* AbstractGeneratorObject::create(
     JSContext* cx, HandleFunction callee, HandleScript script,
     HandleObject environmentChain, Handle<ArgumentsObject*> argsObject) {
   Rooted<AbstractGeneratorObject*> genObj(cx);
-  // TODO(Bug 2039389): Remove generator use counters
   if (!callee->isAsync()) {
     genObj = GeneratorObject::create(cx, callee);
-    cx->runtime()->setUseCounter(cx->global(),
-                                 JSUseCounter::GENERATOR_FUNCTION_CREATED);
   } else if (callee->isGenerator()) {
     genObj = AsyncGeneratorObject::create(cx, callee);
-    cx->runtime()->setUseCounter(
-        cx->global(), JSUseCounter::ASYNC_GENERATOR_FUNCTION_CREATED);
   } else {
     genObj = AsyncFunctionGeneratorObject::create(cx, callee);
   }
@@ -216,20 +210,32 @@ static AbstractGeneratorObject* GetGeneratorObjectForCall(JSContext* cx,
              : nullptr;
 }
 
+AbstractGeneratorObject* js::GetGeneratorObjectForModule(ModuleObject* module) {
+  ModuleEnvironmentObject* moduleEnv = module->environment();
+  if (!moduleEnv) {
+    return nullptr;
+  }
+
+  PropertyName* name =
+      module->runtimeFromMainThread()->commonNames->dot_generator_;
+  mozilla::Maybe<PropertyInfo> prop = moduleEnv->lookupPure(name);
+  if (prop.isNothing()) {
+    return nullptr;
+  }
+
+  Value genValue = moduleEnv->getSlot(prop->slot());
+  return genValue.isObject()
+             ? &genValue.toObject().as<AbstractGeneratorObject>()
+             : nullptr;
+}
+
 AbstractGeneratorObject* js::GetGeneratorObjectForFrame(
     JSContext* cx, AbstractFramePtr frame) {
   cx->check(frame);
   MOZ_ASSERT(frame.isGeneratorFrame());
 
   if (frame.isModuleFrame()) {
-    ModuleEnvironmentObject* moduleEnv =
-        frame.script()->module()->environment();
-    mozilla::Maybe<PropertyInfo> prop =
-        moduleEnv->lookup(cx, cx->names().dot_generator_);
-    Value genValue = moduleEnv->getSlot(prop->slot());
-    return genValue.isObject()
-               ? &genValue.toObject().as<AbstractGeneratorObject>()
-               : nullptr;
+    return GetGeneratorObjectForModule(frame.script()->module());
   }
   if (!frame.hasInitialEnvironment()) {
     return nullptr;
@@ -242,25 +248,6 @@ AbstractGeneratorObject* js::GetGeneratorObjectForEnvironment(
     JSContext* cx, HandleObject env) {
   auto* call = CallObject::find(env);
   return call ? GetGeneratorObjectForCall(cx, *call) : nullptr;
-}
-
-bool js::GeneratorThrowOrReturn(JSContext* cx, AbstractFramePtr frame,
-                                Handle<AbstractGeneratorObject*> genObj,
-                                HandleValue arg,
-                                GeneratorResumeKind resumeKind) {
-  MOZ_ASSERT(genObj->isRunning());
-  if (resumeKind == GeneratorResumeKind::Throw) {
-    cx->setPendingException(arg, ShouldCaptureStack::Maybe);
-  } else {
-    MOZ_ASSERT(resumeKind == GeneratorResumeKind::Return);
-
-    MOZ_ASSERT_IF(genObj->is<GeneratorObject>(), arg.isObject());
-    frame.setReturnValue(arg);
-
-    RootedValue closing(cx, MagicValue(JS_GENERATOR_CLOSING));
-    cx->setPendingException(closing, nullptr);
-  }
-  return false;
 }
 
 void AbstractGeneratorObject::resume(JSContext* cx,
@@ -298,11 +285,10 @@ void AbstractGeneratorObject::resume(JSContext* cx,
   uint32_t offset = script->resumeOffsets()[resumeIndex];
   activation.regs().pc = script->offsetToPC(offset);
 
-  // Push arg, generator, resumeKind Values on the generator's stack.
-  activation.regs().sp += 3;
+  // Push arg and resumeKind Values on the generator's stack.
+  activation.regs().sp += 2;
   MOZ_ASSERT(activation.regs().spForStackDepth(activation.regs().stackDepth()));
-  activation.regs().sp[-3] = arg;
-  activation.regs().sp[-2] = ObjectValue(*genObj);
+  activation.regs().sp[-2] = arg;
   activation.regs().sp[-1] = Int32Value(int32_t(resumeKind));
 }
 
@@ -454,6 +440,13 @@ void AbstractGeneratorObject::setUnaliasedLocal(uint32_t slot,
 }
 
 void AbstractGeneratorObject::setClosed(JSContext* cx) {
+  // If the top-level await generator is suspended in
+  // ModuleObject::onTopLevelEvaluationFinished, clear the SCRIPT_SLOT since
+  // the generator is closed.
+  if (isModuleGenerator() && module().status() == ModuleStatus::Evaluated) {
+    module().setReservedSlotTyped(ModuleObject::SCRIPT_SLOT, UndefinedValue());
+  }
+
   setFixedSlotTyped(CALLEE_OR_MODULE_SLOT, NullValue());
   setFixedSlotTyped(ENV_CHAIN_SLOT, NullValue());
   setFixedSlotTyped(ARGS_OBJ_SLOT, NullValue());

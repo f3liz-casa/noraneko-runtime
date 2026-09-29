@@ -6,10 +6,10 @@ package mozilla.components.feature.search.storage
 
 import android.content.Context
 import android.content.res.AssetManager
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.GlobalScope
+import java.util.Locale
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import mozilla.components.browser.state.search.RegionState
 import mozilla.components.browser.state.search.SearchEngine
@@ -21,81 +21,75 @@ import mozilla.components.support.ktx.android.org.json.toList
 import mozilla.components.support.ktx.android.org.json.tryGetString
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Locale
-import kotlin.coroutines.CoroutineContext
 
 private val logger = Logger("BundledSearchEnginesStorage")
 
-/**
- * A storage implementation for reading bundled [SearchEngine]s from the app's assets.
- */
-internal class BundledSearchEnginesStorage(
-    private val context: Context,
-) : SearchMiddleware.BundleStorage {
-    /**
-     * Load the [SearchMiddleware.BundleStorage.Bundle] for the given [region] and [locale].
-     */
+/** A storage implementation for reading bundled [SearchEngine]s from the app's assets. */
+internal class BundledSearchEnginesStorage(private val context: Context) : SearchMiddleware.BundleStorage {
+    /** Load the [SearchMiddleware.BundleStorage.Bundle] for the given [region] and [locale]. */
     override suspend fun load(
         region: RegionState,
         locale: Locale,
         distribution: String?,
         searchExtraParams: SearchExtraParams?,
         coroutineContext: CoroutineContext,
-    ): SearchMiddleware.BundleStorage.Bundle = withContext(coroutineContext) {
-        val localizedConfiguration = loadAndFilterConfiguration(context, region, locale, distribution)
-        val searchEngineIdentifiers = localizedConfiguration.visibleSearchEngines
+    ): SearchMiddleware.BundleStorage.Bundle =
+        withContext(coroutineContext) {
+            val localizedConfiguration = loadAndFilterConfiguration(context, region, locale, distribution)
+            val searchEngineIdentifiers = localizedConfiguration.visibleSearchEngines
 
-        val searchEngines = loadSearchEnginesFromList(
-            context = context,
-            searchEngineIdentifiers = searchEngineIdentifiers.distinct(),
-            type = SearchEngine.Type.BUNDLED,
-            searchExtraParams = searchExtraParams,
-            coroutineContext = coroutineContext,
-        )
+            val searchEngines =
+                loadSearchEnginesFromList(
+                    context = context,
+                    searchEngineIdentifiers = searchEngineIdentifiers.distinct(),
+                    type = SearchEngine.Type.BUNDLED,
+                    searchExtraParams = searchExtraParams,
+                )
 
-        // Reorder the list of search engines according to the configuration.
-        // Note: we're using the name of the search engine, not the id, so we can only do this
-        // after we've loaded the search engine from the XML
-        val searchOrder = localizedConfiguration.searchOrder
-        val orderedList = searchOrder
-            .map { name ->
-                searchEngines.filter { it.name == name }
-            }
-            .flatten()
+            // Reorder the list of search engines according to the configuration.
+            // Note: we're using the name of the search engine, not the id, so we can only do this
+            // after we've loaded the search engine from the XML
+            val searchOrder = localizedConfiguration.searchOrder
+            val orderedList =
+                searchOrder
+                    .map { name ->
+                        searchEngines.filter { it.name == name }
+                    }
+                    .flatten()
 
-        val unorderedRest = searchEngines
-            .filter {
+            val unorderedRest = searchEngines.filter {
                 !searchOrder.contains(it.name)
             }
 
-        val defaultEngine = localizedConfiguration.searchDefault?.let { name ->
-            searchEngines.find { it.name == name }
-        } ?: throw IllegalStateException("No default engine for configuration: locale=$locale, region=$region")
+            val defaultEngine =
+                localizedConfiguration.searchDefault?.let { name ->
+                    searchEngines.find { it.name == name }
+                } ?: throw IllegalStateException("No default engine for configuration: locale=$locale, region=$region")
 
-        SearchMiddleware.BundleStorage.Bundle(
-            list = orderedList + unorderedRest,
-            defaultSearchEngineId = defaultEngine.id,
-            searchEnvironmentId = null,
-        )
-    }
+            SearchMiddleware.BundleStorage.Bundle(
+                list = orderedList + unorderedRest,
+                defaultSearchEngineId = defaultEngine.id,
+                searchEnvironmentId = null,
+            )
+        }
 
     override suspend fun load(
         ids: List<String>,
         searchExtraParams: SearchExtraParams?,
         coroutineContext: CoroutineContext,
-    ): List<SearchEngine> = withContext(coroutineContext) {
-        if (ids.isEmpty()) {
-            emptyList()
-        } else {
-            loadSearchEnginesFromList(
-                context = context,
-                searchEngineIdentifiers = ids.distinct(),
-                type = SearchEngine.Type.BUNDLED_ADDITIONAL,
-                searchExtraParams = searchExtraParams,
-                coroutineContext = coroutineContext,
-            )
+    ): List<SearchEngine> =
+        withContext(coroutineContext) {
+            if (ids.isEmpty()) {
+                emptyList()
+            } else {
+                loadSearchEnginesFromList(
+                    context = context,
+                    searchEngineIdentifiers = ids.distinct(),
+                    type = SearchEngine.Type.BUNDLED_ADDITIONAL,
+                    searchExtraParams = searchExtraParams,
+                )
+            }
         }
-    }
 }
 
 private data class SearchEngineListConfiguration(
@@ -113,8 +107,7 @@ private fun loadAndFilterConfiguration(
     val config = context.assets.readJSONObject("search/list.json")
 
     val configBlocks = pickConfigurationBlocks(locale, config)
-    val jsonSearchEngineIdentifiers =
-        getSearchEngineIdentifiersFromBlock(region, locale, distribution, configBlocks)
+    val jsonSearchEngineIdentifiers = getSearchEngineIdentifiersFromBlock(region, locale, distribution, configBlocks)
 
     val searchOrder = getSearchOrderFromBlock(region, configBlocks)
     val searchDefault = getSearchDefaultFromBlock(region, configBlocks)
@@ -132,18 +125,17 @@ private fun pickConfigurationBlocks(
 ): Array<JSONObject> {
     val localesConfig = config.getJSONObject("locales")
 
-    val localizedConfig = when {
-        // First try (Locale): locales/xx_XX/
-        localesConfig.has(locale.languageTag) ->
-            localesConfig.getJSONObject(locale.languageTag)
+    val localizedConfig =
+        when {
+            // First try (Locale): locales/xx_XX/
+            localesConfig.has(locale.languageTag) -> localesConfig.getJSONObject(locale.languageTag)
 
-        // Second try (Language): locales/xx/
-        localesConfig.has(locale.language) ->
-            localesConfig.getJSONObject(locale.language)
+            // Second try (Language): locales/xx/
+            localesConfig.has(locale.language) -> localesConfig.getJSONObject(locale.language)
 
-        // Give up, and fallback to defaults
-        else -> null
-    }
+            // Give up, and fallback to defaults
+            else -> null
+        }
 
     return localizedConfig?.let {
         arrayOf(it, config)
@@ -165,9 +157,10 @@ private fun getSearchEngineIdentifiersFromBlock(
 private fun getSearchDefaultFromBlock(
     region: RegionState,
     configBlocks: Array<JSONObject>,
-): String? = getValueFromBlock(region, configBlocks) {
-    it.tryGetString("searchDefault")
-}
+): String? =
+    getValueFromBlock(region, configBlocks) {
+        it.tryGetString("searchDefault")
+    }
 
 private fun getSearchOrderFromBlock(
     region: RegionState,
@@ -178,18 +171,17 @@ private fun getArrayFromBlock(
     region: RegionState,
     key: String,
     blocks: Array<JSONObject>,
-): JSONArray? = getValueFromBlock(region, blocks) {
-    it.optJSONArray(key)
-}
+): JSONArray? =
+    getValueFromBlock(region, blocks) {
+        it.optJSONArray(key)
+    }
 
 /**
- * This looks for a JSONObject in the config blocks it is passed that is able to be transformed
- * into a value. It tries the permutations of locale and region from most specific to least
- * specific.
+ * This looks for a JSONObject in the config blocks it is passed that is able to be transformed into a value. It tries
+ * the permutations of locale and region from most specific to least specific.
  *
- * This has to be done on a value basis, not a configBlock basis, as the configuration for a
- * given locale/region is not grouped into one object, but spread across the json file,
- * according to these rules.
+ * This has to be done on a value basis, not a configBlock basis, as the configuration for a given locale/region is not
+ * grouped into one object, but spread across the json file, according to these rules.
  */
 private fun <T : Any> getValueFromBlock(
     region: RegionState,
@@ -213,11 +205,12 @@ private fun applyOverridesIfNeeded(
 ): List<String> {
     val overrides = config.getJSONObject("regionOverrides")
     val searchEngineIdentifiers = mutableListOf<String>()
-    val regionOverrides = if (overrides.has(region.home)) {
-        overrides.getJSONObject(region.home)
-    } else {
-        null
-    }
+    val regionOverrides =
+        if (overrides.has(region.home)) {
+            overrides.getJSONObject(region.home)
+        } else {
+            null
+        }
 
     for (i in 0 until jsonSearchEngineIdentifiers.length()) {
         var identifier = jsonSearchEngineIdentifiers.getString(i)
@@ -230,28 +223,22 @@ private fun applyOverridesIfNeeded(
     return searchEngineIdentifiers
 }
 
-@OptIn(DelicateCoroutinesApi::class)
 private suspend fun loadSearchEnginesFromList(
     context: Context,
     searchEngineIdentifiers: List<String>,
     type: SearchEngine.Type,
     searchExtraParams: SearchExtraParams?,
-    coroutineContext: CoroutineContext,
 ): List<SearchEngine> {
     val assets = context.assets
     val reader = SearchEngineReader(context, type, searchExtraParams)
 
-    val deferredSearchEngines = mutableListOf<Deferred<SearchEngine?>>()
-
-    searchEngineIdentifiers.forEach { identifier ->
-        deferredSearchEngines.add(
-            GlobalScope.async(coroutineContext) {
-                loadSearchEngine(assets, reader, identifier)
-            },
-        )
+    return coroutineScope {
+        searchEngineIdentifiers
+            .map { identifier ->
+                async { loadSearchEngine(assets, reader, identifier) }
+            }
+            .mapNotNull { it.await() }
     }
-
-    return deferredSearchEngines.mapNotNull { it.await() }
 }
 
 @Suppress("TooGenericExceptionCaught")
@@ -259,21 +246,22 @@ private fun loadSearchEngine(
     assets: AssetManager,
     reader: SearchEngineReader,
     identifier: String,
-): SearchEngine? = try {
-    assets.open("searchplugins/$identifier.xml").use { stream ->
-        reader.loadStream(identifier, stream)
-    }
-} catch (e: Exception) {
-    // Handling all exceptions here (instead of just IOExceptions) as we're
-    // seeing crashes we can't explain currently. Letting the app launch
-    // will eventually help us understand the root cause:
-    // https://github.com/mozilla-mobile/android-components/issues/12304
+): SearchEngine? =
+    try {
+        assets.open("searchplugins/$identifier.xml").use { stream ->
+            reader.loadStream(identifier, stream)
+        }
+    } catch (e: Exception) {
+        // Handling all exceptions here (instead of just IOExceptions) as we're
+        // seeing crashes we can't explain currently. Letting the app launch
+        // will eventually help us understand the root cause:
+        // https://github.com/mozilla-mobile/android-components/issues/12304
 
-    // We should also consider logging these errors to Sentry:
-    // https://github.com/mozilla-mobile/android-components/issues/12313
-    logger.error("Could not load additional search engine with ID $identifier", e)
-    null
-}
+        // We should also consider logging these errors to Sentry:
+        // https://github.com/mozilla-mobile/android-components/issues/12313
+        logger.error("Could not load additional search engine with ID $identifier", e)
+        null
+    }
 
 private val Locale.languageTag: String
     get() = "$language-$country"

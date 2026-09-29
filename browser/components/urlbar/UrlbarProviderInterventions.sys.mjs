@@ -422,11 +422,12 @@ export class UrlbarProviderInterventions extends UrlbarProvider {
     },
   });
 
-  constructor() {
-    super();
-    // The tip we should currently show.
-    this.currentTip = UrlbarShared.INTERVENTION_TIP_TYPE.NONE;
-  }
+  /**
+   * The tip we should currently show.
+   *
+   * @type {Values<typeof UrlbarShared.INTERVENTION_TIP_TYPE>}
+   */
+  currentTip = UrlbarShared.INTERVENTION_TIP_TYPE.NONE;
 
   /**
    * @returns {Values<typeof UrlbarShared.PROVIDER_TYPE>}
@@ -658,6 +659,11 @@ export class UrlbarProviderInterventions extends UrlbarProvider {
     }
   }
 
+  /**
+   * @param {UrlbarQueryContext} queryContext
+   * @param {UrlbarParentController} controller
+   * @param {object} details
+   */
   onEngagement(queryContext, controller, details) {
     // `selType` is "tip" when the tip's main button is picked. Ignore clicks on
     // the help command ("help"), which is handled by UrlbarInput since we

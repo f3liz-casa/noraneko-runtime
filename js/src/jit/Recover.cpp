@@ -22,6 +22,7 @@
 #include "js/ScalarType.h"
 #include "util/DifferentialTesting.h"
 #include "vm/BigIntType.h"
+#include "vm/BoundFunctionObject.h"
 #include "vm/EqualityOperations.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
@@ -1959,6 +1960,21 @@ bool RToFloat16::recover(JSContext* cx, SnapshotIterator& iter) const {
   return true;
 }
 
+bool MUnsignedToDouble::writeRecoverData(CompactBufferWriter& writer) const {
+  MOZ_ASSERT(canRecoverOnBailout());
+  writer.writeUnsigned(uint32_t(RInstruction::Recover_UnsignedToDouble));
+  return true;
+}
+
+RUnsignedToDouble::RUnsignedToDouble(CompactBufferReader& reader) {}
+
+bool RUnsignedToDouble::recover(JSContext* cx, SnapshotIterator& iter) const {
+  double num = iter.readNumber();
+
+  iter.storeInstructionResult(NumberValue(JS::ToUint32(num)));
+  return true;
+}
+
 bool MTruncateToInt32::writeRecoverData(CompactBufferWriter& writer) const {
   MOZ_ASSERT(canRecoverOnBailout());
   writer.writeUnsigned(uint32_t(RInstruction::Recover_TruncateToInt32));
@@ -2185,6 +2201,28 @@ bool RNewDateObject::recover(JSContext* cx, SnapshotIterator& iter) const {
   MOZ_ASSERT(utcTime.isNumber());
 
   auto* resultObject = jit::NewDateObject(cx, utcTime.toNumber());
+  if (!resultObject) {
+    return false;
+  }
+
+  iter.storeInstructionResult(ObjectValue(*resultObject));
+  return true;
+}
+
+bool MNewBoundFunction::writeRecoverData(CompactBufferWriter& writer) const {
+  MOZ_ASSERT(canRecoverOnBailout());
+  writer.writeUnsigned(uint32_t(RInstruction::Recover_NewBoundFunction));
+  return true;
+}
+
+RNewBoundFunction::RNewBoundFunction(CompactBufferReader& reader) {}
+
+bool RNewBoundFunction::recover(JSContext* cx, SnapshotIterator& iter) const {
+  Rooted<BoundFunctionObject*> templateObj(
+      cx, &iter.readObject()->as<BoundFunctionObject>());
+
+  JSObject* resultObject =
+      BoundFunctionObject::createWithTemplate(cx, templateObj);
   if (!resultObject) {
     return false;
   }

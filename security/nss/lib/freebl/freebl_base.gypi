@@ -30,11 +30,9 @@
     'freeblver.c',
     'hmacct.c',
     'jpake.c',
-    'kyber.c',
     'ldvector.c',
     'md2.c',
     'md5.c',
-    'ml_dsa.c',
     'mpi/mp_gf2m.c',
     'mpi/mpcpucache.c',
     'mpi/mpi.c',
@@ -52,11 +50,6 @@
     'tlsprfalg.c',
     'secmpi.c',
     'verified/Hacl_Hash_SHA3.c',
-    'verified/libcrux_sha3_portable.c',
-    'verified/libcrux_mlkem768_portable.c',
-    'verified/libcrux_mlkem1024_portable.c',
-    'verified/libcrux_mlkem_portable.c',
-    'verified/libcrux_core.c',
     'verified/Hacl_P256.c',
     'verified/Hacl_P384.c',
     'verified/Hacl_P521.c',
@@ -64,12 +57,6 @@
     'shake.c',
     'verified/Hacl_Curve25519_51.c',
     'verified/Hacl_Ed25519.c',
-  ],
-  'defines': [
-    # For kyber-pqcrystals-ref.c. If we ever decide to support Kyber512 or
-    # Kyber1024, we'll need to build separate static libraries with different
-    # values of KYBER_K.
-    'KYBER_K=3',
   ],
   'conditions': [
     [ 'OS=="linux" or OS=="android"', {
@@ -157,11 +144,6 @@
     [ 'disable_deprecated_rc2==0', {
       'sources': [
         'deprecated/alg2268.c',
-      ],
-    }],
-    [ 'disable_kyber==0', {
-      'sources': [
-        'kyber-pqcrystals-ref.c',
       ],
     }],
     [ 'fuzz==1', {

@@ -1986,12 +1986,6 @@ nsresult HttpBaseChannel::SetReferrerInfoInternal(
     return NS_ERROR_NOT_INITIALIZED;
   }
 
-  if (aClone) {
-    // Record the telemetry once we set the referrer info to the channel
-    // successfully.
-    referrerInfo->RecordTelemetry(this);
-  }
-
   if (aCompute) {
     rv = referrerInfo->ComputeReferrer(this);
     if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -3420,12 +3414,6 @@ bool HttpBaseChannel::ShouldBlockOpaqueResponse() const {
     return false;
   }
 
-  // Ignore the request from object or embed elements
-  if (mLoadInfo->GetIsFromObjectOrEmbed()) {
-    LOGORB("No block: Request From <object> or <embed>");
-    return false;
-  }
-
   // Exclude no_cors System XHR
   if (extContentPolicyType == ExtContentPolicy::TYPE_XMLHTTPREQUEST) {
     if (securityMode ==
@@ -3448,13 +3436,6 @@ bool HttpBaseChannel::ShouldBlockOpaqueResponse() const {
   uint32_t httpsOnlyStatus = mLoadInfo->GetHttpsOnlyStatus();
   if (httpsOnlyStatus & nsILoadInfo::HTTPS_ONLY_BYPASS_ORB) {
     LOGORB("No block: HTTPS_ONLY_BYPASS_ORB");
-    return false;
-  }
-
-  bool isInDevToolsContext;
-  mLoadInfo->GetIsInDevToolsContext(&isInDevToolsContext);
-  if (isInDevToolsContext) {
-    LOGORB("No block: Request created by devtools");
     return false;
   }
 
@@ -3772,8 +3753,8 @@ void HttpBaseChannel::SetChannelBlockedByOpaqueResponse() {
   }
 }
 
-NS_IMETHODIMP
-HttpBaseChannel::SetCookieHeaders(const nsTArray<nsCString>& aCookieHeaders) {
+nsresult HttpBaseChannel::SetCookieHeaders(
+    const nsTArray<nsCString>& aCookieHeaders) {
   if (mLoadFlags & LOAD_ANONYMOUS) return NS_OK;
 
   // The loadGroup of the channel in the parent process could be null in the

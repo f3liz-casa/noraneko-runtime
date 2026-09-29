@@ -629,7 +629,7 @@ static inline wr::WrExternalImage RawDataToWrExternalImage(const uint8_t* aBuff,
 }
 
 static inline wr::WrExternalImage NativeTextureToWrExternalImage(
-    uint32_t aHandle, float u0, float v0, float u1, float v1) {
+    uint64_t aHandle, float u0, float v0, float u1, float v1) {
   return wr::WrExternalImage{wr::WrExternalImageType::NativeTexture,
                              aHandle,
                              u0,
@@ -801,7 +801,7 @@ struct BuiltDisplayList {
 struct WrClipChainId {
   uint64_t id;
 
-  bool operator==(const WrClipChainId& other) const { return id == other.id; }
+  bool operator==(const WrClipChainId& other) const = default;
 
   static WrClipChainId Empty() {
     WrClipChainId id = {0};

@@ -74,6 +74,7 @@ already_AddRefed<FOG> FOG::GetSingleton() {
   MOZ_LOG(sLog, LogLevel::Debug, ("FOG::GetSingleton()"));
 
   gFOG = new FOG();
+  gFOG->mIsShutdown = false;
   gFOG->InitMemoryReporter();
 
   if (XRE_IsParentProcess()) {
@@ -124,6 +125,10 @@ already_AddRefed<FOG> FOG::GetSingleton() {
 void FOG::Shutdown() {
   MOZ_ASSERT(XRE_IsParentProcess());
 
+  if (mIsShutdown) {
+    return;
+  }
+
   UnregisterWeakMemoryReporter(this);
   glean::impl::fog_shutdown();
 }
@@ -146,14 +151,16 @@ FOG::InitializeFOG(const nsACString& aDataPathOverride,
                    const bool aDisableInternalPings) {
   MOZ_ASSERT(XRE_IsParentProcess());
   gInitializeCalled = true;
-  RunOnShutdown(
-      [&] {
-        if (Preferences::GetBool("telemetry.glean.internal.finalInactive",
-                                 false)) {
-          glean::impl::fog_internal_glean_handle_client_inactive();
-        }
-      },
-      ShutdownPhase::AppShutdownConfirmed);
+  if (!AppShutdown::IsInOrBeyond(ShutdownPhase::AppShutdownConfirmed)) {
+    RunOnShutdown(
+        [&] {
+          if (Preferences::GetBool("telemetry.glean.internal.finalInactive",
+                                   false)) {
+            glean::impl::fog_internal_glean_handle_client_inactive();
+          }
+        },
+        ShutdownPhase::AppShutdownConfirmed);
+  }
 
   nsresult rv = glean::impl::fog_init(&aDataPathOverride, &aAppIdOverride,
                                       aDisableInternalPings);
@@ -450,7 +457,23 @@ FOG::TestResetFOG(const nsACString& aDataPathOverride,
     ApplyInterestingServerKnobs();
   }
 #endif
+  mIsShutdown = false;
   return rv;
+}
+
+NS_IMETHODIMP
+FOG::TestShutdownFOG() {
+  MOZ_ASSERT(XRE_IsParentProcess());
+
+  if (mIsShutdown) {
+    return NS_OK;
+  }
+
+  mIsShutdown = true;
+
+  PROFILER_MARKER_UNTYPED("fog.testShutdownFOG", TEST);
+  glean::impl::fog_test_shutdown();
+  return NS_OK;
 }
 
 NS_IMETHODIMP

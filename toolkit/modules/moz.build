@@ -10,6 +10,9 @@ with Files("**"):
 with Files("docs/**"):
     BUG_COMPONENT = ("Toolkit", "Async Tooling")
 
+with Files("launchonlogin/**"):
+    BUG_COMPONENT = ("Toolkit", "General")
+
 with Files("subprocess/**"):
     BUG_COMPONENT = ("Toolkit", "Async Tooling")
 
@@ -124,9 +127,6 @@ with Files("SubDialog.sys.mjs"):
 with Files("UpdateUtils.sys.mjs"):
     BUG_COMPONENT = ("Toolkit", "Application Update")
 
-with Files("WindowsLaunchOnLogin.sys.mjs"):
-    BUG_COMPONENT = ("Toolkit", "General")
-
 with Files("WindowsRegistry.sys.mjs"):
     BUG_COMPONENT = ("Toolkit", "General")
 
@@ -204,7 +204,6 @@ EXTRA_JS_MODULES += [
     "RemotePageAccessManager.sys.mjs",
     "ResetProfile.sys.mjs",
     "RustSharedRemoteSettingsService.sys.mjs",
-    "ScheduledTask.sys.mjs",
     "SelectionUtils.sys.mjs",
     "ServiceRequest.sys.mjs",
     "ShortcutUtils.sys.mjs",
@@ -213,6 +212,8 @@ EXTRA_JS_MODULES += [
     "Timer.sys.mjs",
     "Troubleshoot.sys.mjs",
     "UpdateUtils.sys.mjs",
+    "URLKeywordAnalyzer.sys.mjs",
+    "URLKeywordStopWords.sys.mjs",
     "UrlUtils.sys.mjs",
     "WebChannel.sys.mjs",
 ]
@@ -266,9 +267,13 @@ if "Android" != CONFIG["OS_TARGET"]:
         "GMPInstallManager.sys.mjs",
         "GMPUtils.sys.mjs",
         "LightweightThemeConsumer.sys.mjs",
+        "ScheduledTask.sys.mjs",
     ]
-
+    TESTING_JS_MODULES += [
+        "tests/modules/SystemDelay.sys.mjs",
+    ]
     DIRS += [
+        "launchonlogin",
         "subprocess",
     ]
 
@@ -279,7 +284,6 @@ if CONFIG["OS_TARGET"] not in ("Android", "WINNT"):
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
     EXTRA_JS_MODULES += [
-        "WindowsLaunchOnLogin.sys.mjs",
         "WindowsRegistry.sys.mjs",
     ]
 
@@ -289,6 +293,7 @@ for var in (
     "MOZ_APP_DISPLAYNAME",
     "MOZ_APP_VERSION",
     "MOZ_APP_VERSION_DISPLAY",
+    "MOZ_BACKGROUNDTASK_ACTIVATABLE_CLASS_ID",
     "MOZ_BING_API_CLIENTID",
     "MOZ_BING_API_KEY",
     "MOZ_GOOGLE_SAFEBROWSING_API_KEY",

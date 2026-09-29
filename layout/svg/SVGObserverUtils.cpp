@@ -353,7 +353,7 @@ class SVGIDRenderingObserver : public SVGRenderingObserver {
   // observer. Note that this may be called during construction, before the
   // deriving class is fully constructed.
   using TargetIsValidCallback = bool (*)(const Element&);
-  SVGIDRenderingObserver(
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY SVGIDRenderingObserver(
       SVGReference* aReference, Element* aObservingElement,
       bool aReferenceImage,
       uint32_t aCallbacks = kAttributeChanged | kContentAppended |
@@ -461,14 +461,16 @@ SVGIDRenderingObserver::SVGIDRenderingObserver(
       mTargetIsValidCallback(aTargetIsValidCallback) {
   // Start watching the target element
   if (aReference) {
+    const nsCOMPtr<nsIURI> uri = aReference->GetURI();
+    const nsCOMPtr<nsIReferrerInfo> referrerInfo =
+        aReference->GetReferrerInfo();
     if (aReference->IsLocalRef()) {
       mObservedElementTracker.ResetToLocalFragmentID(
-          *aObservingElement, aReference->GetLocalRef(), aReference->GetURI(),
-          aReference->GetReferrerInfo(), aReferenceImage);
+          *aObservingElement, aReference->GetLocalRef(), uri, referrerInfo,
+          aReferenceImage);
     } else {
       mObservedElementTracker.ResetToURIWithFragmentID(
-          *aObservingElement, aReference->GetURI(),
-          aReference->GetReferrerInfo(), aReferenceImage);
+          *aObservingElement, uri, referrerInfo, aReferenceImage);
     }
   } else {
     mObservedElementTracker.Unlink();
@@ -586,6 +588,10 @@ void SVGTextPathObserver::OnRenderingChange() {
   MOZ_ASSERT(text, "expected to find an ancestor SVGTextFrame");
   if (text) {
     text->AddStateBits(NS_STATE_SVG_POSITIONING_DIRTY);
+
+    if (text->HasAnyStateBits(NS_STATE_SVG_TEXT_IN_REFLOW)) {
+      return;
+    }
 
     if (SVGUtils::AnyOuterSVGIsCallingReflowSVG(text)) {
       text->AddStateBits(NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN);
@@ -906,6 +912,8 @@ class SVGFilterObserverList : public ISVGFilterObserverList {
   virtual void OnRenderingChange(Element* aObservingElement) = 0;
 
  protected:
+  SVGFilterObserverList(const SVGFilterObserverList& aOther)
+      : mObservers(aOther.mObservers.Clone()) {}
   virtual ~SVGFilterObserverList();
 
   void DetachObservers() {
@@ -979,7 +987,14 @@ class SVGFilterObserverListForCSSProp final : public SVGFilterObserverList {
                               GetFrameContentAsElement(aFilteredFrame),
                               aFilteredFrame) {}
 
+  ISVGFilterObserverList* Clone() const override {
+    return new SVGFilterObserverListForCSSProp(*this);
+  }
+
  protected:
+  SVGFilterObserverListForCSSProp(const SVGFilterObserverListForCSSProp& aOther)
+      : SVGFilterObserverList(aOther) {}
+
   void OnRenderingChange(Element* aObservingElement) override;
 };
 
@@ -1017,18 +1032,25 @@ class SVGFilterObserverListForCanvasContext final
       : SVGFilterObserverList(aFilters, aCanvasElement), mContext(aContext) {}
 
   void OnRenderingChange(Element* aObservingElement) override;
-  void Detach() override { mContext = nullptr; }
+  void SetIsActive(bool aActive) override { mActive = aActive; }
+  ISVGFilterObserverList* Clone() const override {
+    return new SVGFilterObserverListForCanvasContext(*this);
+  }
 
  private:
+  SVGFilterObserverListForCanvasContext(
+      const SVGFilterObserverListForCanvasContext& aOther)
+      : SVGFilterObserverList(aOther),
+        mContext(aOther.mContext),
+        mActive(aOther.mActive) {}
+
   CanvasRenderingContext2D* mContext;
+  bool mActive = true;
 };
 
 void SVGFilterObserverListForCanvasContext::OnRenderingChange(
     Element* aObservingElement) {
-  if (!mContext) {
-    NS_WARNING(
-        "GFX: This should never be called without a context, except during "
-        "cycle collection (when Detach has been called)");
+  if (!mActive) {
     return;
   }
   // Refresh the cached FilterDescription in mContext->CurrentState().filter.

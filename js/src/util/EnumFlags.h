@@ -74,12 +74,7 @@ class EnumFlags {
   constexpr FieldType toRaw() const { return flags_; }
   void setRaw(FieldType flag) { flags_ = flag; }
 
-  constexpr bool operator==(const EnumFlags& other) const {
-    return flags_ == other.flags_;
-  }
-  constexpr bool operator!=(const EnumFlags& other) const {
-    return flags_ != other.flags_;
-  }
+  constexpr bool operator==(const EnumFlags& other) const = default;
 };
 
 }  // namespace js

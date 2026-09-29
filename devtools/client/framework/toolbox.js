@@ -1053,7 +1053,6 @@ class Toolbox extends EventEmitter {
       this.#buildInitialPanelDefinitions();
       this.#setDebugTargetData();
 
-      this.#addWindowListeners();
       this.#addChromeEventHandlerEvents();
 
       // Get the tab bar of the ToolboxController to attach the "keypress" event listener to.
@@ -2000,12 +1999,14 @@ class Toolbox extends EventEmitter {
   postMessage(msg) {
     // We sometime try to send messages in middle of destroy(), where the
     // toolbox iframe may already be detached.
-    if (!this.#destroyer) {
-      // Toolbox document is still chrome and disallow identifying message
-      // origin via event.source as it is null. So use a custom id.
-      msg.frameId = this.frameId;
-      this.topWindow.postMessage(msg, "*");
+    if (this.#destroyer) {
+      return;
     }
+
+    // Toolbox document is still chrome and disallow identifying message
+    // origin via event.source as it is null. So use a custom id.
+    msg.frameId = this.frameId;
+    this.topWindow.postMessage(msg, "*");
   }
 
   /**
@@ -2077,6 +2078,10 @@ class Toolbox extends EventEmitter {
         this.#URL
       );
     });
+
+    // We have to wait for the document to be loaded, otherwise we may receive
+    // unexpected "unload" events.
+    this.#addWindowListeners();
 
     // Setup the Toolbox Browser Loader, used to load React component modules
     // which expect to be loaded with toolbox.xhtml document as global scope.
@@ -2527,19 +2532,12 @@ class Toolbox extends EventEmitter {
    *        page is going to navigate
    */
   updateToolboxButtonsVisibility({ fromWillNavigate = false } = {}) {
-    const inspectorFront = this.target.getCachedFront("inspector");
-
     let toggledHighlighters = false;
     for (const button of this.toolbarButtons) {
       button.isVisible = this.#commandIsVisible(button);
 
       // We want to hide highlighters when the toolbox button is disabled from the options panel
-      if (
-        inspectorFront &&
-        button.highlighterTypes &&
-        !button.isVisible &&
-        button.isChecked
-      ) {
+      if (button.highlighterTypes && !button.isVisible && button.isChecked) {
         button.onClick({});
         toggledHighlighters = true;
       }
@@ -4745,6 +4743,7 @@ class Toolbox extends EventEmitter {
 
     // Instead view the stylesheet in the debugger since the pref is enabled
     if (Services.prefs.getBoolPref(DEVTOOLS_STYLESHEETS_IN_DEBUGGER)) {
+      Glean.devtoolsDebuggerStylesheets.linksOpenedInDebuggerCount.add(1);
       return viewSource.viewSourceInDebugger(this, url, line, column, null);
     }
 
@@ -4774,6 +4773,7 @@ class Toolbox extends EventEmitter {
 
     // Instead view the stylesheet in the debugger since the pref is enabled
     if (Services.prefs.getBoolPref(DEVTOOLS_STYLESHEETS_IN_DEBUGGER)) {
+      Glean.devtoolsDebuggerStylesheets.linksOpenedInDebuggerCount.add(1);
       return viewSource.viewSourceInDebugger(
         this,
         stylesheetResource.href,

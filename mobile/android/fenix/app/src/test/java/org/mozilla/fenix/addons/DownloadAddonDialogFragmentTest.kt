@@ -9,20 +9,19 @@ import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import mozilla.components.compose.base.theme.Theme
 import mozilla.components.concept.engine.webextension.InstallationMethod
+import mozilla.components.feature.addons.R as addonsR
 import mozilla.components.support.test.robolectric.createAddedTestFragment
 import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mozilla.fenix.theme.Theme
-import mozilla.components.feature.addons.R as addonsR
 
 @RunWith(AndroidJUnit4::class)
 class DownloadAddonDialogFragmentTest {
-    @get:Rule
-    val composeRule = createEmptyComposeRule()
+    @get:Rule val composeRule = createEmptyComposeRule()
 
     private var fragment: DownloadAddonDialogFragment? = null
 
@@ -94,12 +93,14 @@ class DownloadAddonDialogFragmentTest {
         installationMethod: InstallationMethod = InstallationMethod.RTAMO,
         onCancelled: () -> Unit = {},
     ) {
-        val fragmentArgs = DownloadAddonDialogFragmentArgs(
-            addonDownloadUrl = downloadUrl,
-            addonName = addonName,
-            addonImageUrl = addonImageUrl,
-            addonInstallationSource = installationMethod,
-        ).toBundle()
+        val fragmentArgs =
+            DownloadAddonDialogFragmentArgs(
+                    addonDownloadUrl = downloadUrl,
+                    addonName = addonName,
+                    addonImageUrl = addonImageUrl,
+                    addonInstallationSource = installationMethod,
+                )
+                .toBundle()
 
         fragment = createAddedTestFragment {
             DownloadAddonDialogFragment().apply {

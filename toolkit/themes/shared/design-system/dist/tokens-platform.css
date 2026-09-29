@@ -7,9 +7,9 @@
 
 @import url("chrome://global/skin/design-system/tokens-shared.css");
 
-@layer tokens-foundation {
-  :root,
-  :host(.anonymous-content-host) {
+:root,
+:host(.anonymous-content-host) {
+  @layer tokens-foundation {
     /** background-color **/
     --background-color-box-info: color-mix(in srgb, currentColor 6%, transparent);
     --background-color-canvas: Canvas;
@@ -28,6 +28,8 @@
     --button-background-color-hover: color-mix(in srgb, currentColor 17%, transparent);
     --button-background-color-active: color-mix(in srgb, currentColor 30%, transparent);
     --button-background-color-ghost: transparent;
+    --button-background-color-ghost-hover: color-mix(in srgb, currentColor 17%, transparent);
+    --button-background-color-ghost-active: color-mix(in srgb, currentColor 30%, transparent);
     --button-text-color: currentColor;
     --button-text-color-menu-selected: currentColor;
     --button-text-color-primary: AccentColorText;
@@ -41,10 +43,8 @@
 
     /** font-size **/
     --font-size-root: unset;
+    /* 13px in-content, unset in platform (we want to avoid going too small when the root font size is already quite small) */
     --font-size-small: unset;
-
-    /** info-bar **/
-    --info-bar-border-color: var(--toolbarseparator-color);
 
     /** input **/
     --input-text-background-color: Field;
@@ -87,6 +87,8 @@
     --toolbar-text-color: -moz-dialogtext;
 
     /** toolbarbutton **/
+    --toolbarbutton-background-color-hover: var(--button-background-color-ghost-hover);
+    --toolbarbutton-background-color-active: var(--button-background-color-ghost-active);
     --toolbarbutton-icon-fill: currentColor;
     --toolbarbutton-icon-fill-attention: AccentColor;
     --toolbarbutton-icon-fill-attention-text: AccentColorText;
@@ -97,14 +99,76 @@
     --toolbox-text-color: -moz-headerbartext;
     --toolbox-text-color-inactive: -moz-headerbarinactivetext;
   }
+
+  @media -moz-pref("browser.nova.enabled") {
+    @layer tokens-foundation-nova {
+      /** button **/
+      --button-background-color-hover: color-mix(in srgb, AccentColor 20%, transparent);
+      --button-background-color-active: color-mix(in srgb, AccentColor 30%, transparent);
+      --button-background-color-ghost: transparent;
+      --button-background-color-ghost-hover: color-mix(in srgb, currentColor 17%, transparent);
+      --button-background-color-ghost-active: color-mix(in srgb, currentColor 30%, transparent);
+      --button-text-color: currentColor;
+      --button-text-color-menu-selected: currentColor;
+      --button-text-color-primary: AccentColorText;
+
+      /** color **/
+      --color-accent-attention: AccentColor;
+      --color-accent-primary: AccentColor;
+      --color-accent-primary-hover: color-mix(in srgb, black 10%, var(--color-accent-primary));
+      --color-accent-primary-active: color-mix(in srgb, black 20%, var(--color-accent-primary));
+      --color-accent-primary-selected: SelectedItem;
+
+      /** info-bar **/
+      --info-bar-border-color: var(--border-color-deemphasized);
+
+      /** input **/
+      --input-text-background-color: Field;
+
+      /** panel **/
+      --panel-background-color: Field;
+      --panel-border-color: var(--border-color-deemphasized);
+      --panel-text-color: FieldText;
+
+      /** popup **/
+      --popup-border-color: var(--border-color-deemphasized);
+
+      /** sidebar **/
+      --sidebar-border-color: -moz-sidebarborder;
+
+      /** text-color **/
+      --text-color: currentColor;
+      --text-color-accent-primary-selected: SelectedItemText;
+
+      /** toolbar **/
+      --toolbar-background-color: color-mix(in srgb, -moz-dialog 85%, var(--color-white));
+      --toolbar-field-background-color: light-dark(rgba(0, 0, 0, 0.05), var(--color-black-alpha-30));
+      --toolbar-field-background-color-focus: Field;
+      --toolbar-field-border-color: var(--border-color-transparent);
+      --toolbar-field-border-color-focus: color-mix(in srgb, var(--focus-outline-color) 50%, transparent);
+      --toolbar-field-text-color: inherit;
+      --toolbar-field-text-color-focus: FieldText;
+
+      /** toolbarbutton **/
+      --toolbarbutton-background-color-hover: var(--button-background-color-ghost-hover);
+      --toolbarbutton-background-color-active: var(--button-background-color-ghost-active);
+      --toolbarbutton-icon-fill: currentColor;
+      --toolbarbutton-icon-fill-attention: AccentColor;
+
+      /** toolbox **/
+      --toolbox-background-color: -moz-headerbar;
+      --toolbox-background-color-inactive: -moz-headerbarinactive;
+      /* This gradient is only used for Nova */
+      --toolbox-background-gradient: image(transparent);
+      --toolbox-text-color: -moz-headerbartext;
+    }
+  }
 }
 
-/* Bug 1879900: Can't nest media queries inside of :host, :root selector
-   until Bug 1879349 lands */
-@layer tokens-browser-theme {
-  @media not ((forced-colors) or (-moz-native-theme)) {
-    :root:is([theme-in-app], :not([lwtheme])),
-    :host(.anonymous-content-host) {
+:root:is([theme-in-app], :not([lwtheme])),
+:host(.anonymous-content-host) {
+  @layer tokens-browser-theme {
+    @media not ((forced-colors) or (-moz-native-theme)) {
       /** background-color **/
       --background-color-dimmed: light-dark(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 17%, transparent));
       --background-color-dimmed-further: light-dark(color-mix(in srgb, currentColor 20%, transparent), color-mix(in srgb, currentColor 14%, transparent));
@@ -114,6 +178,9 @@
       --button-background-color: light-dark(rgba(207, 207, 216, 0.33), rgba(0, 0, 0, 0.33));
       --button-background-color-hover: light-dark(rgba(207, 207, 216, 0.66), rgba(207, 207, 216, 0.2));
       --button-background-color-active: light-dark(rgb(207, 207, 216), rgba(207, 207, 216, 0.4));
+      --button-background-color-ghost: transparent;
+      --button-background-color-ghost-hover: var(--button-background-color-hover);
+      --button-background-color-ghost-active: var(--button-background-color-active);
       --button-text-color: light-dark(rgb(21, 20, 26), rgb(251, 251, 254));
       --button-text-color-menu-selected: var(--button-text-color-ghost-selected);
       --button-text-color-primary: light-dark(rgb(251, 251, 254), rgb(43, 42, 51));
@@ -124,9 +191,6 @@
       --color-accent-primary-hover: light-dark(var(--color-blue-70), var(--color-cyan-20));
       --color-accent-primary-active: light-dark(var(--color-blue-80), var(--color-cyan-10));
       --color-accent-primary-selected: light-dark(var(--color-blue-60), var(--color-cyan-30));
-
-      /** info-bar **/
-      --info-bar-border-color: light-dark(var(--color-violet-desaturated-20), var(--color-gray-60));
 
       /** input **/
       --input-text-background-color: light-dark(var(--color-white), #42414d);
@@ -160,6 +224,8 @@
       --toolbar-text-color: light-dark(var(--color-gray-100), var(--color-gray-0));
 
       /** toolbarbutton **/
+      --toolbarbutton-background-color-hover: color-mix(in srgb, currentColor 17%, transparent);
+      --toolbarbutton-background-color-active: color-mix(in srgb, currentColor 30%, transparent);
       --toolbarbutton-icon-fill: light-dark(var(--color-gray-70), var(--color-gray-0));
       --toolbarbutton-icon-fill-attention: light-dark(var(--color-blue-60), var(--color-cyan-30));
       --toolbarbutton-icon-fill-attention-text: light-dark(var(--color-gray-20), var(--color-gray-90));
@@ -171,74 +237,16 @@
       --toolbox-text-color-inactive: var(--toolbox-text-color);
     }
   }
-}
 
-@media -moz-pref("browser.nova.enabled") {
-  @layer tokens-foundation-nova {
-    :root,
-    :host(.anonymous-content-host) {
-      /** button **/
-      /* TODO Bug 1821203 - Gray use needs to be consolidated */
-      --button-background-color: color-mix(in srgb, currentColor 13%, transparent);
-      --button-background-color-hover: color-mix(in srgb, currentColor 17%, transparent);
-      --button-background-color-active: color-mix(in srgb, currentColor 30%, transparent);
-      --button-background-color-ghost: transparent;
-      --button-text-color: currentColor;
-      --button-text-color-menu-selected: currentColor;
-      --button-text-color-primary: AccentColorText;
-
-      /** color **/
-      --color-accent-attention: AccentColor;
-      --color-accent-primary: AccentColor;
-      --color-accent-primary-hover: color-mix(in srgb, black 10%, var(--color-accent-primary));
-      --color-accent-primary-active: color-mix(in srgb, black 20%, var(--color-accent-primary));
-      --color-accent-primary-selected: SelectedItem;
-
-      /** panel **/
-      --panel-background-color: Field;
-      --panel-border-color: var(--border-color-deemphasized);
-      --panel-text-color: FieldText;
-
-      /** popup **/
-      --popup-border-color: var(--border-color-deemphasized);
-
-      /** text-color **/
-      --text-color: currentColor;
-      --text-color-accent-primary-selected: SelectedItemText;
-
-      /** toolbar **/
-      --toolbar-background-color: color-mix(in srgb, -moz-dialog 85%, var(--color-white));
-      --toolbar-field-background-color: light-dark(rgba(0, 0, 0, 0.05), var(--color-black-alpha-30));
-      --toolbar-field-background-color-focus: Field;
-      --toolbar-field-border-color: var(--border-color-transparent);
-      --toolbar-field-border-color-focus: color-mix(in srgb, var(--focus-outline-color) 50%, transparent);
-      --toolbar-field-text-color: inherit;
-      --toolbar-field-text-color-focus: FieldText;
-
-      /** toolbarbutton **/
-      --toolbarbutton-icon-fill: currentColor;
-      --toolbarbutton-icon-fill-attention: AccentColor;
-
-      /** toolbox **/
-      --toolbox-background-color-inactive: -moz-headerbarinactive;
-      /* This gradient is only used for Nova */
-      --toolbox-background-gradient: image(transparent);
-      --toolbox-text-color: -moz-headerbartext;
-    }
-  }
-
-  /* Bug 1879900: Can't nest media queries inside of :host, :root selector
-   until Bug 1879349 lands */
-  @layer tokens-browser-theme-nova {
-    @media not ((forced-colors) or (-moz-native-theme)) {
-      :root:is([theme-in-app], :not([lwtheme])),
-      :host(.anonymous-content-host) {
+  @media -moz-pref("browser.nova.enabled") {
+    @layer tokens-browser-theme-nova {
+      @media not ((forced-colors) or (-moz-native-theme)) {
         /** button **/
-        /* TODO Bug 1821203 - Gray use needs to be consolidated */
-        --button-background-color: transparent;
         --button-background-color-hover: light-dark(var(--color-violet-desaturated-20), var(--color-violet-desaturated-50));
         --button-background-color-active: light-dark(var(--color-violet-desaturated-30), var(--color-violet-desaturated-40));
         --button-background-color-ghost: var(--button-background-color);
+        --button-background-color-ghost-hover: var(--button-background-color-hover);
+        --button-background-color-ghost-active: var(--button-background-color-active);
         --button-text-color: light-dark(var(--color-violet-90), var(--color-gray-0));
         --button-text-color-menu-selected: light-dark(var(--button-text-color-ghost-selected), var(--button-text-color-selected));
         --button-text-color-primary: light-dark(var(--color-white), var(--color-gray-70));
@@ -250,19 +258,28 @@
         --color-accent-primary-active: light-dark(var(--color-violet-70), var(--color-violet-10));
         --color-accent-primary-selected: var(--button-background-color-primary-active);
 
+        /** info-bar **/
+        --info-bar-border-color: light-dark(var(--color-violet-desaturated-20), var(--color-gray-60));
+
+        /** input **/
+        --input-text-background-color: var(--background-color-box);
+
         /** panel **/
         --panel-background-color: var(--popup-background-color);
         --panel-border-color: var(--popup-border-color);
         --panel-text-color: var(--text-color);
 
         /** popup **/
-        --popup-border-color: light-dark(var(--color-gray-10), var(--color-gray-65));
+        --popup-border-color: var(--border-color-deemphasized);
+
+        /** sidebar **/
+        --sidebar-border-color: var(--chrome-content-separator-color);
 
         /** text-color **/
         --text-color: light-dark(var(--color-violet-desaturated-90), var(--color-violet-desaturated-0));
 
         /** toolbar **/
-        --toolbar-background-color: var(--background-color-box);
+        --toolbar-background-color: light-dark(rgba(255, 255, 255, 0.4), rgba(0, 0, 0, 0.2));
         --toolbar-field-background-color: var(--toolbar-background-color);
         --toolbar-field-background-color-focus: var(--background-color-box);
         --toolbar-field-border-color: light-dark(var(--color-gray-20), var(--color-gray-60));
@@ -271,10 +288,13 @@
         --toolbar-field-text-color-focus: var(--toolbar-field-text-color);
 
         /** toolbarbutton **/
+        --toolbarbutton-background-color-hover: light-dark(rgba(117, 102, 159, 0.25), rgba(182, 170, 217, 0.25));
+        --toolbarbutton-background-color-active: light-dark(rgba(117, 102, 159, 0.4), rgba(182, 170, 217, 0.4));
         --toolbarbutton-icon-fill: light-dark(var(--color-violet-desaturated-50), var(--color-violet-desaturated-10));
         --toolbarbutton-icon-fill-attention: var(--color-accent-primary);
 
         /** toolbox **/
+        --toolbox-background-color: light-dark(var(--color-white), var(--color-gray-70));
         --toolbox-background-color-inactive: transparent;
         /* This gradient is only used for Nova */
         --toolbox-background-gradient: linear-gradient(

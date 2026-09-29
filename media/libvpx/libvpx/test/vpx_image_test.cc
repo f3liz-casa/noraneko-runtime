@@ -10,6 +10,8 @@
 
 #include <climits>
 #include <cstdint>
+#include <cstdio>
+#include <initializer_list>
 
 #include "vpx/vpx_image.h"
 #include "gtest/gtest.h"
@@ -33,6 +35,29 @@ TEST(VpxImageTest, VpxImgWrapInvalidAlign) {
   EXPECT_EQ(vpx_img_wrap(&img, format, kWidth, kHeight, align, buf), nullptr);
 }
 
+TEST(VpxImageTest, VpxImgWrapI42xOddWidth) {
+  vpx_image_t img;
+  unsigned char buf[1];  // Should not be read
+  char str[32];
+  for (const auto format : { VPX_IMG_FMT_I420, VPX_IMG_FMT_I422,
+                             VPX_IMG_FMT_I42016, VPX_IMG_FMT_I42216 }) {
+    for (const int width : { 1, 711, 4913 }) {
+      snprintf(str, sizeof(str), "format: %d width: %d", format, width);
+      SCOPED_TRACE(str);
+      const int stride_in_bytes =
+          (format & VPX_IMG_FMT_HIGHBITDEPTH) ? width * 2 : width;
+      const int uv_width = (width + 1) / 2;
+      const int uv_stride_in_bytes =
+          (format & VPX_IMG_FMT_HIGHBITDEPTH) ? uv_width * 2 : uv_width;
+      EXPECT_EQ(vpx_img_wrap(&img, format, width, 32, /*stride_align=*/1, buf),
+                &img);
+      EXPECT_EQ(img.stride[VPX_PLANE_Y], stride_in_bytes);
+      EXPECT_EQ(img.stride[VPX_PLANE_U], uv_stride_in_bytes);
+      EXPECT_EQ(img.stride[VPX_PLANE_V], uv_stride_in_bytes);
+    }
+  }
+}
+
 TEST(VpxImageTest, VpxImgSetRectOverflow) {
   const int kWidth = 128;
   const int kHeight = 128;
@@ -48,6 +73,51 @@ TEST(VpxImageTest, VpxImgSetRectOverflow) {
   EXPECT_NE(vpx_img_set_rect(&img, static_cast<unsigned int>(-1),
                              static_cast<unsigned int>(-1), kWidth, kHeight),
             0);
+}
+
+TEST(VpxImageTest, VpxImgSetRectPreservesFlip) {
+  static constexpr vpx_img_fmt_t kFormats[] = {
+    VPX_IMG_FMT_YV12,   VPX_IMG_FMT_I420,   VPX_IMG_FMT_I422,
+    VPX_IMG_FMT_I444,   VPX_IMG_FMT_I440,   VPX_IMG_FMT_NV12,
+    VPX_IMG_FMT_I42016, VPX_IMG_FMT_I42216, VPX_IMG_FMT_I44416,
+    VPX_IMG_FMT_I44016,
+  };
+
+  for (const vpx_img_fmt_t format : kFormats) {
+    vpx_image_t *img = vpx_img_alloc(nullptr, format, 16, 5, 1);
+    vpx_image_t *expected = vpx_img_alloc(nullptr, format, 16, 5, 1);
+    ASSERT_NE(img, nullptr);
+    ASSERT_NE(expected, nullptr);
+
+    ASSERT_EQ(vpx_img_set_rect(expected, 2, 1, 8, 3), 0);
+    vpx_img_flip(expected);
+
+    vpx_img_flip(img);
+    ASSERT_EQ(vpx_img_set_rect(img, 2, 1, 8, 3), 0);
+
+    for (int plane = VPX_PLANE_Y; plane <= VPX_PLANE_V; ++plane) {
+      EXPECT_EQ(img->planes[plane] - img->img_data,
+                expected->planes[plane] - expected->img_data);
+      EXPECT_EQ(img->stride[plane], expected->stride[plane]);
+    }
+
+    ASSERT_EQ(vpx_img_set_rect(img, 0, 0, 16, 0), 0);
+    EXPECT_LT(img->stride[VPX_PLANE_Y], 0);
+    ASSERT_EQ(vpx_img_set_rect(img, 0, 0, 16, 5), 0);
+
+    vpx_img_flip(expected);
+    ASSERT_EQ(vpx_img_set_rect(expected, 0, 0, 16, 5), 0);
+    vpx_img_flip(expected);
+
+    for (int plane = VPX_PLANE_Y; plane <= VPX_PLANE_V; ++plane) {
+      EXPECT_EQ(img->planes[plane] - img->img_data,
+                expected->planes[plane] - expected->img_data);
+      EXPECT_EQ(img->stride[plane], expected->stride[plane]);
+    }
+
+    vpx_img_free(expected);
+    vpx_img_free(img);
+  }
 }
 
 TEST(VpxImageTest, VpxImgAllocNone) {
@@ -133,4 +203,73 @@ TEST(VpxImageTest, VpxImgFlipNoAlpha) {
   ASSERT_NE(img, nullptr);
   vpx_img_flip(img);
   vpx_img_free(img);
+}
+
+TEST(VpxImageTest, VpxImgFlipOneRow) {
+  vpx_image_t *img = vpx_img_alloc(nullptr, VPX_IMG_FMT_I420, 16, 1, 1);
+  ASSERT_NE(img, nullptr);
+  unsigned char *const y_plane = img->planes[VPX_PLANE_Y];
+  unsigned char *const u_plane = img->planes[VPX_PLANE_U];
+  unsigned char *const v_plane = img->planes[VPX_PLANE_V];
+  const int y_stride = img->stride[VPX_PLANE_Y];
+  const int u_stride = img->stride[VPX_PLANE_U];
+  const int v_stride = img->stride[VPX_PLANE_V];
+
+  vpx_img_flip(img);
+
+  EXPECT_EQ(img->planes[VPX_PLANE_Y], y_plane);
+  EXPECT_EQ(img->planes[VPX_PLANE_U], u_plane);
+  EXPECT_EQ(img->planes[VPX_PLANE_V], v_plane);
+  EXPECT_EQ(img->stride[VPX_PLANE_Y], -y_stride);
+  EXPECT_EQ(img->stride[VPX_PLANE_U], -u_stride);
+  EXPECT_EQ(img->stride[VPX_PLANE_V], -v_stride);
+
+  vpx_img_flip(img);
+
+  EXPECT_EQ(img->planes[VPX_PLANE_Y], y_plane);
+  EXPECT_EQ(img->planes[VPX_PLANE_U], u_plane);
+  EXPECT_EQ(img->planes[VPX_PLANE_V], v_plane);
+  EXPECT_EQ(img->stride[VPX_PLANE_Y], y_stride);
+  EXPECT_EQ(img->stride[VPX_PLANE_U], u_stride);
+  EXPECT_EQ(img->stride[VPX_PLANE_V], v_stride);
+
+  vpx_img_free(img);
+}
+
+TEST(VpxImageTest, VpxImgFlipOddHeight) {
+  static constexpr vpx_img_fmt_t kFormats[] = {
+    VPX_IMG_FMT_YV12, VPX_IMG_FMT_I420,   VPX_IMG_FMT_I440,
+    VPX_IMG_FMT_NV12, VPX_IMG_FMT_I42016, VPX_IMG_FMT_I44016,
+  };
+
+  for (const vpx_img_fmt_t format : kFormats) {
+    vpx_image_t *img = vpx_img_alloc(nullptr, format, 16, 3, 1);
+    ASSERT_NE(img, nullptr);
+    unsigned char *const y_plane = img->planes[VPX_PLANE_Y];
+    unsigned char *const u_plane = img->planes[VPX_PLANE_U];
+    unsigned char *const v_plane = img->planes[VPX_PLANE_V];
+    const int y_stride = img->stride[VPX_PLANE_Y];
+    const int u_stride = img->stride[VPX_PLANE_U];
+    const int v_stride = img->stride[VPX_PLANE_V];
+
+    vpx_img_flip(img);
+
+    EXPECT_EQ(img->planes[VPX_PLANE_Y], y_plane + 2 * y_stride);
+    EXPECT_EQ(img->planes[VPX_PLANE_U], u_plane + u_stride);
+    EXPECT_EQ(img->planes[VPX_PLANE_V], v_plane + v_stride);
+    EXPECT_EQ(img->stride[VPX_PLANE_Y], -y_stride);
+    EXPECT_EQ(img->stride[VPX_PLANE_U], -u_stride);
+    EXPECT_EQ(img->stride[VPX_PLANE_V], -v_stride);
+
+    vpx_img_flip(img);
+
+    EXPECT_EQ(img->planes[VPX_PLANE_Y], y_plane);
+    EXPECT_EQ(img->planes[VPX_PLANE_U], u_plane);
+    EXPECT_EQ(img->planes[VPX_PLANE_V], v_plane);
+    EXPECT_EQ(img->stride[VPX_PLANE_Y], y_stride);
+    EXPECT_EQ(img->stride[VPX_PLANE_U], u_stride);
+    EXPECT_EQ(img->stride[VPX_PLANE_V], v_stride);
+
+    vpx_img_free(img);
+  }
 }
