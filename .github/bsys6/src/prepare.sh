@@ -6,7 +6,7 @@ set -eu
 source $BSYS6/exports/target.sh
 
 # LLVM version to install
-LLVM_VERSION="${LLVM_VERSION:-20}"
+LLVM_VERSION="${LLVM_VERSION:-22}"
 
 # Function to install LLVM on Debian/Ubuntu
 install_llvm() {

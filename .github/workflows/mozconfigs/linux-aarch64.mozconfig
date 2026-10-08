@@ -16,8 +16,8 @@ ac_add_options --enable-rust-simd
 ac_add_options --target=aarch64-unknown-linux-gnu
 
 # LLVM and Linker
-export CC=clang-20
-export CXX=clang++-20
+export CC=clang-22
+export CXX=clang++-22
 ac_add_options --enable-linker=lld
 ac_add_options --enable-lto=thin
 
