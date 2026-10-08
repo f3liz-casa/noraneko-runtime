@@ -14,11 +14,13 @@ import MozInputText from "chrome://global/content/elements/moz-input-text.mjs";
  * @property {string} name - The name of the input control
  * @property {string} value - The value of the input control
  * @property {boolean} disabled - The disabled state of the input control
+ * @property {boolean} required - The required state of the input control
  * @property {string} description - The text for the description element that helps describe the input control
  * @property {string} supportPage - Name of the SUMO support page to link to.
  * @property {string} placeholder - Text to display when the input has no value.
  * @property {string} ariaLabel - The aria-label text when there is no visible label.
  * @property {string} ariaDescription - The aria-description text when there is no visible description.
+ * @property {string} title - The title attribute, mapped onto the inner input.
  */
 export default class MozInputSearch extends MozInputText {
   // The amount of milliseconds that we wait before firing the "search" event.
@@ -83,6 +85,7 @@ export default class MozInputSearch extends MozInputText {
         name=${this.name}
         .value=${this.value}
         ?disabled=${this.disabled || this.parentDisabled}
+        ?required=${this.required}
         accesskey=${ifDefined(this.accessKey)}
         placeholder=${ifDefined(this.placeholder)}
         aria-label=${ifDefined(this.ariaLabel ?? undefined)}
@@ -90,6 +93,7 @@ export default class MozInputSearch extends MozInputText {
         aria-description=${ifDefined(
           this.hasDescription ? undefined : this.ariaDescription
         )}
+        title=${ifDefined(this.title)}
         @input=${this.handleInput}
         @change=${this.redispatchEvent}
       />

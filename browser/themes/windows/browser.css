@@ -230,25 +230,10 @@
 }
 
 @media (prefers-contrast) {
-  :root {
-    /* Windows HCM conventions use these colors for chiclets. We can't use them on
-       other platforms because AccentColor can be shown atop SelectedItem,
-       which has zero contrast. */
-    --urlbar-box-background-color-hover: SelectedItem;
-    --urlbar-box-background-color-active: SelectedItem;
-    --urlbar-box-text-color-hover: SelectedItemText;
-  }
-
   :root:not([lwtheme]) {
     #searchbar:not(:focus-within),
     .findbar-textbox:not(:focus) {
       border-color: ThreeDShadow;
-    }
-  }
-
-  @media -moz-pref("browser.nova.enabled") {
-    .urlbar[breakout-extend] > .urlbar-background {
-      border-color: currentColor;
     }
   }
 

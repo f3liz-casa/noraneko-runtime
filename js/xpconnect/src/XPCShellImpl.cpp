@@ -62,7 +62,6 @@
 #  include "mozilla/mscom/ProcessRuntime.h"
 #  include "mozilla/ScopeExit.h"
 #  include "mozilla/WinDllServices.h"
-#  include "mozilla/WindowsBCryptInitialization.h"
 
 #  include <windows.h>
 #  if defined(MOZ_SANDBOX)
@@ -141,7 +140,6 @@ static FILE* gInFile = nullptr;
 
 static int gExitCode = 0;
 static bool gQuitting = false;
-static bool reportWarnings = true;
 static bool compileOnly = false;
 
 static JSPrincipals* gJSPrincipals = nullptr;
@@ -889,11 +887,7 @@ static bool ProcessArgs(AutoJSAPI& jsapi, char** argv, int argc,
     }
     switch (argv[i][1]) {
       case 'W':
-        reportWarnings = false;
-        break;
       case 'w':
-        reportWarnings = true;
-        break;
       case 'x':
         break;
       case 'd':
@@ -1307,10 +1301,6 @@ int XRE_XPCShellMain(int argc, char** argv, char** envp,
     }
 #  endif  // defined(MOZ_SANDBOX)
 
-    {
-      DebugOnly<bool> result = WindowsBCryptInitialization();
-      MOZ_ASSERT(result);
-    }
 #endif  // defined(XP_WIN)
 
 #ifdef MOZ_CODE_COVERAGE

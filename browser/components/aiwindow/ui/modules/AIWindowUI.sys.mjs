@@ -499,6 +499,21 @@ export const AIWindowUI = {
   },
 
   /**
+   * Toggle the monitor creation panel anchored to its toolbar button.
+   *
+   * @param {Window} _win
+   */
+  toggleMonitorPanel(_win) {
+    // TODO(bug https://bugzilla.mozilla.org/show_bug.cgi?id=2062112): Open the
+    // monitor panel, and replace this with AIWindow.takeMonitorAttentionIds()
+    // where the panel is shown, so it can highlight the monitors it is clearing.
+    // Clearing from here instead would also run on the closing toggle, and would
+    // run before the panel has decided whether it is opening at all.
+    AIWindow.clearMonitorAttention();
+    console.warn("TODO open panel");
+  },
+
+  /**
    * Toggle the AI Window sidebar
    *
    * @param {Window} win

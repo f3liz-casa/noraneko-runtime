@@ -4,7 +4,7 @@
 
 // @nova-cleanup(move-directory): Move to components/CustomizeMenu/WidgetsManagementPanel/ after Nova ships
 
-import React, { useEffect, useRef } from "react";
+import React, { useRef } from "react";
 import { batch, useDispatch, useSelector } from "react-redux";
 import { actionCreators as ac, actionTypes as at } from "common/Actions.mjs";
 import { WIDGET_REGISTRY, resolveWidgetSize } from "common/WidgetsRegistry.mjs";
@@ -12,7 +12,6 @@ import { WIDGET_REGISTRY, resolveWidgetSize } from "common/WidgetsRegistry.mjs";
 import { CSSTransition } from "react-transition-group";
 
 function WidgetsManagementPanel({
-  onSubpanelToggle,
   togglePanel,
   showPanel,
   enabledSections,
@@ -26,19 +25,13 @@ function WidgetsManagementPanel({
   mayHaveCrosswordWidget,
   mayHaveStocksWidget,
   mayHavePictureOfTheDayWidget,
+  mayHaveRecentSearchesWidget,
   setPref,
 }) {
   const prefs = useSelector(state => state.Prefs.values);
   const arrowButtonRef = useRef(null);
   const panelRef = useRef(null);
   const dispatch = useDispatch();
-
-  // Notify parent menu when subpanel opens/closes
-  useEffect(() => {
-    if (onSubpanelToggle) {
-      onSubpanelToggle(showPanel);
-    }
-  }, [showPanel, onSubpanelToggle]);
 
   const handlePanelEntered = () => {
     arrowButtonRef.current?.focus();
@@ -86,6 +79,9 @@ function WidgetsManagementPanel({
         case "WIDGET_PICTURE_OF_THE_DAY":
           widgetName = "picture_of_the_day";
           break;
+        case "WIDGET_RECENT_SEARCHES":
+          widgetName = "recent_searches";
+          break;
       }
 
       if (widgetName) {
@@ -121,6 +117,7 @@ function WidgetsManagementPanel({
     crosswordEnabled,
     stocksEnabled,
     pictureOfTheDayEnabled,
+    recentSearchesEnabled,
   } = enabledWidgets;
   const isRTL = typeof document !== "undefined" && document.dir === "rtl";
   const arrowIconSrc = `chrome://global/skin/icons/shaft-arrow-${isRTL ? "right" : "left"}.svg`;
@@ -147,6 +144,7 @@ function WidgetsManagementPanel({
                 type="ghost"
                 className="arrow-button"
                 iconSrc={arrowIconSrc}
+                data-l10n-id="newtab-customize-panel-back-button"
                 onClick={togglePanel}
               ></moz-button>
               <h2 data-l10n-id="newtab-widget-manage-title"></h2>
@@ -257,6 +255,18 @@ function WidgetsManagementPanel({
                     data-preference="widgets.pictureOfTheDay.enabled"
                     data-event-source="WIDGET_PICTURE_OF_THE_DAY"
                     data-l10n-id="newtab-custom-widget-picture-toggle"
+                  />
+                </div>
+              )}
+              {mayHaveRecentSearchesWidget && (
+                <div id="recent-searches-widget-section" className="section">
+                  <moz-toggle
+                    id="recent-searches-toggle"
+                    pressed={recentSearchesEnabled || null}
+                    ontoggle={onToggleWidget}
+                    data-preference="widgets.recentSearches.enabled"
+                    data-event-source="WIDGET_RECENT_SEARCHES"
+                    data-l10n-id="newtab-custom-widget-recent-searches-toggle"
                   />
                 </div>
               )}

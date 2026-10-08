@@ -1,6 +1,23 @@
 {
   "data": [
     {
+      "schema": 1788393608812,
+      "imageSize": 56,
+      "attachment": {
+        "hash": "77b58351b9f57ca4f663812879efb28988da716038b9cf22ad9c3af7fcdeee39",
+        "size": 536,
+        "filename": "mdn.svg",
+        "location": "main-workspace/search-config-icons/20260910133855--2cb3ddd3-0b70-4a4b-b487-fb36cb9658ca--005a5457-cb2c-471e-b4e0-abea713c4f2b.svg",
+        "mimetype": "image/svg+xml"
+      },
+      "engineIdentifiers": [
+        "mdn"
+      ],
+      "filter_expression": "env.appinfo.OS != \"iOS\" && env.appinfo.OS != \"Android\"",
+      "id": "2cb3ddd3-0b70-4a4b-b487-fb36cb9658ca",
+      "last_modified": 1789051164551
+    },
+    {
       "schema": 1786121638638,
       "imageSize": 16,
       "attachment": {
@@ -252,23 +269,6 @@
       "filter_expression": "env.appinfo.OS == \"iOS\" || env.appinfo.OS == \"Android\"",
       "id": "7c81cf98-7c11-4afd-8279-db89118a6dfb",
       "last_modified": 1744118264969
-    },
-    {
-      "schema": 1743687939650,
-      "imageSize": 96,
-      "attachment": {
-        "hash": "076352591c7077af4af5771918f80b5da9c6bf479327cc68390abdb158f3ec03",
-        "size": 1261,
-        "filename": "amazon_mobile.png",
-        "location": "main-workspace/search-config-icons/6343f182-d4ca-4865-a12c-62f3861524b9.png",
-        "mimetype": "image/png"
-      },
-      "engineIdentifiers": [
-        "amazon*"
-      ],
-      "filter_expression": "env.appinfo.OS == \"iOS\" || env.appinfo.OS == \"Android\"",
-      "id": "b882b24d-1776-4ef9-9016-0bdbd935eda3",
-      "last_modified": 1744118264967
     },
     {
       "schema": 1743687897341,
@@ -1175,23 +1175,6 @@
       "last_modified": 1744118264833
     },
     {
-      "schema": 1743687843968,
-      "imageSize": 16,
-      "attachment": {
-        "hash": "16ea89d4baa39529d7a84d5152867a4c6ed6867198c4dfa1648b1f43ce6a3f6f",
-        "size": 1407,
-        "filename": "amazon-16-firefox.ico",
-        "location": "main-workspace/search-config-icons/9b60e56c-34cc-4447-a20d-21b4ecad7e8a.ico",
-        "mimetype": "image/x-icon"
-      },
-      "engineIdentifiers": [
-        "amazon*"
-      ],
-      "filter_expression": "env.appinfo.OS != \"iOS\" && env.appinfo.OS != \"Android\"",
-      "id": "2e835b0e-9709-d1bb-9725-87f59f3445ca",
-      "last_modified": 1744118264829
-    },
-    {
       "schema": 1743687738096,
       "imageSize": 16,
       "attachment": {
@@ -1224,5 +1207,5 @@
       "last_modified": 1744118264825
     }
   ],
-  "timestamp": 1786412902498
+  "timestamp": 1790703262927
 }

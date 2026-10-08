@@ -39,6 +39,7 @@ task-defaults:
     fetches:
         toolchain:
             - linux64-minidump-stackwalk
+            - newtab-node-modules
 
 tasks:
     amd64-nightly/opt:
@@ -53,7 +54,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 9000
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh nightly amd64
@@ -73,7 +73,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 7200
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh nightly amd64 --debug
@@ -93,7 +92,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 9000
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh nightly arm64
@@ -113,7 +111,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 7200
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh nightly arm64 --debug
@@ -133,7 +130,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 9000
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh beta amd64
@@ -153,7 +149,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 7200
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh beta amd64 --debug
@@ -173,7 +168,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 9000
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh stable amd64
@@ -193,7 +187,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 7200
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh stable amd64 --debug
@@ -213,7 +206,6 @@ tasks:
             docker-image: {in-tree: snap-build-core22}
             max-run-time: 9000
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh esr amd64
@@ -233,7 +225,6 @@ tasks:
             docker-image: {in-tree: snap-build-core22}
             max-run-time: 7200
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh esr amd64 --debug
@@ -257,7 +248,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 9000
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh try amd64
@@ -281,7 +271,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 7200
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh try amd64 --debug
@@ -305,7 +294,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 9000
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh try arm64
@@ -329,7 +317,6 @@ tasks:
             docker-image: {in-tree: snap-build-core24}
             max-run-time: 7200
         run:
-            clone-with: hg
             using: run-task
             command: >-
               ./run.sh try arm64 --debug

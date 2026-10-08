@@ -7,9 +7,52 @@
 #include "CommonMetadata.h"
 
 #include "mozilla/dom/quota/QuotaCommon.h"
+#include "mozilla/dom/quota/QuotaManager.h"
 #include "mozilla/dom/quota/ResultExtensions.h"
 
 namespace mozilla::dom::quota {
+
+#if defined(NIGHTLY_BUILD) || defined(DEBUG)
+bool CheckClientUsagesConsistency(const ClientUsageArray& aClientUsages,
+                                  int64_t aUsage, const nsACString& aContext) {
+  QuotaManager* quotaManager = QuotaManager::Get();
+  MOZ_ASSERT(quotaManager);
+
+  bool consistent = true;
+  int64_t usage = 0;
+  for (const Client::Type type : quotaManager->AllClientTypes()) {
+    // Not AssertNoOverflow: its aArg>=0 precondition would crash on exactly
+    // the negative values this function exists to detect (see the valueOk
+    // check below) rather than the isolated bug this whole function is
+    // meant to catch.
+    QM_SCOPED_CONTEXT(aContext + "["_ns + Client::TypeToText(type) +
+                      "]Underflow"_ns);
+    const int64_t value = aClientUsages[type].valueOr(0);
+    const bool valueOk = value >= 0;
+    QM_WARNONLY_TRY(OkIf(valueOk));
+    consistent = consistent && valueOk;
+    usage += value;
+  }
+  {
+    QM_SCOPED_CONTEXT(aContext + "Mismatch"_ns);
+    const bool mismatchOk = aUsage == usage;
+    QM_WARNONLY_TRY(OkIf(mismatchOk));
+    consistent = consistent && mismatchOk;
+  }
+  {
+    QM_SCOPED_CONTEXT(aContext + "UsageUnderflow"_ns);
+    const bool usageOk = aUsage >= 0;
+    QM_WARNONLY_TRY(OkIf(usageOk));
+    consistent = consistent && usageOk;
+  }
+  return consistent;
+}
+
+bool FullOriginMetadata::CheckIfUsageIsConsistent(
+    const nsACString& aContext) const {
+  return CheckClientUsagesConsistency(mClientUsages, mOriginUsage, aContext);
+}
+#endif  // defined(NIGHTLY_BUILD) || defined(DEBUG)
 
 nsresult FullOriginMetadata::BindToStatement(
     mozIStorageStatement* aStatement) const {

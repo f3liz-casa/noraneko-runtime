@@ -135,6 +135,16 @@ module.exports = function (config) {
                 branches: 0,
               },
             /**
+             * CardCarousel.jsx is tested via Jest (see test/jest/content-src/components/DiscoveryStreamComponents/CardCarousel.test.jsx).
+             */
+            "content-src/components/DiscoveryStreamComponents/CardCarousel/CardCarousel.jsx":
+              {
+                statements: 0,
+                lines: 0,
+                functions: 0,
+                branches: 0,
+              },
+            /**
              * ErrorBoundary.jsx is tested via Jest (see test/jest/content-src/components/ErrorBoundary.test.jsx).
              */
             "content-src/components/ErrorBoundary/ErrorBoundary.jsx": {
@@ -195,6 +205,26 @@ module.exports = function (config) {
              * ComponentPerfTimer.jsx is tested via Jest (see test/jest/content-src/components/ComponentPerfTimer.test.jsx).
              */
             "content-src/components/ComponentPerfTimer/ComponentPerfTimer.jsx":
+              {
+                statements: 0,
+                lines: 0,
+                functions: 0,
+                branches: 0,
+              },
+            /**
+             * TopicNavigation.jsx is tested via Jest (see test/jest/content-src/components/DiscoveryStreamComponents/TopicNavigation.test.jsx).
+             */
+            "content-src/components/DiscoveryStreamComponents/TopicNavigation/TopicNavigation.jsx":
+              {
+                statements: 0,
+                lines: 0,
+                functions: 0,
+                branches: 0,
+              },
+            /**
+             * useOverflowSplit.jsx is tested via Jest (see test/jest/content-src/components/DiscoveryStreamComponents/useOverflowSplit.test.jsx).
+             */
+            "content-src/components/DiscoveryStreamComponents/TopicNavigation/useOverflowSplit.jsx":
               {
                 statements: 0,
                 lines: 0,
@@ -428,13 +458,6 @@ module.exports = function (config) {
                 lines: 84,
                 functions: 83,
               },
-            "content-src/components/DiscoveryStreamComponents/BriefingCard/BriefingCard.jsx":
-              {
-                statements: 92.31,
-                branches: 66.67,
-                functions: 90,
-                lines: 94.59,
-              },
             /**
              * PromoCard currently has no functionality and is a placeholder component
              */
@@ -525,6 +548,22 @@ module.exports = function (config) {
               functions: 0,
               branches: 0,
             },
+            // Coverage for this component lives in Jest (test/jest/content-src/components/PanelListItems.test.jsx)
+            "content-src/components/LinkMenu/PanelListItems.jsx": {
+              statements: 0,
+              lines: 0,
+              functions: 0,
+              branches: 0,
+            },
+            // Coverage for this component lives in Jest (test/jest/content-src/components/ContextMenu/ContextMenuButton.test.jsx).
+            // The karma suite only reached it through the topsites and story-card
+            // menu tests, which this stack moves to panel-list.
+            "content-src/components/ContextMenu/ContextMenuButton.jsx": {
+              statements: 0,
+              lines: 0,
+              functions: 0,
+              branches: 0,
+            },
             // Coverage for this component lives in Jest (test/jest/content-src/components/Widgets/Clocks.test.jsx)
             "content-src/components/Widgets/Clocks/Clocks.jsx": {
               statements: 0,
@@ -567,8 +606,30 @@ module.exports = function (config) {
               functions: 0,
               branches: 0,
             },
+            // Coverage for this component lives in Jest (test/jest/content-src/components/Widgets/StockSearch.test.jsx)
+            "content-src/components/Widgets/Stocks/StockSearch.jsx": {
+              statements: 0,
+              lines: 0,
+              functions: 0,
+              branches: 0,
+            },
+            // Coverage for this hook lives in Jest (test/jest/content-src/components/Widgets/useStockSearch.test.jsx)
+            "content-src/components/Widgets/Stocks/useStockSearch.jsx": {
+              statements: 0,
+              lines: 0,
+              functions: 0,
+              branches: 0,
+            },
             // Coverage for this component lives in Jest (test/jest/content-src/components/Widgets/PictureOfTheDay.test.jsx)
             "content-src/components/Widgets/PictureOfTheDay/PictureOfTheDay.jsx":
+              {
+                statements: 0,
+                lines: 0,
+                functions: 0,
+                branches: 0,
+              },
+            // Coverage for this component lives in Jest (test/jest/content-src/components/Widgets/RecentSearches.test.jsx)
+            "content-src/components/Widgets/RecentSearches/RecentSearches.jsx":
               {
                 statements: 0,
                 lines: 0,
@@ -603,6 +664,21 @@ module.exports = function (config) {
               functions: 0,
               branches: 0,
             },
+            // Static registry data; the Fluent pairing it relies on is checked
+            // in Jest (test/jest/content-src/components/Widgets/ClockCityRegistry.test.jsx)
+            "content-src/components/Widgets/Clocks/ClockCityRegistry.mjs": {
+              statements: 0,
+              lines: 0,
+              functions: 0,
+              branches: 0,
+            },
+            // Coverage for this hook lives in Jest (test/jest/content-src/components/Widgets/useCuratedCityNames.test.jsx)
+            "content-src/components/Widgets/Clocks/useCuratedCityNames.jsx": {
+              statements: 0,
+              lines: 0,
+              functions: 0,
+              branches: 0,
+            },
             "content-src/components/Weather/LocationSearch.jsx": {
               statements: 0,
               lines: 0,
@@ -615,11 +691,13 @@ module.exports = function (config) {
               functions: 0,
               branches: 0,
             },
+            // Lowered when Bug 2066344 removed the onSubpanelToggle Enzyme test.
+            // Coverage for this component lives in Jest (test/jest/content-src/components/CustomizeMenu/SectionsMgmtPanel.test.jsx)
             "content-src/components/CustomizeMenu/SectionsMgmtPanel/*.jsx": {
               statements: 86,
               lines: 76,
-              functions: 86,
-              branches: 76,
+              functions: 85.71,
+              branches: 75.68,
             },
             "content-src/components/CustomizeMenu/ContentSection/*.jsx": {
               statements: 80,
@@ -725,12 +803,6 @@ module.exports = function (config) {
               functions: 0,
               branches: 0,
             },
-            "content-src/components/Widgets/useMouseDnD.jsx": {
-              statements: 0,
-              lines: 0,
-              functions: 0,
-              branches: 0,
-            },
             // Covered by test/jest/content-src/components/Widgets/useCountUp.test.jsx
             "content-src/components/Widgets/useCountUp.jsx": {
               statements: 0,
@@ -782,6 +854,19 @@ module.exports = function (config) {
               branches: 0,
             },
             "content-src/lib/useReorderFlip.jsx": {
+              statements: 0,
+              lines: 0,
+              functions: 0,
+              branches: 0,
+            },
+            // Coverage for this module lives in Jest (test/jest/content-src/lib/panel-list-utils.test.jsx)
+            "content-src/lib/panel-list-utils.jsx": {
+              statements: 0,
+              lines: 0,
+              functions: 0,
+              branches: 0,
+            },
+            "content-src/lib/usePointerReorder.jsx": {
               statements: 0,
               lines: 0,
               functions: 0,
@@ -861,13 +946,6 @@ module.exports = function (config) {
             __dirname,
             "../../../toolkit/content/vendor/react/react-redux.js"
           )
-        ),
-        // AppConstants is imported eagerly in AboutPreferences.sys.mjs, but
-        // karma's webpack bundler can't resolve resource:// URIs.
-        // Redirect to a test stub.
-        new webpack.NormalModuleReplacementPlugin(
-          /^resource:\/\/gre\/modules\/AppConstants\.sys\.mjs$/,
-          path.resolve(__dirname, "test/unit/stubs/AppConstants.sys.mjs")
         ),
       ],
       externals: [

@@ -12,7 +12,16 @@ async function unloadSearchExtension(extension) {
 add_setup(async function setup() {
   requestLongerTimeout(5);
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.search.suggest.enabled", false]],
+    set: [
+      ["browser.search.suggest.enabled", false],
+      // Tests get no default Top Sites, and disabled_unified_button opens the
+      // view on an empty string, which would otherwise leave it closed with no
+      // results.
+      [
+        "browser.newtabpage.activity-stream.default.sites",
+        "https://example.com/",
+      ],
+    ],
   });
   registerCleanupFunction(() => {
     Services.prefs.clearUserPref(
@@ -866,7 +875,7 @@ add_task(async function test_search_mode_switcher_engine_no_icon() {
 add_task(async function test_search_mode_switcher_private_engine_icon() {
   await SpecialPowers.pushPrefEnv({
     set: [
-      ["browser.search.separatePrivateDefault.ui.enabled", true],
+      ["browser.search.separatePrivateDefault.featureGate", true],
       // This test also asserts the switcher's icon in a window it opens itself;
       // see test_icon_new_window.
       ["browser.urlbar.ipc.chromeMessagePassing", false],

@@ -9,9 +9,11 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   ContextualIdentityService:
     "moz-src:///toolkit/components/contextualidentity/ContextualIdentityService.sys.mjs",
-  PageWireframes: "resource:///modules/sessionstore/PageWireframes.sys.mjs",
+  PageWireframes:
+    "moz-src:///browser/components/sessionstore/PageWireframes.sys.mjs",
   SponsorProtection:
     "moz-src:///browser/components/newtab/SponsorProtection.sys.mjs",
+  Tabbrowser: "moz-src:///browser/components/tabbrowser/Tabbrowser.sys.mjs",
   TabNotes: "moz-src:///browser/components/tabnotes/TabNotes.sys.mjs",
 });
 
@@ -208,6 +210,25 @@ export default class TabHoverPanelSet {
   }
 
   #doDeactivate(panel) {
+    // Hiding a popup that has not finished showing cancels the in-flight show,
+    // so popupshown never fires. Mark the panel inactive now and complete the
+    // hide once the show settles, unless it gets reactivated in the meantime.
+    if (panel.panelElement.state == "showing") {
+      if (this.#activePanel == panel) {
+        this.#activePanel = null;
+      }
+      panel.panelElement.addEventListener(
+        "popupshown",
+        () => {
+          if (this.#activePanel != panel) {
+            this.#doDeactivate(panel);
+          }
+        },
+        { once: true }
+      );
+      return;
+    }
+
     panel.onBeforeHide();
     panel.panelElement.hidePopup();
     this.panelOpener.clear(panel);
@@ -228,6 +249,19 @@ export default class TabHoverPanelSet {
     // opener must be cleared after all panels have been hidden.
     this.panelOpener.reset();
     this.#activePanel = null;
+  }
+
+  /**
+   * Whether the given node is one of the hover preview panels managed here,
+   * as opposed to an unrelated panel or menupopup.
+   *
+   * @param {Node} node
+   * @returns {boolean}
+   */
+  isHoverPanel(node) {
+    return [this.tabPanel, this.tabGroupPanel, this.tabNotePanel].some(
+      panel => panel.panelElement == node
+    );
   }
 
   shouldActivate() {
@@ -646,7 +680,7 @@ class TabPanel extends HoverPanel {
 
     this.#updateContainerIndicator();
 
-    if (this.win.gBrowser.showPidAndActiveness) {
+    if (lazy.Tabbrowser.prefs.showPidAndActiveness) {
       this.panelElement.querySelector(".tab-preview-pid").textContent =
         this.#displayPids;
       this.panelElement.querySelector(".tab-preview-activeness").textContent =

@@ -146,8 +146,7 @@ struct VFYContextStr {
     /* the encoded DigestInfo from a RSA PKCS#1 signature */
     unsigned char *pkcs1RSADigestInfo;
     void *wincx;
-    void *hashcx;
-    const SECHashObject *hashobj;
+    PK11Context *hashcx;
     PK11Context *vfycx;
     SECOidTag encAlg; /* enc alg */
     CK_MECHANISM_TYPE mech;
@@ -606,9 +605,16 @@ sec_DecodeSigAlg(const SECKEYPublicKey *key, SECOidTag sigAlg,
         case SEC_OID_ML_DSA_44:
         case SEC_OID_ML_DSA_65:
         case SEC_OID_ML_DSA_87:
+            /* RFC 9881 requires the parameters component to be absent, so
+             * there is nothing to decode and nowhere to carry a signing
+             * context; a caller that needs a non-empty context has to supply
+             * it out of band. Reject anything present rather than ignore it. */
+            if (param != NULL && param->len != 0) {
+                PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+                return SECFailure;
+            }
             comboRequired = PR_TRUE;
             *hashalg = sigAlg;
-            /* decode params to get the sign context and set (mechparamsp) */
             break;
         /* we don't implement MD4 hashes */
         case SEC_OID_PKCS1_MD4_WITH_RSA_ENCRYPTION:
@@ -760,6 +766,11 @@ vfy_CreateContext(const SECKEYPublicKey *key, const SECItem *sig,
         SECITEM_FreeItem(mechparamsp, PR_FALSE);
         PORT_SetError(SEC_ERROR_PKCS7_KEYALG_MISMATCH);
         return NULL;
+    }
+    /* for mldsa, the hash has to match the paramset anyway, so a caller of
+     * the *Direct entry points may leave it unnamed */
+    if ((type == mldsaKey) && (hashAlg == SEC_OID_UNKNOWN)) {
+        hashAlg = encAlg;
     }
     if (NSS_OptionGet(NSS_KEY_SIZE_POLICY_FLAGS, &optFlags) != SECFailure) {
         if (optFlags & NSS_KEY_SIZE_POLICY_VERIFY_FLAG) {
@@ -914,11 +925,11 @@ VFY_DestroyContext(VFYContext *cx, PRBool freeit)
 {
     if (cx) {
         if (cx->hashcx != NULL) {
-            (*cx->hashobj->destroy)(cx->hashcx, PR_TRUE);
+            PK11_DestroyContext(cx->hashcx, PR_TRUE);
             cx->hashcx = NULL;
         }
         if (cx->vfycx != NULL) {
-            (void)PK11_DestroyContext(cx->vfycx, PR_TRUE);
+            PK11_DestroyContext(cx->vfycx, PR_TRUE);
             cx->vfycx = NULL;
         }
         if (cx->key) {
@@ -938,11 +949,11 @@ SECStatus
 VFY_Begin(VFYContext *cx)
 {
     if (cx->hashcx != NULL) {
-        (*cx->hashobj->destroy)(cx->hashcx, PR_TRUE);
+        PK11_DestroyContext(cx->hashcx, PR_TRUE);
         cx->hashcx = NULL;
     }
     if (cx->vfycx != NULL) {
-        (void)PK11_DestroyContext(cx->vfycx, PR_TRUE);
+        PK11_DestroyContext(cx->vfycx, PR_TRUE);
         cx->vfycx = NULL;
     }
     if (cx->mech != CKM_INVALID_MECHANISM) {
@@ -964,15 +975,15 @@ VFY_Begin(VFYContext *cx)
             return SECFailure;
         return SECSuccess;
     }
-    cx->hashobj = HASH_GetHashObjectByOidTag(cx->hashAlg);
-    if (!cx->hashobj)
+    cx->hashcx = PK11_CreateDigestContext(cx->hashAlg);
+    if (cx->hashcx == NULL)
         return SECFailure; /* error code is set */
 
-    cx->hashcx = (*cx->hashobj->create)();
-    if (cx->hashcx == NULL)
-        return SECFailure;
-
-    (*cx->hashobj->begin)(cx->hashcx);
+    if (PK11_DigestBegin(cx->hashcx) != SECSuccess) {
+        PK11_DestroyContext(cx->hashcx, PR_TRUE);
+        cx->hashcx = NULL;
+        return SECFailure; /* error code is set */
+    }
     return SECSuccess;
 }
 
@@ -986,8 +997,7 @@ VFY_Update(VFYContext *cx, const unsigned char *input, unsigned inputLen)
         }
         return PK11_DigestOp(cx->vfycx, input, inputLen);
     }
-    (*cx->hashobj->update)(cx->hashcx, input, inputLen);
-    return SECSuccess;
+    return PK11_DigestOp(cx->hashcx, input, inputLen);
 }
 
 static SECStatus
@@ -1016,7 +1026,8 @@ SECStatus
 VFY_EndWithSignature(VFYContext *cx, SECItem *sig)
 {
     unsigned char final[HASH_LENGTH_MAX];
-    unsigned part;
+    unsigned int part = 0;
+    unsigned int expectedLen;
     SECStatus rv;
 
     /* make sure our signature is set (either previously nor now) */
@@ -1039,10 +1050,17 @@ VFY_EndWithSignature(VFYContext *cx, SECItem *sig)
         return PK11_DigestFinal(cx->vfycx, cx->u.gensig, &dummy,
                                 cx->signatureLen);
     }
-    (*cx->hashobj->end)(cx->hashcx, final, &part, sizeof(final));
+    rv = PK11_DigestFinal(cx->hashcx, final, &part, sizeof(final));
+    if (rv != SECSuccess) {
+        return SECFailure;
+    }
+    expectedLen = HASH_ResultLenByOidTag(cx->hashAlg);
+    if (expectedLen == 0 || part != expectedLen) {
+        PORT_SetError(SEC_ERROR_LIBRARY_FAILURE);
+        return SECFailure;
+    }
     SECItem gensig = { siBuffer, cx->u.gensig, cx->signatureLen };
     SECItem hash = { siBuffer, final, part };
-    PORT_Assert(part <= sizeof(final));
     /* handle the algorithm specific final call */
     switch (cx->key->keyType) {
         case ecKey:

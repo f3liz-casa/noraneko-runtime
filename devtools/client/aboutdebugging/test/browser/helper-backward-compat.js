@@ -70,6 +70,7 @@ function addCompatTask(taskFn) {
     info(
       `Testing against ${brandName} ${version} (${channel}) on ${config.host}`
     );
+
     await taskFn(config);
   });
 }

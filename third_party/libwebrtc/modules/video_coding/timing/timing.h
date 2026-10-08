@@ -15,10 +15,10 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 
-#include "api/field_trials_view.h"
+#include "api/environment/environment.h"
 #include "api/sequence_checker.h"
-#include "api/units/data_size.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
 #include "api/video/timing/video_jitter_timing_interface.h"
@@ -28,7 +28,6 @@
 #include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/system/no_unique_address.h"
 #include "rtc_base/thread_annotations.h"
-#include "system_wrappers/include/clock.h"
 
 namespace webrtc {
 
@@ -67,11 +66,8 @@ class VCMTiming {
     TimeDelta current_delay = TimeDelta::Zero();
   };
 
-  VCMTiming(Clock* clock,
-            const FieldTrialsView& field_trials,
-            TimeDelta render_delay);
-  VCMTiming(Clock* clock,
-            const FieldTrialsView& field_trials,
+  VCMTiming(const Environment& env, TimeDelta render_delay);
+  VCMTiming(const Environment& env,
             TimeDelta render_delay,
             std::unique_ptr<VideoJitterTimingInterface> video_jitter_timing);
   ~VCMTiming() = default;
@@ -92,11 +88,11 @@ class VCMTiming {
 
   // Methods used by video jitter timing.
   void OnCompleteFrame(const VideoJitterTimingInterface::FrameInfo& info);
-  void OnDecodableTemporalUnit(uint32_t rtp_timestamp,
-                               DataSize superframe_size,
-                               Timestamp max_receive_time,
-                               bool was_retransmitted);
-  void UpdateRtt(TimeDelta rtt);
+  void OnContinuousTemporalUnits(std::span<const uint32_t> rtp_timestamps,
+                                 Timestamp now);
+  void OnDecodableTemporalUnit(
+      const VideoJitterTimingInterface::TemporalUnitInfo& info);
+  void OnNetworkUpdate(const VideoJitterTimingInterface::NetworkInfo& info);
 
   // Increases or decreases the current delay to get closer to the target delay.
   // Given the actual decode time and the render time for a frame, this function

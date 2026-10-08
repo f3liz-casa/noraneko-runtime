@@ -557,12 +557,15 @@ class nsBlockFrame : public nsContainerFrame {
 
   /** Returns the effective align-content of this frame */
   mozilla::StyleAlignFlags EffectiveAlignContent() const {
-    if (IsButtonLike()) {
-      return mozilla::StyleAlignFlags::CENTER;
-    }
-    if (IsSingleLineTextInput()) {
-      return mozilla::StyleAlignFlags::CENTER |
-             mozilla::StyleAlignFlags::UNSAFE;
+    if (!mozilla::StaticPrefs::
+            layout_forms_button_input_align_content_block_enabled()) {
+      if (IsButtonLike()) {
+        return mozilla::StyleAlignFlags::CENTER;
+      }
+      if (IsSingleLineTextInput()) {
+        return mozilla::StyleAlignFlags::CENTER |
+               mozilla::StyleAlignFlags::UNSAFE;
+      }
     }
     return StylePosition()->mAlignContent.primary;
   }
@@ -702,7 +705,7 @@ class nsBlockFrame : public nsContainerFrame {
    * Clears any -webkit-line-clamp ellipsis on a line in this block or one
    * of its descendants.
    */
-  void ClearLineClampEllipsis();
+  bool ClearLineClampEllipsis();
 
   /**
    * Returns whether this block is in a -webkit-line-clamp context. That is,
@@ -743,8 +746,89 @@ class nsBlockFrame : public nsContainerFrame {
   }
 
  protected:
+  struct LineClampTarget {
+    nsBlockFrame* targetFrame;
+    nsLineBox* targetLine;
+    nscoord clampedBSize;
+
+    bool IsFullyClampedOut(nsBlockFrame* aRootFrame, nsBlockFrame* aThisFrame) {
+      MOZ_ASSERT(aRootFrame);
+      if (aThisFrame != aRootFrame) {
+        return false;
+      }
+      if (clampedBSize == 0) {
+        MOZ_ASSERT(targetFrame == nullptr && targetLine == nullptr);
+        return true;
+      }
+      return false;
+    }
+  };
   nsBlockFrame* GetLineClampRoot() const;
-  nscoord ApplyLineClamp(nscoord aContentBlockEndEdge);
+  Maybe<LineClampTarget> FindLineClampAutoTarget(
+      nscoord aContentBlockEndEdge, const ReflowInput& aReflowInput,
+      nscoord aCollapsingBEndMargin, nsBlockFrame* aLineClampRoot);
+  Maybe<LineClampTarget> FindLineClampNumberedTarget(
+      nscoord aContentBlockEndEdge, nscoord aCollapsingBEndMargin,
+      nsBlockFrame* aLineClampRoot) const;
+  void ApplyLineClamp(LineClampTarget aLineClampTarget,
+                      nsBlockFrame* aLineClampRoot);
+  // Helper for calling ApplyLineClamp with automatic and line-based sizing.
+  Maybe<nscoord> ApplySmallestLineClamp(
+      Maybe<nsBlockFrame::LineClampTarget> aLineClampAutoTarget,
+      Maybe<nsBlockFrame::LineClampTarget> aLineClampNumberedTarget,
+      nsBlockFrame* aLineClampRoot);
+
+  struct LineClampAutoInfo {
+    Maybe<nscoord> lineClampRootMaxHeight = Nothing();
+    bool blockIsFullyClampedOut = false;
+  };
+
+  NS_DECLARE_FRAME_PROPERTY_DELETABLE(LineClampAutoData, LineClampAutoInfo);
+  void SetLineClampAutoClampedToZero() {
+    GetOrCreateDeletableProperty(LineClampAutoData())->blockIsFullyClampedOut =
+        true;
+  }
+  bool LineClampIsClampedToZero() {
+    bool found = false;
+    const LineClampAutoInfo* prop = GetProperty(LineClampAutoData(), &found);
+    return found && prop->blockIsFullyClampedOut;
+  }
+  void ClearLineClampAutoClampedToZero() {
+    bool found = false;
+    LineClampAutoInfo* currentInfo = GetProperty(LineClampAutoData(), &found);
+    if (!found) {
+      return;
+    }
+    if (!currentInfo->lineClampRootMaxHeight) {
+      RemoveProperty(LineClampAutoData());
+      return;
+    }
+    currentInfo->blockIsFullyClampedOut = false;
+  }
+  void SetLineClampRootMaxHeight(nscoord aHeight) {
+    GetOrCreateDeletableProperty(LineClampAutoData())->lineClampRootMaxHeight =
+        mozilla::Some(aHeight);
+  }
+  Maybe<nscoord> GetLineClampRootMaxHeight() {
+    bool found = false;
+    LineClampAutoInfo* prop = GetProperty(LineClampAutoData(), &found);
+    if (!found) {
+      return Nothing();
+    }
+    return prop->lineClampRootMaxHeight;
+  }
+  void ClearLineClampRootMaxHeight() {
+    bool found = false;
+    LineClampAutoInfo* info = GetProperty(LineClampAutoData(), &found);
+    if (!found) {
+      return;
+    }
+    if (!info->blockIsFullyClampedOut) {
+      RemoveProperty(LineClampAutoData());
+      return;
+    }
+    info->lineClampRootMaxHeight = Nothing();
+  }
 
   /** grab overflow lines from this block's prevInFlow, and make them
    * part of this block's mLines list.

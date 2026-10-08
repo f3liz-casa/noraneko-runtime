@@ -70,6 +70,7 @@
 
 #include "nsIApplicationReputation.h"
 
+#include "nsContentUtils.h"
 #include "nsDSURIContentListener.h"
 #include "nsMimeTypes.h"
 #include "nsMIMEInfoImpl.h"
@@ -1872,6 +1873,16 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
   bool shouldAutomaticallyHandleInternally =
       action == nsIMIMEInfo::handleInternally;
 
+  // The built-in viewer is the only way to handle a PDF internally, so when it
+  // is disabled the user has to be asked instead: launching the file would fail
+  // because nsIMIMEInfo::handleInternally has no application to launch.
+  if (shouldAutomaticallyHandleInternally &&
+      MIMEType.EqualsLiteral(APPLICATION_PDF) &&
+      !nsContentUtils::IsPDFJSEnabled()) {
+    shouldAutomaticallyHandleInternally = false;
+    alwaysAsk = true;
+  }
+
   if (aChannel) {
     uint32_t disposition = -1;
     aChannel->GetContentDisposition(&disposition);
@@ -2000,7 +2011,7 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
 bool nsExternalAppHandler::IsDownloadSpam(nsIChannel* aChannel) {
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
   nsCOMPtr<nsIPermissionManager> permissionManager =
-      mozilla::services::GetPermissionManager();
+      mozilla::components::PermissionManager::Service();
   nsCOMPtr<nsIPrincipal> principal = loadInfo->TriggeringPrincipal();
   bool exactHostMatch = false;
   constexpr auto type = "automatic-download"_ns;
@@ -2431,10 +2442,10 @@ nsresult nsExternalAppHandler::CreateTransfer() {
         mDownloadClassification, referrerInfo, !mDialogShowing,
         mBrowsingContext, mHandleInternally, nullptr);
   } else {
-    rv = transfer->Init(mSourceUrl, nullptr, target, u""_ns, mMimeInfo,
-                        mTimeDownloadStarted, mTempFile, this,
-                        channel && NS_UsePrivateBrowsing(channel),
-                        mDownloadClassification, referrerInfo, !mDialogShowing);
+    rv = transfer->Init(
+        mSourceUrl, nullptr, target, u""_ns, mMimeInfo, mTimeDownloadStarted,
+        mTempFile, this, channel && NS_UsePrivateBrowsing(channel),
+        mDownloadClassification, referrerInfo, !mDialogShowing, nullptr);
   }
   mDialogShowing = false;
 
@@ -2528,7 +2539,7 @@ nsresult nsExternalAppHandler::CreateFailedTransfer() {
     rv = transfer->Init(mSourceUrl, nullptr, pseudoTarget, u""_ns, mMimeInfo,
                         mTimeDownloadStarted, mTempFile, this,
                         channel && NS_UsePrivateBrowsing(channel),
-                        mDownloadClassification, referrerInfo, true);
+                        mDownloadClassification, referrerInfo, true, nullptr);
   }
   NS_ENSURE_SUCCESS(rv, rv);
 

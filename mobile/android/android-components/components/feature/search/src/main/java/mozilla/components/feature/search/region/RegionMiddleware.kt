@@ -7,9 +7,8 @@ package mozilla.components.feature.search.region
 import android.content.Context
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import mozilla.components.browser.state.action.BrowserAction
@@ -22,19 +21,24 @@ import mozilla.components.lib.state.Store
 import mozilla.components.service.location.LocationService
 
 /**
- * [Middleware] implementation for updating the [RegionState] using the provided [LocationService].
+ * [Middleware] implementation for updating the [RegionState] using the provided [LocationService]. *
+ *
+ * @param context The [Context] used for internal region management.
+ * @param locationService The [LocationService] used to determine the device's geographic region.
+ * @param ioDispatcher The [CoroutineDispatcher] to be used for background operations.
+ * @param applicationScope The [CoroutineScope] used to fetch the device region. This scope should outlive individual
+ *   Activities. Region detection must remain active for the entire application lifetime, so callers should pass an
+ *   application-scoped scope when possible.
  */
 class RegionMiddleware(
     context: Context,
     locationService: LocationService,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val applicationScope: CoroutineScope,
 ) : Middleware<BrowserState, BrowserAction> {
-    @VisibleForTesting
-    internal var regionManager = RegionManager(context, locationService, dispatcher = ioDispatcher)
+    @VisibleForTesting internal var regionManager = RegionManager(context, locationService, dispatcher = ioDispatcher)
 
-    @VisibleForTesting
-    @Volatile
-    internal var updateJob: Job? = null
+    @VisibleForTesting @Volatile internal var updateJob: Job? = null
 
     override fun invoke(
         store: Store<BrowserState, BrowserAction>,
@@ -52,26 +56,26 @@ class RegionMiddleware(
         next(action)
     }
 
-    @OptIn(DelicateCoroutinesApi::class)
     private fun determineRegion(
         store: Store<BrowserState, BrowserAction>,
         newDistributionId: String? = null,
-    ) = GlobalScope.launch(ioDispatcher) {
-        // Get the region state from the RegionManager. If there's none then dispatch the default
-        // region to be used.
-        val distributionId = newDistributionId ?: store.state.distributionId
-        val region = regionManager.region()
-        if (region != null) {
-            store.dispatch(SearchAction.SetRegionAction(region, distributionId))
-        } else {
-            store.dispatch(SearchAction.SetRegionAction(RegionState.Default, distributionId))
-        }
+    ) =
+        applicationScope.launch(ioDispatcher) {
+            // Get the region state from the RegionManager. If there's none then dispatch the default
+            // region to be used.
+            val distributionId = newDistributionId ?: store.state.distributionId
+            val region = regionManager.region()
+            if (region != null) {
+                store.dispatch(SearchAction.SetRegionAction(region, distributionId))
+            } else {
+                store.dispatch(SearchAction.SetRegionAction(RegionState.Default, distributionId))
+            }
 
-        // Ask the RegionManager to perform an update. If the "home" region changed then it will
-        // return a new RegionState.
-        val update = regionManager.update()
-        if (update != null) {
-            store.dispatch(SearchAction.SetRegionAction(update, distributionId))
+            // Ask the RegionManager to perform an update. If the "home" region changed then it will
+            // return a new RegionState.
+            val update = regionManager.update()
+            if (update != null) {
+                store.dispatch(SearchAction.SetRegionAction(update, distributionId))
+            }
         }
-    }
 }

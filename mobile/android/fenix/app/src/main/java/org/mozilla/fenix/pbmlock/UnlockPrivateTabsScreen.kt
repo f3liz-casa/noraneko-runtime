@@ -28,12 +28,12 @@ import androidx.compose.ui.unit.dp
 import mozilla.components.compose.base.annotation.FlexibleWindowPreview
 import mozilla.components.compose.base.button.FilledButton
 import mozilla.components.compose.base.button.TextButton
+import mozilla.components.compose.base.theme.PreviewThemeProvider
+import mozilla.components.compose.base.theme.Theme
 import mozilla.components.compose.base.utils.getResolvedAttrResId
 import org.mozilla.fenix.R
 import org.mozilla.fenix.ext.isLargeWindow
 import org.mozilla.fenix.theme.FirefoxTheme
-import org.mozilla.fenix.theme.PreviewThemeProvider
-import org.mozilla.fenix.theme.Theme
 
 private const val FILL_WIDTH_LARGE_WINDOW = 0.5f
 private const val FILL_WIDTH_DEFAULT = 1.0f
@@ -53,9 +53,7 @@ internal fun UnlockPrivateTabsScreen(
 ) {
     Surface {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = 32.dp),
+            modifier = Modifier.fillMaxSize().padding(bottom = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
@@ -89,9 +87,7 @@ private fun Header() {
 @Composable
 private fun Logo() {
     Row(
-        modifier = Modifier
-            .padding(32.dp)
-            .height(62.dp),
+        modifier = Modifier.padding(32.dp).height(62.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Image(
@@ -110,17 +106,16 @@ private fun Logo() {
 
 @Composable
 private fun Footer(onUnlockClicked: () -> Unit, onLeaveClicked: () -> Unit, showNegativeButton: Boolean) {
-    val fillWidthFraction = if (LocalContext.current.isLargeWindow()) {
-        FILL_WIDTH_LARGE_WINDOW
-    } else {
-        FILL_WIDTH_DEFAULT
-    }
+    val fillWidthFraction =
+        if (LocalContext.current.isLargeWindow()) {
+            FILL_WIDTH_LARGE_WINDOW
+        } else {
+            FILL_WIDTH_DEFAULT
+        }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .padding(horizontal = 16.dp)
-            .fillMaxWidth(fillWidthFraction),
+        modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(fillWidthFraction),
     ) {
         FilledButton(
             text = stringResource(id = R.string.pbm_authentication_unlock),
@@ -142,9 +137,7 @@ private fun Footer(onUnlockClicked: () -> Unit, onLeaveClicked: () -> Unit, show
 
 @FlexibleWindowPreview
 @Composable
-private fun ScreenPreview(
-    @PreviewParameter(PreviewThemeProvider::class) theme: Theme,
-) {
+private fun ScreenPreview(@PreviewParameter(PreviewThemeProvider::class) theme: Theme) {
     FirefoxTheme(theme) {
         UnlockPrivateTabsScreen(
             onUnlockClicked = {},

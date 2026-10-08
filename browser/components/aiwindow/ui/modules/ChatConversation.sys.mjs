@@ -125,13 +125,13 @@ export class ChatConversation extends Conversation {
   lastSubmitType = null;
 
   /**
-   * Transient (not persisted): cached action_type categorization
-   * ("tab_mention", "description", "unsupported") of the most recent browser
-   * action request, used to send telemetry to later tool-result events.
+   * Transient (not persisted): browser_action_submit telemetry context for
+   * manage_tabs confirmation, keyed by toolCallId. Stashed when a tab action
+   * is deferred for user confirmation and consumed when it resolves.
    *
-   * @type {?string}
+   * @type {Map<string, object>} toolCallId -> browser_action_submit context
    */
-  lastBrowserActionType = null;
+  #pendingBrowserActionTelemetry = new Map();
 
   /**
    * A mapping of a URL to its unique URL token. URL tokens are used as shortened
@@ -298,6 +298,40 @@ export class ChatConversation extends Conversation {
   }
 
   /**
+   * Stash browser_action_submit telemetry context for a deferred tab action,
+   * to be consumed when its confirmation resolves.
+   *
+   * @param {string} toolCallId
+   * @param {object} telemetryInfo - browser_action_submit context
+   */
+  stashPendingBrowserActionTelemetry(toolCallId, telemetryInfo) {
+    this.#pendingBrowserActionTelemetry.set(toolCallId, telemetryInfo);
+  }
+
+  /**
+   * Retrieve and remove the stashed browser_action_submit context for a tool
+   * call, if any.
+   *
+   * @param {string} toolCallId
+   * @returns {object | undefined} The stashed context, or undefined if none.
+   */
+  takePendingBrowserActionTelemetry(toolCallId) {
+    const telemetryInfo = this.#pendingBrowserActionTelemetry.get(toolCallId);
+    this.#pendingBrowserActionTelemetry.delete(toolCallId);
+    return telemetryInfo;
+  }
+
+  /**
+   * Number of stashed browser_action_submit contexts awaiting a confirmation.
+   * Exposed for tests.
+   *
+   * @type {number}
+   */
+  get pendingBrowserActionTelemetryCount() {
+    return this.#pendingBrowserActionTelemetry.size;
+  }
+
+  /**
    * Converts a URL into a token. It first computes a base token from
    * the hostname and path parts, then appends a monotonically increasing number on the
    * end to make it unique. This token is cached to the conversation while
@@ -391,7 +425,7 @@ export class ChatConversation extends Conversation {
     }
     if (plainText || tokens) {
       this.emit("chat-conversation:message-update", currentMessage);
-      lazy.ChatStore.updateConversation(this);
+      lazy.ChatStore.persistStreamingMessage(this, currentMessage);
     }
   }
 
@@ -424,7 +458,15 @@ export class ChatConversation extends Conversation {
       currentMessage.citations = this.getCitationsSnapshot();
     }
 
-    const result = await super.receiveResponse(stream, currentMessage);
+    let result;
+    try {
+      result = await super.receiveResponse(stream, currentMessage);
+    } catch (e) {
+      // An aborted or failed stream skips the persist below, so land what
+      // streamed before it stopped rather than leaving it only in memory.
+      await lazy.ChatStore.endStreamingWrites(this.id);
+      throw e;
+    }
 
     if (result.currentMessage?.content?.body) {
       // Expand URL tokens and remove any hallucinated ones.
@@ -447,6 +489,10 @@ export class ChatConversation extends Conversation {
       this.emit("chat-conversation:message-update", currentMessage);
     }
 
+    // Drop the pending chunk write rather than flushing it: the full write
+    // below covers the same message, plus the token remainder the stream loop
+    // appends after the last chunk.
+    await lazy.ChatStore.endStreamingWrites(this.id, false);
     await lazy.ChatStore.updateConversation(this);
 
     // Only finalize the message when the turn is actually done. When the model
@@ -904,7 +950,8 @@ export class ChatConversation extends Conversation {
   ) {
     const memoriesContext = await constructMemories(
       prompt,
-      this.#getPreviousRelevantMemories(messageCount)
+      this.#getPreviousRelevantMemories(messageCount),
+      this.engine?.model
     );
     if (memoriesContext == null) {
       return;

@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 const { TabStateFlusher } = ChromeUtils.importESModule(
-  "resource:///modules/sessionstore/TabStateFlusher.sys.mjs"
+  "moz-src:///browser/components/sessionstore/TabStateFlusher.sys.mjs"
 );
 
 const { UrlbarTestUtils } = ChromeUtils.importESModule(
@@ -23,7 +23,6 @@ let win;
 add_setup(async () => {
   await SpecialPowers.pushPrefEnv({
     set: [
-      ["test.wait300msAfterTabSwitch", true],
       ["browser.tabs.groups.enabled", true],
       ["browser.urlbar.scotchBonnet.enableOverride", true],
     ],

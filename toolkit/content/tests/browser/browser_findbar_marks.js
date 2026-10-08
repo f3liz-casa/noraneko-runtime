@@ -216,6 +216,44 @@ add_task(async function test_found_resize() {
   await BrowserTestUtils.closeWindow(window2);
 });
 
+// This test verifies that the marks reappear when "Highlight All" is turned
+// off and back on without a new search (bug 1695881).
+add_task(async function test_findmarks_highlight_toggle() {
+  let tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    TEST_PAGE_URI
+  );
+  let browser = tab.linkedBrowser;
+  let endFn = initForBrowser(browser);
+
+  await promiseFindFinished(gBrowser, "tex", true);
+  let values = await getMarks(browser, true);
+  Assert.equal(values.length, 3, "marks after search with highlighting on");
+
+  let findbar = await gBrowser.getFindBar();
+
+  let marksChanged = BrowserTestUtils.waitForContentEvent(
+    browser,
+    "find-scrollmarks-changed",
+    true
+  );
+  findbar.toggleHighlight(false);
+  await marksChanged;
+  await verifyFind(browser, "tex (highlight off)", true, []);
+
+  marksChanged = BrowserTestUtils.waitForContentEvent(
+    browser,
+    "find-scrollmarks-changed",
+    true
+  );
+  findbar.toggleHighlight(true);
+  await marksChanged;
+  await verifyFind(browser, "tex (highlight on again)", true, values);
+
+  endFn();
+  gBrowser.removeTab(tab);
+});
+
 // Returns the scroll marks that should have been assigned
 // to the scrollbar after a find. As a side effect, also
 // verifies that the marks have been updated since the last
@@ -223,15 +261,29 @@ add_task(async function test_found_resize() {
 // have been updated, and if increase is false, the marks should
 // not have been updated.
 async function getMarks(browser, increase, shouldBeOnHScrollbar = false) {
-  let results = await SpecialPowers.spawn(browser, [], () => {
-    let { marks, onHorizontalScrollbar } = content.lastMarks;
-    content.lastMarks = {};
-    return {
-      onHorizontalScrollbar,
-      marks: marks || [],
-      count: content.eventsCount,
-    };
-  });
+  // The marks are updated on a findbar.iteratorTimeout timer, which can fire
+  // long after the find itself has been reported as finished.
+  let results = await SpecialPowers.spawn(
+    browser,
+    [increase, gUpdateCount],
+    async (shouldWait, lastCount) => {
+      if (shouldWait && (content.eventsCount ?? 0) <= lastCount) {
+        await ContentTaskUtils.waitForEvent(
+          content,
+          "find-scrollmarks-changed",
+          true
+        );
+      }
+
+      let { marks, onHorizontalScrollbar } = content.lastMarks;
+      content.lastMarks = {};
+      return {
+        onHorizontalScrollbar,
+        marks: marks || [],
+        count: content.eventsCount,
+      };
+    }
+  );
 
   // The marks are updated whenever the scrollbar is updated and
   // this could happen several times as either a find for multiple

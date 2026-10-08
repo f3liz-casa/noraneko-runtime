@@ -12,7 +12,7 @@ System handles:
 - {searchfox}`Action Only <browser/components/asrouter/content-src/templates/OnboardingMessage/ActionOnlyMessage.schema.json>`
 - {searchfox}`CFR URLBar Chiclet <browser/components/asrouter/content-src/templates/CFR/templates/CFRUrlbarChiclet.schema.json>`
 - {searchfox}`Extension Doorhanger <browser/components/asrouter/content-src/templates/CFR/templates/ExtensionDoorhanger.schema.json>`
-- {searchfox}`Infobar <browser/components/asrouter/content-src/templates/CFR/templates/InfoBar.schema.json>`
+- {searchfox}`Infobar <browser/components/asrouter/content-src/templates/InfoBar/InfoBar.schema.json>`
 - {searchfox}`Spotlight <browser/components/asrouter/content-src/templates/OnboardingMessage/Spotlight.schema.json>`
 - {searchfox}`Toast Notification <browser/components/asrouter/content-src/templates/ToastNotification/ToastNotification.schema.json>`
 - {searchfox}`Toolbar Badge <browser/components/asrouter/content-src/templates/OnboardingMessage/ToolbarBadgeMessage.schema.json>`
@@ -23,6 +23,12 @@ System handles:
 Together, they are combined into the {searchfox}`Messaging Experiments <browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json>` via a {searchfox}`script <browser/components/asrouter/content-src/schemas/make-schemas.py>`. This
 is the schema used for Nimbus experiments that target messaging features. All
 incoming messaging experiments will be validated against this schema.
+
+### MultiStageProtonScreen
+
+There is a JSON schema for a multistage screen content, which the Messaging System renders Spotlights and Feature Callouts from, and even shares with about:welcome onboarding. However, this JSON schema isn't used by Nimbus to be enforced on messaging experiments and is only served for the purpose of documenting a catalog of the growing set of content properties.
+
+See JSON schema [here](https://searchfox.org/firefox-main/source/toolkit/components/messaging-system/schemas/MultiStageProtonScreenSchemas/MultiStageProtonScreenSchemas.json).
 
 ## Schema Changes
 
@@ -138,7 +144,7 @@ library, which is reused in the {searchfox}`Firefox MS Schemas CI job <taskclust
 {searchfox}`CFRMessageProvider <browser/components/asrouter/modules/CFRMessageProvider.sys.mjs>`, {searchfox}`OnboardingMessageProvider <browser/components/asrouter/modules/OnboardingMessageProvider.sys.mjs>`, and {searchfox}`PanelTestProvider <browser/components/asrouter/modules/PanelTestProvider.sys.mjs>`
 with the same JSON schema validation library and configuration as Experimenter.
 
-See how to run these tests {ref}`above <run_make_schemas>`.
+See how to run these tests {ref}`above <run-make-schemas>`.
 
 ## Triggers and actions
 

@@ -1,6 +1,21 @@
 "use strict";
 
 add_setup(async () => {
+  // The scale multiplies the browser window's minimum width (500 CSS pixels,
+  // --window-min-width), which forces the window to grow, and popping the pref
+  // does not shrink it back. Restore the size, otherwise the rest of the
+  // manifest runs with a window that can be wider than the screen.
+  const { outerWidth, outerHeight } = window;
+  registerCleanupFunction(async () => {
+    await SpecialPowers.popPrefEnv();
+    // The minimum size only goes back down once layout has caught up with the
+    // scale change; resizing before that would be clamped to the larger minimum.
+    await window.promiseDocumentFlushed(() => {});
+    if (window.outerWidth != outerWidth || window.outerHeight != outerHeight) {
+      window.resizeTo(outerWidth, outerHeight);
+    }
+  });
+
   // Simulate hidpi monitor, where CSS and desktop pixels diverge. We use 3
   // because it differs from 1, and also differs from 2 (which would be
   // canceled out by contentsScaleFactor of 2 on macOS).
@@ -33,11 +48,13 @@ add_task(async function test_windows_create_update_roundtrip_top_and_left() {
 
       function assertDimension(expected, actual, description) {
         if (isWayland) {
-          // TODO bug 1989539: fails to return top/left on Wayland, always 0.
-          browser.test.assertEq(
-            0,
-            actual,
-            `TODO ${description}: expected ${expected}`
+          // TODO bug 1989539: Wayland has no request to position a toplevel, so
+          // where the window ends up, and what gets reported back, is up to the
+          // compositor. Some report 0, some report what was asked for, so there
+          // is no value we can assert here that holds everywhere. Log what we
+          // got instead.
+          browser.test.log(
+            `Not checked on Wayland: ${description} (expected ${expected}, got ${actual})`
           );
           return;
         }
@@ -84,4 +101,10 @@ add_task(async function test_windows_create_update_roundtrip_top_and_left() {
   await extension.startup();
   await extension.awaitMessage("done");
   await extension.unload();
+
+  // TODO bug 1989539: the top/left roundtrip is all this file checks, so on
+  // Wayland it asserts nothing at all, which the harness reports as a failure.
+  if (Services.appinfo.isWayland) {
+    todo(false, "the top/left roundtrip cannot be checked on Wayland");
+  }
 });

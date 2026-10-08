@@ -54,8 +54,6 @@ const BANDWIDTH_WARNING_DISMISSED_PREF =
 const BANDWIDTH_RESET_DATE_PREF = "browser.ipProtection.bandwidthResetDate";
 const EGRESS_LOCATION_PREF = "browser.ipProtection.egressLocation";
 const USER_OPENED_PREF = "browser.ipProtection.everOpenedPanel";
-const OPENED_WITH_LOCATION_PREF =
-  "browser.ipProtection.openedPanelWithLocation";
 const LOCATION_BADGE_DISMISSED_PREF =
   "browser.ipProtection.locationButtonBadgeDismissed";
 const UPGRADE_NOT_AVAILABLE_PREF = "browser.ipProtection.upgradeNotAvailable";
@@ -141,6 +139,8 @@ export class IPProtectionPanel {
    * True if the VPN service has been paused due to bandwidth limits
    * @property {boolean} isSiteExceptionsEnabled
    * True if site exceptions support is enabled, else false.
+   * @property {boolean} isSiteInclusionsEnabled
+   * True if site inclusions support is enabled, else false.
    * @property {object} siteData
    * Data about the currently loaded site, including "isExclusion".
    * @property {object} bandwidthUsage
@@ -252,8 +252,13 @@ export class IPProtectionPanel {
 
     const isOnListItemForFocus = listItems.includes(focused);
 
-    // Tab key handling
-    const tabOnlyElements = [backButton, listItems[0], promoButton].filter(
+    // Tab key handling. The list is a single tab stop: enter it on whichever
+    // item currently carries the roving tabindex (the selected option when the
+    // subview was shown, or the option focused since), falling back to the
+    // first item.
+    const listTabStop =
+      listItems.find(item => item.tabIndex === 0) ?? listItems[0];
+    const tabOnlyElements = [backButton, listTabStop, promoButton].filter(
       el => el != null
     );
 
@@ -360,6 +365,17 @@ export class IPProtectionPanel {
     );
   }
 
+  /**
+   * Gets the value of the pref
+   * browser.ipProtection.features.siteInclusions.
+   */
+  get isInclusionsFeatureEnabled() {
+    return Services.prefs.getBoolPref(
+      "browser.ipProtection.features.siteInclusions",
+      false
+    );
+  }
+
   get isDefaultBrowser() {
     let isDefaultBrowser = lazy.ShellService.isDefaultBrowser();
     return isDefaultBrowser;
@@ -402,6 +418,7 @@ export class IPProtectionPanel {
       bandwidthWarning: false,
       paused: lazy.IPPProxyManager.state === lazy.IPPProxyStates.PAUSED,
       isSiteExceptionsEnabled: this.isExceptionsFeatureEnabled,
+      isSiteInclusionsEnabled: this.isInclusionsFeatureEnabled,
       siteData: this.#getSiteData(),
       bandwidthUsage: this.#getBandwidthUsage(),
       isActivating:
@@ -603,6 +620,7 @@ export class IPProtectionPanel {
     this.setState({
       isPremium: this.isPremium,
       isSiteExceptionsEnabled: this.isExceptionsFeatureEnabled,
+      isSiteInclusionsEnabled: this.isInclusionsFeatureEnabled,
       bandwidthWarning: this.#shouldShowBandwidthWarning(),
     });
 
@@ -631,13 +649,6 @@ export class IPProtectionPanel {
     let hasUserEverOpenedPanel = Services.prefs.getBoolPref(USER_OPENED_PREF);
     if (!hasUserEverOpenedPanel) {
       Services.prefs.setBoolPref(USER_OPENED_PREF, true);
-    }
-
-    let hasOpenedPanelWithLocation = Services.prefs.getBoolPref(
-      OPENED_WITH_LOCATION_PREF
-    );
-    if (!hasOpenedPanelWithLocation) {
-      Services.prefs.setBoolPref(OPENED_WITH_LOCATION_PREF, true);
     }
   }
 
@@ -833,9 +844,14 @@ export class IPProtectionPanel {
       el.dataset.capturesFocus = "true";
     }
 
-    // On keyboard activation, focus the first list item
+    // On keyboard activation, focus the list's tab stop. The roving tabindex is
+    // reset to the selected option when the subview is shown, so entry lands on
+    // the current selection.
     if (keyboardActivated) {
-      view.querySelector(".location-item:not([disabled])")?.focus();
+      const listTabStop =
+        view.querySelector('.location-item[tabindex="0"]') ??
+        view.querySelector(".location-item");
+      listTabStop?.focus();
     }
 
     view.addEventListener("keydown", this.#locationsKeyListener, {
@@ -1072,7 +1088,7 @@ export class IPProtectionPanel {
    * Gets siteData by reading the current URL bar's URI.
    *
    * @returns {object|null}
-   *  An object with data relevant to a site (eg. isExclusion),
+   *  An object with data relevant to a site (eg. isExclusion, hasSiteRule),
    *  or null otherwise if invalid.
    *
    * @see State.siteData
@@ -1086,7 +1102,14 @@ export class IPProtectionPanel {
     const isExclusion =
       lazy.IPPExceptionsManager.getPrincipalRule(principal) ===
       lazy.IPPPrincipalRules.EXCLUDED;
-    return { isExclusion };
+
+    //TODO: Check the exceptions manager for inclusions as well as exclusions - Bug 2066802
+    //const isInclusion = lazy.IPPExceptionsManager.hasInclusion(principal);
+    const isInclusion = false;
+
+    //TODO: Check the exceptions manager for inclusions as well as exclusions - Bug 2066802
+    const hasSiteRule = lazy.IPPExceptionsManager.hasExclusion(principal);
+    return { isExclusion, isInclusion, hasSiteRule };
   }
 
   /**

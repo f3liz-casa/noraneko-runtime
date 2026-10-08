@@ -220,8 +220,8 @@ describe("<Widgets>", () => {
 
       assert.equal(
         setPrefCalls.length,
-        8,
-        `should dispatch eight SetPref actions, got ${setPrefCalls.length}.`
+        9,
+        `should dispatch nine SetPref actions, got ${setPrefCalls.length}.`
       );
 
       const listsPrefCall = setPrefCalls.find(
@@ -322,8 +322,8 @@ describe("<Widgets>", () => {
 
       assert.equal(
         setPrefCalls.length,
-        8,
-        "should dispatch eight SetPref actions"
+        9,
+        "should dispatch nine SetPref actions"
       );
 
       const listsPrefCall = setPrefCalls.find(
@@ -424,8 +424,8 @@ describe("<Widgets>", () => {
 
       assert.equal(
         setPrefCalls.length,
-        8,
-        "should dispatch eight SetPref actions"
+        9,
+        "should dispatch nine SetPref actions"
       );
 
       const listsPrefCall = setPrefCalls.find(
@@ -1322,7 +1322,6 @@ describe("<Widgets>", () => {
       it("should call openWidgetsPanel when the Add widgets button is clicked", () => {
         const openWidgetsPanel = sinon.stub();
         const novaStore = createStore(combineReducers(reducers), NOVA_STATE);
-        sinon.spy(novaStore, "dispatch");
         const novaWrapper = mount(
           <BaseContext.Provider value={{ openWidgetsPanel }}>
             <Provider store={novaStore}>
@@ -1336,19 +1335,6 @@ describe("<Widgets>", () => {
         });
 
         assert.calledOnce(openWidgetsPanel);
-        const userEvent = novaStore.dispatch
-          .getCalls()
-          .map(c => c.args[0])
-          .find(
-            a =>
-              a.type === at.TELEMETRY_USER_EVENT &&
-              a.data?.event === "SHOW_PERSONALIZE"
-          );
-        assert.ok(
-          userEvent,
-          "should dispatch SHOW_PERSONALIZE telemetry event"
-        );
-        novaStore.dispatch.restore();
       });
 
       it("should match the largest current widget size on the Add widgets button", () => {

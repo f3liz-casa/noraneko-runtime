@@ -7,6 +7,7 @@ import androidx.compose.ui.test.DarkMode
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import mozilla.components.compose.base.theme.Theme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -15,15 +16,12 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ThemeProviderTest {
 
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    @get:Rule val composeTestRule = createComposeRule()
 
     @Test
     fun defaultThemeProviderProvidesDarkDarkWhenInDarkMode() {
         composeTestRule.setContent {
-            DeviceConfigurationOverride(
-                DeviceConfigurationOverride.DarkMode(isDarkMode = true),
-            ) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.DarkMode(isDarkMode = true)) {
                 assertEquals(Theme.Dark, DefaultThemeProvider.provideTheme())
             }
         }
@@ -32,9 +30,7 @@ class ThemeProviderTest {
     @Test
     fun defaultThemeProviderProvidesLightThemeWhenInLightMode() {
         composeTestRule.setContent {
-            DeviceConfigurationOverride(
-                DeviceConfigurationOverride.DarkMode(isDarkMode = false),
-            ) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.DarkMode(isDarkMode = false)) {
                 assertEquals(Theme.Light, DefaultThemeProvider.provideTheme())
             }
         }
@@ -43,9 +39,7 @@ class ThemeProviderTest {
     @Test
     fun getThemeProviderFallsBackToDefaultThemeProvider_dark() {
         composeTestRule.setContent {
-            DeviceConfigurationOverride(
-                DeviceConfigurationOverride.DarkMode(isDarkMode = true),
-            ) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.DarkMode(isDarkMode = true)) {
                 assertEquals(Theme.Dark, getThemeProvider().provideTheme())
                 assertEquals(DefaultThemeProvider.provideTheme(), getThemeProvider().provideTheme())
             }
@@ -55,9 +49,7 @@ class ThemeProviderTest {
     @Test
     fun getThemeProviderFallsBackToDefaultThemeProvider_light() {
         composeTestRule.setContent {
-            DeviceConfigurationOverride(
-                DeviceConfigurationOverride.DarkMode(isDarkMode = false),
-            ) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.DarkMode(isDarkMode = false)) {
                 assertEquals(Theme.Light, getThemeProvider().provideTheme())
                 assertEquals(DefaultThemeProvider.provideTheme(), getThemeProvider().provideTheme())
             }

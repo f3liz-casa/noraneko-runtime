@@ -294,8 +294,67 @@ add_task(async function test_buildProposals_cachesLabelsBySourceTabs() {
   }
 });
 
+add_task(function test_uniqueLabel_avoidsTakenLabels() {
+  const taken = new Set(["news", "shopping 2"]);
+
+  Assert.equal(
+    AutoTabGroupingSuggestions.uniqueLabel("Work", taken),
+    "Work",
+    "A label nothing uses is kept as is"
+  );
+  Assert.equal(
+    AutoTabGroupingSuggestions.uniqueLabel("NEWS", taken),
+    "NEWS 2",
+    "A label a group already has gets a suffix, whatever its case"
+  );
+  Assert.equal(
+    AutoTabGroupingSuggestions.uniqueLabel("Shopping", taken),
+    "Shopping",
+    "Only the exact label counts as taken, not one with a suffix"
+  );
+  Assert.equal(
+    AutoTabGroupingSuggestions.uniqueLabel("Shopping", taken),
+    "Shopping 3",
+    "The suffix skips the ones already in use, including the label just chosen"
+  );
+});
+
+add_task(async function test_buildProposals_avoidsExistingGroupNames() {
+  const originalManager = AutoTabGroupingSuggestions._manager;
+  const originalLlm = AutoTabGroupingSuggestions._llmLabelForGroup;
+  AutoTabGroupingSuggestions._llmLabelForGroup = async () => {
+    throw new Error("force on-device");
+  };
+  AutoTabGroupingSuggestions._manager = {
+    async generateClusters() {
+      return {
+        clusterRepresentations: [makeCluster(3, 0.9), makeCluster(2, 0.9)],
+      };
+    },
+    async getPredictedLabelForGroup() {
+      return "Work";
+    },
+  };
+  AutoTabGroupingSuggestions._labelCache.clear();
+  try {
+    const proposals = await AutoTabGroupingSuggestions.buildProposals(
+      [],
+      ["Work"]
+    );
+    Assert.deepEqual(
+      proposals.map(p => p.label),
+      ["Work 2", "Work 3"],
+      "Neither proposal repeats the existing group's name, nor each other's"
+    );
+  } finally {
+    AutoTabGroupingSuggestions._manager = originalManager;
+    AutoTabGroupingSuggestions._llmLabelForGroup = originalLlm;
+    AutoTabGroupingSuggestions._labelCache.clear();
+  }
+});
+
 add_task(function test_tabInfo_resolvesFaviconAndTitle() {
-  const cached = AutoTabGroupingSuggestions._tabInfo(
+  const cached = AutoTabGroupingSuggestions.toTabInfo(
     makeTab({ url: "https://example.com/kids-bikes", label: "Kids Bikes" })
   );
   Assert.equal(
@@ -306,7 +365,7 @@ add_task(function test_tabInfo_resolvesFaviconAndTitle() {
   Assert.equal(cached.title, "Kids Bikes", "The tab label is the title");
 
   Assert.equal(
-    AutoTabGroupingSuggestions._tabInfo(
+    AutoTabGroupingSuggestions.toTabInfo(
       makeTab({ iconUrl: "https://example.com/favicon.ico" })
     ).iconUrl,
     "page-icon:https://example.com/",
@@ -314,7 +373,7 @@ add_task(function test_tabInfo_resolvesFaviconAndTitle() {
   );
 
   Assert.equal(
-    AutoTabGroupingSuggestions._tabInfo(
+    AutoTabGroupingSuggestions.toTabInfo(
       makeTab({ iconUrl: "data:image/png;base64,AAAA" })
     ).iconUrl,
     "data:image/png;base64,AAAA",
@@ -322,13 +381,13 @@ add_task(function test_tabInfo_resolvesFaviconAndTitle() {
   );
 
   Assert.equal(
-    AutoTabGroupingSuggestions._tabInfo(makeTab({ url: null })).iconUrl,
+    AutoTabGroupingSuggestions.toTabInfo(makeTab({ url: null })).iconUrl,
     "chrome://global/skin/icons/defaultFavicon.svg",
     "A tab with no URI falls back to the default favicon"
   );
 
   Assert.equal(
-    AutoTabGroupingSuggestions._tabInfo(
+    AutoTabGroupingSuggestions.toTabInfo(
       makeTab({ url: "https://example.com/", label: "" })
     ).title,
     "example.com",

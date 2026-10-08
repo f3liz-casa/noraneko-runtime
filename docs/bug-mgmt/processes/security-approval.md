@@ -1,10 +1,12 @@
+(security-bug-approval-process)=
+
 # Security Bug Approval Process
 
 ## How to fix a core-security bug in Firefox - developer guidelines
 
 Follow these security guidelines if you’re involved in reviewing,
 testing and landing a security patch:
-{ref}`fixing-security-bugs`.
+[Fixing Security Bugs](fixing-security-bugs.md).
 
 ## Purpose: protect the worst security vulnerabilities while reducing developer friction
 
@@ -70,12 +72,12 @@ especially when commenting in bugs with external reporters.
 
 Request review of the patch in the same process as normal. After the
 patch has been reviewed you will request sec-approval as needed. See
-{ref}`fixing-security-bugs`
+[Fixing Security Bugs](fixing-security-bugs.md)
 for more examples/details of these points.
 
 ### Preparing the patch for landing
 
-See {ref}`fixing-security-bugs`
+See [Fixing Security Bugs](fixing-security-bugs.md)
 for more details.
 
 ### On Requesting sec-approval

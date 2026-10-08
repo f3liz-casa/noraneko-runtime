@@ -8,22 +8,26 @@ import androidx.annotation.DrawableRes
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
+import java.lang.ref.WeakReference
 import mozilla.components.browser.state.state.TabSessionState
+import mozilla.components.ui.icons.R as iconsR
 import org.mozilla.focus.R
 import org.mozilla.focus.databinding.ItemSessionBinding
 import org.mozilla.focus.ext.beautifyUrl
-import java.lang.ref.WeakReference
-import mozilla.components.ui.icons.R as iconsR
 
 /**
- * [RecyclerView.ViewHolder] implementation for displaying a tab session or action items
- * (like "Add New Tab" or "Close All Tabs") in the tabs tray.
+ * [RecyclerView.ViewHolder] implementation for displaying a tab session or action items (like "Add New Tab" or "Close
+ * All Tabs") in the tabs tray.
  *
  * @param binding The [ItemSessionBinding] for the layout of this view holder.
  */
-class TabViewHolder(
-    private val binding: ItemSessionBinding,
-) : RecyclerView.ViewHolder(binding.root) {
+class TabViewHolder(private val binding: ItemSessionBinding) : RecyclerView.ViewHolder(binding.root) {
+
+    private val initialPaddingStart = binding.sessionTitle.paddingStart
+
+    private val linkDrawableWidth by lazy {
+        AppCompatResources.getDrawable(binding.root.context, iconsR.drawable.mozac_ic_link_24)?.intrinsicWidth ?: 0
+    }
 
     private var tabReference: WeakReference<TabSessionState> = WeakReference<TabSessionState>(null)
 
@@ -39,7 +43,6 @@ class TabViewHolder(
      * @param isCloseAllItem Indicates if this item should represent the "Close All Tabs" action.
      * @param isAddNewTabItem Indicates if this item should represent the "Add New Tab" action.
      */
-
     fun bind(
         tab: TabSessionState?,
         isCurrentSession: Boolean,
@@ -50,11 +53,12 @@ class TabViewHolder(
         isCloseAllItem: Boolean,
         isAddNewTabItem: Boolean,
     ) {
-        val drawable = if (isCurrentSession) {
-            R.drawable.background_list_item_current_session
-        } else {
-            R.drawable.background_list_item_session
-        }
+        val drawable =
+            if (isCurrentSession) {
+                R.drawable.background_list_item_current_session
+            } else {
+                R.drawable.background_list_item_session
+            }
 
         when {
             tab != null -> {
@@ -91,15 +95,19 @@ class TabViewHolder(
         binding.sessionTitle.apply {
             setCompoundDrawablesWithIntrinsicBounds(iconsR.drawable.mozac_ic_link_24, 0, 0, 0)
             text = title
+            setPaddingRelative(initialPaddingStart, paddingTop, paddingRight, paddingBottom)
             setOnClickListener {
                 val clickedTab = tabReference.get() ?: return@setOnClickListener
                 selectSession(clickedTab)
             }
         }
 
-        binding.closeButton.setOnClickListener {
-            val clickedTab = tabReference.get() ?: return@setOnClickListener
-            closeSession(clickedTab)
+        binding.closeButton.apply {
+            isVisible = true
+            setOnClickListener {
+                val clickedTab = tabReference.get() ?: return@setOnClickListener
+                closeSession(clickedTab)
+            }
         }
     }
 
@@ -115,15 +123,12 @@ class TabViewHolder(
     ) {
         binding.sessionItem.setBackgroundResource(drawable)
 
-        val drawableWidth =
-            AppCompatResources.getDrawable(binding.root.context, iconsR.drawable.mozac_ic_link_24)?.intrinsicWidth ?: 0
-
         binding.sessionTitle.apply {
             text = binding.root.context.getString(R.string.tabs_tray_action_erase_other)
             setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0)
 
             setPaddingRelative(
-                paddingStart + drawableWidth + compoundDrawablePadding,
+                initialPaddingStart + linkDrawableWidth + compoundDrawablePadding,
                 paddingTop,
                 paddingRight,
                 paddingBottom,
@@ -140,11 +145,10 @@ class TabViewHolder(
     private fun bindNewTabItem(drawable: Int, addNewTab: () -> Unit) {
         binding.sessionItem.setBackgroundResource(drawable)
 
-        AppCompatResources.getDrawable(binding.root.context, R.drawable.ic_tab_new)?.intrinsicWidth ?: 0
-
         binding.sessionTitle.apply {
             text = binding.root.context.getString(R.string.tabs_tray_action_add_new_tab)
             setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_tab_new, 0, 0, 0)
+            setPaddingRelative(initialPaddingStart, paddingTop, paddingRight, paddingBottom)
 
             setOnClickListener {
                 addNewTab.invoke()

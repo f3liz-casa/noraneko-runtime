@@ -22,7 +22,7 @@ use crate::stylesheets::{CssRules, CustomMediaEvaluator};
 use crate::stylist::Stylist;
 use crate::values::computed::{CSSPixelLength, ContainerType, Context, Ratio};
 use crate::values::specified::ContainerName;
-use crate::{derives::*, LocalName};
+use crate::{LocalName, derives::*};
 use app_units::Au;
 use cssparser::{Parser, SourceLocation};
 use euclid::default::Size2D;
@@ -62,7 +62,7 @@ impl DeepCloneWithLock for ContainerRule {
         Self {
             conditions: self.conditions.clone(),
             rules: Arc::new(lock.wrap(rules.deep_clone_with_lock(lock, guard))),
-            source_location: self.source_location.clone(),
+            source_location: self.source_location,
         }
     }
 }
@@ -206,10 +206,7 @@ impl ContainerCondition {
         self.condition.as_ref()
     }
     /// Parse a container condition.
-    pub fn parse<'a>(
-        context: &ParserContext,
-        input: &mut Parser<'a, '_>,
-    ) -> Result<Self, ParseError<'a>> {
+    pub fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         let name = input
             .try_parse(|input| ContainerName::parse_for_query(context, input))
             .ok()
@@ -218,12 +215,12 @@ impl ContainerCondition {
             .try_parse(|input| QueryCondition::parse(context, input, FeatureType::Container))
             .ok();
         if condition.is_none() && name.is_none() {
-            return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         let mut attributes_referenced = AttrReferenceSet::default();
-        condition
-            .as_ref()
-            .map(|c| c.collect_attribute_references(&mut attributes_referenced));
+        if let Some(c) = condition.as_ref() {
+            c.collect_attribute_references(&mut attributes_referenced)
+        }
         let flags = condition
             .as_ref()
             .map_or(FeatureFlags::empty(), |c| c.cumulative_flags());
@@ -300,16 +297,14 @@ impl ContainerCondition {
     where
         E: TElement,
     {
-        match traverse_container(
+        traverse_container(
             e,
             originating_element_style,
             |element, originating_element_style| {
                 self.valid_container_info(element, originating_element_style)
             },
-        ) {
-            Some((_, result)) => Some(result),
-            None => None,
-        }
+        )
+        .map(|(_, result)| result)
     }
 
     /// Tries to match a container query condition for a given element.
@@ -409,14 +404,14 @@ impl ContainerCondition {
         };
         for attr in self.get_attributes_referenced() {
             kind_map
-                .entry(attr.clone())
+                .entry_ref(attr)
                 .and_modify(|v| {
                     if *v == ContainerAttributeDependencyKind::UnnamedContainer {
                         *v = name_kind
                     }
                 })
                 .or_insert(name_kind);
-            attribute_dependencies.insert(attr.clone());
+            attribute_dependencies.get_or_insert_with(attr, Clone::clone);
         }
     }
 }
@@ -562,10 +557,8 @@ impl ContainerSizeQueryResult {
             if let Some(w) = self.width {
                 return w;
             }
-        } else {
-            if let Some(h) = self.height {
-                return h;
-            }
+        } else if let Some(h) = self.height {
+            return h;
         }
         Self::get_logical_viewport_size(context).inline
     }
@@ -727,16 +720,16 @@ impl<'a> ContainerSizeQuery<'a> {
 
         // If there's no style, such as being `display: none` or so, we still want to show a
         // correct computed value, so give it a try.
-        let should_traverse = parent_style.map_or(true, |s| {
+        let should_traverse = parent_style.is_none_or(|s| {
             s.flags
                 .contains(ComputedValueFlags::SELF_OR_ANCESTOR_HAS_SIZE_CONTAINER_TYPE)
         });
         if !should_traverse {
             return Self::none();
         }
-        return Self::NotEvaluated(Box::new(move || {
+        Self::NotEvaluated(Box::new(move || {
             Self::lookup(element, if is_pseudo { known_parent_style } else { None })
-        }));
+        }))
     }
 
     /// Create a new instance, but with optional element.

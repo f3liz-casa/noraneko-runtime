@@ -559,9 +559,9 @@ class nsDocShell final : public nsDocLoader,
       bool aTryToSaveOldPresentation = true, bool aCheckPermitUnload = true,
       mozilla::dom::WindowGlobalChild* aActor = nullptr);
 
-  nsresult CreateDocumentViewer(const nsACString& aContentType,
-                                nsIRequest* aRequest,
-                                nsIStreamListener** aContentHandler);
+  MOZ_CAN_RUN_SCRIPT nsresult
+  CreateDocumentViewer(const nsACString& aContentType, nsIRequest* aRequest,
+                       nsIStreamListener** aContentHandler);
 
   nsresult NewDocumentViewerObj(const nsACString& aContentType,
                                 nsIRequest* aRequest, nsILoadGroup* aLoadGroup,
@@ -570,9 +570,9 @@ class nsDocShell final : public nsDocLoader,
 
   already_AddRefed<nsILoadURIDelegate> GetLoadURIDelegate();
 
-  nsresult SetupNewViewer(
-      nsIDocumentViewer* aNewViewer,
-      mozilla::dom::WindowGlobalChild* aWindowActor = nullptr);
+  MOZ_CAN_RUN_SCRIPT nsresult
+  SetupNewViewer(nsIDocumentViewer* aNewViewer,
+                 mozilla::dom::WindowGlobalChild* aWindowActor = nullptr);
 
   // Finds the target browsing context for this load according to
   // aLoadState->Target() and sets aLoadState->TargetBrowsingContext() to it.
@@ -605,7 +605,7 @@ class nsDocShell final : public nsDocLoader,
 
   void UpdateActiveEntry(
       bool aReplace, const mozilla::Maybe<nsPoint>& aPreviousScrollPos,
-      nsIURI* aURI, nsIURI* aOriginalURI, nsIReferrerInfo* aReferrerInfo,
+      nsIURI* aURI, nsIReferrerInfo* aReferrerInfo,
       nsIPrincipal* aTriggeringPrincipal, nsIPolicyContainer* aPolicyContainer,
       const nsAString& aTitle, bool aScrollRestorationIsManual,
       nsIStructuredCloneContainer* aData, bool aURIWasModified);
@@ -960,10 +960,10 @@ class nsDocShell final : public nsDocLoader,
   nsresult EnsureCommandHandler();
   nsresult RefreshURIFromQueue();
   void RefreshURIToQueue();
-  nsresult Embed(nsIDocumentViewer* aDocumentViewer,
-                 mozilla::dom::WindowGlobalChild* aWindowActor,
-                 bool aIsTransientAboutBlank, nsIRequest* aRequest,
-                 nsIURI* aPreviousURI);
+  MOZ_CAN_RUN_SCRIPT nsresult Embed(
+      nsIDocumentViewer* aDocumentViewer,
+      mozilla::dom::WindowGlobalChild* aWindowActor,
+      bool aIsTransientAboutBlank, nsIRequest* aRequest, nsIURI* aPreviousURI);
   nsPresContext* GetEldestPresContext();
   nsresult CheckLoadingPermissions();
 
@@ -1096,7 +1096,16 @@ class nsDocShell final : public nsDocLoader,
   void MaybeDisconnectChildListenersOnPageHide();
 
   /**
-   * Helper for addState and document.open that does just the
+   * Do either a history.pushState() or history.replaceState() operation,
+   * depending on the value of aReplace.
+   */
+  MOZ_CAN_RUN_SCRIPT
+  nsresult AddState(JS::Handle<JS::Value> aData, const nsAString& aTitle,
+                    const nsAString& aURL, mozilla::dom::CallerType aCallerType,
+                    bool aReplace, JSContext* aCx);
+
+  /**
+   * Helper for AddState and document.open that does just the
    * history-manipulation guts.
    *
    * Arguments the spec defines:

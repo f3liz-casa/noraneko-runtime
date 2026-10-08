@@ -19,7 +19,6 @@ use crate::picture::ResolvedSurfaceTexture;
 use crate::tile_cache::MAX_SURFACE_SIZE;
 use crate::transform::GpuTransformId;
 use crate::resource_cache::ImageRequest;
-use std::{usize, f32, i32, u32};
 use crate::renderer::{GpuBufferAddress, GpuBufferBuilder, GpuBufferBuilderF};
 use crate::render_backend::DataStores;
 use crate::render_target::{ResolveOp, RenderTargetKind};
@@ -2242,6 +2241,7 @@ pub struct RectangleClipSubTask {
     pub quad_flags: QuadFlags,
     pub needs_scissor_rect: bool,
     pub rounded_rect_fast_path: bool,
+    pub rounded_rect_superellipse: bool,
 }
 
 /// An clip applied to a render task using the multiply blend mode on top of

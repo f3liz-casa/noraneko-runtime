@@ -24,6 +24,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/BasicEvents.h"
 #include "mozilla/CORSMode.h"
+#include "mozilla/Directionality.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/FlushType.h"
 #include "mozilla/Maybe.h"
@@ -36,7 +37,6 @@
 #include "mozilla/dom/BorrowedAttrInfo.h"
 #include "mozilla/dom/DOMString.h"
 #include "mozilla/dom/DOMTokenListSupportedTokens.h"
-#include "mozilla/dom/DirectionalityUtils.h"
 #include "mozilla/dom/FragmentOrElement.h"
 #include "mozilla/dom/NameSpaceConstants.h"
 #include "mozilla/dom/NodeInfo.h"
@@ -62,6 +62,7 @@ class JSObject;
 class mozAutoDocUpdate;
 class nsAttrName;
 class nsAttrValueOrString;
+class nsAutoScriptBlocker;
 class nsDOMAttributeMap;
 class nsDOMCSSAttributeDeclaration;
 class nsDOMStringMap;
@@ -519,16 +520,35 @@ class Element : public FragmentOrElement {
   virtual bool IsInteractiveHTMLContent() const;
 
   /**
-   * Is the attribute named aAttribute a mapped attribute?
+   * Is the attribute named aAttribute in the null namespace a mapped attribute?
    */
-  NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const;
+  virtual bool IsNoNamespaceAttrMapped(const nsAtom* aAttribute) const;
+  bool IsAttrMapped(int32_t aNamespaceID, const nsAtom* aAttribute) const {
+    if (aNamespaceID == kNameSpaceID_None) {
+      return IsNoNamespaceAttrMapped(aAttribute);
+    }
+    // xml:lang is always mapped.
+    return aNamespaceID == kNameSpaceID_XML && aAttribute == nsGkAtoms::lang;
+  }
 
   nsresult BindToTree(BindContext&, nsINode& aParent) override;
   void UnbindFromTree(UnbindContext&) override;
   using nsIContent::UnbindFromTree;
 
+  // Container Timing (https://wicg.github.io/container-timing/).
+  // Returns the nearest strict-ancestor element carrying a `containertiming`
+  // attribute that tracks this element (respecting `containertimingignore`
+  // boundaries), or nullptr. This is an O(1) node-property lookup; the value
+  // is kept up to date.
+  Element* GetContainerTimingRoot() const;
+
+  // Recomputes the cached container-timing root for this element and its whole
+  // subtree from its parent. Called when `containertiming` or
+  // `containertimingignore` changes.
+  void RecomputeContainerTimingRootForSubtree();
+
   virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
-  static void MapNoAttributesInto(mozilla::MappedDeclarationsBuilder&);
+  static void MapXmlLangAttrInto(mozilla::MappedDeclarationsBuilder&);
 
   /**
    * Get a hint that tells the style system what to do when
@@ -766,16 +786,16 @@ class Element : public FragmentOrElement {
   REFLECT_NULLABLE_DOMSTRING_ATTR(AriaValueNow, aria_valuenow)
   REFLECT_NULLABLE_DOMSTRING_ATTR(AriaValueText, aria_valuetext)
 
- protected:
-  already_AddRefed<ShadowRoot> AttachShadowInternal(ShadowRootMode,
-                                                    ErrorResult& aError);
-
  public:
   MOZ_CAN_RUN_SCRIPT
   ScrollContainerFrame* GetScrollContainerFrame(
       nsIFrame** aFrame = nullptr, FlushType aFlushType = FlushType::Layout);
 
  private:
+  // Computes and stores this element's cached container-timing root from
+  // aParent's already-computed state. aParent may be null or a non-element.
+  void UpdateContainerTimingRootFromParent(nsINode* aParent);
+
   // Style state computed from element's state and style locks.
   ElementState StyleStateFromLocks() const;
 
@@ -951,9 +971,10 @@ class Element : public FragmentOrElement {
    * `AttrArray::InfallibleMarkAsPendingPresAttributeEvaluation` at
    * most once.
    */
-  nsresult SetNoNameSpaceAttrOnNewlyCreatedElement(
+  MOZ_CAN_RUN_SCRIPT nsresult SetNoNameSpaceAttrOnNewlyCreatedElement(
       already_AddRefed<nsAtom> aName, nsHtml5String& aValue,
-      bool& aIsPendingMappedAttributeEvaluation);
+      bool& aIsPendingMappedAttributeEvaluation,
+      const nsAutoScriptBlocker& aGuard);
 
   /**
    * Get the current value of the attribute. This returns a form that is
@@ -1259,7 +1280,7 @@ class Element : public FragmentOrElement {
   /**
    * A common method where you can just pass in a list of maps to check
    * for attribute dependence. Most implementations of
-   * IsAttributeMapped should use this function as a default
+   * IsNoNamespaceAttrMapped should use this function as a default
    * handler.
    */
   template <size_t N>
@@ -1466,6 +1487,21 @@ class Element : public FragmentOrElement {
       nsAtom* aAttr, bool* aUseCachedValue,
       Nullable<nsTArray<RefPtr<Element>>>& aElements);
 
+ private:
+  /**
+   * Get the unresolved attribute target elements.
+   * https://whatpr.org/html/10995/common-microsyntaxes.html#unresolved-attribute-target-elements
+   */
+  Maybe<nsTArray<RefPtr<Element>>> GetUnresolvedAttributeTargetElements(
+      nsAtom* aAttr);
+  /**
+   * Get the resolved attribute target elements.
+   * https://whatpr.org/html/10995/common-microsyntaxes.html#resolved-attribute-target-elements
+   */
+  Maybe<nsTArray<RefPtr<Element>>> GetResolvedAttributeTargetElements(
+      nsAtom* aAttr);
+
+ public:
   typedef bool (*AttrTargetObserver)(Element* aOldElement, Element* aNewElement,
                                      Element* thisElement);
   /**
@@ -1642,8 +1678,8 @@ class Element : public FragmentOrElement {
 
   void ReleaseCapture();
 
-  already_AddRefed<Promise> RequestFullscreen(const FullscreenOptions&,
-                                              CallerType, ErrorResult&);
+  MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> RequestFullscreen(
+      const FullscreenOptions&, CallerType, ErrorResult&);
   already_AddRefed<Promise> RequestPointerLock(
       const PointerLockOptions& aOptions, CallerType aCallerType,
       ErrorResult& aRv);
@@ -1711,21 +1747,47 @@ class Element : public FragmentOrElement {
       const Maybe<RefPtr<CustomElementRegistry>>& aRegistry,
       CustomSlotDispatch = CustomSlotDispatch::No, bool aNotify = true);
 
-  // Attach UA Shadow Root if it is not attached.
   enum class NotifyUAWidget : bool { No, Yes };
-  void AttachAndSetUAShadowRoot(NotifyUAWidget = NotifyUAWidget::Yes,
+
+  /**
+   * Attach a UA shadow root if no one is attached. If aNotifyUAWidget is "Yes",
+   * this will dispatch a chrome event to UAWidgetsChild via the script runner
+   * to trigger construction or onchange callback on the existing widget.
+   *
+   * Be aware, the caller must have to block script if aNotifyUAWidget is "Yes"
+   * because this may be called by methods which should not run script, e.g.,
+   * BindToTree and UnbindFromTree, and we don't want to mark them as
+   * MOZ_CAN_RUN_SCRIPT.
+   */
+  void AttachAndSetUAShadowRoot(NotifyUAWidget aNotifyUAWidget,
                                 DelegatesFocus = DelegatesFocus::No,
                                 CustomSlotDispatch = CustomSlotDispatch::No,
                                 bool aNotify = true);
 
-  // Dispatch an event to UAWidgetsChild, triggering construction
-  // or onchange callback on the existing widget.
-  void NotifyUAWidgetSetupOrChange();
+  /**
+   * Dispatch a chrome event to UAWidgetsChild via the script runner. The event
+   * will trigger construction or onchange callback on the existing widget.
+   *
+   * Be aware, the caller must have to block script because this may be called
+   * by methods which should not run script, e.g., * BindToTree and
+   * UnbindFromTree, and we don't want to mark them as MOZ_CAN_RUN_SCRIPT.
+   */
+  void AddScriptRunnerToNotifyUAWidgetSetupOrChange();
 
   enum class UnattachShadowRoot : bool { No, Yes };
-  // Dispatch an event to UAWidgetsChild, triggering UA Widget destruction.
-  // and optionally remove the shadow root.
-  void TeardownUAShadowRoot(NotifyUAWidget = NotifyUAWidget::Yes,
+
+  /**
+   * Remove the UA shadow root. If aNOtifyUAWidget is "Yes", this will dispatch
+   * a chrome event to UAWidgetChild, triggering UA widget destruction and
+   * optionally remove the shadow root.
+   *
+   * Be aware, the caller must have to block script if aNotifyUAWidget is "Yes"
+   * because this may be called by methods which should not run script, e.g.,
+   * UnbindFromTree, and we don't want to mark them as MOZ_CAN_RUN_SCRIPT.
+   *
+   * @return true if this actually unattach a shadow.
+   */
+  void TeardownUAShadowRoot(NotifyUAWidget aNotifyUAWidget,
                             UnattachShadowRoot = UnattachShadowRoot::Yes);
 
   void UnattachShadow();
@@ -1784,7 +1846,7 @@ class Element : public FragmentOrElement {
   // https://dom.spec.whatwg.org/#element-custom-element-registry
   CustomElementRegistry* GetCustomElementRegistry();
   void SetCustomElementRegistry(CustomElementRegistry* aCustomElementRegistry);
-  void SetKeepCustomElementRegistryNull();
+  void SetNullCustomElementRegistry();
   static void TraverseCustomElementRegistry(
       Element* aElement, nsCycleCollectionTraversalCallback& aCb);
   static void UnlinkCustomElementRegistry(Element* aElement);
@@ -2106,6 +2168,9 @@ class Element : public FragmentOrElement {
 
     return mAttrs.AttrInfoAt(index);
   }
+
+  static bool ParseReferrerAttribute(const nsAString& aString,
+                                     nsAttrValue& aResult);
 
   /**
    * Parse a string into an nsAttrValue for a CORS attribute.  This

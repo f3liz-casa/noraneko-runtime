@@ -12,6 +12,7 @@
 #include "mozilla/dom/FileBlobImpl.h"
 #include "mozilla/dom/FileSystemSecurity.h"
 #include "mozilla/dom/IPCBlobUtils.h"
+#include "nsBaseFilePicker.h"
 #include "nsComponentManagerUtils.h"
 #include "nsIFile.h"
 #include "nsISimpleEnumerator.h"
@@ -280,6 +281,10 @@ mozilla::ipc::IPCResult FilePickerParent::RecvOpen(
     return IPC_OK();
   }
 
+  if (aFilters.Length() != aFilterNames.Length()) {
+    return IPC_FAIL(this, "PFilePicker::Open filter arrays lengths mismatch");
+  }
+
   mFilePicker->SetAddToRecentDocs(aAddToRecentDocs);
 
   for (uint32_t i = 0; i < aFilters.Length(); ++i) {
@@ -299,7 +304,9 @@ mozilla::ipc::IPCResult FilePickerParent::RecvOpen(
   if (!aDisplayDirectory.IsEmpty()) {
     nsCOMPtr<nsIFile> localFile;
     if (NS_SUCCEEDED(
-            NS_NewLocalFile(aDisplayDirectory, getter_AddRefs(localFile)))) {
+            NS_NewLocalFile(aDisplayDirectory, getter_AddRefs(localFile))) &&
+        localFile &&
+        nsBaseFilePicker::IsPotentiallyReadableDirectory(*localFile)) {
       mFilePicker->SetDisplayDirectory(localFile);
     }
   } else if (!aDisplaySpecialDirectory.IsEmpty()) {
@@ -307,9 +314,12 @@ mozilla::ipc::IPCResult FilePickerParent::RecvOpen(
   }
 
   MOZ_ASSERT(!mCallback);
-  mCallback = new FilePickerShownCallback(this);
+  const RefPtr<FilePickerShownCallback> callback =
+      MakeRefPtr<FilePickerShownCallback>(this);
+  mCallback = callback;
 
-  mFilePicker->Open(mCallback);
+  const nsCOMPtr<nsIFilePicker> filePicker = mFilePicker;
+  filePicker->Open(callback);
   return IPC_OK();
 }
 

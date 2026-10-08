@@ -26,6 +26,7 @@
 #include "nsXULAppAPI.h"
 #include "ProfilerCodeAddressService.h"
 
+#include <algorithm>
 #include <type_traits>
 
 using namespace mozilla;
@@ -336,11 +337,7 @@ bool UniqueStacks::FrameKey::NormalFrameData::operator==(
 }
 
 bool UniqueStacks::FrameKey::JITFrameData::operator==(
-    const JITFrameData& aOther) const {
-  return mCanonicalAddress == aOther.mCanonicalAddress &&
-         mDepth == aOther.mDepth && mRangeIndex == aOther.mRangeIndex &&
-         mLine == aOther.mLine && mColumn == aOther.mColumn;
-}
+    const JITFrameData& aOther) const = default;
 
 // Consume aJITFrameInfo by stealing its string table and its JIT frame info
 // ranges. The JIT frame info contains JSON which refers to strings from the
@@ -1278,7 +1275,12 @@ void ProfileBuffer::MaybeStreamExecutionTraceToJSON(
           &trace.stringBuffer[stringBufferOffset], classNameLength));
       stringBufferOffset += classNameLength + 1;
 
-      for (uint32_t propertyIndex = 0; propertyIndex < shape.numProperties;
+      // At most MAX_COLLECTION_VALUES property keys are recorded in the
+      // string buffer, even though numProperties is the full count.
+      const uint32_t recordedProperties =
+          std::min(shape.numProperties,
+                   uint32_t(JS::ValueSummary::MAX_COLLECTION_VALUES));
+      for (uint32_t propertyIndex = 0; propertyIndex < recordedProperties;
            propertyIndex++) {
         size_t len = strlen(&trace.stringBuffer[stringBufferOffset]);
         shapesWriter.StringElement(

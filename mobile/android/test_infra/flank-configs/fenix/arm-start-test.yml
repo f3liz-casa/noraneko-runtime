@@ -24,12 +24,15 @@ gcloud:
    - class org.mozilla.fenix.ui.SettingsSearchTest#verifyShowSearchSuggestionsToggleTest
    - class org.mozilla.fenix.ui.CollectionTest#deleteCollectionTest
    - class org.mozilla.fenix.ui.HistoryTest#noHistoryInPrivateBrowsingTest
-   - class org.mozilla.fenix.ui.NoNetworkAccessStartupTests#noNetworkConnectionStartupTest
    - class org.mozilla.fenix.ui.SettingsAboutTest#verifyLibrariesListInReleaseBuildsTest
 
   device:
+  # 16KB page size emulators start at API 36+ in preview (Aug 2026).
    - model: MediumPhone.arm
      version: 34
+     locale: en_US
+   - model: MediumPhone_ps16k.arm
+     version: 36
      locale: en_US
 
 flank:

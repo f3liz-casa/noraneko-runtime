@@ -3,6 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 
+use gleam::gl;
+use std::rc::Rc;
 use crate::blob;
 use crossbeam::sync::chase_lev;
 #[cfg(windows)]
@@ -50,6 +52,18 @@ pub enum FontDescriptor {
         style: u32,
         stretch: u32,
     },
+}
+
+/// Everything that distinguishes one registered font instance from another, so
+/// the cache hands the same `FontInstanceKey` back for an identical request.
+/// `render_mode` is part of it because reftests can override it per file.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct FontInstanceDescriptor {
+    pub font_key: FontKey,
+    pub size: FontSize,
+    pub flags: FontInstanceFlags,
+    pub render_mode: Option<FontRenderMode>,
+    pub synthetic_italics: SyntheticItalics,
 }
 
 struct NotifierData {
@@ -210,10 +224,32 @@ impl WrenchThing for CapturedSequence {
 pub struct Wrench {
     window_size: DeviceIntSize,
 
+    /// The GL context the renderer draws with, shared so that wrench can
+    /// create GL textures to hand to the renderer as external images.
+    gl: Rc<dyn gl::Gl>,
     pub renderer: webrender::Renderer,
     pub api: RenderApi,
     pub document_id: DocumentId,
     pub root_pipeline_id: PipelineId,
+
+    /// Font templates and instances, retained for the life of the process.
+    ///
+    /// Interning keys a text run on the `FontInstanceKey` the client picked, so a
+    /// client that deletes and re-registers an identical font gets a different key
+    /// and re-interns every run using it. Gecko keeps its instance keys across
+    /// paints; a per-yaml cache would not, and the mechanism would never dedup.
+    fonts: HashMap<FontDescriptor, FontKey>,
+    font_instances: HashMap<FontInstanceDescriptor, FontInstanceKey>,
+
+    /// Display list builders, retained per pipeline for the life of the process.
+    ///
+    /// A builder owns its interning state and is meant to be reused across
+    /// builds - that is what lets an unchanged item keep its handle instead of
+    /// being re-transmitted, and it is what Gecko does with its per-pipeline
+    /// `mDLBuilder`. Building each display list with a fresh builder would work,
+    /// but it restarts slot numbering and so re-sends everything every time,
+    /// leaving the whole mechanism untested.
+    dl_builders: HashMap<PipelineId, DisplayListBuilder>,
 
     window_title_to_set: Option<String>,
 
@@ -235,6 +271,10 @@ pub struct Wrench {
 }
 
 impl Wrench {
+    pub fn gl(&self) -> &dyn gl::Gl {
+        &*self.gl
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         window: &mut WindowWrapper,
@@ -310,8 +350,9 @@ impl Wrench {
             Box::new(Notifier(data))
         });
 
+        let gl = window.clone_gl();
         let (renderer, sender) = webrender::create_webrender_instance(
-            window.clone_gl(),
+            gl.clone(),
             notifier,
             opts,
             None,
@@ -324,6 +365,7 @@ impl Wrench {
 
         let mut wrench = Wrench {
             window_size: size,
+            gl,
 
             renderer,
             api,
@@ -333,6 +375,9 @@ impl Wrench {
             rebuild_display_lists: do_rebuild,
 
             root_pipeline_id: PipelineId(0, 0),
+            fonts: HashMap::new(),
+            font_instances: HashMap::new(),
+            dl_builders: HashMap::new(),
 
             graphics_api,
             frame_start_sender: timing_sender,
@@ -434,6 +479,53 @@ impl Wrench {
         let bounding_rect = bounding_rect.inflate(2.0, 2.0);
 
         (indices, positions, bounding_rect)
+    }
+
+    /// A font template for this descriptor, loading it on first use. `load` is
+    /// only called on a miss, so the file read stays out of the hit path.
+    pub fn get_or_create_font(
+        &mut self,
+        desc: FontDescriptor,
+        load: impl FnOnce(&mut Self, &FontDescriptor) -> FontKey,
+    ) -> FontKey {
+        if let Some(key) = self.fonts.get(&desc) {
+            return *key;
+        }
+        let key = load(self, &desc);
+        self.fonts.insert(desc, key);
+        key
+    }
+
+    /// A font instance for this description, registering it on first use.
+    pub fn get_or_create_font_instance(
+        &mut self,
+        desc: FontInstanceDescriptor,
+    ) -> FontInstanceKey {
+        if let Some(key) = self.font_instances.get(&desc) {
+            return *key;
+        }
+        let key = self.add_font_instance(
+            desc.font_key,
+            desc.size.to_f32_px(),
+            desc.flags,
+            desc.render_mode,
+            desc.synthetic_italics,
+        );
+        self.font_instances.insert(desc, key);
+        key
+    }
+
+    /// Take this pipeline's retained display list builder, creating one on first
+    /// use. The caller must hand it back with `put_dl_builder` so the interning
+    /// state it accumulated survives into the next build.
+    pub fn take_dl_builder(&mut self, pipeline_id: PipelineId) -> DisplayListBuilder {
+        self.dl_builders
+            .remove(&pipeline_id)
+            .unwrap_or_else(|| DisplayListBuilder::new(pipeline_id))
+    }
+
+    pub fn put_dl_builder(&mut self, pipeline_id: PipelineId, builder: DisplayListBuilder) {
+        self.dl_builders.insert(pipeline_id, builder);
     }
 
     pub fn set_title(&mut self, extra: &str) {

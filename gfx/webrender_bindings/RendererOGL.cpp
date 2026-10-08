@@ -77,6 +77,8 @@ wr::WrExternalImage wr_renderer_lock_external_image(void* aObj,
     return InvalidToWrExternalImage();
   }
 
+  renderer->GetCompositor()->MaybeWaitingForPendingReadFence(texture);
+
 #if defined(MOZ_WAYLAND)
   // Wayland native compositor doesn't use textures for direct compositing.
   if (aIsComposited && texture->AsRenderDMABUFTextureHost() &&
@@ -260,6 +262,12 @@ RenderedFrameId RendererOGL::UpdateAndRender(
 
   if (present) {
     if (aReadbackBuffer.isSome()) {
+      // Check graphics reset status before readback
+      CheckGraphicsResetStatus(gfx::DeviceResetDetectPlace::WR_BEFORE_READBACK,
+                               /* aForce */ true);
+    }
+
+    if (aReadbackBuffer.isSome() && !mThread->IsHandlingDeviceReset()) {
       MOZ_ASSERT(aReadbackSize.isSome());
       MOZ_ASSERT(aReadbackFormat.isSome());
       if (!mCompositor->MaybeReadback(aReadbackSize.ref(),

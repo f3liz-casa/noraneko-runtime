@@ -211,6 +211,7 @@ export var SyncHelpers = new (class SyncHelpers {
           return;
         }
         const url = await window.FxAccounts.config.promiseConnectAccountURI(
+          "sync",
           this.getEntryPoint()
         );
         this.replaceTabWithUrl(url);
@@ -227,6 +228,7 @@ export var SyncHelpers = new (class SyncHelpers {
       return;
     }
     const url = await window.FxAccounts.config.promiseConnectAccountURI(
+      "sync",
       this.getEntryPoint()
     );
     this.replaceTabWithUrl(url);
@@ -241,8 +243,10 @@ export var SyncHelpers = new (class SyncHelpers {
    *        different entrypoints to accounts
    */
   async reSignIn(entrypoint) {
-    const url =
-      await window.FxAccounts.config.promiseConnectAccountURI(entrypoint);
+    const url = await window.FxAccounts.config.promiseConnectAccountURI(
+      "sync",
+      entrypoint
+    );
     this.replaceTabWithUrl(url);
   }
 
@@ -663,7 +667,7 @@ Preferences.addSetting({
   },
   setup(emitChange) {
     window.FxAccounts.config
-      .promiseConnectDeviceURI(SyncHelpers.getEntryPoint())
+      .promiseConnectDeviceURI("sync", SyncHelpers.getEntryPoint())
       .then(connectURI => {
         SyncHelpers.connectAnotherDeviceHref = connectURI;
         emitChange();
@@ -847,9 +851,7 @@ SettingGroupManager.registerGroups({
         l10nId: "account-disabled-group",
         iconSrc: "chrome://browser/skin/preferences/mozilla-logo.svg",
         supportPage: "managed-browser-firefox",
-        controlAttrs: {
-          headinglevel: 2,
-        },
+        headingLevel: 2,
       },
     ],
   },
@@ -1025,9 +1027,7 @@ SettingGroupManager.registerGroups({
         id: "fxaDeviceNameSection",
         l10nId: "sync-device-name-header-2",
         control: "moz-fieldset",
-        controlAttrs: {
-          ".headingLevel": 3,
-        },
+        headingLevel: 3,
         items: [
           {
             id: "fxaDeviceNameGroup",
@@ -1136,14 +1136,15 @@ SettingGroupManager.registerGroups({
     ],
   },
   referrals: {
-    l10nId: "referrals-section-header",
+    l10nId: "referrals-section-header2",
     headingLevel: 2,
+    iconSrc: "chrome://browser/content/logos/share-firefox.svg",
     hidden: !Referrals.isEnabled,
     items: [
       {
         id: "referrals-link",
         control: "moz-box-button",
-        l10nId: "referrals-link",
+        l10nId: "referrals-link2",
       },
     ],
   },

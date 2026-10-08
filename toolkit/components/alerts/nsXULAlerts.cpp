@@ -352,7 +352,7 @@ nsresult nsXULAlerts::ShowAlertImpl(nsIAlertNotification* aAlert,
     features.AppendLiteral(",private");
   }
   rv = wwatch->OpenWindow(
-      nullptr, "chrome://global/content/alerts/alert.xhtml"_ns, "_blank"_ns,
+      nullptr, "chrome://global/content/alerts/alert.xhtml"_ns, u"_blank"_ns,
       features, argsArray, getter_AddRefs(newWindow));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -388,7 +388,8 @@ nsXULAlerts::SetSuppressForScreenSharing(bool aSuppress) {
 }
 
 NS_IMETHODIMP
-nsXULAlerts::CloseAlert(const nsAString& aAlertName, bool aContextClosed) {
+nsXULAlerts::CloseAlert(const nsAString& aAlertName,
+                        bool aContextClosed) MOZ_CAN_RUN_SCRIPT_BOUNDARY {
   mozIDOMWindowProxy* alert = mNamedWindows.GetWeak(aAlertName);
   if (nsCOMPtr<nsPIDOMWindowOuter> domWindow =
           nsPIDOMWindowOuter::From(alert)) {

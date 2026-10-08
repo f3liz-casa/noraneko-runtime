@@ -59,25 +59,27 @@ const ENGINES = {
   },
 };
 
-const BASE_METRICS = [
-  PIPELINE_READY_LATENCY,
-  INITIALIZATION_LATENCY,
-  MODEL_RUN_LATENCY,
-];
+const SMART_WINDOW_INTENT_OPTIONS = {
+  engineId: "smart-intent-smoke",
+  featureId: "smart-intent",
+  taskName: "text-classification",
+  modelId: "mozilla/mobilebert-query-intent-detection",
+  modelRevision: "main",
+  modelHubUrlTemplate: "{model}/{revision}",
+  dtype: "q8",
+  timeoutMS: -1,
+};
 
-// Generate prefixed metrics for each engine
-const METRICS = [];
-for (let engineKey of Object.keys(ENGINES)) {
-  for (let metric of BASE_METRICS) {
-    METRICS.push(`${engineKey}-${metric}`);
-  }
-}
-METRICS.push(TOTAL_MEMORY_USAGE);
-
-const journal = {};
-for (let metric of METRICS) {
-  journal[metric] = [];
-}
+// Based on https://huggingface.co/datasets/Mozilla/query-intent-detection-golden-dataset,
+// with additional search examples for balanced coverage.
+const INTENT_DATA_ROOT =
+  "chrome://mochitests/content/browser/toolkit/components/ml/tests/browser/data/intent/";
+const INTENT_DATASET = "query-intent-golden.json";
+const SEARCH_SCORE_THRESHOLD = 0.8;
+const INTENT_METRIC_THRESHOLDS = {
+  chat: { precision: 0.9, recall: 0.9 },
+  search: { precision: 0.9, recall: 0.9 },
+};
 
 const perfMetadata = {
   owner: "GenAI Team",
@@ -106,20 +108,13 @@ const perfMetadata = {
   },
 };
 
-for (let metric of METRICS) {
-  perfMetadata.options.default.perfherder_metrics.push({
-    name: metric,
-    unit: metric.includes("latency") ? "ms" : "MiB",
-    shouldAlert: false,
-  });
-}
-
 requestLongerTimeout(10);
 
 async function runEngineWithMetrics(
   engineInstance,
   engineConfig,
-  iterations = 1
+  iterations = 1,
+  tag
 ) {
   const journal = {};
   const engine = engineInstance.engine;
@@ -127,9 +122,9 @@ async function runEngineWithMetrics(
     const res = await engine.run(engineConfig.request);
     let metrics = fetchMetrics(res.metrics);
 
-    // Collect metrics, prefixing each metric name with engineId
+    // Collect metrics, prefixing each metric name with engineId and backend
     for (const [metricName, metricVal] of Object.entries(metrics)) {
-      const prefixedMetricName = `${engineConfig.engineId}-${metricName}`;
+      const prefixedMetricName = `${engineConfig.engineId}-${metricName}-${tag}`;
       if (!journal[prefixedMetricName]) {
         journal[prefixedMetricName] = [];
       }
@@ -153,52 +148,147 @@ async function runEngineWithMetrics(
  * Tests concurrent execution of the ml pipeline API by starting engines first, then running inference.
  */
 add_task(async function test_ml_generic_pipeline_concurrent_separate_phases() {
+  await runMLPerfTestForEachBackend({
+    name: "MULTI",
+    run: runConcurrentEngines,
+  });
+});
+
+async function runConcurrentEngines({ backend, tag }) {
   // Step 1: Initialize all engines concurrently
   const engineInstances = await Promise.all(
     Object.values(ENGINES).map(async engineConfig => {
       const { cleanup, engine } = await initializeEngine(
-        new PipelineOptions({ timeoutMS: -1, ...engineConfig })
+        new PipelineOptions({ timeoutMS: -1, ...engineConfig, backend })
       );
       return { cleanup, engine };
     })
   );
   info("All engines initialized successfully");
 
-  // Step 2: Run inference on all initialized engines concurrently and collect metrics
-  const allJournals = await Promise.all(
-    engineInstances.map((engineInstance, index) =>
-      runEngineWithMetrics(
-        engineInstance,
-        Object.values(ENGINES)[index],
-        ITERATIONS
+  let combinedJournal;
+  try {
+    // Step 2: Run inference on all initialized engines concurrently and collect metrics
+    const allJournals = await Promise.all(
+      engineInstances.map((engineInstance, index) =>
+        runEngineWithMetrics(
+          engineInstance,
+          Object.values(ENGINES)[index],
+          ITERATIONS,
+          tag
+        )
       )
-    )
-  );
+    );
 
-  // Merge all journals into one for final reporting
-  const combinedJournal = allJournals.reduce((acc, journal) => {
-    Object.entries(journal).forEach(([key, values]) => {
-      if (!acc[key]) {
-        acc[key] = [];
-      }
-      acc[key].push(...values);
-    });
-    return acc;
-  }, {});
+    // Merge all journals into one for final reporting
+    combinedJournal = allJournals.reduce((acc, journal) => {
+      Object.entries(journal).forEach(([key, values]) => {
+        if (!acc[key]) {
+          acc[key] = [];
+        }
+        acc[key].push(...values);
+      });
+      return acc;
+    }, {});
 
-  Assert.ok(true);
+    Assert.ok(true);
 
-  const memUsage = await getTotalMemoryUsage();
-  (combinedJournal["total-memory-usage"] =
-    combinedJournal["total-memory-usage"] || []).push(memUsage);
+    const memUsage = await getTotalMemoryUsage();
+    (combinedJournal[`MULTI-total-memory-usage-${tag}`] =
+      combinedJournal[`MULTI-total-memory-usage-${tag}`] || []).push(memUsage);
+  } finally {
+    await EngineProcess.destroyMLEngine();
+
+    // Cleanup and verify that all engines are terminated
+    for (const instance of engineInstances) {
+      await instance.cleanup();
+    }
+  }
 
   // Final metrics report
   reportMetrics(combinedJournal);
+}
 
-  await EngineProcess.destroyMLEngine();
-
-  // Cleanup and verify that all engines are terminated
-  for (const instance of engineInstances) {
-    await instance.cleanup();
-  }
+add_task(async function test_smart_window_intent_precision_and_recall() {
+  await runMLPerfTestForEachBackend({
+    name: "SMART-WINDOW-INTENT-PRECISION-AND-RECALL",
+    run: runSmartWindowIntentPrecisionAndRecall,
+  });
 });
+
+async function runSmartWindowIntentPrecisionAndRecall({ backend, tag }) {
+  const examples = JSON.parse(
+    await fetchFile(INTENT_DATA_ROOT, INTENT_DATASET)
+  );
+  Assert.greater(
+    examples.length,
+    0,
+    "The intent smoke corpus contains examples"
+  );
+
+  const { cleanup, engine } = await initializeEngine(
+    new PipelineOptions({ ...SMART_WINDOW_INTENT_OPTIONS, backend })
+  );
+
+  let result;
+  try {
+    result = await engine.run({
+      args: [examples.map(example => example.query)],
+    });
+  } finally {
+    await EngineProcess.destroyMLEngine();
+    await cleanup();
+  }
+
+  const predictions = Array.isArray(result) ? result : result.output;
+  Assert.equal(
+    predictions.length,
+    examples.length,
+    "The model returned one prediction per intent example"
+  );
+
+  const tallies = {
+    chat: { actual: 0, predicted: 0, truePositive: 0 },
+    search: { actual: 0, predicted: 0, truePositive: 0 },
+  };
+  for (let i = 0; i < examples.length; i++) {
+    const output = Array.isArray(predictions[i])
+      ? predictions[i][0]
+      : predictions[i];
+    const predicted =
+      output.label.toLowerCase() === "search" &&
+      output.score >= SEARCH_SCORE_THRESHOLD
+        ? "search"
+        : "chat";
+    const expected = examples[i].label.toLowerCase();
+    const matches = predicted === expected;
+    tallies[expected].actual += 1;
+    tallies[predicted].predicted += 1;
+    tallies[expected].truePositive += matches ? 1 : 0;
+    info(
+      `[${tag}] ${examples[i].query}: expected ${expected}, got ${predicted} ` +
+        `(${output.label}, ${output.score})`
+    );
+  }
+
+  for (const [label, { actual, predicted, truePositive }] of Object.entries(
+    tallies
+  )) {
+    const precision = predicted ? truePositive / predicted : 0;
+    const recall = truePositive / actual;
+    info(
+      `[${tag}] ${label} precision: ${truePositive}/${predicted}; ` +
+        `recall: ${truePositive}/${actual}`
+    );
+    Assert.greaterOrEqual(
+      precision,
+      INTENT_METRIC_THRESHOLDS[label].precision,
+      `Smart Window ${label} precision ${truePositive}/${predicted} is above the smoke-test floor`
+    );
+    Assert.greaterOrEqual(
+      recall,
+      INTENT_METRIC_THRESHOLDS[label].recall,
+      `Smart Window ${label} recall ${truePositive}/${actual} is above the smoke-test floor`
+    );
+  }
+}

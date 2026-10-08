@@ -4,10 +4,10 @@
 
 //! Query features.
 
+use crate::Atom;
 use crate::derives::*;
 use crate::parser::ParserContext;
 use crate::values::computed::{self, CSSPixelLength, Ratio, Resolution};
-use crate::Atom;
 use cssparser::Parser;
 use selectors::kleene_value::KleeneValue;
 use std::fmt;
@@ -27,8 +27,8 @@ pub type KeywordSerializer = fn(KeywordDiscriminant) -> String;
 /// Parses a given identifier.
 pub type KeywordParser = for<'a, 'i, 't> fn(
     context: &'a ParserContext,
-    input: &'a mut Parser<'i, 't>,
-) -> Result<KeywordDiscriminant, ParseError<'i>>;
+    input: &'a mut Parser<'i>,
+) -> Result<KeywordDiscriminant, ParseError>;
 
 /// An evaluator for a given feature.
 ///
@@ -67,10 +67,10 @@ pub enum Evaluator {
 /// even make sense?).
 macro_rules! keyword_evaluator {
     ($actual_evaluator:ident, $keyword_type:ty) => {{
-        fn __parse<'i, 't>(
+        fn __parse(
             context: &$crate::parser::ParserContext,
-            input: &mut $crate::cssparser::Parser<'i, 't>,
-        ) -> Result<$crate::queries::feature::KeywordDiscriminant, ::style_traits::ParseError<'i>>
+            input: &mut $crate::cssparser::Parser,
+        ) -> Result<$crate::queries::feature::KeywordDiscriminant, ::style_traits::ParseError>
         {
             let kw = <$keyword_type as $crate::parser::Parse>::parse(context, input)?;
             Ok(kw as $crate::queries::feature::KeywordDiscriminant)
@@ -104,7 +104,7 @@ macro_rules! keyword_evaluator {
 
 /// Different flags or toggles that change how a expression is parsed or
 /// evaluated.
-#[derive(Clone, Copy, Debug, ToShmem)]
+#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, ToShmem)]
 pub struct FeatureFlags(u8);
 bitflags! {
     impl FeatureFlags : u8 {

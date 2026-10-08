@@ -184,13 +184,10 @@ export class UrlbarProviderQuickSuggestContextualOptIn extends UrlbarProvider {
   }
 
   /**
-   * This is called only for dynamic result types, when the urlbar view updates
-   * the view of one of the results of the provider.  It should return an object
-   * describing the view update.
-   *
+   * @param {UrlbarResult} _result The result whose view will be updated.
    * @returns {object} An object describing the view update.
    */
-  getViewUpdate() {
+  getViewUpdate(_result) {
     return {
       icon: {
         attributes: {
@@ -210,6 +207,10 @@ export class UrlbarProviderQuickSuggestContextualOptIn extends UrlbarProvider {
     };
   }
 
+  /**
+   * @param {UrlbarResult} result The result being selected.
+   * @param {Element} [element] The selected element. Undefined in the message path.
+   */
   onBeforeSelection(result, element) {
     if (element.getAttribute("name") == "learn_more") {
       this.#a11yAlertRow(element.closest(".urlbarView-row"));
@@ -231,6 +232,13 @@ export class UrlbarProviderQuickSuggestContextualOptIn extends UrlbarProvider {
     row.ariaNotify(alertText);
   }
 
+  /**
+   * @param {string} state
+   * @param {UrlbarQueryContext} _queryContext
+   * @param {UrlbarParentController} _controller
+   * @param {{index: number, result: UrlbarResult}[]} _resultsAndIndexes
+   * @param {object|null} details
+   */
   onImpression(state, _queryContext, _controller, _resultsAndIndexes, details) {
     if (state == "engagement" && details.provider == this.name) {
       return;
@@ -255,6 +263,11 @@ export class UrlbarProviderQuickSuggestContextualOptIn extends UrlbarProvider {
     }
   }
 
+  /**
+   * @param {UrlbarQueryContext} queryContext
+   * @param {UrlbarParentController} controller
+   * @param {object} details
+   */
   onEngagement(queryContext, controller, details) {
     // The clicked control's command rides `selType` (set from its data-command),
     // so it crosses the actor boundary; `details.element` is content-only.

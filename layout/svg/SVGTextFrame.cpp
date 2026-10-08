@@ -295,7 +295,7 @@ static nscoord GetBaselinePosition(nsTextFrame* aFrame,
 
     case StyleDominantBaseline::TextBottom:
     case StyleDominantBaseline::Ideographic:
-      return writingMode.IsVerticalLR() ? 0 : ascent + descent;
+      return convertIfVerticalRL(ascent + descent);
 
     case StyleDominantBaseline::Central:
       return (ascent + descent) / 2.0;
@@ -2766,10 +2766,9 @@ void SVGTextDrawPathCallbacks::StrokeGeometry() {
         SVGElement::FromNode(mFrame->GetParent()->GetContent());
 
     // Apply any stroke-specific transform
-    gfxMatrix outerSVGToUser;
-    if (SVGUtils::GetNonScalingStrokeTransform(mFrame, &outerSVGToUser) &&
-        outerSVGToUser.Invert()) {
-      mContext.Multiply(outerSVGToUser);
+    if (Maybe<gfxMatrix> userToOuterSVG =
+            SVGUtils::GetNonScalingStrokeTransform(mFrame)) {
+      mContext.Multiply(userToOuterSVG->Inverse());
     }
 
     RefPtr<Path> path = mContext.GetPath();
@@ -2916,7 +2915,7 @@ void SVGTextFrame::ReflowSVGNonDisplayText() {
 
   // We had a style change, so we mark this frame as dirty so that the next
   // time it is painted, we reflow the anonymous block frame.
-  this->MarkSubtreeDirty();
+  MarkSubtreeDirty();
 
   // Finally, we need to actually reflow the anonymous block frame and update
   // mPositions, in case we are being reflowed immediately after a DOM
@@ -3076,9 +3075,16 @@ void SVGTextFrame::NotifySVGChanged(ChangeFlags aFlags) {
 
   bool needNewBounds = false;
   bool needGlyphMetricsUpdate = false;
-  if (aFlags.contains(ChangeFlag::CoordContextChanged) &&
-      HasAnyStateBits(NS_STATE_SVG_POSITIONING_MAY_USE_PERCENTAGES)) {
-    needGlyphMetricsUpdate = true;
+  if (aFlags.contains(ChangeFlag::CoordContextChanged)) {
+    if (HasAnyStateBits(NS_STATE_SVG_POSITIONING_MAY_USE_PERCENTAGES)) {
+      needGlyphMetricsUpdate = true;
+    }
+    if (SVGContentUtils::HasPercentageDependentStroke(
+            Style(), SVGContextPaint::GetContextPaint(GetContent())) ||
+        SVGIntegrationUtils::UsingEffectsForFrame(this)) {
+      // Stroke and effects may have percentage dependent units.
+      needNewBounds = true;
+    }
   }
 
   if (aFlags.contains(ChangeFlag::TransformChanged)) {
@@ -5162,8 +5168,8 @@ void SVGTextFrame::MaybeReflowAnonymousBlockChild() {
     return;
   }
 
-  NS_ASSERTION(!kid->HasAnyStateBits(NS_FRAME_IN_REFLOW),
-               "should not be in reflow when about to reflow again");
+  MOZ_ASSERT(!kid->HasAnyStateBits(NS_FRAME_IN_REFLOW),
+             "should not be in reflow when about to reflow again");
 
   if (IsSubtreeDirty()) {
     if (HasAnyStateBits(NS_FRAME_IS_DIRTY)) {
@@ -5443,6 +5449,9 @@ gfxRect SVGTextFrame::TransformFrameRectFromTextChild(
 
     // Scale it into frame user space.
     gfxRect rectInFrameUserSpace = AppUnitsToFloatCSSPixels(rectInTextFrame);
+
+    // Take into account any font size scaling
+    rectInFrameUserSpace.Scale(1.0 / mFontSizeScaleFactor);
 
     // Intersect it with the run.
     TextRenderedRun::GeometryFlags flags(

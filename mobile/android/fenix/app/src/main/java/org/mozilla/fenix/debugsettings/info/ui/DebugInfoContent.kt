@@ -25,6 +25,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import mozilla.components.compose.base.badge.StatusBadge
 import mozilla.components.compose.base.button.OutlinedButton
+import mozilla.components.compose.base.theme.PreviewThemeProvider
+import mozilla.components.compose.base.theme.Theme
 import mozilla.components.compose.base.theme.success
 import org.mozilla.fenix.R
 import org.mozilla.fenix.debugsettings.info.DebugInfoItem
@@ -32,8 +34,6 @@ import org.mozilla.fenix.debugsettings.info.DebugInfoSection
 import org.mozilla.fenix.debugsettings.info.DebugInfoValue
 import org.mozilla.fenix.debugsettings.info.displayText
 import org.mozilla.fenix.theme.FirefoxTheme
-import org.mozilla.fenix.theme.PreviewThemeProvider
-import org.mozilla.fenix.theme.Theme
 
 @Composable
 internal fun DebugInfoContent(
@@ -41,10 +41,10 @@ internal fun DebugInfoContent(
     onViewJsonClick: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = FirefoxTheme.layout.space.static200),
+        modifier =
+            Modifier.fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = FirefoxTheme.layout.space.static200)
     ) {
         Text(
             text = stringResource(id = R.string.debug_info_title),
@@ -86,9 +86,7 @@ private fun DebugInfoSectionView(section: DebugInfoSection) {
 @Composable
 private fun DebugInfoRow(item: DebugInfoItem) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = FirefoxTheme.layout.space.static100),
+        modifier = Modifier.fillMaxWidth().padding(vertical = FirefoxTheme.layout.space.static100),
         horizontalArrangement = Arrangement.spacedBy(FirefoxTheme.layout.space.static200),
     ) {
         Text(
@@ -101,16 +99,18 @@ private fun DebugInfoRow(item: DebugInfoItem) {
             is DebugInfoValue.State -> {
                 StatusBadge(
                     status = value.displayText(LocalContext.current),
-                    containerColor = if (value.enabled) {
-                        MaterialTheme.colorScheme.success
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    },
-                    contentColor = if (value.enabled) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    containerColor =
+                        if (value.enabled) {
+                            MaterialTheme.colorScheme.success
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                    contentColor =
+                        if (value.enabled) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                 )
             }
 
@@ -127,9 +127,7 @@ private fun DebugInfoRow(item: DebugInfoItem) {
 
 @Preview
 @Composable
-private fun DebugInfoContentPreview(
-    @PreviewParameter(PreviewThemeProvider::class) theme: Theme,
-) {
+private fun DebugInfoContentPreview(@PreviewParameter(PreviewThemeProvider::class) theme: Theme) {
     FirefoxTheme(theme = theme) {
         Surface {
             DebugInfoContent(
@@ -140,32 +138,39 @@ private fun DebugInfoContentPreview(
     }
 }
 
-private val previewSections = listOf(
-    DebugInfoSection(
-        title = "Device",
-        items = listOf(
-            DebugInfoItem(label = "Android", value = DebugInfoValue.Text("Android 15")),
-            DebugInfoItem(label = "Model", value = DebugInfoValue.Text("Medium Phone")),
+private val previewSections =
+    listOf(
+        DebugInfoSection(
+            title = "Device",
+            items =
+                listOf(
+                    DebugInfoItem(label = "Android", value = DebugInfoValue.Text("Android 15")),
+                    DebugInfoItem(label = "Model", value = DebugInfoValue.Text("Medium Phone")),
+                ),
         ),
-    ),
-    DebugInfoSection(
-        title = "Secret settings",
-        items = listOf(
-            DebugInfoItem(label = "enableHomepageSearchBar", value = DebugInfoValue.State(enabled = true)),
-            DebugInfoItem(label = "tabGroupsEnabled", value = DebugInfoValue.State(enabled = false)),
-            DebugInfoItem(
-                label = "enableVeryLongSecretSettingDescription",
-                value = DebugInfoValue.Text("a-very-long-configuration-value-that-needs-to-wrap-onto-multiple-lines"),
-            ),
+        DebugInfoSection(
+            title = "Secret settings",
+            items =
+                listOf(
+                    DebugInfoItem(label = "enableHomepageSearchBar", value = DebugInfoValue.State(enabled = true)),
+                    DebugInfoItem(label = "tabGroupsEnabled", value = DebugInfoValue.State(enabled = false)),
+                    DebugInfoItem(
+                        label = "enableVeryLongSecretSettingDescription",
+                        value =
+                            DebugInfoValue.Text(
+                                "a-very-long-configuration-value-that-needs-to-wrap-onto-multiple-lines"
+                            ),
+                    ),
+                ),
         ),
-    ),
-    DebugInfoSection(
-        title = "Build",
-        items = listOf(
-            DebugInfoItem(
-                label = "VCS Commit",
-                value = DebugInfoValue.Text("2839629039f3a1b2c4d5e6f7890123456789abcd"),
-            ),
+        DebugInfoSection(
+            title = "Build",
+            items =
+                listOf(
+                    DebugInfoItem(
+                        label = "VCS Commit",
+                        value = DebugInfoValue.Text("2839629039f3a1b2c4d5e6f7890123456789abcd"),
+                    )
+                ),
         ),
-    ),
-)
+    )

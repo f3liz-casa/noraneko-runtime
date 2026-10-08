@@ -397,9 +397,12 @@ add_task(async function test_windows_zoneInformation() {
     return;
   }
 
+  // The file name must differ between the legacy and the non-legacy runs:
+  // both test files share this task and may run in parallel, and this
+  // directory is shared by the whole session.
   let normalTargetFile = await IOUtils.getFile(
     Services.dirsvc.get("LocalAppData", Ci.nsIFile).path,
-    "xpcshell-download-test.txt"
+    `xpcshell-download-test-${gUseLegacySaver ? "legacy" : "core"}.txt`
   );
 
   // The template file name length is more than MAX_PATH characters. The final
@@ -477,6 +480,13 @@ add_task(async function test_windows_zoneInformation() {
         isPrivate: true,
       },
       expectedZoneId: "[ZoneTransfer]\r\nZoneId=3\r\n",
+    },
+    {
+      options: {
+        originalUrl: "https://original.url.com",
+      },
+      expectedZoneId:
+        "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://original.url.com/\r\n",
     },
   ];
   for (const test of tests) {

@@ -56,7 +56,6 @@ task-defaults:
             - android-ndk-linux
             - android-sdk-linux
             - linux64-jdk
-            - linux64-rust-android
             - linux64-rust-size
             - linux64-cbindgen
             - linux64-dump_syms
@@ -82,7 +81,6 @@ android-arm/debug:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: arm-debug
         mozconfig-variant: debug
@@ -90,6 +88,7 @@ android-arm/debug:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -108,7 +107,6 @@ android-arm/opt:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: arm
     use-sccache: true
@@ -116,6 +114,7 @@ android-arm/opt:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - android-gradle-dependencies
             - linux64-sccache
 
@@ -134,13 +133,13 @@ android-arm-lite/opt:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
             PERFHERDER_EXTRA_OPTIONS: lite
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: arm-lite
     use-sccache: true
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -165,13 +164,13 @@ android-arm-shippable/opt:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
-        clone-with: hg
         actions: [get-secrets, build, multi-l10n]
         config: [taskcluster_nightly.py]
         custom-build-variant-cfg: arm
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - android-gradle-dependencies
 
 android-arm-shippable-lite/opt:
@@ -196,13 +195,13 @@ android-arm-shippable-lite/opt:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
             PERFHERDER_EXTRA_OPTIONS: lite
     run:
-        clone-with: hg
         actions: [get-secrets, build, multi-l10n]
         config: [taskcluster_nightly.py]
         custom-build-variant-cfg: arm-lite
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - android-gradle-dependencies
 
 android-aarch64/opt:
@@ -220,7 +219,6 @@ android-aarch64/opt:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: aarch64
     use-sccache: true
@@ -228,6 +226,7 @@ android-aarch64/opt:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -246,13 +245,13 @@ android-aarch64-lite/opt:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
             PERFHERDER_EXTRA_OPTIONS: lite
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: aarch64-lite
     use-sccache: true
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -271,7 +270,6 @@ android-aarch64-non-unified/opt:
             PERFHERDER_EXTRA_OPTIONS: non-unified
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: aarch64
         extra-config:
@@ -282,6 +280,7 @@ android-aarch64-non-unified/opt:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -299,7 +298,6 @@ android-aarch64/debug:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: aarch64-debug
         mozconfig-variant: debug
@@ -307,6 +305,7 @@ android-aarch64/debug:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -331,13 +330,13 @@ android-aarch64-shippable/opt:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
-        clone-with: hg
         actions: [get-secrets, build, multi-l10n]
         config: [taskcluster_nightly.py]
         custom-build-variant-cfg: aarch64
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - android-gradle-dependencies
 
 android-aarch64-shippable-lite/opt:
@@ -362,13 +361,13 @@ android-aarch64-shippable-lite/opt:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
             PERFHERDER_EXTRA_OPTIONS: lite
     run:
-        clone-with: hg
         actions: [get-secrets, build, multi-l10n]
         config: [taskcluster_nightly.py]
         custom-build-variant-cfg: aarch64-lite
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - android-gradle-dependencies
 
 android-x86_64/opt:
@@ -386,7 +385,6 @@ android-x86_64/opt:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: x86_64
     use-sccache: true
@@ -394,6 +392,37 @@ android-x86_64/opt:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
+            - linux64-sccache
+            - android-gradle-dependencies
+
+android-x86_64-ccov/opt:
+    description: "Android x86-64 Opt CCov"
+    index:
+        job-name: android-x86_64-ccov-opt
+    treeherder:
+        platform: android-5-0-x86_64-ccov/opt
+        symbol: B
+        tier: 2
+    run-on-projects: ['mozilla-central']
+    worker:
+        artifacts:
+            - name: public/code-coverage-grcov.zip
+              path: /builds/worker/workspace/obj-build/code-coverage-grcov.zip
+              type: file
+        env:
+            TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
+            MOZ_AUTOMATION_PACKAGE_TESTS: "1"
+    run:
+        actions: [get-secrets, build]
+        custom-build-variant-cfg: x86_64-ccov
+        mozconfig-variant: code-coverage-opt
+    use-sccache: false
+    fetches:
+        toolchain:
+            - linux64-clang
+            - linux64-grcov
+            - linux64-rust-android-dev
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -413,13 +442,13 @@ android-x86_64-lite/opt:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
             PERFHERDER_EXTRA_OPTIONS: lite
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: x86_64-lite
     use-sccache: true
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -435,7 +464,6 @@ android-x86_64-fuzzing/debug:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
             PERFHERDER_EXTRA_OPTIONS: fuzzing
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: fuzzing-debug
         mozconfig-variant: debug-fuzzing
@@ -443,6 +471,7 @@ android-x86_64-fuzzing/debug:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
     optimization:
@@ -463,7 +492,6 @@ android-x86_64-non-unified/opt:
             PERFHERDER_EXTRA_OPTIONS: non-unified
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: x86_64
         extra-config:
@@ -474,6 +502,7 @@ android-x86_64-non-unified/opt:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -498,13 +527,13 @@ android-x86_64-shippable/opt:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
-        clone-with: hg
         actions: [get-secrets, build, multi-l10n]
         config: [taskcluster_nightly.py]
         custom-build-variant-cfg: x86_64
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - android-gradle-dependencies
 
 android-x86_64-shippable-lite/opt:
@@ -529,13 +558,13 @@ android-x86_64-shippable-lite/opt:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
             PERFHERDER_EXTRA_OPTIONS: lite
     run:
-        clone-with: hg
         actions: [get-secrets, build, multi-l10n]
         config: [taskcluster_nightly.py]
         custom-build-variant-cfg: x86_64-lite
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - android-gradle-dependencies
 
 android-x86_64/debug:
@@ -552,7 +581,6 @@ android-x86_64/debug:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: x86_64-debug
         mozconfig-variant: debug
@@ -560,6 +588,7 @@ android-x86_64/debug:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies
 
@@ -578,7 +607,6 @@ android-x86_64/debug-isolated-process:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
             PERFHERDER_EXTRA_OPTIONS: isolated-process
     run:
-        clone-with: hg
         actions: [get-secrets, build]
         custom-build-variant-cfg: x86_64-debug-isolated-process
         mozconfig-variant: debug-isolated-process
@@ -586,5 +614,6 @@ android-x86_64/debug-isolated-process:
     fetches:
         toolchain:
             - linux64-clang
+            - linux64-rust-android
             - linux64-sccache
             - android-gradle-dependencies

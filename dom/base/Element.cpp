@@ -8,7 +8,7 @@
  * utility methods for subclasses, and so forth.
  */
 
-#include "mozilla/dom/Element.h"
+#include "Element.h"
 
 #include <inttypes.h>
 
@@ -107,6 +107,7 @@
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/MutationObservers.h"
 #include "mozilla/dom/NodeInfo.h"
+#include "mozilla/dom/PerformanceContainerTiming.h"
 #include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/PolicyContainer.h"
 #include "mozilla/dom/Promise.h"
@@ -575,12 +576,15 @@ void Element::SetCustomElementRegistry(
   if (aCustomElementRegistry->IsScoped()) {
     SetCustomElementRegistryState(CustomElementRegistryState::Scoped);
     CustomElementRegistry::SetScopedRegistry(*this, *aCustomElementRegistry);
+    // https://html.spec.whatwg.org/#scoped-document-set
+    // Append element's node document to the registry's scoped document set.
+    aCustomElementRegistry->AddToScopedDocumentSet(OwnerDoc());
   } else {
     SetCustomElementRegistryState(CustomElementRegistryState::Global);
   }
 }
 
-void Element::SetKeepCustomElementRegistryNull() {
+void Element::SetNullCustomElementRegistry() {
   MOZ_ASSERT(StaticPrefs::dom_scoped_custom_element_registries_enabled());
   MOZ_ASSERT(!HasCustomElementRegistry(),
              "We shouldn't set a custom element registry without clearing "
@@ -1601,10 +1605,10 @@ already_AddRefed<ShadowRoot> Element::AttachShadowWithoutNameChecks(
   return shadowRoot.forget();
 }
 
-void Element::AttachAndSetUAShadowRoot(NotifyUAWidget aNotifyUAWidget,
-                                       DelegatesFocus aDelegatesFocus,
-                                       CustomSlotDispatch aCustomSlotDispatch,
-                                       bool aNotify) {
+void Element::AttachAndSetUAShadowRoot(
+    NotifyUAWidget aNotifyUAWidget, DelegatesFocus aDelegatesFocus /* = No */,
+    CustomSlotDispatch aCustomSlotDispatch /* = No */,
+    bool aNotify /* = true*/) {
   MOZ_DIAGNOSTIC_ASSERT(!CanAttachShadowDOM(),
                         "Cannot be used to attach UA shadow DOM");
   if (OwnerDoc()->IsStaticDocument()) {
@@ -1621,13 +1625,34 @@ void Element::AttachAndSetUAShadowRoot(NotifyUAWidget aNotifyUAWidget,
   }
 
   MOZ_ASSERT(GetShadowRoot()->IsUAWidget());
-  if (aNotifyUAWidget == NotifyUAWidget::Yes) {
-    NotifyUAWidgetSetupOrChange();
+  if (aNotifyUAWidget == NotifyUAWidget::No) {
+    return;
   }
+
+  // Note that this method may be called during a BindToTree() or
+  // UnbindFromTree() calls. Then, we shouldn't run script synchronously.
+  // Therefore, we want to make this dispatch the chrome event asynchronously to
+  // avoid to mark this method, BindToTree() and UnbindFromTree() as
+  // MOZ_CAN_RUN_SCRIPT.
+  MOZ_ASSERT(!nsContentUtils::IsSafeToRunScript(),
+             "Block running script before calling "
+             "Element::AttachAndSetUAShadowRoot!");
+
+  AddScriptRunnerToNotifyUAWidgetSetupOrChange();
 }
 
-void Element::NotifyUAWidgetSetupOrChange() {
+void Element::AddScriptRunnerToNotifyUAWidgetSetupOrChange() {
   MOZ_ASSERT(IsInComposedDoc());
+
+  // Note that this method may be called during a BindToTree() or
+  // UnbindFromTree() calls. Then, we shouldn't run script synchronously.
+  // Therefore, we want to make this dispatch the chrome event asynchronously to
+  // avoid to mark this method, BindToTree() and UnbindFromTree() as
+  // MOZ_CAN_RUN_SCRIPT.
+  MOZ_ASSERT(!nsContentUtils::IsSafeToRunScript(),
+             "Block running script before calling "
+             "Element::AddScriptRunnerToNotifyUAWidgetSetupOrChange!");
+
   Document* doc = OwnerDoc();
   if (doc->IsStaticDocument()) {
     return;
@@ -1640,15 +1665,15 @@ void Element::NotifyUAWidgetSetupOrChange() {
   // UA Widget to re-init.
   nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
       "Element::NotifyUAWidgetSetupOrChange::UAWidgetSetupOrChange",
-      [self = RefPtr<Element>(this), doc = RefPtr<Document>(doc)]() {
-        nsContentUtils::DispatchChromeEvent(doc, self,
-                                            u"UAWidgetSetupOrChange"_ns,
+      [self = RefPtr<Element>(this)]() MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
+        nsContentUtils::DispatchChromeEvent(self, u"UAWidgetSetupOrChange"_ns,
                                             CanBubble::eYes, Cancelable::eNo);
       }));
 }
 
-void Element::TeardownUAShadowRoot(NotifyUAWidget aNotify,
-                                   UnattachShadowRoot aUnattachShadowRoot) {
+void Element::TeardownUAShadowRoot(
+    NotifyUAWidget aNotifyUAWidget,
+    UnattachShadowRoot aUnattachShadowRoot /* = Yes */) {
   MOZ_ASSERT(IsInComposedDoc());
   if (!GetShadowRoot()) {
     return;
@@ -1658,9 +1683,18 @@ void Element::TeardownUAShadowRoot(NotifyUAWidget aNotify,
     UnattachShadow();
   }
 
-  if (aNotify == NotifyUAWidget::No) {
+  if (aNotifyUAWidget == NotifyUAWidget::No) {
     return;
   }
+
+  // Note that this method may be called during a BindToTree() or
+  // UnbindFromTree() calls. Then, we shouldn't run script synchronously.
+  // Therefore, we want to make this dispatch the chrome event asynchronously to
+  // avoid to mark this method, BindToTree() and UnbindFromTree() as
+  // MOZ_CAN_RUN_SCRIPT.
+  MOZ_ASSERT(!nsContentUtils::IsSafeToRunScript(),
+             "Block running script before calling "
+             "Element::TeardownUAShadowRoot!");
 
   Document* doc = OwnerDoc();
   if (doc->IsStaticDocument()) {
@@ -1670,19 +1704,20 @@ void Element::TeardownUAShadowRoot(NotifyUAWidget aNotify,
   // The runnable will dispatch an event to tear down UA Widget.
   nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
       "Element::NotifyUAWidgetTeardownAndUnattachShadow::UAWidgetTeardown",
-      [self = RefPtr<Element>(this), doc = RefPtr<Document>(doc)]() {
-        // Bail out if the element is being collected by CC
-        bool hasHadScriptObject = true;
-        nsIScriptGlobalObject* scriptObject =
-            doc->GetScriptHandlingObject(hasHadScriptObject);
-        if (!scriptObject && hasHadScriptObject) {
-          return;
-        }
+      [self = RefPtr<Element>(this), doc = RefPtr<Document>(doc)]()
+          MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
+            // Bail out if the element is being collected by CC
+            bool hasHadScriptObject = true;
+            nsIScriptGlobalObject* scriptObject =
+                doc->GetScriptHandlingObject(hasHadScriptObject);
+            if (!scriptObject && hasHadScriptObject) {
+              return;
+            }
 
-        (void)nsContentUtils::DispatchChromeEvent(
-            doc, self, u"UAWidgetTeardown"_ns, CanBubble::eYes,
-            Cancelable::eNo);
-      }));
+            (void)nsContentUtils::DispatchChromeEvent(
+                doc, self, u"UAWidgetTeardown"_ns, CanBubble::eYes,
+                Cancelable::eNo);
+          }));
 }
 
 void Element::UnattachShadow() {
@@ -2150,12 +2185,14 @@ Element* Element::GetAttrAssociatedElementInternal(nsAtom* aAttr,
     return nullptr;
   }
 
-  Element* resolved = attrEl->ResolveReferenceTarget();
-  if (resolved && aForBindings) {
+  if (aForBindings) {
+    // <https://whatpr.org/html/10995/common-dom-interfaces.html#reflecting-content-attributes-in-idl-attributes:get-the-unresolved-attribute-target-element>
+    // The getter steps are to return the result of running this's get the
+    // unresolved attribute target element.
     return attrEl;
   }
 
-  return resolved;
+  return attrEl->ResolveReferenceTarget();
 }
 
 Element* Element::GetAttrAssociatedElementForBindings(nsAtom* aAttr) const {
@@ -2164,29 +2201,38 @@ Element* Element::GetAttrAssociatedElementForBindings(nsAtom* aAttr) const {
 
 Maybe<nsTArray<RefPtr<Element>>> Element::GetAttrAssociatedElementsInternal(
     nsAtom* aAttr, bool aForBindings) {
-  // https://whatpr.org/html/10995/common-microsyntaxes.html#attr-associated-elements
+  if (aForBindings || !StaticPrefs::dom_shadowdom_referenceTarget_enabled()) {
+    return GetUnresolvedAttributeTargetElements(aAttr);
+  } else {
+    return GetResolvedAttributeTargetElements(aAttr);
+  }
+}
+
+Maybe<nsTArray<RefPtr<Element>>> Element::GetUnresolvedAttributeTargetElements(
+    nsAtom* aAttr) {
+  // https://whatpr.org/html/10995/common-microsyntaxes.html#unresolved-attribute-target-elements
+  // note that step 1 is handled further below.
+  // 2. Let unresolvedTargets be « ».
   nsTArray<RefPtr<Element>> elements;
   auto& [explicitlySetAttrElements, _] =
       ExtendedDOMSlots()->mAttrElementsMap.LookupOrInsert(aAttr);
 
   if (explicitlySetAttrElements) {
-    // 3. If element has an explicitly set attr-elements which
+    // 3. If element has an explicitly set attr-elements:
     for (const nsWeakPtr& weakEl : *explicitlySetAttrElements) {
-      // For each attrElement in reflectedTarget's explicitly set
-      // attr-elements:
+      // 3.1. For each attrElement of element's explicitly set attr-elements:
       if (RefPtr<Element> attrEl = do_QueryReferent(weakEl)) {
-        // If attrElement is not a descendant of any of element's
+        // 3.1.1. If attrElement is not a descendant of any of element's
         // shadow-including ancestors, then continue.
         if (!HasSharedRoot(attrEl)) {
           continue;
         }
-        // Append attrElement to elements.
+        // 3.1.2. Append attrElement to unresolvedTargets.
         elements.AppendElement(std::move(attrEl));
       }
     }
   } else {
-    // 4. Otherwise
-    // 4.1. Let value be the attribute value.
+    // 4. Let value be the attribute value.
     const nsAttrValue* value = GetParsedAttr(aAttr);
     // 1. If the attribute is not specified on element, return null.
     if (!value || value->GetAtomCount() == 0) {
@@ -2196,41 +2242,49 @@ Maybe<nsTArray<RefPtr<Element>>> Element::GetAttrAssociatedElementsInternal(
     MOZ_ASSERT(value->Type() == nsAttrValue::eAtomArray ||
                    value->Type() == nsAttrValue::eAtom,
                "Attribute used for accessible relations must be parsed.");
-    // 4.2. Let tokens be value, split on ASCII whitespace.
-    // 4.3. For each id of tokens:
+    // 5. Let tokens be value, split on ASCII whitespace.
+    // 6. For each id of tokens:
     for (uint32_t i = 0; i < value->GetAtomCount(); i++) {
-      // 4.3.1 Let candidate be the first element, in tree order, that meets the
-      // following criteria:
-      // - candidate's root is the same as element's root; and
-      // - candidate's ID is id.
+      // 6.1. Let unresolvedTarget be the first element, in tree order, that
+      // meets the following criteria:
+      // - unresolvedTarget's root is the same as element's root; and
+      // - unresolvedTarget's ID is id.
       if (auto* candidate = GetElementByIdInDocOrSubtree(
               value->AtomAt(static_cast<int32_t>(i)))) {
-        // Append candidate to elements.
+        // 6.2. Append unresolvedTarget to unresolvedTargets.
         elements.AppendElement(candidate);
       }
     }
   }
-  if (!StaticPrefs::dom_shadowdom_referenceTarget_enabled()) {
-    return Some(std::move(elements));
-  }
+  // 7. Return unresolvedTargets.
+  return Some(std::move(elements));
+}
 
-  // 5. Let resolvedCandidates be an empty list.
+Maybe<nsTArray<RefPtr<Element>>> Element::GetResolvedAttributeTargetElements(
+    nsAtom* aAttr) {
+  // https://whatpr.org/html/10995/common-microsyntaxes.html#resolved-attribute-target-elements
+  // 1. Let unresolvedTargets be the unresolved attribute target elements for
+  // attribute and element.
+  Maybe<nsTArray<RefPtr<Element>>> maybeUnresolvedTargets =
+      GetUnresolvedAttributeTargetElements(aAttr);
+  if (maybeUnresolvedTargets.isNothing()) {
+    return Nothing();
+  }
+  nsTArray<RefPtr<Element>> unresolvedTargets =
+      maybeUnresolvedTargets.extract();
+  // 2. Let resolvedTargets be « ».
   nsTArray<RefPtr<Element>> resolvedElements;
-  // 6. For each candidate in candidates:
-  for (const RefPtr<Element>& element : elements) {
-    // 6.1 Let resolvedCandidate be the result of resolving the reference target
-    // on candidate.
+  // 3. For each unresolvedTarget of unresolvedTargets:
+  for (const RefPtr<Element>& element : unresolvedTargets) {
+    // 3.1. Let resolvedTarget be the result of resolving the reference target
+    // on unresolvedTarget.
     if (Element* resolvedCandidate = element->ResolveReferenceTarget()) {
-      // 6.2 If resolvedCandidate is not null:
-      if (aForBindings) {
-        // 6.2.1 If retarget is true, append candidate to resolvedCandidates
-        resolvedElements.AppendElement(element);
-      } else {
-        // 6.2.2 Otherwise, append resolvedCandidate to resolvedCandidates
-        resolvedElements.AppendElement(resolvedCandidate);
-      }
+      // 3.2. If resolvedTarget is not null, then append resolvedTarget to
+      // resolvedTargets.
+      resolvedElements.AppendElement(resolvedCandidate);
     }
   }
+  // 4. Return resolvedTargets.
   return Some(std::move(resolvedElements));
 }
 
@@ -3001,6 +3055,14 @@ nsresult Element::BindToTree(BindContext& aContext, nsINode& aParent) {
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  // Cache our container-timing root from our (already-bound) parent before
+  // recursing into kids, so each can read it from us. Only document-tree
+  // content contributes to container timing.
+  if (aContext.OwnerDoc().MayHaveContainerTimingAttributes() &&
+      aContext.InUncomposedDoc()) {
+    UpdateContainerTimingRootFromParent(&aParent);
+  }
+
   // Now recurse into our kids. Ensure this happens after binding the shadow
   // root so that directionality of slots is updated.
   {
@@ -3059,6 +3121,65 @@ nsresult Element::BindToTree(BindContext& aContext, nsINode& aParent) {
   return NS_OK;
 }
 
+Element* Element::GetContainerTimingRoot() const {
+  return static_cast<Element*>(GetProperty(nsGkAtoms::containerTimingRoot));
+}
+
+void Element::UpdateContainerTimingRootFromParent(nsINode* aParent) {
+  // This element is tracked by the nearest strict-ancestor element carrying a
+  // `containertiming` attribute, unless it carries `containertimingignore`,
+  // which stops upward propagation. Because the parent's root is already
+  // cached, this is O(1) per element and the whole subtree is populated
+  // top-down (during BindToTree or a subtree recompute).
+  //
+  // Only an HTMLElement can be a container root or an ignored subtree root.
+  // `containertiming` and `containertimingignore` are rare, so the subtree
+  // bloom filter lets us skip the HasAttr scans.
+  static const uint64_t containerTimingBits =
+      AttrArray::HashForBloomFilter(nsGkAtoms::containertiming);
+  static const uint64_t ignoreBits =
+      AttrArray::HashForBloomFilter(nsGkAtoms::containerTimingIgnore);
+
+  const bool rootsIgnoredSubtree = IsHTMLElement() &&
+                                   mAttrs.BloomMayHave(ignoreBits) &&
+                                   HasAttr(nsGkAtoms::containerTimingIgnore);
+
+  Element* root = nullptr;
+  Element* parent = Element::FromNodeOrNull(aParent);
+  if (parent && !rootsIgnoredSubtree) {
+    if (parent->IsHTMLElement() &&
+        parent->mAttrs.BloomMayHave(containerTimingBits) &&
+        parent->HasAttr(nsGkAtoms::containertiming)) {
+      root = parent;
+    } else {
+      // The parent is not itself a container root, so inherit its cached root.
+      // This is deliberately namespace-agnostic: a non-HTML parent can never be
+      // a root, but it does relay one to the HTML content below it.
+      root = parent->GetContainerTimingRoot();
+    }
+  }
+
+  if (root) {
+    // The stored Element* is raw and non-owning. This is safe because `root` is
+    // a strict ancestor, it cannot be destroyed while this element remains
+    // connected, the property is cleared in UnbindFromTree. So it can never
+    // dangle.
+    SetProperty(nsGkAtoms::containerTimingRoot, root);
+  } else if (HasProperties()) {
+    RemoveProperty(nsGkAtoms::containerTimingRoot);
+  }
+}
+
+void Element::RecomputeContainerTimingRootForSubtree() {
+  UpdateContainerTimingRootFromParent(GetParentNode());
+  for (nsIContent* node = GetNextNode(this); node;
+       node = node->GetNextNode(this)) {
+    if (Element* element = Element::FromNode(node)) {
+      element->UpdateContainerTimingRootFromParent(element->GetParentNode());
+    }
+  }
+}
+
 static bool WillDetachFromShadowOnUnbind(const Element& aElement,
                                          bool aNullParent) {
   // If our parent still is in a shadow tree by now, and we're not removing
@@ -3094,6 +3215,25 @@ void Element::UnbindFromTree(UnbindContext& aContext) {
       if (!parent->HasFlag(ELEMENT_IS_DATALIST_OR_HAS_DATALIST_ANCESTOR)) {
         UnsetFlags(ELEMENT_IS_DATALIST_OR_HAS_DATALIST_ANCESTOR);
       }
+    }
+  }
+
+  if (aContext.OwnerDoc().MayHaveContainerTimingAttributes()) {
+    // Drop the cached container-timing root so it can never dangle: an ancestor
+    // root may be destroyed once we are no longer in its subtree.
+    if (HasProperties()) {
+      RemoveProperty(nsGkAtoms::containerTimingRoot);
+    }
+
+    static const uint64_t containerTimingBits =
+        AttrArray::HashForBloomFilter(nsGkAtoms::containertiming);
+
+    // A full disconnect should ensure a new connection creates a fresh painted
+    // region.
+    if (!aContext.IsMove() && IsHTMLElement() &&
+        mAttrs.BloomMayHave(containerTimingBits) &&
+        HasAttr(nsGkAtoms::containertiming)) {
+      ContainerTimingHelpers::DropRecordForContainerRoot(this);
     }
   }
 
@@ -3305,14 +3445,24 @@ nsresult Element::SetInlineStyleDeclaration(StyleLockedDeclarationBlock&,
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP_(bool)
-Element::IsAttributeMapped(const nsAtom* aAttribute) const { return false; }
-
-nsMapRuleToAttributesFunc Element::GetAttributeMappingFunction() const {
-  return &MapNoAttributesInto;
+bool Element::IsNoNamespaceAttrMapped(const nsAtom* aAttribute) const {
+  return false;
 }
 
-void Element::MapNoAttributesInto(mozilla::MappedDeclarationsBuilder&) {}
+nsMapRuleToAttributesFunc Element::GetAttributeMappingFunction() const {
+  return &MapXmlLangAttrInto;
+}
+
+void Element::MapXmlLangAttrInto(mozilla::MappedDeclarationsBuilder& aBuilder) {
+  const auto* value = aBuilder.GetAttr(kNameSpaceID_XML, nsGkAtoms::lang);
+  if (!value) {
+    return;
+  }
+  MOZ_ASSERT(value->Type() == nsAttrValue::eAtom);
+  // We set it unconditionally, if xml:lang and lang are both specified, this
+  // one wins, and is the caller's responsibility to call this last.
+  aBuilder.SetIdentAtomValue(eCSSProperty__x_lang, value->GetAtomValue());
+}
 
 nsChangeHint Element::GetAttributeChangeHint(const nsAtom* aAttribute,
                                              AttrModType) const {
@@ -3773,7 +3923,8 @@ static MOZ_ALWAYS_INLINE void SetLifecycleCallbackNamespaceURI(
 
 nsresult Element::SetNoNameSpaceAttrOnNewlyCreatedElement(
     already_AddRefed<nsAtom> aName, nsHtml5String& aValue,
-    bool& aIsPendingMappedAttributeEvaluation) {
+    bool& aIsPendingMappedAttributeEvaluation,
+    const nsAutoScriptBlocker& aGuard) {
   MOZ_ASSERT(aValue);
   MOZ_ASSERT(IsHTMLElement());
   MOZ_ASSERT(!GetParentNode());
@@ -3925,14 +4076,18 @@ nsresult Element::SetNoNameSpaceAttrOnNewlyCreatedElement(
   const nsAttrValue* valuePtr =
       mAttrs.AddNewAttributeAssumeAvailableSlot(nameRef, value);
   UpdateSubtreeBloomFilterForAttribute(namePtr);
-  if (!aIsPendingMappedAttributeEvaluation && IsAttributeMapped(namePtr)) {
+  if (!aIsPendingMappedAttributeEvaluation &&
+      IsNoNamespaceAttrMapped(namePtr)) {
     aIsPendingMappedAttributeEvaluation = true;
     mAttrs.InfallibleMarkAsPendingPresAttributeEvaluation();
     // Not calling `Document::ScheduleForPresAttrEvaluation` since not in doc.
   }
 
   // No `dir` handling, because the element has neither ancestors nor
-  // descendants, yet.
+  // descendants, yet. Except we might need to invalidate DefinitelyLTR.
+  if (namePtr == nsGkAtoms::dir) {
+    MaybeSetDocNeedsDirHandling(this, valuePtr);
+  }
 
   // No check for `HasElementCreatedFromPrototypeAndHasUnmodifiedL10n()`, since
   // we only call this from the HTML parser and not from the prototype content
@@ -3973,18 +4128,19 @@ nsresult Element::SetAttrAndNotify(
       hadValidDir = HasValidDir() || IsHTMLElement(nsGkAtoms::bdi);
       hadDirAuto = HasDirAuto();  // already takes bdi into account
     }
-
     MOZ_TRY(SetAndSwapAttr(aName, aParsedValue, &oldValueSet, aIsKnownNew));
-    if (IsAttributeMapped(aName) && !IsPendingMappedAttributeEvaluation()) {
-      mAttrs.InfallibleMarkAsPendingPresAttributeEvaluation();
-      if (Document* doc = GetComposedDoc()) {
-        doc->ScheduleForPresAttrEvaluation(this);
-      }
-    }
   } else {
     RefPtr<mozilla::dom::NodeInfo> ni = NodeInfoManager()->GetNodeInfo(
         aName, aPrefix, aNamespaceID, ATTRIBUTE_NODE);
     MOZ_TRY(SetAndSwapAttr(ni, aParsedValue, &oldValueSet, aIsKnownNew));
+  }
+
+  if (IsAttrMapped(aNamespaceID, aName) &&
+      !IsPendingMappedAttributeEvaluation()) {
+    mAttrs.InfallibleMarkAsPendingPresAttributeEvaluation();
+    if (Document* doc = GetComposedDoc()) {
+      doc->ScheduleForPresAttrEvaluation(this);
+    }
   }
 
   // If the old value owns its own data, we know it is OK to keep using it.
@@ -4075,11 +4231,6 @@ bool Element::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
     return true;
   }
 
-  if (aAttribute == nsGkAtoms::form || aAttribute == nsGkAtoms::_for) {
-    aResult.ParseAtom(aValue);
-    return true;
-  }
-
   if (aNamespaceID == kNameSpaceID_None) {
     if (NS_IS_ATOM_ARRAY_ATTRIBUTE(aAttribute)) {
       aResult.ParseAtomArray(aValue);
@@ -4091,15 +4242,16 @@ bool Element::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
       return true;
     }
 
-    if (aAttribute == nsGkAtoms::aria_activedescendant) {
-      // String in aria-activedescendant is an id, so store as an atom.
+    if (aAttribute == nsGkAtoms::form || aAttribute == nsGkAtoms::_for ||
+        aAttribute == nsGkAtoms::aria_activedescendant) {
+      // Strings here are ids, so parse as an atom.
       aResult.ParseAtom(aValue);
       return true;
     }
 
     if (aAttribute == nsGkAtoms::id) {
       // Store id as an atom.  id="" means that the element has no id,
-      // not that it has an emptystring as the id.
+      // not that it has an empty string as the id.
       if (aValue.IsEmpty()) {
         return false;
       }
@@ -4357,16 +4509,16 @@ nsresult Element::UnsetAttr(int32_t aNameSpaceID, nsAtom* aName, bool aNotify) {
   bool hadValidDir = false;
   bool hadDirAuto = false;
 
-  if (aNameSpaceID == kNameSpaceID_None) {
-    if (aName == nsGkAtoms::dir) {
-      hadValidDir = HasValidDir() || IsHTMLElement(nsGkAtoms::bdi);
-      hadDirAuto = HasDirAuto();  // already takes bdi into account
-    }
-    if (IsAttributeMapped(aName) && !IsPendingMappedAttributeEvaluation()) {
-      mAttrs.InfallibleMarkAsPendingPresAttributeEvaluation();
-      if (Document* doc = GetComposedDoc()) {
-        doc->ScheduleForPresAttrEvaluation(this);
-      }
+  if (aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::dir) {
+    hadValidDir = HasValidDir() || IsHTMLElement(nsGkAtoms::bdi);
+    hadDirAuto = HasDirAuto();  // already takes bdi into account
+  }
+
+  if (IsAttrMapped(aNameSpaceID, aName) &&
+      !IsPendingMappedAttributeEvaluation()) {
+    mAttrs.InfallibleMarkAsPendingPresAttributeEvaluation();
+    if (Document* doc = GetComposedDoc()) {
+      doc->ScheduleForPresAttrEvaluation(this);
     }
   }
 
@@ -4701,11 +4853,6 @@ nsresult Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor) {
           }
         }
 
-        if (aVisitor.mPresContext) {
-          EventStateManager::SetActiveManager(
-              aVisitor.mPresContext->EventStateManager(), this);
-        }
-
         // OK, we're pretty sure we're going to load, so warm up a speculative
         // connection to be sure we have one ready when we open the channel.
         if (nsIDocShell* shell = OwnerDoc()->GetDocShell()) {
@@ -4914,6 +5061,30 @@ bool Element::Matches(const nsACString& aSelector, ErrorResult& aResult) {
   return Servo_SelectorList_Matches(this, list);
 }
 
+static constexpr nsAttrValue::EnumTableEntry kReferrerPolicyTable[] = {
+    {GetEnumString(ReferrerPolicy::No_referrer).get(),
+     static_cast<int16_t>(ReferrerPolicy::No_referrer)},
+    {GetEnumString(ReferrerPolicy::Origin).get(),
+     static_cast<int16_t>(ReferrerPolicy::Origin)},
+    {GetEnumString(ReferrerPolicy::Origin_when_cross_origin).get(),
+     static_cast<int16_t>(ReferrerPolicy::Origin_when_cross_origin)},
+    {GetEnumString(ReferrerPolicy::No_referrer_when_downgrade).get(),
+     static_cast<int16_t>(ReferrerPolicy::No_referrer_when_downgrade)},
+    {GetEnumString(ReferrerPolicy::Unsafe_url).get(),
+     static_cast<int16_t>(ReferrerPolicy::Unsafe_url)},
+    {GetEnumString(ReferrerPolicy::Strict_origin).get(),
+     static_cast<int16_t>(ReferrerPolicy::Strict_origin)},
+    {GetEnumString(ReferrerPolicy::Same_origin).get(),
+     static_cast<int16_t>(ReferrerPolicy::Same_origin)},
+    {GetEnumString(ReferrerPolicy::Strict_origin_when_cross_origin).get(),
+     static_cast<int16_t>(ReferrerPolicy::Strict_origin_when_cross_origin)},
+};
+
+bool Element::ParseReferrerAttribute(const nsAString& aString,
+                                     nsAttrValue& aResult) {
+  return aResult.ParseEnumValue(aString, kReferrerPolicyTable, false);
+}
+
 static constexpr nsAttrValue::EnumTableEntry kCORSAttributeTable[] = {
     // Order matters here
     // See ParseCORSValue
@@ -5042,7 +5213,8 @@ already_AddRefed<Promise> Element::RequestFullscreen(
   if (const char* error = GetFullscreenError(aCallerType, OwnerDoc())) {
     request->Reject(error);
   } else {
-    OwnerDoc()->RequestFullscreen(std::move(request));
+    const RefPtr<Document> doc = OwnerDoc();
+    doc->RequestFullscreen(std::move(request));
   }
   return promise.forget();
 }
@@ -5110,9 +5282,9 @@ already_AddRefed<DOMMatrixReadOnly> Element::GetTransformToAncestor(
     // If aAncestor is not actually an ancestor of this (including nullptr),
     // then the call to GetTransformToAncestor will return the transform
     // all the way up through the parent chain.
-    transform = nsLayoutUtils::GetTransformToAncestor(RelativeTo{primaryFrame},
-                                                      RelativeTo{ancestorFrame},
-                                                      nsIFrame::IN_CSS_UNITS)
+    transform = nsLayoutUtils::GetTransformToAncestor(
+                    RelativeTo{primaryFrame}, RelativeTo{ancestorFrame},
+                    TransformMatrixFlag::InCSSUnits)
                     .GetMatrix();
   }
 
@@ -5127,9 +5299,9 @@ already_AddRefed<DOMMatrixReadOnly> Element::GetTransformToParent() {
   Matrix4x4 transform;
   if (primaryFrame) {
     nsIFrame* parentFrame = primaryFrame->GetParent();
-    transform = nsLayoutUtils::GetTransformToAncestor(RelativeTo{primaryFrame},
-                                                      RelativeTo{parentFrame},
-                                                      nsIFrame::IN_CSS_UNITS)
+    transform = nsLayoutUtils::GetTransformToAncestor(
+                    RelativeTo{primaryFrame}, RelativeTo{parentFrame},
+                    TransformMatrixFlag::InCSSUnits)
                     .GetMatrix();
   }
 
@@ -5146,7 +5318,7 @@ already_AddRefed<DOMMatrixReadOnly> Element::GetTransformToViewport() {
         nsLayoutUtils::GetTransformToAncestor(
             RelativeTo{primaryFrame},
             RelativeTo{nsLayoutUtils::GetDisplayRootFrame(primaryFrame)},
-            nsIFrame::IN_CSS_UNITS)
+            TransformMatrixFlag::InCSSUnits)
             .GetMatrix();
   }
 
@@ -5894,7 +6066,7 @@ Element* Element::GetPseudoElement(const PseudoStyleRequest& aRequest) const {
 }
 
 ReferrerPolicy Element::GetReferrerPolicyAsEnum() const {
-  if (IsHTMLElement()) {
+  if (IsHTMLElement() || IsSVGElement()) {
     return ReferrerPolicyFromAttr(GetParsedAttr(nsGkAtoms::referrerpolicy));
   }
   return ReferrerPolicy::_empty;

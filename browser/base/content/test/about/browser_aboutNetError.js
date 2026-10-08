@@ -28,49 +28,6 @@ function resetPrefs() {
   Services.prefs.clearUserPref(DES_PREF);
 }
 
-const SSL_ERROR_BASE = -0x3000;
-const SSL_ERROR_NO_CYPHER_OVERLAP = SSL_ERROR_BASE + 2;
-const SSL_ERROR_PROTOCOL_VERSION_ALERT = SSL_ERROR_BASE + 98;
-
-function nssErrorToNSErrorAsString(nssError) {
-  let nssErrorsService = Cc["@mozilla.org/nss_errors_service;1"].getService(
-    Ci.nsINSSErrorsService
-  );
-  return nssErrorsService.getXPCOMFromNSSError(nssError).toString();
-}
-
-async function resetTelemetry() {
-  Services.telemetry.clearEvents();
-  await TestUtils.waitForCondition(() => {
-    let events = Services.telemetry.snapshotEvents(
-      Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-      true
-    ).content;
-    return !events || !events.length;
-  });
-}
-
-async function checkTelemetry(errorString, nssError) {
-  let loadEvent = await TestUtils.waitForCondition(() => {
-    let events = Services.telemetry.snapshotEvents(
-      Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-      true
-    ).content;
-    return events?.find(e => e[1] == "security.ui.tlserror" && e[2] == "load");
-  }, "recorded telemetry for the load");
-  loadEvent.shift();
-  Assert.deepEqual(loadEvent, [
-    "security.ui.tlserror",
-    "load",
-    "abouttlserror",
-    errorString,
-    {
-      is_frame: "false",
-      channel_status: nssErrorToNSErrorAsString(nssError),
-    },
-  ]);
-}
-
 add_task(async function resetToDefaultConfig() {
   info(
     "Change TLS config to cause page load to fail, check that reset button is shown and that it works"
@@ -79,8 +36,6 @@ add_task(async function resetToDefaultConfig() {
   // Set ourselves up for a TLS error.
   Services.prefs.setIntPref("security.tls.version.min", 1); // TLS 1.0
   Services.prefs.setIntPref("security.tls.version.max", 1);
-
-  await resetTelemetry();
 
   let browser;
   let pageLoaded;
@@ -96,11 +51,6 @@ add_task(async function resetToDefaultConfig() {
 
   info("Loading and waiting for the net error");
   await pageLoaded;
-
-  await checkTelemetry(
-    "SSL_ERROR_PROTOCOL_VERSION_ALERT",
-    SSL_ERROR_PROTOCOL_VERSION_ALERT
-  );
 
   // Setup an observer for the target page.
   const finalLoadComplete = BrowserTestUtils.browserLoaded(
@@ -160,8 +110,6 @@ add_task(async function checkLearnMoreLink() {
   Services.prefs.setIntPref("security.tls.version.min", 3);
   Services.prefs.setIntPref("security.tls.version.max", 4);
 
-  await resetTelemetry();
-
   let browser;
   let pageLoaded;
   await BrowserTestUtils.openNewForegroundTab(
@@ -176,11 +124,6 @@ add_task(async function checkLearnMoreLink() {
 
   info("Loading and waiting for the net error");
   await pageLoaded;
-
-  await checkTelemetry(
-    "SSL_ERROR_PROTOCOL_VERSION_ALERT",
-    SSL_ERROR_PROTOCOL_VERSION_ALERT
-  );
 
   const baseURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
 
@@ -299,6 +242,94 @@ add_task(async function checkDomainCorrectionReplacesLearnMoreLink() {
 
   lazy.gDNSOverride.clearHostOverride("www.example.com");
   resetPrefs();
+  // This page records an alternate_host_suggested impression in its content
+  // process. Flush while the tab is still open: a closing tab's process drops
+  // out of the list testFlushAllChildren() walks (bug 1843178), so anything
+  // still buffered reaches the parent only when the process finally exits,
+  // which on a slow machine is after the next task has cleared FOG.
+  await Services.fog.testFlushAllChildren();
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
+});
+
+// Impression and click telemetry for the alternate-host suggestion
+// (bug 2058380). Driven through the real injection path rather than a
+// hand-built span, so a suggestion that renders without its click listener
+// attached fails here.
+add_task(async function checkDomainCorrectionTelemetry() {
+  // Drain before clearing, so data still buffered in a live content process
+  // does not arrive with our own flush and double-count. The task above also
+  // has to flush before it closes its tab, which this cannot do for it.
+  await Services.fog.testFlushAllChildren();
+  Services.fog.testResetFOG();
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.fixup.alternate.enabled", false]],
+  });
+  lazy.gDNSOverride.addIPOverride("www.example.com", "::1");
+
+  BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    // eslint-disable-next-line sdl/no-insecure-url
+    "http://example/example2/",
+    false
+  );
+  let browser = gBrowser.selectedBrowser;
+  await BrowserTestUtils.waitForErrorPage(browser);
+
+  await waitForSettledNetErrorCard(browser);
+  const suggestionCount = await SpecialPowers.spawn(browser, [], async () => {
+    const netErrorCard =
+      content.document.querySelector("net-error-card").wrappedJSObject;
+    // The suggestion is injected by NetErrorChild off the back of its own async
+    // DNS lookup, which is independent of the card's render, so it still needs
+    // a wait of its own after the card has settled.
+    await ContentTaskUtils.waitForCondition(
+      () => netErrorCard.dnsSuggestion?.querySelector("a"),
+      "The suggestion link is injected"
+    );
+    return netErrorCard.shadowRoot.querySelectorAll("#dns-suggestion").length;
+  });
+  await Services.fog.testFlushAllChildren();
+
+  // Asserted separately from the counter so that a page which really did
+  // render two suggestions is not mistaken for a telemetry bug.
+  is(suggestionCount, 1, "The page holds a single suggestion");
+  is(
+    Glean.securityUiNeterror.alternateHostSuggested.testGetValue(),
+    1,
+    "The suggestion impression is recorded once"
+  );
+  is(
+    Glean.securityUiNeterror.clickDnsSuggestionLink.testGetValue(),
+    null,
+    "No click is recorded before the user clicks"
+  );
+
+  // Cancel the navigation so the click is measured without leaving the page.
+  await SpecialPowers.spawn(browser, [], async () => {
+    const doc = content.document;
+    doc.addEventListener("click", e => e.preventDefault(), { capture: true });
+    doc
+      .querySelector("net-error-card")
+      .wrappedJSObject.dnsSuggestion.querySelector("a")
+      .click();
+  });
+  await Services.fog.testFlushAllChildren();
+
+  const events = Glean.securityUiNeterror.clickDnsSuggestionLink.testGetValue();
+  is(events?.length, 1, "The suggestion click is recorded once");
+  is(String(events[0].extra.is_frame), "false", "is_frame recorded");
+  ok(
+    !JSON.stringify(events[0].extra).includes("example"),
+    `No host reaches the event extras (got ${JSON.stringify(events[0].extra)})`
+  );
+  is(
+    Glean.securityUiNeterror.alternateHostSuggested.testGetValue(),
+    1,
+    "Clicking does not add a second impression"
+  );
+
+  lazy.gDNSOverride.clearHostOverride("www.example.com");
+  resetPrefs();
   BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });
 
@@ -348,8 +379,6 @@ add_task(async function checkDnsNotFoundLearnMoreLink() {
 // Test that ciphersuites that use 3DES (namely, TLS_RSA_WITH_3DES_EDE_CBC_SHA)
 // can only be enabled when deprecated TLS is enabled.
 add_task(async function onlyAllow3DESWithDeprecatedTLS() {
-  await resetTelemetry();
-
   // By default, connecting to a server that only uses 3DES should fail.
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: "about:blank" },
@@ -357,11 +386,6 @@ add_task(async function onlyAllow3DESWithDeprecatedTLS() {
       BrowserTestUtils.startLoadingURIString(browser, TRIPLEDES_PAGE);
       await BrowserTestUtils.waitForErrorPage(browser);
     }
-  );
-
-  await checkTelemetry(
-    "SSL_ERROR_NO_CYPHER_OVERLAP",
-    SSL_ERROR_NO_CYPHER_OVERLAP
   );
 
   // Enabling deprecated TLS should also enable 3DES.

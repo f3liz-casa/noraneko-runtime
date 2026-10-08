@@ -4,7 +4,6 @@
 
 using mozilla::TimeStamp from "mozilla/TimeStamp.h";
 using mozilla::gfx::VRControllerType from "moz_external_vr.h";
-using mozilla::dom::NativeThreadId from "mozilla/dom/NativeThreadId.h";
 include "VRMessageUtils.h";
 include "VRParent.h";
 include "VRChild.h";
@@ -18,7 +17,7 @@ include protocol PVRGPU;
 namespace mozilla {
 namespace gfx {
 
-[NeedsOtherPid, ChildImpl="VRChild", ParentImpl="VRParent", ParentProc=VR, ChildProc=Parent]
+[NeedsOtherPid, ChildImpl="mozilla::gfx::VRChild", ParentImpl="mozilla::gfx::VRParent", ParentProc=VR, ChildProc=Parent]
 async protocol PVR
 {
 parent:

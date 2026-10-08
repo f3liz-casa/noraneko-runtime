@@ -1,6 +1,7 @@
 [DEFAULT]
 prefs = [
   "apz.zoom-to-focused-input.enabled=false",
+  "dom.navigation.navigationRateLimit.count=0",
   "test.ime_content_observer.assert_invalid_cache=true",
   "ui.dragThresholdX=4", # Bug 1873142
   "ui.dragThresholdY=4", # Bug 1873142
@@ -36,6 +37,8 @@ skip-if = [
 ]
 
 ["test_backspace_vs.html"]
+
+["test_blur_in_compositionend.html"]
 
 ["test_bug46555.html"]
 
@@ -481,6 +484,8 @@ skip-if = [
 
 ["test_dragdrop.html"]
 
+["test_dragdrop_img_with_data_url.html"]
+
 ["test_dragend_target.html"]
 
 ["test_editing_UI_in_plaintext-only.html"]
@@ -653,6 +658,8 @@ skip-if = [
 
 ["test_paste_clipboard_change.html"]
 
+["test_paste_command_data.html"]
+
 ["test_paste_no_formatting.html"]
 
 ["test_paste_redirect_focus_in_paste_event_listener.html"]
@@ -669,6 +676,8 @@ skip-if = [
 ["test_pasting_text_longer_than_maxlength.html"]
 
 ["test_plaintext_mail_in_design_mode.html"]
+
+["test_remove_during_composition.html"]
 
 ["test_replace_text.html"]
 

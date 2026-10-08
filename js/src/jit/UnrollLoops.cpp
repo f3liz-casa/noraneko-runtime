@@ -873,6 +873,9 @@ static bool AddClosingPhisForLoop(TempAllocator& alloc,
 
   for (size_t i = 0; i < state.exitingValues.size(); i++) {
     MDefinition* exitingValue = state.exitingValues.get(i);
+    if (!alloc.ensureBallast()) {
+      return false;
+    }
     // In `targetBlock`, add a single-argument phi node that "catches"
     // `exitingValue`, and change all uses of `exitingValue` to be the phi
     // node instead.
@@ -1077,6 +1080,9 @@ static bool UnrollAndOrPeelLoop(MIRGraph& graph, UnrollState& state) {
   const CompileInfo& info = originalHeader->info();
   for (uint32_t cix = 1; cix < unrollFactor; cix++) {
     for (uint32_t bix = 0; bix < numBlocksInOriginal; bix++) {
+      if (!graph.alloc().ensureBallast()) {
+        return false;
+      }
       MBasicBlock* empty = MBasicBlock::New(graph, info, /*pred=*/nullptr,
                                             MBasicBlock::Kind::NORMAL);
       if (!empty) {
@@ -1110,6 +1116,9 @@ static bool UnrollAndOrPeelLoop(MIRGraph& graph, UnrollState& state) {
       for (MPhiIterator phiIter(originalBlock->phisBegin());
            phiIter != originalBlock->phisEnd(); phiIter++) {
         const MPhi* originalPhi = *phiIter;
+        if (!graph.alloc().ensureBallast()) {
+          return false;
+        }
         MPhi* clonedPhi =
             MakeReplacementPhi(graph.alloc(), mapper, originalPhi);
         if (!clonedPhi) {
@@ -1134,6 +1143,9 @@ static bool UnrollAndOrPeelLoop(MIRGraph& graph, UnrollState& state) {
       for (MInstructionIterator insnIter(originalBlock->begin());
            insnIter != originalBlock->end(); insnIter++) {
         const MInstruction* originalInsn = *insnIter;
+        if (!graph.alloc().ensureBallast()) {
+          return false;
+        }
         MInstruction* clonedInsn =
             MakeReplacementInstruction(graph.alloc(), mapper, originalInsn);
         if (!clonedInsn) {
@@ -1167,24 +1179,14 @@ static bool UnrollAndOrPeelLoop(MIRGraph& graph, UnrollState& state) {
                  valueTable.get(0, vix)->op());
     }
 
-    // For cloned instructions that have a (load) dependency field, and that
-    // field points to an instruction in the original body, update the field so
-    // as to point to the equivalent instruction in the cloned body.
-    for (vix = 0; vix < numValuesInOriginal; vix++) {
-      MDefinition* clonedInsn = valueTable.get(cix, vix);
-      MDefinition* originalDep = clonedInsn->dependency();
-      if (originalDep) {
-        mozilla::Maybe<size_t> originalInsnIndex =
-            valueTable.findInRow(0, originalDep);
-        if (originalInsnIndex.isSome()) {
-          // The dependency is to an insn in the original body, so we need to
-          // remap it to this body.
-          MDefinition* clonedDep =
-              valueTable.get(cix, originalInsnIndex.value());
-          clonedInsn->setDependency(clonedDep);
-        }
-      }
-    }
+    // Note: cloned instructions inherit the original's loadDependency_ field,
+    // which is meaningless in the copy.  We deliberately don't try to fix them
+    // here -- it can't be done correctly, because dependencies of instructions
+    // after the loop also become stale and there is no easy way to find those
+    // instructions.  UnrollLoops (below) runs AccountForCFGChanges after
+    // unrolling is complete, which recomputes the loadDependency_ fields
+    // correctly (and does some other stuff).  See bugs 2063089, 2045312 and
+    // 2045575.
   }
 
 #ifdef JS_JITSPEW
@@ -1454,6 +1456,9 @@ static bool UnrollAndOrPeelLoop(MIRGraph& graph, UnrollState& state) {
           continue;
         }
         // Invent a new block.
+        if (!graph.alloc().ensureBallast()) {
+          return false;
+        }
         MBasicBlock* splitter =
             MBasicBlock::New(graph, info, block, MBasicBlock::Kind::SPLIT_EDGE);
         if (!splitter || !splitterBlocks.append(splitter)) {
@@ -2007,6 +2012,34 @@ bool UnrollLoops(const MIRGenerator* mir, MIRGraph& graph, bool* changed) {
   // the checking done in AnalyzeLoop, we know the transformations can't fail
   // (apart from OOMing).
 
+  // If `unrollStates` is empty, we're not going to modify the function,
+  // so make an early exit.  After this point we assume it's non-empty.
+  if (unrollStates.empty()) {
+    if (JitSpewEnabled(JitSpew_Unroll)) {
+      JitSpew(JitSpew_Unroll, "END   UnrollLoops, no loops changed.");
+    }
+    // *changed is already false
+    return true;
+  }
+
+#ifdef DEBUG
+  // We are going to modify the function, which will cause loadDependency_
+  // fields to become incorrect in ways which are difficult to incrementally fix
+  // up.  Instead, we'll let AccountForCFGChanges (below) regenerate them
+  // afterwards, by rerunning alias analysis.  For debug-level safety, let's
+  // invalidate them at this point, so any attempt to use them before alias
+  // analysis is rerun will lead to a segfault.
+  for (MBasicBlockIterator iter(graph.begin()); iter != graph.end(); iter++) {
+    MBasicBlock* block = *iter;
+    for (MInstruction* ins : *block) {
+      MDefinition* dep = ins->dependency();
+      if (dep) {
+        ins->setDependency((MDefinition*)1);
+      }
+    }
+  }
+#endif
+
   // Add "loop-closing phis" for values defined in the loop and used
   // afterwards.  See comments on AddClosingPhisForLoop.
   for (const UnrollState& state : unrollStates) {
@@ -2039,32 +2072,31 @@ bool UnrollLoops(const MIRGenerator* mir, MIRGraph& graph, bool* changed) {
     }
   }
 
-  // Do function-level fixups, if anything changed.
-  if (!unrollStates.empty()) {
-    RenumberBlocks(graph);
-    ClearDominatorTree(graph);
-    if (!BuildDominatorTree(mir, graph)) {
-      return false;
-    }
+  // As a result of changing the function's control flow graph, the block
+  // numbers, dominator tree and loadDependency_ pointers will be out of date.
+  // AccountForCFGChanges will fix all of that by recomputing them from scratch.
+  // See bugs 2063089, 2045312 and 2045575.
+  MOZ_ASSERT(!unrollStates.empty());
+  if (!AccountForCFGChanges(mir, graph, /*updateAliasAnalysis=*/true,
+                            /*underValueNumberer=*/false)) {
+    return false;
   }
 
   uint32_t numLoopsChanged =
       numLoopsPeeled + numLoopsUnrolled + numLoopsPeeledAndUnrolled;
+  (void)numLoopsChanged;
+  MOZ_ASSERT(numLoopsChanged > 0);
 
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_Unroll)) {
-    if (numLoopsChanged == 0) {
-      JitSpew(JitSpew_Unroll, "END   UnrollLoops");
-    } else {
-      JitSpew(JitSpew_Unroll,
-              "END UnrollLoops, %u processed (P=%u, U=%u, P&U=%u)",
-              numLoopsChanged, numLoopsPeeled, numLoopsUnrolled,
-              numLoopsPeeledAndUnrolled);
-    }
+    JitSpew(JitSpew_Unroll,
+            "END UnrollLoops, %u processed (P=%u, U=%u, P&U=%u)",
+            numLoopsChanged, numLoopsPeeled, numLoopsUnrolled,
+            numLoopsPeeledAndUnrolled);
   }
 #endif
 
-  *changed = numLoopsChanged > 0;
+  *changed = true;
   return true;
 }
 

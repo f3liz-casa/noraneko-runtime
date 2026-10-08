@@ -386,9 +386,11 @@ def get_treeherder_link(config) -> str:
 
 
 @functools.cache
-def get_default_priority(graph_config, project):
+def get_default_priority(graph_config, project, shipping):
     return evaluate_keyed_by(
-        graph_config["task-priority"], "Graph Config", {"project": project}
+        graph_config["task-priority"],
+        "Graph Config",
+        {"project": project, "shipping": str(shipping).lower()},
     )
 
 
@@ -2379,7 +2381,18 @@ def try_task_config_env(config, tasks):
     }
     for task in tasks:
         if task["worker"]["implementation"] in implementations:
-            task["worker"]["env"].update(env)
+            task_env = task["worker"]["env"]
+            # A test task whose manifests were restricted to what try asked for
+            # holds the share of the request that its own chunk runs, which is
+            # narrower than the request itself. Every other task needs the
+            # request, as the harness is what filters the suite down for it.
+            attributes = task.get("attributes") or {}
+            keep_test_paths = attributes.get("test-manifests-restricted", False)
+            task_env.update({
+                name: value
+                for name, value in env.items()
+                if name != "MOZHARNESS_TEST_PATHS" or not keep_test_paths
+            })
         yield task
 
 
@@ -2556,7 +2569,9 @@ def build_task(config, tasks):
 
         if "priority" not in task:
             task["priority"] = get_default_priority(
-                config.graph_config, config.params["project"]
+                config.graph_config,
+                config.params["project"],
+                config.params["shipping"],
             )
 
         tags = task.get("tags", {})

@@ -47,6 +47,7 @@
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/dom/GeneratedImageContent.h"
 #include "mozilla/dom/HTMLInputElement.h"
+#include "mozilla/dom/HTMLLabelElement.h"
 #include "mozilla/dom/HTMLSelectElement.h"
 #include "mozilla/dom/HTMLSharedListElement.h"
 #include "mozilla/dom/HTMLSummaryElement.h"
@@ -1481,30 +1482,6 @@ void nsCSSFrameConstructor::CreateGeneratedContent(
       return;
     }
 
-    case Type::Attr: {
-      const auto& attr = aItem.AsAttr();
-      RefPtr<nsAtom> attrName = attr.attribute.AsAtom();
-      int32_t attrNameSpace = kNameSpaceID_None;
-      RefPtr<nsAtom> ns = attr.namespace_url.AsAtom();
-      if (!ns->IsEmpty()) {
-        nsresult rv = nsNameSpaceManager::GetInstance()->RegisterNameSpace(
-            ns.forget(), attrNameSpace);
-        NS_ENSURE_SUCCESS_VOID(rv);
-      }
-
-      if (mDocument->IsHTMLDocument() && aOriginatingElement.IsHTMLElement()) {
-        ToLowerCaseASCII(attrName);
-      }
-
-      RefPtr<nsAtom> fallback = attr.fallback.AsAtom();
-
-      nsCOMPtr<nsIContent> content;
-      NS_NewAttributeContent(mDocument->NodeInfoManager(), attrNameSpace,
-                             attrName, fallback, getter_AddRefs(content));
-      aAddChild(content);
-      return;
-    }
-
     case Type::Counter:
     case Type::Counters: {
       RefPtr<nsAtom> name;
@@ -1553,8 +1530,7 @@ void nsCSSFrameConstructor::CreateGeneratedContent(
           accesskey.IsEmpty() || !LookAndFeel::GetMenuAccessKey()) {
         // Easy path: just return a regular value attribute content.
         nsCOMPtr<nsIContent> content;
-        NS_NewAttributeContent(mDocument->NodeInfoManager(), kNameSpaceID_None,
-                               nsGkAtoms::value, nsGkAtoms::_empty,
+        NS_NewAttributeContent(mDocument->NodeInfoManager(), nsGkAtoms::value,
                                getter_AddRefs(content));
         aAddChild(content);
         return;
@@ -1643,8 +1619,7 @@ void nsCSSFrameConstructor::CreateGeneratedContent(
       // detect that and do the right thing here?
       if (aOriginatingElement.HasAttr(nsGkAtoms::alt)) {
         nsCOMPtr<nsIContent> content;
-        NS_NewAttributeContent(mDocument->NodeInfoManager(), kNameSpaceID_None,
-                               nsGkAtoms::alt, nsGkAtoms::_empty,
+        NS_NewAttributeContent(mDocument->NodeInfoManager(), nsGkAtoms::alt,
                                getter_AddRefs(content));
         aAddChild(content);
         return;
@@ -1653,9 +1628,8 @@ void nsCSSFrameConstructor::CreateGeneratedContent(
       if (aOriginatingElement.IsHTMLElement(nsGkAtoms::input)) {
         if (aOriginatingElement.HasAttr(nsGkAtoms::value)) {
           nsCOMPtr<nsIContent> content;
-          NS_NewAttributeContent(mDocument->NodeInfoManager(),
-                                 kNameSpaceID_None, nsGkAtoms::value,
-                                 nsGkAtoms::_empty, getter_AddRefs(content));
+          NS_NewAttributeContent(mDocument->NodeInfoManager(), nsGkAtoms::value,
+                                 getter_AddRefs(content));
           aAddChild(content);
           return;
         }
@@ -1747,6 +1721,13 @@ static bool HasUAWidget(const Element& aOriginatingElement) {
   return sr && sr->IsUAWidget();
 }
 
+static bool IsBaseAppearanceSelect(const Element& aElement) {
+  if (const auto* select = HTMLSelectElement::FromNode(aElement)) {
+    return select->IsBaseSelectAppearance();
+  }
+  return false;
+}
+
 /*
  * aParentFrame - the frame that should be the parent of the generated
  *   content.  This is the frame for the corresponding content node,
@@ -1777,7 +1758,8 @@ void nsCSSFrameConstructor::CreateGeneratedContentItem(
   if (aPseudoElement != PseudoStyleType::Backdrop &&
       aPseudoElement != PseudoStyleType::PickerIcon &&
       HasUAWidget(aOriginatingElement) &&
-      !aOriginatingElement.IsHTMLElement(nsGkAtoms::details)) {
+      !aOriginatingElement.IsHTMLElement(nsGkAtoms::details) &&
+      !IsBaseAppearanceSelect(aOriginatingElement)) {
     // ::before / ::after / ::marker shouldn't work on <video> / <input>.
     return;
   }
@@ -3449,6 +3431,9 @@ nsCSSFrameConstructor::FindHTMLData(const Element& aElement,
       SIMPLE_TAG_CREATE(progress, NS_NewProgressFrame),
       SIMPLE_TAG_CREATE(meter, NS_NewMeterFrame),
       SIMPLE_TAG_CHAIN(details, nsCSSFrameConstructor::FindDetailsData),
+      SIMPLE_TAG_CHAIN(label,
+                       nsCSSFrameConstructor::FindLabelOrDescriptionData),
+
   };
 
   return FindDataByTag(aElement, aStyle, sHTMLData, std::size(sHTMLData));
@@ -4016,9 +4001,9 @@ nsCSSFrameConstructor::FindXULTagData(const Element& aElement,
       SIMPLE_TAG_CREATE(image, NS_NewXULImageFrame),
       SIMPLE_TAG_CREATE(treechildren, NS_NewTreeBodyFrame),
       SIMPLE_TAG_CHAIN(label,
-                       nsCSSFrameConstructor::FindXULLabelOrDescriptionData),
+                       nsCSSFrameConstructor::FindLabelOrDescriptionData),
       SIMPLE_TAG_CHAIN(description,
-                       nsCSSFrameConstructor::FindXULLabelOrDescriptionData),
+                       nsCSSFrameConstructor::FindLabelOrDescriptionData),
       SIMPLE_TAG_CREATE(iframe, NS_NewSubDocumentFrame),
       SIMPLE_TAG_CREATE(editor, NS_NewSubDocumentFrame),
       SIMPLE_TAG_CREATE(browser, NS_NewSubDocumentFrame),
@@ -4039,8 +4024,12 @@ nsCSSFrameConstructor::FindXULTagData(const Element& aElement,
 
 /* static */
 const nsCSSFrameConstructor::FrameConstructionData*
-nsCSSFrameConstructor::FindXULLabelOrDescriptionData(const Element& aElement,
-                                                     ComputedStyle&) {
+nsCSSFrameConstructor::FindLabelOrDescriptionData(const Element& aElement,
+                                                  ComputedStyle&) {
+  if (!aElement.OwnerDoc()->ChromeRulesEnabled()) {
+    return nullptr;
+  }
+
   // Follow CSS display value if no value attribute
   if (!aElement.HasAttr(nsGkAtoms::value)) {
     return nullptr;
@@ -5144,7 +5133,7 @@ void nsCSSFrameConstructor::AddFrameConstructionItemsInternal(
   // Create our shadow tree lazily if needed.
   // NOTE(emilio): This is rather hacky, we should ideally remove this and make
   // shadow tree creation faster, see bug 2017005.
-  if (auto* input = HTMLInputElement::FromNode(aContent)) {
+  if (const RefPtr input = HTMLInputElement::FromNode(aContent)) {
     if (auto* sr = input->CreateShadowTreeFromLayoutIfNeeded()) {
       StyleNewChildRange(sr->GetFirstChild(), nullptr);
     }
@@ -11226,8 +11215,12 @@ bool nsCSSFrameConstructor::FrameConstructionItem::IsWhitespace(
   if (!mIsText) {
     return false;
   }
-  mContent->SetFlags(NS_CREATE_FRAME_IF_NON_WHITESPACE |
-                     NS_REFRAME_IF_WHITESPACE);
+  // Set content whitespace flags, but not for generated content, where we
+  // never expect to see these.
+  if (!(aState.mAdditionalStateBits & NS_FRAME_GENERATED_CONTENT)) {
+    mContent->SetFlags(NS_CREATE_FRAME_IF_NON_WHITESPACE |
+                       NS_REFRAME_IF_WHITESPACE);
+  }
   return mContent->TextIsOnlyWhitespace();
 }
 

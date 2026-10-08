@@ -13,9 +13,6 @@ prefs = [
   "browser.sessionstore.closedTabsFromClosedWindows=true",
   "sidebar.verticalTabs.dragToPinPromo.dismissed=true",
 ]
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && tsan", # Bug 2057863
-]
 
 ["browser_1936752_lock_tab_sizing.js"]
 
@@ -51,10 +48,7 @@ https_first_disabled = true
 run-if = [
   "fission",
 ]
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && debug", # Bug 1934436
-  "verify-standalone",
-]
+skip-if = ["verify-standalone"]
 
 ["browser_blank_tab_label.js"]
 tags = "vertical-tabs"
@@ -131,8 +125,6 @@ tags = "vertical-tabs"
 ["browser_lastSeenActive.js"]
 tags = "vertical-tabs"
 skip-if = [
-  "os == 'linux' && os_version == '22.04' && arch == 'x86_64' && debug && vertical_tab && nova", # Bug 2057865
-  "os == 'linux' && os_version == '22.04' && arch == 'x86_64' && opt && vertical_tab && nova", # Bug 2057865
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && opt", # Bug 1889774
 ]
 
@@ -495,6 +487,8 @@ tags = "vertical-tabs"
 # Unclear why this fails with vertical tabs
 # tags = "vertical-tabs"
 
+["browser_swapBrowsers.js"]
+
 ["browser_switch_by_scrolling.js"]
 tags = "vertical-tabs"
 
@@ -653,6 +647,9 @@ tags = "vertical-tabs"
 
 ["browser_tab_preview.js"]
 tags = "vertical-tabs"
+skip-if = [
+  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && opt && a11y_checks", # Bug 2010318
+]
 
 ["browser_tab_splitview.js"]
 
@@ -665,11 +662,15 @@ skip-if = [
 
 ["browser_tab_splitview_alt_click.js"]
 
+["browser_tab_splitview_content_size.js"]
+
 ["browser_tab_splitview_contextmenu.js"]
 skip-if = [
   "os == 'mac' && os_version == '10.15' && arch == 'x86_64'", # Bug 1994508
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 2023967
 ]
+
+["browser_tab_splitview_findbar.js"]
 
 ["browser_tab_splitview_footer.js"]
 support-files = ["file_withicon.html"]
@@ -681,6 +682,8 @@ support-files = ["file_withicon.html"]
 ["browser_tab_splitview_splitter_keyboard.js"]
 
 ["browser_tab_splitview_splitter_keyboard_boundary.js"]
+
+["browser_tab_splitview_tab_height.js"]
 
 ["browser_tab_splitview_tab_order.js"]
 

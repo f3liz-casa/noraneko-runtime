@@ -375,13 +375,13 @@ void ExternalEngineStateMachine::OnMetadataRead(MetadataHolder&& aMetadata) {
 
   if (IsBeingProfiledOrLogEnabled()) {
     nsPrintfCString msg(
-        "a=%s, v=%s, size=[%dx%d], duration=%s, encrypted=%d, "
+        "a=%s, v=%s, size=[%dx%d], image=[%dx%d], duration=%s, encrypted=%d, "
         "IsEncryptedCustomIdent=%d",
         mInfo->HasAudio() ? mInfo->mAudio.mMimeType.get() : "none",
         mInfo->HasVideo() ? mInfo->mVideo.mMimeType.get() : "none",
-        mVideoDisplay.width, mVideoDisplay.height,
-        mDuration.Ref()->ToString().get(), mInfo->IsEncrypted(),
-        mReader->IsEncryptedCustomIdent());
+        mVideoDisplay.width, mVideoDisplay.height, mInfo->mVideo.mImage.width,
+        mInfo->mVideo.mImage.height, mDuration.Ref()->ToString().get(),
+        mInfo->IsEncrypted(), mReader->IsEncryptedCustomIdent());
     LOG("Metadata loaded : {}", msg.get());
     PROFILER_MARKER_TEXT("EESM::OnMetadataRead", MEDIA_PLAYBACK, {}, msg);
   }
@@ -1575,6 +1575,7 @@ void ExternalEngineStateMachine::ReportTelemetry(const MediaResult& aError) {
   // process starts and are not modified afterwards. This runs on the state
   // machine task queue rather than the main thread, so copy the values out
   // instead of holding a reference into the gfxVars singleton.
+  // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
   const nsCString adapterVendorID = gfx::gfxVars::AdapterVendorID();
   if (!adapterVendorID.IsEmpty()) {
     extraData.adapterVendorId = Some(adapterVendorID);

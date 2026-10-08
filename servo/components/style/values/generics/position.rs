@@ -18,13 +18,13 @@ use crate::derives::*;
 use crate::logical_geometry::PhysicalSide;
 use crate::parser::{Parse, ParserContext};
 use crate::rule_tree::CascadeLevel;
+use crate::values::DashedIdent;
 use crate::values::animated::ToAnimatedZero;
 use crate::values::computed::position::TryTacticAdjustment;
+use crate::values::generics::Optional;
 use crate::values::generics::box_::PositionProperty;
 use crate::values::generics::length::GenericAnchorSizeFunction;
 use crate::values::generics::ratio::Ratio;
-use crate::values::generics::Optional;
-use crate::values::DashedIdent;
 
 use crate::values::computed::Context;
 use crate::values::computed::ToComputedValue;
@@ -102,10 +102,7 @@ impl<T> Parse for TreeScoped<T>
 where
     T: Parse,
 {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         Ok(TreeScoped {
             value: T::parse(context, input)?,
             scope: CascadeLevel::same_tree_author_normal(),
@@ -125,7 +122,7 @@ where
             scope: if context.current_scope().is_tree() {
                 context.current_scope()
             } else {
-                self.scope.clone()
+                self.scope
             },
         }
     }
@@ -133,7 +130,7 @@ where
     fn from_computed_value(computed: &Self::ComputedValue) -> Self {
         Self {
             value: ToComputedValue::from_computed_value(&computed.value),
-            scope: computed.scope.clone(),
+            scope: computed.scope,
         }
     }
 }

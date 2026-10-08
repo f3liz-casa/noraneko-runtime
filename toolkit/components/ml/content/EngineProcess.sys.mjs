@@ -145,7 +145,7 @@ export const DEFAULT_MODELS = Object.freeze({
  * The only exception is web extension, as the engine id is dynamically created with the extension id.
  */
 export const FEATURES = {
-  // see toolkit/components/pdfjs/content/PdfjsParent.sys.mjs
+  // see toolkit/components/pdfjs/content/PdfJsParent.sys.mjs
   "pdfjs-alt-text": {
     engineId: "pdfjs",
     fluentId: "mlmodel-pdfjs",
@@ -251,6 +251,16 @@ export const FEATURES = {
   // see browser/components/aiwindow/models/search/SearchAgent.sys.mjs
   "search-answer-generation": {
     engineId: "smart-openai",
+  },
+  aitab: {
+    engineId: "aitab-engine",
+  },
+  // see dom/media/webspeech/recognition/SpeechRecognition.cpp
+  "speech-recognition": {
+    engineId: "parakeet-gguf",
+    fluentId: "mlmodel-speech-recognition",
+    fileDisplayInfoModule:
+      "resource://gre/modules/SpeechRecognitionModelDisplayInfo.sys.mjs",
   },
 };
 
@@ -719,6 +729,15 @@ export class PipelineOptions {
   extraHeaders = null;
 
   /**
+   * How many times an OpenAI-API-compatable backend retries a failed request
+   * before giving up. Null leaves the library default in place; set 0 when the
+   * caller does its own retrying.
+   *
+   * @type {?number}
+   */
+  maxRetries = null;
+
+  /**
    * Create a PipelineOptions instance.
    *
    * @param {object} options - The options for the pipeline. Must include mandatory fields.
@@ -928,6 +947,7 @@ export class PipelineOptions {
       "serviceType",
       "purpose",
       "extraHeaders",
+      "maxRetries",
     ];
 
     if (options instanceof PipelineOptions) {
@@ -1077,6 +1097,7 @@ export class PipelineOptions {
       serviceType: this.serviceType,
       purpose: this.purpose,
       extraHeaders: this.extraHeaders,
+      maxRetries: this.maxRetries,
     };
   }
 

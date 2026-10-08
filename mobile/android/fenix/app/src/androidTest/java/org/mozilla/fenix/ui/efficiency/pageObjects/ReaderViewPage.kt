@@ -11,7 +11,6 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
 import org.mozilla.fenix.ui.efficiency.helpers.BasePage
-import org.mozilla.fenix.ui.efficiency.helpers.Selector
 import org.mozilla.fenix.ui.efficiency.selectors.ReaderViewSelectors
 
 class ReaderViewPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>) : BasePage(composeRule) {
@@ -24,18 +23,17 @@ class ReaderViewPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestR
     // URL) via the reader-view toggle + Customize Reader View menu item, which the generic graph
     // cannot express. Tests drive that sequence explicitly and then act on this page's selectors.
 
-    override fun mozGetSelectorsByGroup(group: String): List<Selector> {
-        return ReaderViewSelectors.all.filter { it.groups.contains(group) }
-    }
+    override val selectorCatalog = ReaderViewSelectors
 
     /**
-     * Clear the reader-view appearance SharedPreferences so the test starts from the feature defaults
-     * (font size 3, no explicit font/color scheme). These preferences persist across test runs and across
-     * the RetryTestRule's attempts, so without this a value left by an earlier run (e.g. font size 4) makes
-     * the initial verifyFontSize(3) assertion fail. Mirrors the clean app state the legacy test relied on.
+     * Clear the reader-view appearance SharedPreferences so the test starts from the feature defaults (font size 3, no
+     * explicit font/color scheme). These preferences persist across test runs and across the RetryTestRule's attempts,
+     * so without this a value left by an earlier run (e.g. font size 4) makes the initial verifyFontSize(3) assertion
+     * fail. Mirrors the clean app state the legacy test relied on.
      */
     fun resetAppearancePrefsToDefault(): ReaderViewPage {
-        InstrumentationRegistry.getInstrumentation().targetContext
+        InstrumentationRegistry.getInstrumentation()
+            .targetContext
             .getSharedPreferences(READER_VIEW_PREFS, Context.MODE_PRIVATE)
             .edit()
             .clear()
@@ -46,20 +44,21 @@ class ReaderViewPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestR
     /**
      * Assert the reader-view font size equals [expected], polling until it does (or [timeout] elapses).
      *
-     * Font size is the one appearance control with no UI handle to assert against — the increase and
-     * decrease buttons carry no state and the size is not surfaced on screen. It lives only in the
-     * feature's SharedPreferences (as the legacy ReaderViewRobot.verifyAppearanceFontSize also read).
+     * Font size is the one appearance control with no UI handle to assert against — the increase and decrease buttons
+     * carry no state and the size is not surfaced on screen. It lives only in the feature's SharedPreferences (as the
+     * legacy ReaderViewRobot.verifyAppearanceFontSize also read).
      *
-     * A tap on the +/- button does NOT update the pref synchronously: it round-trips asynchronously
-     * through the reader-view web extension before the new value is persisted, so an immediate single
-     * read races ahead of the write and intermittently reads the pre-click value (seen on Firebase as
-     * off-by-one flakes like expected:6 but was:5). Polling until the pref reaches [expected] both
-     * closes that race and serializes each click with its effect, since the test asserts after every
-     * click. A genuinely dropped click still fails correctly once the timeout elapses.
+     * A tap on the +/- button does NOT update the pref synchronously: it round-trips asynchronously through the
+     * reader-view web extension before the new value is persisted, so an immediate single read races ahead of the write
+     * and intermittently reads the pre-click value (seen on Firebase as off-by-one flakes like expected:6 but was:5).
+     * Polling until the pref reaches [expected] both closes that race and serializes each click with its effect, since
+     * the test asserts after every click. A genuinely dropped click still fails correctly once the timeout elapses.
      */
     fun verifyFontSize(expected: Int, timeout: Long = 5_000, interval: Long = 100): ReaderViewPage {
-        val prefs = InstrumentationRegistry.getInstrumentation().targetContext
-            .getSharedPreferences(READER_VIEW_PREFS, Context.MODE_PRIVATE)
+        val prefs =
+            InstrumentationRegistry.getInstrumentation()
+                .targetContext
+                .getSharedPreferences(READER_VIEW_PREFS, Context.MODE_PRIVATE)
 
         val deadline = SystemClock.uptimeMillis() + timeout
         var actual = prefs.getInt(FONT_SIZE_KEY, DEFAULT_FONT_SIZE)

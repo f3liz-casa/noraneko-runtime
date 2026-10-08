@@ -32,6 +32,11 @@ support-files = [
 ]
 
 ["browser_contextualsearch.js"]
+support-files = [
+  "../browser/POSTSearchEngine.xml",
+  "../browser/post_search_engine.html",
+  "../browser/print_postdata.sjs",
+]
 
 ["browser_contextualsearch_install.js"]
 
@@ -124,6 +129,12 @@ https_first_disabled = true
 ["browser_searchSuggestions.js"]
 support-files = [
   "../browser/searchSuggestionEngine.xml",
+  "../browser/searchSuggestionEngine.sjs",
+]
+
+["browser_searchSuggestions_postData.js"]
+support-files = [
+  "../browser/print_postdata.sjs",
   "../browser/searchSuggestionEngine.sjs",
 ]
 

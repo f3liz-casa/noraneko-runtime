@@ -108,7 +108,7 @@ use.counter:
     send_in_pings:
       - use-counters
 
-# Total of 2628 use counter metrics (excludes denominators).
+# Total of 2632 use counter metrics (excludes denominators).
 # Total of 416 'page' use counters.
 use.counter.page:
   svgsvgelement_getelementbyid:
@@ -727,74 +727,6 @@ use.counter.page:
     type: counter
     description: >
       Whether a page recovered a small oom.
-      Compare against `use.counter.top_level_content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  js_generator_function_created:
-    type: counter
-    description: >
-      Whether a page created a generator function.
-      Compare against `use.counter.top_level_content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  js_async_generator_function_created:
-    type: counter
-    description: >
-      Whether a page created an async generator function.
-      Compare against `use.counter.top_level_content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  js_generator_function_ion_eligible:
-    type: counter
-    description: >
-      Whether a page created a generator function eligible for Ion compilation.
-      Compare against `use.counter.top_level_content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  js_async_generator_function_ion_eligible:
-    type: counter
-    description: >
-      Whether a page created an async generator function eligible for Ion compilation.
       Compare against `use.counter.top_level_content_documents_destroyed`
       to calculate the rate.
     bugs:
@@ -5347,10 +5279,10 @@ use.counter.page:
     send_in_pings:
       - use-counters
 
-  sanitizer_sanitize:
+  element_sethtml:
     type: counter
     description: >
-      Whether a page called called Sanitizer.sanitize.
+      Whether a page called called Element.setHTML.
       Compare against `use.counter.top_level_content_documents_destroyed`
       to calculate the rate.
     bugs:
@@ -5364,10 +5296,78 @@ use.counter.page:
     send_in_pings:
       - use-counters
 
-  element_sethtml:
+  shadowroot_sethtml:
     type: counter
     description: >
-      Whether a page called called Element.setHTML.
+      Whether a page called called ShadowRoot.setHTML.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  document_parsehtml:
+    type: counter
+    description: >
+      Whether a page called called Document.parseHTML.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  element_sethtmlunsafe:
+    type: counter
+    description: >
+      Whether a page called called Element.setHTMLUnsafe.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  shadowroot_sethtmlunsafe:
+    type: counter
+    description: >
+      Whether a page called called ShadowRoot.setHTMLUnsafe.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  document_parsehtmlunsafe:
+    type: counter
+    description: >
+      Whether a page called called Document.parseHTMLUnsafe.
       Compare against `use.counter.top_level_content_documents_destroyed`
       to calculate the rate.
     bugs:
@@ -7801,74 +7801,6 @@ use.counter.doc:
     type: counter
     description: >
       Whether a document recovered a small oom.
-      Compare against `use.counter.content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  js_generator_function_created:
-    type: counter
-    description: >
-      Whether a document created a generator function.
-      Compare against `use.counter.content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  js_async_generator_function_created:
-    type: counter
-    description: >
-      Whether a document created an async generator function.
-      Compare against `use.counter.content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  js_generator_function_ion_eligible:
-    type: counter
-    description: >
-      Whether a document created a generator function eligible for Ion compilation.
-      Compare against `use.counter.content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  js_async_generator_function_ion_eligible:
-    type: counter
-    description: >
-      Whether a document created an async generator function eligible for Ion compilation.
       Compare against `use.counter.content_documents_destroyed`
       to calculate the rate.
     bugs:
@@ -12421,10 +12353,10 @@ use.counter.doc:
     send_in_pings:
       - use-counters
 
-  sanitizer_sanitize:
+  element_sethtml:
     type: counter
     description: >
-      Whether a document called called Sanitizer.sanitize.
+      Whether a document called called Element.setHTML.
       Compare against `use.counter.content_documents_destroyed`
       to calculate the rate.
     bugs:
@@ -12438,10 +12370,78 @@ use.counter.doc:
     send_in_pings:
       - use-counters
 
-  element_sethtml:
+  shadowroot_sethtml:
     type: counter
     description: >
-      Whether a document called called Element.setHTML.
+      Whether a document called called ShadowRoot.setHTML.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  document_parsehtml:
+    type: counter
+    description: >
+      Whether a document called called Document.parseHTML.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  element_sethtmlunsafe:
+    type: counter
+    description: >
+      Whether a document called called Element.setHTMLUnsafe.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  shadowroot_sethtmlunsafe:
+    type: counter
+    description: >
+      Whether a document called called ShadowRoot.setHTMLUnsafe.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  document_parsehtmlunsafe:
+    type: counter
+    description: >
+      Whether a document called called Document.parseHTMLUnsafe.
       Compare against `use.counter.content_documents_destroyed`
       to calculate the rate.
     bugs:
@@ -19843,7 +19843,7 @@ use.counter.deprecated_ops.doc:
     send_in_pings:
       - use-counters
 
-# Total of 734 'CSS (page)' use counters.
+# Total of 736 'CSS (page)' use counters.
 use.counter.css.page:
   css_align_items:
     type: counter
@@ -24860,6 +24860,40 @@ use.counter.css.page:
     send_in_pings:
       - use-counters
 
+  css_moz_scrollbar_inset_block:
+    type: counter
+    description: >
+      Whether a page used the CSS property -moz-scrollbar-inset-block.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_moz_scrollbar_inset_inline:
+    type: counter
+    description: >
+      Whether a page used the CSS property -moz-scrollbar-inset-inline.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
   css_moz_window_transform:
     type: counter
     description: >
@@ -28736,6 +28770,23 @@ use.counter.css.page:
     send_in_pings:
       - use-counters
 
+  css_moz_appearance:
+    type: counter
+    description: >
+      Whether a page used the CSS property -moz-appearance.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
   css_all:
     type: counter
     description: >
@@ -29097,23 +29148,6 @@ use.counter.css.page:
     type: counter
     description: >
       Whether a page used the CSS property -webkit-animation-timing-function.
-      Compare against `use.counter.top_level_content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  css_moz_appearance:
-    type: counter
-    description: >
-      Whether a page used the CSS property -moz-appearance.
       Compare against `use.counter.top_level_content_documents_destroyed`
       to calculate the rate.
     bugs:
@@ -32323,7 +32357,7 @@ use.counter.css.page:
     send_in_pings:
       - use-counters
 
-# Total of 734 'CSS (document)' use counters.
+# Total of 736 'CSS (document)' use counters.
 use.counter.css.doc:
   css_align_items:
     type: counter
@@ -37340,6 +37374,40 @@ use.counter.css.doc:
     send_in_pings:
       - use-counters
 
+  css_moz_scrollbar_inset_block:
+    type: counter
+    description: >
+      Whether a document used the CSS property -moz-scrollbar-inset-block.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_moz_scrollbar_inset_inline:
+    type: counter
+    description: >
+      Whether a document used the CSS property -moz-scrollbar-inset-inline.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
   css_moz_window_transform:
     type: counter
     description: >
@@ -41216,6 +41284,23 @@ use.counter.css.doc:
     send_in_pings:
       - use-counters
 
+  css_moz_appearance:
+    type: counter
+    description: >
+      Whether a document used the CSS property -moz-appearance.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
   css_all:
     type: counter
     description: >
@@ -41577,23 +41662,6 @@ use.counter.css.doc:
     type: counter
     description: >
       Whether a document used the CSS property -webkit-animation-timing-function.
-      Compare against `use.counter.content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  css_moz_appearance:
-    type: counter
-    description: >
-      Whether a document used the CSS property -moz-appearance.
       Compare against `use.counter.content_documents_destroyed`
       to calculate the rate.
     bugs:

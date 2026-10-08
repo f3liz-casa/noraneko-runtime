@@ -11,8 +11,12 @@ data class Selector(
     val value: String,
     val secondaryValue: String? = null,
     val description: String,
-    val groups: List<String> = emptyList(),
-    val name: String? = null,
+    val groups: Set<SelectorGroup> = emptySet(),
+    val readiness: Set<PageReadinessProfile> = emptySet(),
+    val scrollDirection: SwipeDirection? = null,
+    val lifecycle: SelectorLifecycle = SelectorLifecycle.Active,
+    val appearsAfter: Set<SelectorId> = emptySet(),
+    val id: SelectorId? = null,
 ) {
     fun toResourceId(): Int {
         return try {
@@ -25,10 +29,29 @@ data class Selector(
     }
 }
 
+interface SelectorGroup
+
+@JvmInline
+value class SelectorId(val value: String) {
+    init {
+        require(value.isNotBlank()) { "Selector id cannot be blank" }
+    }
+
+    override fun toString(): String = value
+}
+
+sealed interface SelectorLifecycle {
+    data object Active : SelectorLifecycle
+
+    data class RemovedIn(val version: Int) : SelectorLifecycle {
+        init {
+            require(version > 0) { "Removed selector version must be positive" }
+        }
+    }
+}
+
 enum class SelectorStrategy {
-    /**
-     * Supported strategies for locating UI elements.
-     */
+    /** Supported strategies for locating UI elements. */
     COMPOSE_BY_CONTENT_DESCRIPTION,
     COMPOSE_BY_CONTENT_DESCRIPTION_SUBSTRING,
     COMPOSE_BY_TAG,
@@ -46,6 +69,7 @@ enum class SelectorStrategy {
     COMPOSE_BY_TEXT_MERGED,
     COMPOSE_BY_TEXT_SUBSTRING,
     ESPRESSO_BY_ID,
+    ESPRESSO_BY_ID_WITH_DESCENDANT_TEXT,
     ESPRESSO_BY_ID_WITH_SIBLING_TEXT,
     ESPRESSO_BY_TEXT,
     ESPRESSO_BY_TEXT_WITH_SIBLING_TEXT,
@@ -98,4 +122,10 @@ enum class SelectorStrategy {
     // e.g. the notification shade's scroller. UIAUTOMATOR_WITH_RAW_RES_ID_CONTAINING_TEXT cannot stand in
     // for this: its text criterion is not optional at the UiSelector level.
     UIAUTOMATOR_WITH_RAW_RES_ID,
+
+    // A raw (un-prefixed) res-id resolved as a UiObject2. Needed for system-dialog buttons such as
+    // "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button": UIAUTOMATOR2_BY_RES
+    // cannot address them because it prefixes the app's own package, and the UiObject strategies click via
+    // clickAndSync, which intermittently reports a successful dialog dismissal as a failure.
+    UIAUTOMATOR2_BY_RAW_RES,
 }

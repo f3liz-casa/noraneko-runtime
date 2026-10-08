@@ -212,7 +212,8 @@ class DocAccessible : public HyperTextAccessible,
   void FireEventsOnInsertion(LocalAccessible* aContainer);
 
   /**
-   * Fire value change event on the given accessible if applicable.
+   * Fire value change event on the given accessible, or the nearest ancestor
+   * whose value might depend on it, if applicable.
    */
   void MaybeNotifyOfValueChange(LocalAccessible* aAccessible);
 
@@ -898,9 +899,8 @@ class DocAccessible : public HyperTextAccessible,
 
   PresShell* mPresShell;
 
-  // Exclusively owned by IPDL so don't manually delete it!
-  // Cleared in ActorDestroy
-  DocAccessibleChild* mIPCDoc;
+  // Cleared in ActorDestroy.
+  RefPtr<DocAccessibleChild> mIPCDoc;
 
   // These data structures map between LocalAccessibles and CacheDomains,
   // tracking cache updates that have been queued during the current tick but

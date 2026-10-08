@@ -18,6 +18,7 @@
 #include <span>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "modules/rtp_rtcp/source/rtp_video_header.h"
 
 namespace webrtc {
@@ -43,7 +44,7 @@ class RtpPacketizer {
     kVP9,
     kAV1,
   };
-  static std::unique_ptr<RtpPacketizer> Create(
+  static absl_nonnull std::unique_ptr<RtpPacketizer> Create(
       PacketizationFormat format,
       std::span<const uint8_t> payload,
       PayloadSizeLimits limits,
@@ -60,9 +61,9 @@ class RtpPacketizer {
   // Returns true on success, false otherwise.
   virtual bool NextPacket(RtpPacketToSend* packet) = 0;
 
-  // Split payload_len into sum of integers with respect to `limits`.
+  // Splits `payload_size` into sum of integers with respect to `limits`.
   // Returns empty vector on failure.
-  static std::vector<int> SplitAboutEqually(int payload_len,
+  static std::vector<int> SplitAboutEqually(size_t payload_size,
                                             const PayloadSizeLimits& limits);
 };
 }  // namespace webrtc

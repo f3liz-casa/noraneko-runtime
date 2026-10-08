@@ -593,9 +593,10 @@ LocalAccessible* LocalAccessible::LocalChildAtPoint(
   return accessible;
 }
 
-nsIFrame* LocalAccessible::FindNearestAccessibleAncestorFrame() {
+nsIFrame* LocalAccessible::FindNearestAccessibleAncestorFrame() const {
   nsIFrame* frame = GetFrame();
-  if (frame->StyleDisplay()->mPosition == StylePositionProperty::Fixed &&
+  if (frame &&
+      frame->StyleDisplay()->mPosition == StylePositionProperty::Fixed &&
       nsLayoutUtils::IsReallyFixedPos(frame)) {
     return mDoc->PresShellPtr()->GetRootFrame();
   }
@@ -617,8 +618,8 @@ nsIFrame* LocalAccessible::FindNearestAccessibleAncestorFrame() {
     ancestor = ancestor->LocalParent();
   }
 
-  MOZ_ASSERT_UNREACHABLE("No ancestor with frame?");
-  return nsLayoutUtils::GetContainingBlockForClientRect(frame);
+  return frame ? nsLayoutUtils::GetContainingBlockForClientRect(frame)
+               : nullptr;
 }
 
 nsRect LocalAccessible::ParentRelativeBounds() {
@@ -1367,8 +1368,6 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
   // DOM attribute & resulting layout to actually change. Otherwise,
   // assistive technology will retrieve the wrong state/value/selection info.
 
-  CssAltContent::HandleAttributeChange(mContent, aNameSpaceID, aAttribute);
-
   // XXX todo
   // We still need to handle special HTML cases here
   // For example, if an <img>'s usemap attribute is modified
@@ -1590,6 +1589,32 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
   // ARIA or XUL selection
   if ((mContent->IsXULElement() && aAttribute == nsGkAtoms::selected) ||
       aAttribute == nsGkAtoms::aria_selected) {
+    if (aAttribute == nsGkAtoms::aria_selected) {
+      const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
+      if (!roleMapEntry && IsHTMLTableCell() && Role() == roles::GRID_CELL) {
+        // This is a <td> inside a role="grid"; see the similar case in
+        // ApplyARIAState.
+        roleMapEntry = aria::GetRoleMap(nsGkAtoms::gridcell);
+      }
+      if (roleMapEntry && roleMapEntry->IsSelectableIfDefined()) {
+        // For these roles, whether aria-selected is "defined" (present and
+        // neither empty nor "undefined") determines the selectable state.
+        // For other selectable roles (option, tab, treeitem, etc.), the
+        // selectable state doesn't depend on aria-selected's definedness, so
+        // don't fire this there.
+        const bool wasDefined =
+            aOldValue && !aOldValue->IsEmptyString() &&
+            !aOldValue->Equals(nsGkAtoms::_undefined, eCaseMatters);
+        const bool isDefined =
+            nsAccUtils::HasDefinedARIAToken(elm, nsGkAtoms::aria_selected);
+        if (wasDefined != isDefined) {
+          auto stateChangeEvent = MakeRefPtr<AccStateChangeEvent>(
+              this, states::SELECTABLE, isDefined);
+          mDoc->FireDelayedEvent(stateChangeEvent);
+        }
+      }
+    }
+
     LocalAccessible* widget = nsAccUtils::GetSelectableContainer(this, State());
     if (widget) {
       AccSelChangeEvent::SelChangeType selChangeType;
@@ -2908,6 +2933,12 @@ void LocalAccessible::BindToParent(LocalAccessible* aParent,
   } else {
     mContextFlags &= ~eHasDescriptionDependent;
   }
+  if (mParent->HasValueDependent() ||
+      nsAccUtils::ShouldFireValueChangeForDescendantChanges(mParent)) {
+    mContextFlags |= eHasValueDependent;
+  } else {
+    mContextFlags &= ~eHasValueDependent;
+  }
 
   // Add name/description dependent flags for dependent content once
   // a name/description provider is added to doc.
@@ -2972,7 +3003,7 @@ void LocalAccessible::UnbindFromParent() {
 
   delete mGroupInfo;
   mGroupInfo = nullptr;
-  mContextFlags &= ~eHasNameDependent & ~eInsideAlert;
+  mContextFlags &= ~eHasNameDependent & ~eHasValueDependent & ~eInsideAlert;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -4771,14 +4802,14 @@ void LocalAccessible::StaticAsserts() const {
 }
 
 TableAccessible* LocalAccessible::AsTable() {
-  if (IsTable() && !mContent->IsXULElement()) {
+  if (IsTable() && !IsCustomTable()) {
     return CachedTableAccessible::GetFrom(this);
   }
   return nullptr;
 }
 
 TableCellAccessible* LocalAccessible::AsTableCell() {
-  if (IsTableCell() && !mContent->IsXULElement()) {
+  if (IsTableCell()) {
     return CachedTableCellAccessible::GetFrom(this);
   }
   return nullptr;

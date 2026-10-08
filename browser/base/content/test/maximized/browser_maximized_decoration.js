@@ -24,22 +24,22 @@ function getCustomPropertyPx(win, el, name) {
 }
 
 /**
- * The nova chrome-block radius is platform-dependent. Get the actual value rather
- * than assuming a non-zero value, so the "corner stays rounded" assertions only run
- * when necessary.
+ * The corner where the content area meets the sidebar and the toolbox uses the
+ * same radius with and without nova.
  */
-function getBlockRadius(win) {
+function getContentCornerRadius(win) {
   return getCustomPropertyPx(
     win,
     win.document.documentElement,
-    "--chrome-block-radius"
+    "--border-radius-medium"
   );
 }
 
 function getChromeBlocks(win, extraSelectors = "") {
   // although deeply nested inside #browser, the .browserContainer elements
   // are where borders and corners live, so we measure those.
-  let selector = ".chrome-block, .browserContainer";
+  let selector =
+    "#navigator-toolbox, #sidebar-box, #sidebar-container, .browserContainer";
   if (extraSelectors) {
     selector += ", " + extraSelectors;
   }
@@ -178,7 +178,7 @@ function assertCornerRadii(win, blocks, { nova, requireInnerRounded }, label) {
     if (
       nova &&
       requireInnerRounded &&
-      getBlockRadius(win) > 0 &&
+      getContentCornerRadius(win) > 0 &&
       block.classList.contains("browserContainer")
     ) {
       let innerCorners = corners.filter(c => !c.atEdge).length;
@@ -193,19 +193,56 @@ function assertCornerRadii(win, blocks, { nova, requireInnerRounded }, label) {
   }
 }
 
-function assertSeparatorBorder(win, blocks, label) {
+function assertSeparators(win, blocks, label) {
   for (let block of blocks) {
-    // Borders against a window edge are removed, so check the side that faces
-    // the gap between blocks. The toolbox spans the top of the window and only
-    // its block-end border survives, while the blocks below it keep their
-    // block-start border.
-    let isToolbox = block.id == "navigator-toolbox";
-    let prop = isToolbox ? "borderBottomWidth" : "borderTopWidth";
-    let width = parseFloat(win.getComputedStyle(block)[prop]) || 0;
+    if (block.classList.contains("browserContainer")) {
+      continue;
+    }
+    let style = win.getComputedStyle(block);
+    for (let prop of [
+      "borderTopWidth",
+      "borderRightWidth",
+      "borderBottomWidth",
+      "borderLeftWidth",
+    ]) {
+      Assert.equal(
+        parseFloat(style[prop]) || 0,
+        0,
+        `${label}: ${blockLabel(block)} draws no border of its own (${prop})`
+      );
+    }
+  }
+
+  let contentAreas = blocks.filter(b =>
+    b.classList.contains("browserContainer")
+  );
+  Assert.greater(
+    contentAreas.length,
+    0,
+    `${label}: the content area is present`
+  );
+  // The content area only separates itself from a sidebar that is actually
+  // there; against a window edge it stays border-less.
+  let sidebarShown = win.document
+    .getElementById("tabbrowser-tabbox")
+    .hasAttribute("sidebar-shown");
+  for (let block of contentAreas) {
+    let style = win.getComputedStyle(block);
     Assert.greater(
-      width,
+      parseFloat(style.borderTopWidth) || 0,
       0,
-      `${label}: ${blockLabel(block)} keeps its separator border (${prop})`
+      `${label}: ${blockLabel(block)} keeps the separator facing the toolbox`
+    );
+    if (!sidebarShown) {
+      continue;
+    }
+    let inlineBorder =
+      (parseFloat(style.borderLeftWidth) || 0) +
+      (parseFloat(style.borderRightWidth) || 0);
+    Assert.greater(
+      inlineBorder,
+      0,
+      `${label}: ${blockLabel(block)} keeps the separator facing the sidebar`
     );
   }
 }
@@ -220,8 +257,7 @@ const CORNER_RADIUS_PROPS = [
 /**
  * Split-view panels are inset cards rather than window-edge blocks. In both
  * pref states they intentionally keep an inline margin and a fully rounded
- * .browserContainer (--border-radius-medium without nova,
- * --chrome-block-radius with it), so maximizing must not square those corners
+ * .browserContainer so maximizing must not square those corners
  * or pull the panels flush against the window.
  */
 function assertSplitViewPanels(win, label) {
@@ -245,9 +281,11 @@ function assertSplitViewPanels(win, label) {
   for (let panel of panels) {
     let container = panel.querySelector(".browserContainer");
     let style = win.getComputedStyle(container);
-    let expected = NOVA_ENABLED
-      ? getBlockRadius(win)
-      : getCustomPropertyPx(win, container, "--border-radius-medium");
+    let expected = getCustomPropertyPx(
+      win,
+      container,
+      "--border-radius-medium"
+    );
     for (let prop of CORNER_RADIUS_PROPS) {
       Assert.equal(
         parseFloat(style[prop]) || 0,
@@ -260,20 +298,19 @@ function assertSplitViewPanels(win, label) {
 
 /**
  * Runs the universal decoration assertions, plus the nova-only checks when
- * `browser.nova.enabled` is set. `requireInnerRounded` and `checkBorder` are
- * only meaningful under nova, and are further opt-in per state (split-view and
- * customize states skip the border check: the active split panel intentionally
- * has no border, using a focus outline instead).
+ * `browser.nova.enabled` is set. `requireInnerRounded` and `checkSeparator` are
+ * only meaningful under nova, and are further opt-in per state (the split-view
+ * and customize states have no unsplit content area to check).
  */
 function assertDecoration(
   win,
   blocks,
   label,
-  { requireInnerRounded = false, checkBorder = false } = {}
+  { requireInnerRounded = false, checkSeparator = false } = {}
 ) {
-  if (NOVA_ENABLED && requireInnerRounded && !getBlockRadius(win)) {
+  if (NOVA_ENABLED && requireInnerRounded && !getContentCornerRadius(win)) {
     info(
-      `${label}: --chrome-block-radius is 0 on this platform; ` +
+      `${label}: --border-radius-medium is 0 on this platform; ` +
         `skipping the inner-corner-rounded assertions.`
     );
   }
@@ -285,8 +322,8 @@ function assertDecoration(
     { nova: NOVA_ENABLED, requireInnerRounded },
     label
   );
-  if (NOVA_ENABLED && checkBorder) {
-    assertSeparatorBorder(win, blocks, label);
+  if (NOVA_ENABLED && checkSeparator) {
+    assertSeparators(win, blocks, label);
   }
 }
 
@@ -305,7 +342,7 @@ add_task(async function test_vertical_tabs_sidebar_start() {
       let blocks = getChromeBlocks(win);
       assertDecoration(win, blocks, "vertical tabs, sidebar start", {
         requireInnerRounded: true,
-        checkBorder: true,
+        checkSeparator: true,
       });
     }
   );
@@ -324,7 +361,7 @@ add_task(async function test_vertical_tabs_sidebar_end() {
       let blocks = getChromeBlocks(win);
       assertDecoration(win, blocks, "vertical tabs, sidebar end", {
         requireInnerRounded: true,
-        checkBorder: true,
+        checkSeparator: true,
       });
     }
   );
@@ -342,9 +379,10 @@ add_task(async function test_compact_density() {
     },
     win => {
       let blocks = getChromeBlocks(win);
-      // Compact deliberately squares some inner corners, so don't require inner
-      // corners to stay rounded here.
-      assertDecoration(win, blocks, "compact density", { checkBorder: true });
+      assertDecoration(win, blocks, "compact density", {
+        requireInnerRounded: true,
+        checkSeparator: true,
+      });
     }
   );
 });
@@ -354,7 +392,9 @@ add_task(async function test_horizontal_tabs() {
     { prefs: [...BASE_PREFS, ["sidebar.verticalTabs", false]] },
     win => {
       let blocks = getChromeBlocks(win);
-      assertDecoration(win, blocks, "horizontal tabs", { checkBorder: true });
+      assertDecoration(win, blocks, "horizontal tabs", {
+        checkSeparator: true,
+      });
     }
   );
 });
@@ -371,7 +411,7 @@ add_task(async function test_private_window() {
     },
     win => {
       let blocks = getChromeBlocks(win);
-      assertDecoration(win, blocks, "private window", { checkBorder: true });
+      assertDecoration(win, blocks, "private window", { checkSeparator: true });
     }
   );
 });

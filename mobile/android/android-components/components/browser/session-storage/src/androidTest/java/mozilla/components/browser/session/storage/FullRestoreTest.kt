@@ -7,8 +7,11 @@ package mozilla.components.browser.session.storage
 import android.content.Context
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
+import java.util.concurrent.TimeoutException
+import kotlin.test.assertNotNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import mozilla.components.browser.engine.gecko.GeckoEngine
 import mozilla.components.browser.state.engine.EngineMiddleware
 import mozilla.components.browser.state.selector.selectedTab
@@ -19,25 +22,22 @@ import mozilla.components.support.android.test.rules.WebserverRule
 import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
-import java.util.concurrent.TimeoutException
-import kotlin.test.assertNotNull
 
 class FullRestoreTest {
-    @get:Rule
-    val webserverRule: WebserverRule = WebserverRule()
+    @get:Rule val webserverRule: WebserverRule = WebserverRule()
 
     private val context: Context
         get() = ApplicationProvider.getApplicationContext()
 
     /**
-     * In this test we use GeckoView Nightly to load a test page and then we save and restore the
-     * browsing session, asserting that we end up with the same state as before.
+     * In this test we use GeckoView Nightly to load a test page and then we save and restore the browsing session,
+     * asserting that we end up with the same state as before.
      */
     @Test
     fun loadAndRestore() {
         val engine = createEngine()
 
-        run {
+        runTest {
             // -------------------------------------------------------------------------------------
             // Set up
             // -------------------------------------------------------------------------------------
@@ -59,16 +59,16 @@ class FullRestoreTest {
             // Save state
             // -------------------------------------------------------------------------------------
 
-            val storage = SessionStorage(context, engine)
+            val storage = SessionStorage(context, engine, applicationScope = this)
             storage.save(store.state)
         }
 
-        run {
+        runTest {
             // -------------------------------------------------------------------------------------
             // Restore into new classes
             // -------------------------------------------------------------------------------------
 
-            val storage = SessionStorage(context, engine)
+            val storage = SessionStorage(context, engine, applicationScope = this)
 
             val newStore = createStore(engine)
             val newUseCases = TabsUseCases(newStore)
@@ -90,9 +90,7 @@ class FullRestoreTest {
         }
     }
 
-    private fun createStore(
-        engine: Engine,
-    ): BrowserStore {
+    private fun createStore(engine: Engine): BrowserStore {
         return runBlocking(Dispatchers.Main) {
             BrowserStore(middleware = EngineMiddleware.create(engine))
         }

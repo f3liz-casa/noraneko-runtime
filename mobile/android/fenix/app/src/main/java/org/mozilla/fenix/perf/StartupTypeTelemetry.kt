@@ -11,9 +11,8 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import mozilla.components.support.base.log.logger.Logger
 import org.mozilla.fenix.GleanMetrics.PerfStartup
@@ -27,17 +26,17 @@ private val logger = Logger("StartupTypeTelemetry")
 
 /**
  * Records telemetry for the number of start ups. See the
- * [Fenix perf glossary](https://wiki.mozilla.org/index.php?title=Performance/Fenix/Glossary)
- * for specific definitions.
+ * [Fenix perf glossary](https://wiki.mozilla.org/index.php?title=Performance/Fenix/Glossary) for specific definitions.
  *
- * This should be a member variable of [HomeActivity] because its data is tied to the lifecycle of an
- * Activity. Call [attachOnHomeActivityOnCreate] for this class to work correctly.
+ * This should be a member variable of [HomeActivity] because its data is tied to the lifecycle of an Activity. Call
+ * [attachOnHomeActivityOnCreate] for this class to work correctly.
  *
  * N.B.: this class is lightly hardcoded to HomeActivity.
  */
 class StartupTypeTelemetry(
     private val startupStateProvider: StartupStateProvider,
     private val startupPathProvider: StartupPathProvider,
+    private val applicationScope: CoroutineScope,
 ) {
 
     fun attachOnHomeActivityOnCreate(lifecycle: Lifecycle) {
@@ -46,31 +45,31 @@ class StartupTypeTelemetry(
 
     private fun getTelemetryLabel(startupState: StartupState, startupPath: StartupPath): String {
         // We don't use the enum name directly to avoid unintentional changes when refactoring.
-        val stateLabel = when (startupState) {
-            StartupState.COLD -> "cold"
-            StartupState.WARM -> "warm"
-            StartupState.HOT -> "hot"
-            StartupState.UNKNOWN -> "unknown"
-        }
+        val stateLabel =
+            when (startupState) {
+                StartupState.COLD -> "cold"
+                StartupState.WARM -> "warm"
+                StartupState.HOT -> "hot"
+                StartupState.UNKNOWN -> "unknown"
+            }
 
-        val pathLabel = when (startupPath) {
-            StartupPath.MAIN -> "main"
-            StartupPath.VIEW -> "view"
+        val pathLabel =
+            when (startupPath) {
+                StartupPath.MAIN -> "main"
+                StartupPath.VIEW -> "view"
 
-            // To avoid combinatorial explosion in label names, we bucket NOT_SET into UNKNOWN.
-            StartupPath.NOT_SET,
-            StartupPath.UNKNOWN,
-            -> "unknown"
-        }
+                // To avoid combinatorial explosion in label names, we bucket NOT_SET into UNKNOWN.
+                StartupPath.NOT_SET,
+                StartupPath.UNKNOWN -> "unknown"
+            }
 
         return "${stateLabel}_$pathLabel"
     }
 
-    @VisibleForTesting(otherwise = NONE)
-    fun getTestCallbacks() = StartupTypeLifecycleObserver()
+    @VisibleForTesting(otherwise = NONE) fun getTestCallbacks() = StartupTypeLifecycleObserver()
 
     /**
-     * Record startup telemetry based on the available [startupStateProvider] and [startupPathProvider].
+     * Records startup telemetry based on the available [startupStateProvider] and [startupPathProvider].
      *
      * @param dispatcher used to control the thread on which telemetry will be recorded. Defaults to [Dispatchers.IO].
      */
@@ -80,8 +79,7 @@ class StartupTypeTelemetry(
         val startupPath = startupPathProvider.startupPathForActivity
         val label = getTelemetryLabel(startupState, startupPath)
 
-        @OptIn(DelicateCoroutinesApi::class)
-        GlobalScope.launch(dispatcher) {
+        applicationScope.launch(dispatcher) {
             PerfStartup.startupType[label].add(1)
             logger.info("Recorded start up: $label")
         }

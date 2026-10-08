@@ -826,8 +826,7 @@ void InspectorUtils::ColorToRGBA(GlobalObject& aGlobal,
   }();
 
   nscolor color = NS_RGB(0, 0, 0);
-  if (!ServoCSSParser::ComputeColor(styleData, NS_RGB(0, 0, 0), aColorString,
-                                    &color)) {
+  if (!ServoCSSParser::ComputeColor(styleData, aColorString, &color)) {
     aResult.SetNull();
     return;
   }
@@ -1125,8 +1124,7 @@ static bool IsFrameOutsideOfAncestor(const nsIFrame* aFrame,
                                      const nsIFrame* aAncestorFrame,
                                      const nsRect& aAncestorRect) {
   nsRect frameRectInAncestorSpace = nsLayoutUtils::TransformFrameRectToAncestor(
-      aFrame, aFrame->ScrollableOverflowRect(), RelativeTo{aAncestorFrame},
-      nullptr, nullptr, false, nullptr);
+      aFrame, aFrame->ScrollableOverflowRect(), RelativeTo{aAncestorFrame});
 
   // We use nsRect::SaturatingUnionEdges because it correctly handles the case
   // of a zero-width or zero-height frame, which we still want to consider as
@@ -1445,7 +1443,7 @@ void InspectorUtils::GetComputationSteps(GlobalObject& aGlobalObject,
                                          const nsAString& aExpression,
                                          Element& aElement,
                                          const nsAString& aPseudo,
-                                         nsTArray<nsString>& aResult) {
+                                         nsTArray<nsCString>& aResult) {
   Document* doc = aElement.GetComposedDoc();
   if (!doc) {
     return;

@@ -33,6 +33,7 @@
 #include "nsCOMPtr.h"
 #include "nsCRTGlue.h"
 #include "nsCSSProps.h"
+#include "nsChangeHint.h"
 #include "nsContainerFrame.h"
 #include "nsDeviceContext.h"
 #include "nsIURI.h"
@@ -1112,7 +1113,7 @@ nsStylePosition::nsStylePosition()
       mJustifyItems({{StyleAlignFlags::LEGACY}, {StyleAlignFlags::NORMAL}}),
       mJustifySelf({StyleAlignFlags::AUTO}),
       mFlexDirection(StyleFlexDirection::Row),
-      mFlexWrap(StyleFlexWrap::Nowrap),
+      mFlexWrap(StyleFlexWrap::NOWRAP),
       mObjectFit(StyleObjectFit::Fill),
       mBoxSizing(StyleBoxSizing::ContentBox),
       mOrder(0),
@@ -2089,14 +2090,6 @@ bool nsStyleImageLayers::Layer::
          mRepeat.DependsOnPositioningAreaSize();
 }
 
-bool nsStyleImageLayers::Layer::operator==(const Layer& aOther) const {
-  return mAttachment == aOther.mAttachment && mClip == aOther.mClip &&
-         mOrigin == aOther.mOrigin && mRepeat == aOther.mRepeat &&
-         mBlendMode == aOther.mBlendMode && mPosition == aOther.mPosition &&
-         mSize == aOther.mSize && mImage == aOther.mImage &&
-         mMaskMode == aOther.mMaskMode && mComposite == aOther.mComposite;
-}
-
 template <class ComputedValueItem>
 static void FillImageLayerList(
     nsStyleAutoArray<nsStyleImageLayers::Layer>& aLayers,
@@ -2235,23 +2228,7 @@ bool nsStyleBackground::IsTransparent(const ComputedStyle* aStyle) const {
 
 StyleTransition::StyleTransition(const StyleTransition& aCopy) = default;
 
-bool StyleTransition::operator==(const StyleTransition& aOther) const {
-  return mTimingFunction == aOther.mTimingFunction &&
-         mDuration == aOther.mDuration && mDelay == aOther.mDelay &&
-         mProperty == aOther.mProperty && mBehavior == aOther.mBehavior;
-}
-
 StyleAnimation::StyleAnimation(const StyleAnimation& aCopy) = default;
-
-bool StyleAnimation::operator==(const StyleAnimation& aOther) const {
-  return mTimingFunction == aOther.mTimingFunction &&
-         mDuration == aOther.mDuration && mDelay == aOther.mDelay &&
-         mName == aOther.mName && mDirection == aOther.mDirection &&
-         mFillMode == aOther.mFillMode && mPlayState == aOther.mPlayState &&
-         mIterationCount == aOther.mIterationCount &&
-         mComposition == aOther.mComposition && mTimeline == aOther.mTimeline &&
-         mRangeStart == aOther.mRangeStart && mRangeEnd == aOther.mRangeEnd;
-}
 
 // --------------------
 // nsStyleDisplay
@@ -2288,6 +2265,8 @@ nsStyleDisplay::nsStyleDisplay()
       mScrollSnapStop{StyleScrollSnapStop::Normal},
       mScrollSnapType{StyleScrollSnapAxis::Both,
                       StyleScrollSnapStrictness::None},
+      mScrollbarInsetBlock{StyleLength{0.}, StyleLength{0.}},
+      mScrollbarInsetInline{StyleLength{0.}, StyleLength{0.}},
       mBackfaceVisibility(StyleBackfaceVisibility::Visible),
       mTransformStyle(StyleTransformStyle::Flat),
       mTransformBox(StyleTransformBox::ViewBox),
@@ -2347,6 +2326,8 @@ nsStyleDisplay::nsStyleDisplay(const nsStyleDisplay& aSource)
       mScrollSnapAlign(aSource.mScrollSnapAlign),
       mScrollSnapStop(aSource.mScrollSnapStop),
       mScrollSnapType(aSource.mScrollSnapType),
+      mScrollbarInsetBlock(aSource.mScrollbarInsetBlock),
+      mScrollbarInsetInline(aSource.mScrollbarInsetInline),
       mBackfaceVisibility(aSource.mBackfaceVisibility),
       mTransformStyle(aSource.mTransformStyle),
       mTransformBox(aSource.mTransformBox),
@@ -2760,6 +2741,10 @@ nsChangeHint nsStyleDisplay::CalcDifference(
   // container-query selection on descendants).
   // container-type / contain / content-visibility are handled by the
   // mEffectiveContainment check.
+  //
+  // scrollbar-inset changes are dealt with in
+  // nsSubDocumentFrame::DidSetComputedStyle and
+  // ScrollContainerFrame::DidSetComputedStyle.
   if (!hint && (mWillChange != aNewData.mWillChange ||
                 mOverflowAnchor != aNewData.mOverflowAnchor ||
                 mContentVisibility != aNewData.mContentVisibility ||
@@ -2767,7 +2752,9 @@ nsChangeHint nsStyleDisplay::CalcDifference(
                 mContain != aNewData.mContain ||
                 mContainerName != aNewData.mContainerName ||
                 mAnchorName != aNewData.mAnchorName ||
-                mAnchorScope != aNewData.mAnchorScope)) {
+                mAnchorScope != aNewData.mAnchorScope ||
+                mScrollbarInsetBlock != aNewData.mScrollbarInsetBlock ||
+                mScrollbarInsetInline != aNewData.mScrollbarInsetInline)) {
     hint |= nsChangeHint_NeutralChange;
   }
 

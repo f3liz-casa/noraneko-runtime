@@ -38,10 +38,11 @@ class TabManagerUiStateStorageMiddleware(
         action: TabsTrayAction,
     ) {
         when (action) {
-            is TabManagerUiStateStorageAction -> processAction(
-                action = action,
-                store = store,
-            )
+            is TabManagerUiStateStorageAction ->
+                processAction(
+                    action = action,
+                    store = store,
+                )
 
             else -> {}
         }
@@ -57,21 +58,19 @@ class TabManagerUiStateStorageMiddleware(
             InitAction -> {
                 // Set up the data observer and set the Flow collection to the lifetime of main scope.
                 scope.launch {
-                    uiStateRepository.uiState
-                        .filterNotNull()
-                        .distinctUntilChanged()
-                        .collect { stateUpdate ->
-                            store.dispatch(TabsTrayAction.PersistedUiStateUpdateReceived(update = stateUpdate))
-                        }
+                    uiStateRepository.uiState.filterNotNull().distinctUntilChanged().collect { stateUpdate ->
+                        store.dispatch(TabsTrayAction.PersistedUiStateUpdateReceived(update = stateUpdate))
+                    }
                 }
             }
 
-            TabGroupAction.OnboardingDismissed -> scope.launch {
-                val success = uiStateRepository.dismissTabGroupOnboarding()
-                if (!success) {
-                    logger.debug("Failed to update tab group onboarding was dismissed")
+            TabGroupAction.OnboardingDismissed ->
+                scope.launch {
+                    val success = uiStateRepository.dismissTabGroupOnboarding()
+                    if (!success) {
+                        logger.debug("Failed to update tab group onboarding was dismissed")
+                    }
                 }
-            }
 
             is TabsTrayAction.TabDataUpdateReceived -> {
                 val userHasTabGroups = action.tabStorageUpdate.tabGroups.isNotEmpty()
@@ -91,6 +90,27 @@ class TabManagerUiStateStorageMiddleware(
                     recordOnboardingImpression()
                 }
             }
+
+            is TabGroupAction.UngroupRequested -> {
+                if (store.state.tabGroupState.skipUngroupConfirmation) {
+                    store.dispatch(TabGroupAction.UngroupConfirmed(group = action.group, dontAskAgain = true))
+                } else {
+                    store.dispatch(TabGroupAction.UngroupConfirmationRequested(group = action.group))
+                }
+            }
+
+            is TabGroupAction.UngroupConfirmed -> setSkipUngroupConfirmation(action.dontAskAgain)
+        }
+    }
+
+    private fun setSkipUngroupConfirmation(dontAskAgain: Boolean) {
+        if (dontAskAgain && uiStateRepository.uiState.value?.skipUngroupConfirmation != true) {
+            scope.launch {
+                val success = uiStateRepository.setSkipUngroupConfirmation()
+                if (!success) {
+                    logger.debug("Failed to update whether the ungroup confirmation was dismissed")
+                }
+            }
         }
     }
 
@@ -107,9 +127,10 @@ class TabManagerUiStateStorageMiddleware(
     }
 
     private fun recordTabGroupsPageViewed(page: Page, userHasTabGroups: Boolean) {
-        if (page == Page.TabGroups &&
-            userHasTabGroups &&
-            uiStateRepository.uiState.value?.hasViewedTabGroupsPage != true
+        if (
+            page == Page.TabGroups &&
+                userHasTabGroups &&
+                uiStateRepository.uiState.value?.hasViewedTabGroupsPage != true
         ) {
             scope.launch {
                 val success = uiStateRepository.recordTabGroupsPageViewed()

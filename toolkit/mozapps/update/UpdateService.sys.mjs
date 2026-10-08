@@ -1234,7 +1234,7 @@ function shouldUseService() {
   if (
     !AppConstants.MOZ_MAINTENANCE_SERVICE ||
     !isServiceInstalled() ||
-    !Services.prefs.getBoolPref(PREF_APP_UPDATE_SERVICE_ENABLED, false)
+    !Services.prefs.getBoolPref(PREF_APP_UPDATE_SERVICE_ENABLED, true)
   ) {
     LOG("shouldUseService - returning false");
     return false;
@@ -1759,14 +1759,13 @@ function handleUpdateFailure(update) {
       PREF_APP_UPDATE_SERVICE_MAXERRORS,
       DEFAULT_SERVICE_MAX_ERRORS
     );
-    // Prevent the preference from setting a value greater than 10.
-    maxFail = Math.min(maxFail, 10);
     // As a safety, when the service reaches maximum failures, it will
     // disable itself and fallback to using the normal update mechanism
     // without the service.
     if (failCount >= maxFail) {
       Services.prefs.setBoolPref(PREF_APP_UPDATE_SERVICE_ENABLED, false);
       Services.prefs.clearUserPref(PREF_APP_UPDATE_SERVICE_ERRORS);
+      Glean.update.autoDisableStagedUpdates.record();
     } else {
       failCount++;
       Services.prefs.setIntPref(PREF_APP_UPDATE_SERVICE_ERRORS, failCount);
@@ -1936,12 +1935,14 @@ function pingStateAndStatusCodes(aUpdate, aStartup, aStatus) {
         stateCode = 1;
     }
 
-    if (parts.length > 1) {
-      let statusErrorCode = INVALID_UPDATER_STATE_CODE;
-      if (parts[0] == STATE_FAILED) {
-        statusErrorCode = parseInt(parts[1]) || INVALID_UPDATER_STATUS_CODE;
-      }
-      AUSTLMY.pingStatusErrorCode(suffix, statusErrorCode);
+    if (parts[0] == STATE_FAILED) {
+      // Record a missing or non-numeric error code rather than nothing.
+      AUSTLMY.pingStatusErrorCode(
+        suffix,
+        parseInt(parts[1]) || INVALID_UPDATER_STATUS_CODE
+      );
+    } else if (parts.length > 1) {
+      AUSTLMY.pingStatusErrorCode(suffix, INVALID_UPDATER_STATE_CODE);
     }
   }
   AUSTLMY.pingStateCode(suffix, stateCode);
@@ -2095,6 +2096,25 @@ function pollForStagingEnd() {
   };
 
   lazy.setTimeout(pollingFn, pollingIntervalMs);
+}
+
+function submitUpdateReadyPing(aUpdate) {
+  const ALLOWED_STATES = [
+    STATE_APPLIED,
+    STATE_APPLIED_SERVICE,
+    STATE_PENDING,
+    STATE_PENDING_SERVICE,
+    STATE_PENDING_ELEVATE,
+  ];
+  if (!ALLOWED_STATES.includes(aUpdate.state)) {
+    return;
+  }
+
+  Glean.update.targetChannel.set(aUpdate.channel);
+  Glean.update.targetVersion.set(aUpdate.appVersion);
+  Glean.update.targetBuildId.set(aUpdate.buildID);
+  Glean.update.targetDisplayVersion.set(aUpdate.displayVersion);
+  GleanPings.update.submit("ready");
 }
 
 class UpdatePatch {
@@ -2851,9 +2871,11 @@ export class UpdateService {
       return;
     }
     const readyUpdateDir = getReadyUpdateDir();
-    let status = readStatusFile(readyUpdateDir);
-    let statusParts = status.split(":");
-    status = statusParts[0];
+    // pingStateAndStatusCodes() needs the error code after the colon
+    // (ex. "failed: 7"), so keep the untruncated status too.
+    const fullStatus = readStatusFile(readyUpdateDir);
+    const statusParts = fullStatus.split(":");
+    const status = statusParts[0];
     LOG(`UpdateService:#asyncInit - status = "${status}"`);
     if (!this.canUsuallyApplyUpdates) {
       LOG(
@@ -2952,9 +2974,25 @@ export class UpdateService {
       }
       case STATE_SUCCEEDED:
       case STATE_FAILED:
-        // There is more handing and validation to be done in this state, so
-        // we never want to return early here or lose any of the available state
-        // information, even if it is inconsistent.
+        {
+          // There is more handing and validation to be done in this state, so
+          // we never want to return early here or lose any of the available state
+          // information, even if it is inconsistent.
+          let history = null;
+          try {
+            history = this._getUpdates();
+          } catch (ex) {
+            LOG(
+              "UpdateService:#asyncInit: couldn't read update type from updates.xml"
+            );
+          }
+          Glean.update.updateOutcome.record({
+            is_success: status == STATE_SUCCEEDED,
+            can_stage: getCanStageUpdates(false),
+            is_background: lazy.gIsBackgroundTaskMode,
+            ...lazy.UpdateUtils.summarizeLatestUpdate(history),
+          });
+        }
         break;
       case STATE_DOWNLOAD_FAILED:
         // This is an odd state to start up in since we usually handle this
@@ -3083,7 +3121,7 @@ export class UpdateService {
         ? lazy.UM.internal.downloadingUpdate
         : lazy.UM.internal.readyUpdate,
       true,
-      status
+      fullStatus
     );
     if (lazy.UM.internal.downloadingUpdate || status == STATE_DOWNLOADING) {
       if (status == STATE_SUCCEEDED) {
@@ -3276,8 +3314,7 @@ export class UpdateService {
               "pending-elevate. Showing Update elevation dialog."
           );
           let uri = "chrome://mozapps/content/update/updateElevation.xhtml";
-          let features =
-            "chrome,centerscreen,resizable=no,titlebar,toolbar=no,dialog=no";
+          let features = "chrome,centerscreen,resizable=no,titlebar,dialog=no";
 
           // The following timeout is intended to make the elevation dialog
           // appear on top of any browser windows after startup. In the past,
@@ -3549,7 +3586,7 @@ export class UpdateService {
     await this.init();
 
     if (!this.disabled && AppConstants.NIGHTLY_BUILD) {
-      // Scalar ID: update.suppress_prompts
+      // Metric ID: update.suppress_prompts
       AUSTLMY.pingSuppressPrompts();
     }
     if (this.disabled || this.manualUpdateOnly) {
@@ -3590,7 +3627,7 @@ export class UpdateService {
     // Glean.update.cannotStageExternal
     // Glean.update.cannotStageNotify
     // Glean.update.cannotStageSubsequent
-    if (!getCanApplyUpdates()) {
+    if (!getCanStageUpdates()) {
       Glean.update["cannotStage" + this._pingSuffix].add();
     }
     if (AppConstants.platform == "win") {
@@ -5177,6 +5214,7 @@ export class UpdateManager {
           update.state
       );
       Services.obs.notifyObservers(update, "update-staged", update.state);
+      submitUpdateReadyPing(update);
     } finally {
       // This function being called is the one thing that tells us that staging
       // is done so be very sure that we don't exit it leaving the current
@@ -5469,7 +5507,7 @@ export class CheckerService {
         if ("AppUpdatePin" in policies) {
           updatePin = policies.AppUpdatePin;
 
-          // Scalar ID: update.version_pin
+          // Metric ID: update.version_pin
           AUSTLMY.pingPinPolicy(updatePin);
         }
       }
@@ -7314,6 +7352,7 @@ class Downloader {
         );
         transitionState(Ci.nsIApplicationUpdateService.STATE_PENDING);
         Services.obs.notifyObservers(update, "update-downloaded", update.state);
+        submitUpdateReadyPing(update);
       });
     }
 

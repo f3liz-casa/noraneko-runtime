@@ -4,9 +4,11 @@
 
 #include "gtest/gtest.h"
 
+#include <functional>
+
 #include "blapi.h"
+#include "json_reader.h"
 #include "nss_scoped_ptrs.h"
-#include "kat/kyber768_kat.h"
 #include "testvectors_base/test-structs.h"
 #include "testvectors/ml-kem-keygen-vectors.h"
 #include "testvectors/ml-kem-encap-vectors.h"
@@ -17,8 +19,10 @@ namespace nss_test {
 size_t get_ciphertext_length(KyberParams param) {
   size_t len = 0;
   switch (param) {
-    case params_kyber768_round3:
-    case params_kyber768_round3_test_mode:
+    case params_ml_kem512:
+    case params_ml_kem512_test_mode:
+      len = MLKEM512_CIPHERTEXT_BYTES;
+      break;
     case params_ml_kem768:
     case params_ml_kem768_test_mode:
       len = KYBER768_CIPHERTEXT_BYTES;
@@ -27,7 +31,8 @@ size_t get_ciphertext_length(KyberParams param) {
     case params_ml_kem1024_test_mode:
       len = MLKEM1024_CIPHERTEXT_BYTES;
       break;
-    case params_ml_kem512:
+    case params_kyber768_round3:
+    case params_kyber768_round3_test_mode:
     case params_kyber_invalid:
       break;
   }
@@ -37,8 +42,10 @@ size_t get_ciphertext_length(KyberParams param) {
 size_t get_private_key_length(KyberParams param) {
   size_t len = 0;
   switch (param) {
-    case params_kyber768_round3:
-    case params_kyber768_round3_test_mode:
+    case params_ml_kem512:
+    case params_ml_kem512_test_mode:
+      len = MLKEM512_PRIVATE_KEY_BYTES;
+      break;
     case params_ml_kem768:
     case params_ml_kem768_test_mode:
       len = KYBER768_PRIVATE_KEY_BYTES;
@@ -47,7 +54,8 @@ size_t get_private_key_length(KyberParams param) {
     case params_ml_kem1024_test_mode:
       len = MLKEM1024_PRIVATE_KEY_BYTES;
       break;
-    case params_ml_kem512:
+    case params_kyber768_round3:
+    case params_kyber768_round3_test_mode:
     case params_kyber_invalid:
       break;
   }
@@ -57,8 +65,10 @@ size_t get_private_key_length(KyberParams param) {
 size_t get_public_key_length(KyberParams param) {
   size_t len = 0;
   switch (param) {
-    case params_kyber768_round3:
-    case params_kyber768_round3_test_mode:
+    case params_ml_kem512:
+    case params_ml_kem512_test_mode:
+      len = MLKEM512_PUBLIC_KEY_BYTES;
+      break;
     case params_ml_kem768:
     case params_ml_kem768_test_mode:
       len = KYBER768_PUBLIC_KEY_BYTES;
@@ -67,7 +77,8 @@ size_t get_public_key_length(KyberParams param) {
     case params_ml_kem1024_test_mode:
       len = MLKEM1024_PUBLIC_KEY_BYTES;
       break;
-    case params_ml_kem512:
+    case params_kyber768_round3:
+    case params_kyber768_round3_test_mode:
     case params_kyber_invalid:
       break;
   }
@@ -146,6 +157,15 @@ TEST_P(KyberSelfTest, InvalidParameterTest) {
   rv = Kyber_Encapsulate(param, nullptr, publicKey.get(), ciphertext.get(),
                          secret.get());
   EXPECT_EQ(SECSuccess, rv);
+
+  // Only the test-mode parameter sets accept caller-supplied encapsulation
+  // randomness; these are the production sets, so the seed must be refused
+  // rather than silently used in place of the RNG.
+  ScopedSECItem encSeed(
+      SECITEM_AllocItem(nullptr, nullptr, KYBER_ENC_COIN_BYTES));
+  rv = Kyber_Encapsulate(param, encSeed.get(), publicKey.get(),
+                         ciphertext.get(), secret.get());
+  EXPECT_EQ(SECFailure, rv);
 
   rv = Kyber_Decapsulate(params_kyber_invalid, privateKey.get(),
                          ciphertext.get(), secret.get());
@@ -291,11 +311,7 @@ TEST_P(KyberSelfTest, InvalidPrivateKeyTest) {
 
   rv = Kyber_Decapsulate(param, privateKey.get(), ciphertext.get(),
                          secret2.get());
-  if (param == params_kyber768_round3) {
-    EXPECT_EQ(SECSuccess, rv);
-  } else {
-    EXPECT_EQ(SECFailure, rv);
-  }
+  EXPECT_EQ(SECFailure, rv);
 
   // Fix the key again.
   privateKey->data[pk_pos] = pk_pos_old;
@@ -308,11 +324,7 @@ TEST_P(KyberSelfTest, InvalidPrivateKeyTest) {
 
   rv = Kyber_Decapsulate(param, privateKey.get(), ciphertext.get(),
                          secret2.get());
-  if (param == params_kyber768_round3) {
-    EXPECT_EQ(SECSuccess, rv);
-  } else {
-    EXPECT_EQ(SECFailure, rv);
-  }
+  EXPECT_EQ(SECFailure, rv);
 }
 
 TEST_P(KyberSelfTest, DecapsulationWithModifiedRejectionKeyTest) {
@@ -384,68 +396,9 @@ TEST_P(KyberSelfTest, DecapsulationWithModifiedRejectionKeyTest) {
   EXPECT_NE(0, memcmp(secret2->data, secret3->data, KYBER_SHARED_SECRET_BYTES));
 }
 
-#ifdef NSS_DISABLE_KYBER
 INSTANTIATE_TEST_SUITE_P(SelfTests, KyberSelfTest,
-                         ::testing::Values(params_ml_kem768,
+                         ::testing::Values(params_ml_kem512, params_ml_kem768,
                                            params_ml_kem1024));
-#else
-INSTANTIATE_TEST_SUITE_P(SelfTests, KyberSelfTest,
-                         ::testing::Values(params_ml_kem768, params_ml_kem1024,
-                                           params_kyber768_round3));
-#endif
-
-TEST(Kyber768Test, KnownAnswersTest) {
-  ScopedSECItem privateKey(
-      SECITEM_AllocItem(nullptr, nullptr, MAX_ML_KEM_PRIVATE_KEY_LENGTH));
-  ScopedSECItem publicKey(
-      SECITEM_AllocItem(nullptr, nullptr, MAX_ML_KEM_PUBLIC_KEY_LENGTH));
-  ScopedSECItem ciphertext(
-      SECITEM_AllocItem(nullptr, nullptr, MAX_ML_KEM_CIPHER_LENGTH));
-  ScopedSECItem secret(
-      SECITEM_AllocItem(nullptr, nullptr, KYBER_SHARED_SECRET_BYTES));
-  ScopedSECItem secret2(
-      SECITEM_AllocItem(nullptr, nullptr, KYBER_SHARED_SECRET_BYTES));
-
-  SECStatus rv;
-  uint8_t digest[SHA256_LENGTH];
-
-  for (const auto& kat : KyberKATs) {
-    SECItem keypair_seed = {siBuffer, (unsigned char*)kat.newKeySeed,
-                            sizeof kat.newKeySeed};
-    SECItem enc_seed = {siBuffer, (unsigned char*)kat.encapsSeed,
-                        sizeof kat.encapsSeed};
-
-    privateKey->len = get_private_key_length(kat.params);
-    publicKey->len = get_public_key_length(kat.params);
-    ciphertext->len = get_ciphertext_length(kat.params);
-
-    rv = Kyber_NewKey(kat.params, &keypair_seed, privateKey.get(),
-                      publicKey.get());
-    EXPECT_EQ(SECSuccess, rv);
-
-    SHA256_HashBuf(digest, privateKey->data, privateKey->len);
-    EXPECT_EQ(0, memcmp(kat.privateKeyDigest, digest, sizeof digest));
-
-    SHA256_HashBuf(digest, publicKey->data, publicKey->len);
-    EXPECT_EQ(0, memcmp(kat.publicKeyDigest, digest, sizeof digest));
-
-    rv = Kyber_Encapsulate(kat.params, &enc_seed, publicKey.get(),
-                           ciphertext.get(), secret.get());
-    EXPECT_EQ(SECSuccess, rv);
-
-    SHA256_HashBuf(digest, ciphertext->data, ciphertext->len);
-    EXPECT_EQ(0, memcmp(kat.ciphertextDigest, digest, sizeof digest));
-
-    EXPECT_EQ(secret->len, KYBER_SHARED_SECRET_BYTES);
-    EXPECT_EQ(0, memcmp(kat.secret, secret->data, secret->len));
-
-    rv = Kyber_Decapsulate(kat.params, privateKey.get(), ciphertext.get(),
-                           secret2.get());
-    EXPECT_EQ(SECSuccess, rv);
-    EXPECT_EQ(secret2->len, KYBER_SHARED_SECRET_BYTES);
-    EXPECT_EQ(0, memcmp(secret->data, secret2->data, secret2->len));
-  }
-}
 
 TEST(MlKemKeyGen, KnownAnswersTest) {
   ScopedSECItem privateKey(
@@ -532,5 +485,216 @@ TEST(MlKemDecap, KnownAnswersTest) {
         0, memcmp(secret->data, kat.secret.data(), KYBER_SHARED_SECRET_BYTES));
   }
 }
+
+/* Wycheproof ML-KEM vectors, read from
+ * gtests/common/wycheproof/source_vectors at run time. Unlike the NIST ACVP
+ * vectors above these include negative cases: malformed keys and ciphertexts
+ * that FIPS 203 requires an implementation to reject. */
+
+struct MlKemTestVector {
+  uint64_t id;
+  bool valid;
+  std::vector<uint8_t> seed; /* keygen seed, d || z */
+  std::vector<uint8_t> dk;   /* expanded decapsulation key */
+  std::vector<uint8_t> ek;   /* encapsulation key */
+  std::vector<uint8_t> m;    /* encapsulation entropy */
+  std::vector<uint8_t> c;    /* ciphertext */
+  std::vector<uint8_t> k;    /* shared secret */
+};
+
+class MlKemWycheproofTest : public ::testing::Test {
+ protected:
+  typedef std::function<void(const MlKemTestVector&)> Operation;
+
+  void Run(const std::string& file, const std::string& schema,
+           KyberParams params, Operation op) {
+    params_ = params;
+    op_ = op;
+    WycheproofHeader(file, "ML-KEM", schema,
+                     [this](JsonReader& r) { RunGroup(r); });
+  }
+
+  /* seed -> (ek, dk) */
+  void KeyGen(const MlKemTestVector& t) {
+    ScopedSECItem dk(
+        SECITEM_AllocItem(nullptr, nullptr, MAX_ML_KEM_PRIVATE_KEY_LENGTH));
+    ScopedSECItem ek(
+        SECITEM_AllocItem(nullptr, nullptr, MAX_ML_KEM_PUBLIC_KEY_LENGTH));
+    if (!NewKey(t, dk.get(), ek.get())) {
+      return;
+    }
+    EXPECT_EQ(t.ek, Bytes(ek.get()));
+    EXPECT_EQ(t.dk, Bytes(dk.get()));
+  }
+
+  /* (ek, m) -> (c, K) */
+  void Encaps(const MlKemTestVector& t) {
+    SECItem ek = Item(t.ek);
+    SECItem m = Item(t.m);
+    ScopedSECItem c(
+        SECITEM_AllocItem(nullptr, nullptr, MAX_ML_KEM_CIPHER_LENGTH));
+    ScopedSECItem k(
+        SECITEM_AllocItem(nullptr, nullptr, KYBER_SHARED_SECRET_BYTES));
+    c->len = static_cast<unsigned int>(get_ciphertext_length(params_));
+
+    SECStatus rv = Kyber_Encapsulate(params_, &m, &ek, c.get(), k.get());
+    ASSERT_EQ(t.valid ? SECSuccess : SECFailure, rv);
+    if (!t.valid) {
+      return;
+    }
+    EXPECT_EQ(t.c, Bytes(c.get()));
+    EXPECT_EQ(t.k, Bytes(k.get()));
+  }
+
+  /* seed -> dk, then (dk, c) -> K. Either step may reject an invalid case. */
+  void SeedDecaps(const MlKemTestVector& t) {
+    ScopedSECItem dk(
+        SECITEM_AllocItem(nullptr, nullptr, MAX_ML_KEM_PRIVATE_KEY_LENGTH));
+    ScopedSECItem ek(
+        SECITEM_AllocItem(nullptr, nullptr, MAX_ML_KEM_PUBLIC_KEY_LENGTH));
+    if (!NewKey(t, dk.get(), ek.get())) {
+      return;
+    }
+    if (!t.ek.empty()) {
+      EXPECT_EQ(t.ek, Bytes(ek.get()));
+    }
+    Decapsulate(t, dk.get());
+  }
+
+  /* (dk, c) -> K, with the expanded key given directly. */
+  void Decaps(const MlKemTestVector& t) {
+    SECItem dk = Item(t.dk);
+    Decapsulate(t, &dk);
+  }
+
+ private:
+  static SECItem Item(const std::vector<uint8_t>& v) {
+    SECItem item = {siBuffer, const_cast<uint8_t*>(v.data()),
+                    static_cast<unsigned int>(v.size())};
+    return item;
+  }
+
+  static std::vector<uint8_t> Bytes(const SECItem* item) {
+    return std::vector<uint8_t>(item->data, item->data + item->len);
+  }
+
+  /* Derive a key pair from t.seed. Returns false if the test is done, either
+   * because the seed was rejected as expected or because the failure has
+   * already been reported. */
+  bool NewKey(const MlKemTestVector& t, SECItem* dk, SECItem* ek) {
+    SECItem seed = Item(t.seed);
+    dk->len = static_cast<unsigned int>(get_private_key_length(params_));
+    ek->len = static_cast<unsigned int>(get_public_key_length(params_));
+    if (Kyber_NewKey(params_, &seed, dk, ek) == SECSuccess) {
+      return true;
+    }
+    EXPECT_FALSE(t.valid) << "key generation failed for a valid vector";
+    return false;
+  }
+
+  void Decapsulate(const MlKemTestVector& t, SECItem* dk) {
+    SECItem c = Item(t.c);
+    ScopedSECItem k(
+        SECITEM_AllocItem(nullptr, nullptr, KYBER_SHARED_SECRET_BYTES));
+
+    SECStatus rv = Kyber_Decapsulate(params_, dk, &c, k.get());
+    ASSERT_EQ(t.valid ? SECSuccess : SECFailure, rv);
+    if (!t.valid) {
+      return;
+    }
+    EXPECT_EQ(t.k, Bytes(k.get()));
+  }
+
+  static void ReadTestAttr(MlKemTestVector& t, const std::string& n,
+                           JsonReader& r) {
+    if (n == "seed") {
+      t.seed = r.ReadHex();
+    } else if (n == "dk") {
+      t.dk = r.ReadHex();
+    } else if (n == "ek") {
+      t.ek = r.ReadHex();
+    } else if (n == "m") {
+      t.m = r.ReadHex();
+    } else if (n == "c") {
+      t.c = r.ReadHex();
+    } else if (n == "K") {
+      t.k = r.ReadHex();
+    } else {
+      FAIL() << "unsupported test case field: " << n;
+    }
+  }
+
+  void RunGroup(JsonReader& r) {
+    std::vector<MlKemTestVector> tests;
+    while (r.NextItem()) {
+      std::string n = r.ReadLabel();
+      if (n == "") {
+        break;
+      }
+      if (n == "parameterSet") {
+        ASSERT_EQ(ParameterSetName(), r.ReadString());
+      } else if (n == "type" || n == "source") {
+        r.SkipValue();
+      } else if (n == "tests") {
+        WycheproofReadTests(r, &tests, ReadTestAttr, false);
+      } else {
+        FAIL() << "unknown group label: " << n;
+      }
+    }
+
+    for (auto& t : tests) {
+      SCOPED_TRACE(testing::Message() << "tcId " << t.id);
+      op_(t);
+    }
+  }
+
+  std::string ParameterSetName() {
+    switch (params_) {
+      case params_ml_kem512:
+      case params_ml_kem512_test_mode:
+        return "ML-KEM-512";
+      case params_ml_kem768:
+      case params_ml_kem768_test_mode:
+        return "ML-KEM-768";
+      case params_ml_kem1024:
+      case params_ml_kem1024_test_mode:
+        return "ML-KEM-1024";
+      default:
+        ADD_FAILURE() << "unsupported parameter set";
+        return "";
+    }
+  }
+
+  KyberParams params_;
+  Operation op_;
+};
+
+#define ML_KEM_WYCHEPROOF_TESTS(name, bits, params, testModeParams)          \
+  TEST_F(MlKemWycheproofTest, name##KeyGen) {                                \
+    Run("mlkem_" #bits "_keygen_seed", "mlkem_keygen_seed_test_schema.json", \
+        params, [this](const MlKemTestVector& t) { KeyGen(t); });            \
+  }                                                                          \
+  /* Encapsulation is the only operation that takes its entropy as an input, \
+   * so it needs the seeded (test mode) parameter set. */                    \
+  TEST_F(MlKemWycheproofTest, name##Encaps) {                                \
+    Run("mlkem_" #bits "_encaps", "mlkem_encaps_test_schema.json",           \
+        testModeParams, [this](const MlKemTestVector& t) { Encaps(t); });    \
+  }                                                                          \
+  TEST_F(MlKemWycheproofTest, name##SeedDecaps) {                            \
+    Run("mlkem_" #bits, "mlkem_test_schema.json", params,                    \
+        [this](const MlKemTestVector& t) { SeedDecaps(t); });                \
+  }                                                                          \
+  TEST_F(MlKemWycheproofTest, name##Decaps) {                                \
+    Run("mlkem_" #bits "_semi_expanded_decaps",                              \
+        "mlkem_semi_expanded_decaps_test_schema.json", params,               \
+        [this](const MlKemTestVector& t) { Decaps(t); });                    \
+  }
+
+ML_KEM_WYCHEPROOF_TESTS(MlKem512, 512, params_ml_kem512,
+                        params_ml_kem512_test_mode)
+ML_KEM_WYCHEPROOF_TESTS(MlKem768, 768, params_ml_kem768,
+                        params_ml_kem768_test_mode)
+ML_KEM_WYCHEPROOF_TESTS(MlKem1024, 1024, params_ml_kem1024,
+                        params_ml_kem1024_test_mode)
 
 }  // namespace nss_test

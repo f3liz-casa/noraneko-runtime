@@ -9,6 +9,7 @@
 #include "mozilla/RemoteDecodeUtils.h"
 #include "mozilla/RemoteMediaManagerChild.h"
 #include "mozilla/RemoteMediaManagerParent.h"
+#include "mozilla/ToString.h"
 #include "mozilla/gfx/SourceSurfaceRawData.h"
 #include "mozilla/gfx/Swizzle.h"
 #include "mozilla/layers/ImageDataSerializer.h"
@@ -49,6 +50,17 @@ RemoteImageHolder::RemoteImageHolder(RemoteImageHolder&& aOther)
       mTransferFunction(aOther.mTransferFunction),
       mColorRange(aOther.mColorRange) {
   aOther.mSD = Nothing();
+}
+
+nsCString RemoteImageHolder::ToString() const {
+  nsCString rv;
+  rv.AppendFmt(
+      "RemoteImageHolder {{ size={}x{}, depth={}, range={}, matrix={}, "
+      "primaries={}, transfer={} }}",
+      mSize.Width(), mSize.Height(), mozilla::ToString(mColorDepth),
+      mozilla::ToString(mColorRange), mozilla::ToString(mYUVColorSpace),
+      mozilla::ToString(mColorPrimaries), mozilla::ToString(mTransferFunction));
+  return rv;
 }
 
 already_AddRefed<Image> RemoteImageHolder::DeserializeImage(
@@ -118,6 +130,9 @@ already_AddRefed<Image> RemoteImageHolder::DeserializeImage(
     pData.mStereoMode = descriptor.stereoMode();
     pData.mColorDepth = descriptor.colorDepth();
     pData.mYUVColorSpace = descriptor.yUVColorSpace();
+    pData.mColorPrimaries = mColorPrimaries;
+    pData.mTransferFunction = descriptor.transferFunction();
+    pData.mHDRMetadata = descriptor.hdrMetadata();
     pData.mColorRange = descriptor.colorRange();
     pData.mChromaSubsampling = descriptor.chromaSubsampling();
     pData.mYChannel = ImageDataSerializer::GetYChannel(buffer, descriptor);
@@ -244,20 +259,18 @@ RemoteImageHolder::~RemoteImageHolder() {
   }
 
   if (auto* actor = aReader->GetActor()) {
-    if (auto* manager = actor->Manager()) {
-      if (manager->GetProtocolId() ==
-          mozilla::ipc::ProtocolId::PRemoteMediaManagerMsgStart) {
-        aResult->mManager =
-            XRE_IsContentProcess()
-                ? static_cast<mozilla::IGPUVideoSurfaceManager*>(
-                      static_cast<mozilla::RemoteMediaManagerChild*>(manager))
-                : static_cast<mozilla::IGPUVideoSurfaceManager*>(
-                      static_cast<mozilla::RemoteMediaManagerParent*>(manager));
-        return true;
-      }
+    if (XRE_IsContentProcess()) {
+      aResult->mManager =
+          ActorDynCast<mozilla::RemoteMediaManagerChild>(actor->Manager());
+    } else {
+      aResult->mManager =
+          ActorDynCast<mozilla::RemoteMediaManagerParent>(actor->Manager());
     }
   }
 
-  MOZ_ASSERT_UNREACHABLE("Unexpected or missing protocol manager!");
-  return false;
+  if (!aResult->mManager) {
+    MOZ_ASSERT_UNREACHABLE("Unexpected or missing protocol manager!");
+    return false;
+  }
+  return true;
 }

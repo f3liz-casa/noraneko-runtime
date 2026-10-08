@@ -167,8 +167,7 @@ RefType RefType::greatestLowerBound(RefType a, RefType b) {
   // b, regardless of their actual types.
   bool nullable = a.isNullable() && b.isNullable();
 
-  // If one type is a subtype of the other, the lower type is the GLB. The
-  // nullability should already match what we expect.
+  // If one type is a subtype of the other, the lower type is the GLB.
   if (RefType::isSubTypeOf(a.asNonNullable(), b.asNonNullable())) {
     return a.withIsNullable(nullable);
   }
@@ -295,7 +294,7 @@ bool wasm::ToValType(JSContext* cx, HandleValue v, ValType* out) {
     *out = ValType::F32;
   } else if (StringEqualsLiteral(typeLinearStr, "f64")) {
     *out = ValType::F64;
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
   } else if (SimdAvailable(cx) && StringEqualsLiteral(typeLinearStr, "v128")) {
     *out = ValType::V128;
 #endif

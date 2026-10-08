@@ -155,9 +155,12 @@
   justify-content: center;
   align-items: center;
   height: 100%;
-  padding: 4px;
+  margin: 0 3px;
+  padding: 2px;
+  border-radius: 2px;
   background: transparent;
   outline-offset: -2px;
+  border: none;
 }
 
 .search-field .search-nav-buttons .nav-btn:hover {
@@ -216,4 +219,5 @@
 
 .search-buttons-bar .close-btn {
   margin-inline-end: 3px;
+  background-color: transparent;
 }

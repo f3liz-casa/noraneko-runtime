@@ -17,6 +17,8 @@ support-files = [
   "404.sjs",
 ]
 
+["browser_policies_about_policies.js"]
+
 ["browser_policies_getActivePolicies.js"]
 
 ["browser_policies_notice_in_aboutpreferences.js"]
@@ -167,6 +169,13 @@ support-files = [
   "worker.html",
   "service-worker.js",
   "shared-worker.js",
+]
+
+["browser_policy_sitepolicies_serviceworkers.js"]
+support-files = [
+  "sitepolicies_sw_fetch.html",
+  "sitepolicies_sw_framed.html",
+  "sw_fetch_intercept.js",
 ]
 
 ["browser_policy_support_menu.js"]

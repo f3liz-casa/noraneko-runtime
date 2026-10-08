@@ -20,10 +20,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import mozilla.components.compose.base.annotation.FlexibleWindowPreview
 import mozilla.components.compose.base.button.FilledButton
+import mozilla.components.compose.base.theme.Theme
 import org.mozilla.fenix.R
 import org.mozilla.fenix.ext.isLargeWindow
 import org.mozilla.fenix.theme.FirefoxTheme
-import org.mozilla.fenix.theme.Theme
 
 private const val FILL_WIDTH_LARGE_WINDOW = 0.5f
 private const val FILL_WIDTH_DEFAULT = 1.0f
@@ -39,19 +39,18 @@ internal fun UnlockPrivateTabsTrayScreen(
     modifier: Modifier = Modifier,
     onUnlockClicked: () -> Unit,
 ) {
-    val fillWidthFraction = if (LocalContext.current.isLargeWindow()) {
-        FILL_WIDTH_LARGE_WINDOW
-    } else {
-        FILL_WIDTH_DEFAULT
-    }
+    val fillWidthFraction =
+        if (LocalContext.current.isLargeWindow()) {
+            FILL_WIDTH_LARGE_WINDOW
+        } else {
+            FILL_WIDTH_DEFAULT
+        }
 
     Scaffold(
         modifier = modifier,
         bottomBar = {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 32.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 32.dp),
                 horizontalArrangement = Arrangement.Center,
             ) {
                 FilledButton(
@@ -62,11 +61,7 @@ internal fun UnlockPrivateTabsTrayScreen(
             }
         },
     ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             Text(
                 text = stringResource(id = R.string.pbm_authentication_unlock_private_tabs),
                 modifier = Modifier.align(Alignment.Center),

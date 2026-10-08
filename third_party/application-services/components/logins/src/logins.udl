@@ -98,6 +98,28 @@ dictionary Login {
     string username;
 };
 
+/// A login stored in the database, minus the encrypted fields.
+///
+/// Reading these never needs the encryption key, so consumers which filter on the cleartext
+/// fields can do so without forcing the user to authenticate. See `list_candidates()`.
+dictionary LoginCandidate {
+    // meta fields
+    string id;
+    i64 times_used;
+    i64 time_created;
+    i64 time_last_used;
+    i64 time_password_changed;
+    // breach fields
+    i64? time_last_breach_alert_dismissed;
+
+    // login fields
+    string origin;
+    string? http_realm;
+    string? form_action_origin;
+    string username_field;
+    string password_field;
+};
+
 /// Metrics tracking deletion of logins that cannot be decrypted, see `delete_undecryptable_records_for_remote_replacement`
 /// for more details
 dictionary LoginsDeletionMetrics {
@@ -292,6 +314,11 @@ interface LoginStore {
     [Throws=LoginsApiError]
     sequence<Login> list();
 
+    /// Like `list()`, but without the encrypted fields - and so without needing the encryption
+    /// key. Resolve the ids you're interested in with `get_many()`.
+    [Throws=LoginsApiError]
+    sequence<LoginCandidate> list_candidates();
+
     [Throws=LoginsApiError]
     sequence<Login> get_by_base_domain([ByRef] string base_domain);
 
@@ -303,6 +330,11 @@ interface LoginStore {
 
     [Throws=LoginsApiError]
     Login? get([ByRef] string id);
+
+    /// Get and decrypt the logins with the given ids. Ids which don't exist are skipped, as are
+    /// logins which fail to decrypt.
+    [Throws=LoginsApiError]
+    sequence<Login> get_many(sequence<string> ids);
 
     /// Run maintenance on the DB
     ///
@@ -324,8 +356,9 @@ interface LoginStore {
     void shutdown();
 };
 
-/// The Desktop-facing bridged sync engine. The canonical docs are in
-/// https://searchfox.org/mozilla-central/source/services/interfaces/mozIBridgedSyncEngine.idl
+/// The Desktop-facing bridged sync engine - a thin wrapper over the
+/// `sync15::engine::SyncEngine` implemented by this component (see
+/// `sync15::engine::BridgedEngineWrapper`).
 /// It's only actually used on Desktop, but it's fine to expose this everywhere.
 /// NOTE: all timestamps here are milliseconds.
 interface LoginsBridgedEngine {
@@ -333,7 +366,7 @@ interface LoginsBridgedEngine {
     i64 last_sync();
 
     [Throws=LoginsApiError]
-    void set_last_sync(i64 last_sync);
+    void reset_last_sync();
 
     [Throws=LoginsApiError]
     string? sync_id();
@@ -351,7 +384,7 @@ interface LoginsBridgedEngine {
     void store_incoming(sequence<string> incoming_envelopes_as_json);
 
     [Throws=LoginsApiError]
-    sequence<string> apply();
+    sequence<string> apply(i64 server_modified_millis);
 
     [Throws=LoginsApiError]
     void set_uploaded(i64 new_timestamp, sequence<string> uploaded_ids);

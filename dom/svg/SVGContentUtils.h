@@ -130,6 +130,12 @@ class SVGContentUtils {
                               const ComputedStyle* aComputedStyle,
                               const SVGContextPaint* aContextPaint);
 
+  /**
+   * Returns true if some aspect of the stroke depends on percentages.
+   */
+  static bool HasPercentageDependentStroke(
+      const ComputedStyle* aComputedStyle,
+      const SVGContextPaint* aContextPaint);
   /*
    * Get the number of CSS px (user units) per em (i.e. the em-height in user
    * units) for an nsIContent
@@ -182,10 +188,10 @@ class SVGContentUtils {
    *        space to the space in which non-scaling stroke should be applied.
    *        Must be rectilinear.
    */
-  static void RectilinearGetStrokeBounds(const Rect& aRect,
+  static Rect RectilinearGetStrokeBounds(const Rect& aRect,
                                          const Matrix& aToBoundsSpace,
                                          const Matrix& aToNonScalingStrokeSpace,
-                                         float aStrokeWidth, Rect* aBounds);
+                                         float aStrokeWidth);
 
   static dom::SVGViewportElement* GetNearestViewportElement(
       const nsIContent* aContent);

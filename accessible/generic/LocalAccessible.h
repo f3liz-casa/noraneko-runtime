@@ -700,6 +700,12 @@ class LocalAccessible : public nsISupports, public Accessible {
   }
 
   /**
+   * Return true if this accessible has a parent or ancestor whose value
+   * depends on this accessible.
+   */
+  bool HasValueDependent() const { return mContextFlags & eHasValueDependent; }
+
+  /**
    * Return true if the element is inside an alert.
    */
   bool IsInsideAlert() const { return mContextFlags & eInsideAlert; }
@@ -864,8 +870,9 @@ class LocalAccessible : public nsISupports, public Accessible {
     eHasNameDependent = 1 << 0,  // See HasNameDependent().
     eInsideAlert = 1 << 1,
     eHasDescriptionDependent = 1 << 2,  // See HasDescriptionDependent().
+    eHasValueDependent = 1 << 3,        // See HasValueDependent().
 
-    eLastContextFlag = eHasDescriptionDependent
+    eLastContextFlag = eHasValueDependent
   };
 
  protected:
@@ -962,6 +969,13 @@ class LocalAccessible : public nsISupports, public Accessible {
   virtual void ARIAGroupPosition(int32_t* aLevel, int32_t* aSetSize,
                                  int32_t* aPosInSet) const override;
 
+  /**
+   * Traverses the accessible's parent chain in search of an accessible with
+   * a frame. Returns the frame when found. Includes special handling for
+   * OOP iframe docs and tab documents.
+   */
+  nsIFrame* FindNearestAccessibleAncestorFrame() const;
+
   // Data Members
   // mContent can be null in a DocAccessible if the document has no body or
   // root element, or if the initial tree hasn't been constructed yet.
@@ -996,7 +1010,7 @@ class LocalAccessible : public nsISupports, public Accessible {
   RefPtr<const ComputedStyle> mOldComputedStyle;
 
   static const uint8_t kStateFlagsBits = 11;
-  static const uint8_t kContextFlagsBits = 3;
+  static const uint8_t kContextFlagsBits = 4;
 
   /**
    * Keep in sync with StateFlags, ContextFlags, and AccTypes.
@@ -1030,13 +1044,6 @@ class LocalAccessible : public nsISupports, public Accessible {
   friend class AccGroupInfo;
 
  private:
-  /**
-   * Traverses the accessible's parent chain in search of an accessible with
-   * a frame. Returns the frame when found. Includes special handling for
-   * OOP iframe docs and tab documents.
-   */
-  nsIFrame* FindNearestAccessibleAncestorFrame();
-
   LocalAccessible* GetCommandForDetailsRelation() const;
 
   LocalAccessible* GetPopoverTargetDetailsRelation() const;

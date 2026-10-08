@@ -13,6 +13,7 @@
 
 #include <stdlib.h>
 
+#include <algorithm>
 #include <ctime>
 
 #include "GetAddrInfo.h"
@@ -176,7 +177,7 @@ nsresult nsHostResolver::Init() MOZ_NO_THREAD_SAFETY_ANALYSIS {
 #elif defined(MOZ_WIDGET_ANDROID)
   // android_res_nquery only got added in API level 29
   sNativeHTTPSSupported = jni::GetAPIVersion() >= 29;
-#elif defined(XP_LINUX) || defined(XP_MACOSX)
+#elif defined(XP_LINUX) || defined(XP_MACOSX) || defined(XP_FREEBSD)
   sNativeHTTPSSupported = true;
 #endif
   LOG(("Native HTTPS records supported=%d", bool(sNativeHTTPSSupported)));
@@ -225,7 +226,7 @@ void nsHostResolver::ClearPendingQueue(
 // right now, so we need to mark them to get re-resolved on completion!
 
 void nsHostResolver::FlushCache(bool aTrrToo, bool aFlushEvictionQueue) {
-  mozilla::AutoWriteLock dbLock(mDBLock);
+  MutexAutoLock dbLock(mDBLock);
   MutexAutoLock queueLock(mQueue.mLock);
 
   if (aFlushEvictionQueue) {
@@ -266,7 +267,7 @@ void nsHostResolver::Shutdown() {
   nsTArray<PendingAbort> shutdownCallbacks;
 
   {
-    mozilla::AutoWriteLock dbLock(mDBLock);
+    MutexAutoLock dbLock(mDBLock);
     MutexAutoLock queueLock(mQueue.mLock);
 
     mShutdown = true;
@@ -320,7 +321,7 @@ nsresult nsHostResolver::GetHostRecord(
     const nsACString& host, const nsACString& aTrrServer, uint16_t type,
     nsIDNSService::DNSFlags flags, uint16_t af, bool pb,
     const nsCString& originSuffix, nsHostRecord** result) {
-  mozilla::AutoWriteLock dbLock(mDBLock);
+  MutexAutoLock dbLock(mDBLock);
   nsHostKey key(host, aTrrServer, type, flags, af, pb, originSuffix);
 
   RefPtr<nsHostRecord> rec =
@@ -490,7 +491,7 @@ nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
   RefPtr<nsHostRecord> result;
   nsresult status = NS_OK, rv = NS_OK;
   {
-    mozilla::AutoWriteLock dbLock(mDBLock);
+    MutexAutoLock dbLock(mDBLock);
     MutexAutoLock queueLock(mQueue.mLock);
 
     if (mShutdown) {
@@ -695,6 +696,9 @@ already_AddRefed<nsHostRecord> nsHostResolver::FromCache(
   // put reference to host record on stack...
   RefPtr<nsHostRecord> result = aRec;
 
+  aRec->mFromStaleCache =
+      aRec->CheckExpiration(TimeStamp::NowLoRes()) == nsHostRecord::EXP_GRACE;
+
   // For cached entries that are in the grace period or negative, use the cache
   // but start a new lookup in the background.
   //
@@ -861,7 +865,7 @@ void nsHostResolver::DetachCallback(
   RefPtr<nsResolveHostCallback> callback(aCallback);
 
   {
-    mozilla::AutoWriteLock dbLock(mDBLock);
+    MutexAutoLock dbLock(mDBLock);
     MutexAutoLock queueLock(mQueue.mLock);
 
     nsAutoCString originSuffix;
@@ -1336,12 +1340,9 @@ static bool different_rrset(AddrInfo* rrset1, AddrInfo* rrset2) {
     return true;
   }
 
-  nsTArray<NetAddr> orderedSet1 = rrset1->Addresses().Clone();
-  nsTArray<NetAddr> orderedSet2 = rrset2->Addresses().Clone();
-  orderedSet1.Sort();
-  orderedSet2.Sort();
-
-  bool eq = orderedSet1 == orderedSet2;
+  bool eq = std::is_permutation(
+      rrset1->Addresses().begin(), rrset1->Addresses().end(),
+      rrset2->Addresses().begin(), rrset2->Addresses().end());
   if (!eq) {
     LOG(("different_rrset true due to content change\n"));
   } else {
@@ -1455,7 +1456,7 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
   CallbackArray callbacks;
   LookupStatus result;
   {
-    AutoWriteLock dbLock(mDBLock);
+    MutexAutoLock dbLock(mDBLock);
     MutexAutoLock queueLock(mQueue.mLock);
     result = CompleteLookupLocked(rec, status, aNewRRSet, pb, aOriginsuffix,
                                   aReason, aTRRRequest, callbacks);
@@ -1471,6 +1472,8 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookupLocked(
   MOZ_ASSERT(rec);
   MOZ_ASSERT(rec->pb == pb);
   MOZ_ASSERT(rec->IsAddrRecord());
+
+  rec->mFromStaleCache = false;
 
   RefPtr<AddrHostRecord> addrRec = do_QueryObject(rec);
   MOZ_ASSERT(addrRec);
@@ -1649,7 +1652,7 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookupByType(
   CallbackArray callbacks;
   LookupStatus result;
   {
-    AutoWriteLock dbLock(mDBLock);
+    MutexAutoLock dbLock(mDBLock);
     MutexAutoLock queueLock(mQueue.mLock);
     result = CompleteLookupByTypeLocked(rec, status, aResult, aReason, aTtl, pb,
                                         callbacks);
@@ -1665,6 +1668,8 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookupByTypeLocked(
   MOZ_ASSERT(rec);
   MOZ_ASSERT(rec->pb == pb);
   MOZ_ASSERT(!rec->IsAddrRecord());
+
+  rec->mFromStaleCache = false;
 
   if (rec->LoadNative()) {
     // If this was resolved using the native resolver
@@ -1762,7 +1767,7 @@ void nsHostResolver::CancelAsyncRequest(
   RefPtr<nsHostRecord> rec;
 
   {
-    mozilla::AutoWriteLock dbLock(mDBLock);
+    MutexAutoLock dbLock(mDBLock);
     MutexAutoLock queueLock(mQueue.mLock);
 
     nsAutoCString originSuffix;
@@ -1795,7 +1800,7 @@ void nsHostResolver::CancelAsyncRequest(
 }
 
 size_t nsHostResolver::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const {
-  mozilla::AutoReadLock dbLock(mDBLock);
+  MutexAutoLock dbLock(mDBLock);
 
   size_t n = mallocSizeOf(this);
 
@@ -1914,7 +1919,7 @@ nsresult nsHostResolver::Create(nsHostResolver** result) {
 }
 
 void nsHostResolver::GetDNSCacheEntries(nsTArray<DNSCacheEntries>* args) {
-  mozilla::AutoReadLock dbLock(mDBLock);
+  MutexAutoLock dbLock(mDBLock);
   for (const auto& recordEntry : mRecordDB) {
     // We don't pay attention to address literals, only resolved domains.
     // Also require a host.

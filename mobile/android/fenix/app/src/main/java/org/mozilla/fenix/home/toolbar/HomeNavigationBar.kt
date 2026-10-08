@@ -17,21 +17,24 @@ import mozilla.components.compose.browser.toolbar.store.ToolbarGravity.Top
 import mozilla.components.support.utils.KeyboardState
 import mozilla.components.support.utils.keyboardAsState
 import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
+import org.mozilla.fenix.components.AppStore
 import org.mozilla.fenix.theme.FirefoxTheme
 import org.mozilla.fenix.utils.Settings
 import org.mozilla.fenix.wallpapers.WallpaperTheme
 
 /**
- * A wrapper over the [NavigationBar] composable that provides enhanced customization and
- * lifecycle-aware integration for use within the [FenixHomeToolbar] framework.
+ * A wrapper over the [NavigationBar] composable that provides enhanced customization and lifecycle-aware integration
+ * for use within the [FenixHomeToolbar] framework.
  *
  * @param toolbarStore [BrowserToolbarStore] containing the navigation bar state.
+ * @param appStore [AppStore] used to observe the currently applied wallpaper.
  * @param browsingModeManager [BrowsingModeManager] used to determine the current browsing mode.
  * @param settings [Settings] object to get the toolbar position and other settings.
  * @param hideWhenKeyboardShown If true, navigation bar will be hidden when the keyboard is visible.
  */
 class HomeNavigationBar(
     private val toolbarStore: BrowserToolbarStore,
+    private val appStore: AppStore,
     private val browsingModeManager: BrowsingModeManager,
     private val settings: Settings,
     private val hideWhenKeyboardShown: Boolean,
@@ -40,33 +43,40 @@ class HomeNavigationBar(
     @Composable
     private fun DefaultNavigationBarContent() {
         val uiState by toolbarStore.stateFlow.collectAsState()
-        val toolbarGravity = remember(settings) {
-            when (settings.shouldUseBottomToolbar) {
-                true -> Bottom
-                false -> Top
+        val toolbarGravity =
+            remember(settings) {
+                when (settings.shouldUseBottomToolbar) {
+                    true -> Bottom
+                    false -> Top
+                }
             }
-        }
-        val isKeyboardVisible = if (hideWhenKeyboardShown) {
-            val keyboardState by keyboardAsState()
-            keyboardState == KeyboardState.Opened
-        } else {
-            false
-        }
+        val isKeyboardVisible =
+            if (hideWhenKeyboardShown) {
+                val keyboardState by keyboardAsState()
+                keyboardState == KeyboardState.Opened
+            } else {
+                false
+            }
 
         val isPrivateMode = browsingModeManager.mode.isPrivate
 
         if (uiState.displayState.navigationActions.isNotEmpty() && !isKeyboardVisible) {
             FirefoxTheme {
                 val colors = MaterialTheme.colorScheme
+                val hasWallpaperBackground =
+                    hasWallpaperBackground(appStore = appStore, settings = settings, isPrivateMode = isPrivateMode)
+                val edgeToEdgeColors = colors.withEdgeToEdgeToolbarColors()
                 MaterialTheme(
-                    colorScheme = if (settings.enableUniversalEdgeToEdgeWallpapers && !isPrivateMode) {
-                        colors.copy(
-                            surface = Color.Transparent,
-                            onSurface = WallpaperTheme.onWallpaper,
-                        )
-                    } else {
-                        colors
-                    },
+                    colorScheme =
+                        when {
+                            !hasWallpaperBackground -> colors
+                            settings.enableUniversalEdgeToEdgeWallpapers ->
+                                colors.copy(
+                                    surface = Color.Transparent,
+                                    onSurface = WallpaperTheme.onWallpaper,
+                                )
+                            else -> edgeToEdgeColors
+                        }
                 ) {
                     NavigationBar(
                         actions = uiState.displayState.navigationActions,

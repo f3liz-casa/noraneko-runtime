@@ -23,7 +23,8 @@ class nsFilePicker final : public nsBaseFilePicker {
   NS_DECL_ISUPPORTS
 
   // nsIFilePicker (less what's in nsBaseFilePicker)
-  NS_IMETHOD Open(nsIFilePickerShownCallback* aCallback) override;
+  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
+  Open(nsIFilePickerShownCallback* aCallback) override;
   NS_IMETHOD IsModeSupported(nsIFilePicker::Mode, JSContext*,
                              mozilla::dom::Promise**) override;
   NS_IMETHOD AppendFilters(int32_t aFilterMask) override;
@@ -66,7 +67,7 @@ class nsFilePicker final : public nsBaseFilePicker {
   void ClearPortalState();
 #endif
 
-  void DoneCommon(ResultCode);
+  void DoneCommon(ResultCode, nsCOMPtr<nsIFilePickerShownCallback>);
 
   RefPtr<nsWindow> mParentWidget;
   nsCOMPtr<nsIFilePickerShownCallback> mCallback;

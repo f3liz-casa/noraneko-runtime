@@ -8,6 +8,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import mozilla.components.compose.base.theme.Theme
 import mozilla.components.service.fxa.manager.AccountState.AuthenticationProblem
 import mozilla.components.support.test.robolectric.testContext
 import org.junit.Rule
@@ -17,12 +18,10 @@ import org.mozilla.fenix.R
 import org.mozilla.fenix.components.menu.MenuAccessPoint
 import org.mozilla.fenix.components.menu.store.IPProtectionMenuState
 import org.mozilla.fenix.theme.FirefoxTheme
-import org.mozilla.fenix.theme.Theme
 
 @RunWith(AndroidJUnit4::class)
 class MainMenuTest {
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    @get:Rule val composeTestRule = createComposeRule()
 
     private val customizeHomepageLabel: String
         get() = testContext.getString(R.string.browser_menu_customize_homepage)

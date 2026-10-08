@@ -22,9 +22,7 @@ import org.mozilla.fenix.components.appstate.AppAction
  *
  * @property dataLimitReached Message shown when the user has reached their monthly data limit.
  */
-data class ErrorMessages(
-    val dataLimitReached: String,
-)
+data class ErrorMessages(val dataLimitReached: String)
 
 /**
  * Monitors [IPProtectionStore] state changes and displays informational sticky snackbars to the user via [AppStore].
@@ -42,17 +40,24 @@ class IPProtectionInfoPrompter(
     mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
 ) : AbstractBinding<IPProtectionState>(store, mainDispatcher) {
     override suspend fun onState(flow: Flow<IPProtectionState>) {
-        flow.distinctUntilChanged { old, new ->
-            old.proxyStatus == new.proxyStatus && old.eligibilityStatus == new.eligibilityStatus
-        }.collect { state ->
-            processStateForSnackbar(state)
-        }
+        flow
+            .distinctUntilChanged { old, new ->
+                old.proxyStatus == new.proxyStatus && old.eligibilityStatus == new.eligibilityStatus
+            }
+            .collect { state ->
+                processStateForSnackbar(state)
+            }
     }
 
     private fun processStateForSnackbar(state: IPProtectionState) {
         if (state.eligibilityStatus == EligibilityStatus.Eligible && state.proxyStatus == Authorized.DataLimitReached) {
             Vpn.bandwidthLimitError.record()
-            appStore.dispatch(AppAction.IPProtectionSnackbarAction.DataLimitReached(errorMessages.dataLimitReached))
+            appStore.dispatch(
+                action =
+                    AppAction.IPProtectionSnackbarAction.ShowActionSettingsSnackbar(
+                        title = errorMessages.dataLimitReached
+                    )
+            )
         }
     }
 }

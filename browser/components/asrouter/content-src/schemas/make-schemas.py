@@ -22,6 +22,8 @@ due to the JSONSchema validation library used by Experimenter not fully
 supporting self-references and bundled schema.
 """
 
+from __future__ import annotations
+
 import sys
 from argparse import ArgumentParser
 from itertools import chain
@@ -75,7 +77,7 @@ SCHEMAS = [
             "ExtensionDoorhanger": (
                 SCHEMA_DIR / "CFR" / "templates" / "ExtensionDoorhanger.schema.json"
             ),
-            "InfoBar": SCHEMA_DIR / "CFR" / "templates" / "InfoBar.schema.json",
+            "InfoBar": SCHEMA_DIR / "InfoBar" / "InfoBar.schema.json",
             "MenuMessage": (
                 SCHEMA_DIR / "OnboardingMessage" / "MenuMessage.schema.json"
             ),

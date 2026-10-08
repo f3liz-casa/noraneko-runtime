@@ -60,6 +60,10 @@ topic.
 : Optionally, the git commit corresponding to the head_rev when it's in a Mercurial
   repository.
 
+`head_git_ref`
+
+: Optionally, the git ref associated with `head_git_rev`.
+
 `base_ref`
 
 : Reference where `head_rev` got merged into. It is usually a branch or a tag.
@@ -122,6 +126,12 @@ topic.
 `dontbuild`
 
 : Set (to `true`) when the commit message requested that no tasks run on this push.
+
+`shipping`
+
+: Set (to `true`) when the commit message contains `SHIPPING`, indicating the push
+  is intended to be shipped. This can be used to alter properties of tasks, such as
+  their priority.
 
 ## Tree Information
 

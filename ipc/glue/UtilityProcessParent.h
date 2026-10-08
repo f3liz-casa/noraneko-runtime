@@ -61,6 +61,12 @@ class UtilityProcessParent final
 
   mozilla::ipc::IPCResult RecvInitCompleted();
 
+  mozilla::ipc::IPCResult RecvShutdownProfile(
+      mozilla::ProfileAndAdditionalInformation&&
+          aProfileAndAdditionalInformation);
+
+  mozilla::ipc::IPCResult RecvFinishShutdown();
+
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
  private:

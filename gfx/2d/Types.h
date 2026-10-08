@@ -548,6 +548,9 @@ enum class YUVColorSpace : uint8_t {
   _Last = Identity,
 };
 
+std::ostream& operator<<(std::ostream& aOut,
+                         const YUVColorSpace& aYUVColorSpace);
+
 enum class ColorDepth : uint8_t {
   COLOR_8,
   COLOR_10,
@@ -606,12 +609,17 @@ enum class TransferFunction : uint8_t {
   Default = BT709,
 };
 
+std::ostream& operator<<(std::ostream& aOut,
+                         const TransferFunction& aTransferFunction);
+
 enum class ColorRange : uint8_t {
   LIMITED,
   FULL,
   _First = LIMITED,
   _Last = FULL,
 };
+
+std::ostream& operator<<(std::ostream& aOut, const ColorRange& aColorRange);
 
 // HDR metadata structures, populated from codec-level signalling.
 struct Chromaticity {
@@ -715,6 +723,8 @@ enum class ColorSpace2 : uint8_t {
   _First = Display,
   _Last = BT2020,
 };
+
+std::ostream& operator<<(std::ostream& aOut, const ColorSpace2& aColorSpace2);
 
 inline ColorSpace2 ToColorSpace2(const YUVColorSpace in) {
   switch (in) {
@@ -932,6 +942,9 @@ enum class ChromaSubsampling : uint8_t {
   _First = FULL,
   _Last = HALF_WIDTH_AND_HEIGHT,
 };
+
+std::ostream& operator<<(std::ostream& aOut,
+                         const ChromaSubsampling& aChromaSubsampling);
 
 template <typename T>
 static inline T ChromaSize(const T& aYSize, ChromaSubsampling aSubsampling) {
@@ -1165,11 +1178,7 @@ struct sRGBColor {
            uint32_t(r * 255.0f) << 16 | uint32_t(a * 255.0f) << 24;
   }
 
-  bool operator==(const sRGBColor& aColor) const {
-    return r == aColor.r && g == aColor.g && b == aColor.b && a == aColor.a;
-  }
-
-  bool operator!=(const sRGBColor& aColor) const { return !(*this == aColor); }
+  bool operator==(const sRGBColor& aColor) const = default;
 
   Float r, g, b, a;
 };
@@ -1235,13 +1244,7 @@ struct DeviceColor {
            uint32_t(r * 255.0f) << 16 | uint32_t(a * 255.0f) << 24;
   }
 
-  bool operator==(const DeviceColor& aColor) const {
-    return r == aColor.r && g == aColor.g && b == aColor.b && a == aColor.a;
-  }
-
-  bool operator!=(const DeviceColor& aColor) const {
-    return !(*this == aColor);
-  }
+  bool operator==(const DeviceColor& aColor) const = default;
 
   friend std::ostream& operator<<(std::ostream& aOut,
                                   const DeviceColor& aColor);
@@ -1284,8 +1287,9 @@ enum class DeviceResetDetectPlace {
   WR_SIMULATE,
   WIDGET,
   CANVAS_TRANSLATOR,
+  WR_BEFORE_READBACK,
   _First = WR_BEGIN_FRAME,
-  _Last = CANVAS_TRANSLATOR,
+  _Last = WR_BEFORE_READBACK,
 };
 
 enum class ForcedDeviceResetReason {

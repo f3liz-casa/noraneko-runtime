@@ -387,12 +387,6 @@
     %1$d is the number of bookmarks selected
   -->
   <string name="history_multi_select_title">%1$d தேர்ந்த</string>
-  <!-- Text for the header that groups the history the past 7 days -->
-  <string name="history_7_days">கடந்த 7 நாட்கள்</string>
-  <!-- Text for the header that groups the history the past 30 days -->
-  <string name="history_30_days">கடந்த 30 நாட்கள்</string>
-  <!-- Text for the header that groups the history older than the last month -->
-  <string name="history_older">பழையவை</string>
   <!-- Text shown when no history exists -->
   <string name="history_empty_message">வரலாறு ஏதுமில்லை</string>
   <!--
@@ -782,8 +776,6 @@
   <string name="add_to_homescreen_cancel">ரத்து</string>
   <!-- Add button text for the Add to Homescreen dialog -->
   <string name="add_to_homescreen_add">சேர்</string>
-  <!-- Continue to website button text for the first-time Add to Homescreen dialog -->
-  <string name="add_to_homescreen_continue">தளத்திற்குத் தொடர்</string>
   <!-- Placeholder text for the TextView in the Add to Homescreen dialog -->
   <string name="add_to_homescreen_text_placeholder">குறுக்குவழி பெயர்</string>
   <!-- Preference option for asking to save passwords in Fenix -->

@@ -89,14 +89,14 @@
   /* Ensure focus indicators on elements below the search container
      aren't obscured. */
   margin-bottom: var(--search-container-margin);
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-small);
 }
 
 #searchInput {
   width: 100%;
-}
-
-#policies-container-content:not([hidden]) + #searchInput {
-  margin-block-start: var(--space-small);
 }
 
 .main-content {
@@ -182,6 +182,10 @@ label {
     margin-block: var(--space-xxsmall);
     margin-inline: var(--space-small) 0;
   }
+}
+
+#urlLabel {
+  margin-block-end: var(--space-small);
 }
 
 .description-deemphasized {
@@ -1665,6 +1669,10 @@ setting-pane[onsearchpane] {
   --box-label-font-weight: var(--font-weight-heading);
 }
 
+#containers-list {
+  --box-group-max-height: 525px;
+}
+
 .containers-identity-item {
   --box-icon-start-fill: var(--identity-icon-color);
   --box-icon-size: var(--icon-size-xlarge);
@@ -1674,6 +1682,15 @@ setting-pane[onsearchpane] {
     --box-icon-padding: round(up, var(--space-small), 0.5px);
     --box-icon-border-radius: var(--border-radius-circle);
     --box-icon-background: var(--identity-fill-tint);
+  }
+}
+
+#site-containers-list {
+  --box-group-max-height: 500px;
+
+  container-select {
+    --select-min-width: 10em;
+    --select-max-width: 10em;
   }
 }
 

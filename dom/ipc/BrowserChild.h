@@ -282,7 +282,8 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   mozilla::ipc::IPCResult RecvKeyboardHeightChanged(
       const mozilla::ScreenIntCoord& aHeight);
 
-  mozilla::ipc::IPCResult RecvAndroidPipModeChanged(bool aPipMode);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvAndroidPipModeChanged(
+      bool aPipMode);
 
   mozilla::ipc::IPCResult RecvActivate(uint64_t aActionId);
 
@@ -426,23 +427,16 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   mozilla::ipc::IPCResult RecvLoadRemoteScript(const nsAString& aURL,
                                                const bool& aRunInGlobalScope);
 
-  mozilla::ipc::IPCResult RecvAsyncMessage(const nsAString& aMessage,
-                                           NotNull<StructuredCloneData*> aData);
-  mozilla::ipc::IPCResult RecvSwappedWithOtherRemoteLoader(
-      const IPCTabContext& aContext);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvAsyncMessage(
+      const nsAString& aMessage, NotNull<StructuredCloneData*> aData);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult
+  RecvSwappedWithOtherRemoteLoader(const IPCTabContext& aContext);
 
   mozilla::ipc::IPCResult RecvSafeAreaInsetsChanged(
       const mozilla::LayoutDeviceIntMargin& aSafeAreaInsets);
 
   mozilla::ipc::IPCResult RecvInitSupportsUnadjustedMovement(
       const bool& aSupportsUnadjustedMovement);
-
-#ifdef ACCESSIBILITY
-  PDocAccessibleChild* AllocPDocAccessibleChild(
-      PDocAccessibleChild*, const uint64_t&,
-      const MaybeDiscardedBrowsingContext&, const bool&);
-  bool DeallocPDocAccessibleChild(PDocAccessibleChild*);
-#endif
 
   RefPtr<VsyncMainChild> GetVsyncChild();
 
@@ -545,11 +539,8 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
       const MaybeDiscardedBrowsingContext&, const PrintData&,
       const MaybeDiscardedBrowsingContext&);
 
-  mozilla::ipc::IPCResult RecvDestroyPrintClone(
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvDestroyPrintClone(
       const MaybeDiscardedBrowsingContext&);
-
-  mozilla::ipc::IPCResult RecvUpdateNativeWindowHandle(
-      const uintptr_t& aNewHandle);
 
   mozilla::ipc::IPCResult RecvWillChangeProcess();
 
@@ -622,10 +613,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   nsresult CanCancelContentJS(nsIRemoteTab::NavigationType aNavigationType,
                               int32_t aNavigationIndex, nsIURI* aNavigationURI,
                               int32_t aEpoch, bool* aCanCancel);
-
-#if defined(XP_WIN) && defined(ACCESSIBILITY)
-  uintptr_t GetNativeWindowHandle() const { return mNativeWindowHandle; }
-#endif
 
   BrowsingContext* GetBrowsingContext() const { return mBrowsingContext; }
 
@@ -953,11 +940,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   RefPtr<layers::IAPZCTreeManager> mApzcTreeManager;
   RefPtr<SessionStoreChild> mSessionStoreChild;
-
-#if defined(XP_WIN) && defined(ACCESSIBILITY)
-  // The handle associated with the native window that contains this tab
-  uintptr_t mNativeWindowHandle;
-#endif  // defined(XP_WIN)
 
   int32_t mCancelContentJSEpoch;
 

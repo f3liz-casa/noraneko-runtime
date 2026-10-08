@@ -120,7 +120,7 @@
 #include "vm/JSObject.h"
 #include "vm/NumberObject.h"
 #include "vm/PlainObject.h"    // js::PlainObject
-#include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseSlot_*
+#include "vm/PromiseObject.h"  // js::PromiseObject
 #include "vm/ProxyObject.h"
 #include "vm/RealmFuses.h"
 #include "vm/RuntimeFuses.h"
@@ -1055,7 +1055,7 @@ static bool GetWasmSupportedFeatures(JSContext* cx, unsigned argc, Value* vp) {
   JS_FOR_WASM_FEATURES(WASM_FEATURE);
 #undef WASM_FEATURE
 
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
   value.setBoolean(true);
 #else
   value.setBoolean(false);
@@ -1220,7 +1220,7 @@ static bool WasmIonDisabledByFeatures(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
 #  ifdef DEBUG
 static char lastAnalysisResult[1024];
 
@@ -1929,7 +1929,7 @@ static bool DisassembleNative(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
 
-    FILE* f = fopen(fileName, "w");
+    FILE* f = fopen(fileName, "wb");
     if (!f) {
       JS_ReportErrorASCII(cx, "Could not open file for writing.");
       return false;
@@ -1937,7 +1937,7 @@ static bool DisassembleNative(JSContext* cx, unsigned argc, Value* vp) {
 
     uintptr_t expected_length = reinterpret_cast<uintptr_t>(jit_end) -
                                 reinterpret_cast<uintptr_t>(jit_begin);
-    if (expected_length != fwrite(jit_begin, jit_end - jit_begin, 1, f)) {
+    if (fwrite(jit_begin, 1, expected_length, f) != expected_length) {
       JS_ReportErrorASCII(cx, "Did not write all function bytes to the file.");
       fclose(f);
       return false;
@@ -4973,10 +4973,11 @@ static bool SettlePromiseNow(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   int32_t flags = promise->flags();
-  promise->setNeverGCThingFixedSlot(
-      PromiseSlot_Flags,
+  promise->setFixedSlotTyped(
+      PromiseObject::FLAGS_SLOT,
       Int32Value(flags | PROMISE_FLAG_RESOLVED | PROMISE_FLAG_FULFILLED));
-  promise->setFixedSlot(PromiseSlot_ReactionsOrResult, UndefinedValue());
+  promise->setFixedSlot(PromiseObject::REACTIONS_OR_RESULT_SLOT,
+                        UndefinedValue());
 
   return true;
 }
@@ -7216,6 +7217,14 @@ static bool HasInvalidatedTeleporting(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   args.rval().setBoolean(args[0].toObject().hasInvalidatedTeleporting());
+  return true;
+}
+
+static bool DisableDictionaryModeTeleportation(JSContext* cx, unsigned argc,
+                                               Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  cx->zone()->shapeZone().disableDictionaryModeTeleportation();
+  args.rval().setUndefined();
   return true;
 }
 
@@ -10917,7 +10926,7 @@ JS_FOR_WASM_FEATURES(WASM_FEATURE)
 "  Returns a boolean indicating whether WebAssembly SIMD proposal is\n"
 "  supported by the current device."),
 
-#if defined(ENABLE_WASM_SIMD) && defined(DEBUG)
+#if defined(ENABLE_JIT_SIMD) && defined(DEBUG)
     JS_FN_HELP("wasmSimdAnalysis", WasmSimdAnalysis, 1, 0,
 "wasmSimdAnalysis(...)",
 "  Unstable API for white-box testing.\n"),
@@ -11219,6 +11228,10 @@ JS_FOR_WASM_FEATURES(WASM_FEATURE)
     JS_FN_HELP("hasInvalidatedTeleporting", HasInvalidatedTeleporting, 1, 0,
 "hasInvalidatedTeleporting(obj)",
 "  Return true if the shape teleporting optimization has been disabled for |obj|."),
+
+    JS_FN_HELP("disableDictionaryModeTeleportation", DisableDictionaryModeTeleportation, 0, 0,
+"disableDictionaryModeTeleportation()",
+"  Disable dictionary-mode teleportation for the current zone."),
 
     JS_FN_HELP("evalReturningScope", EvalReturningScope, 1, 0,
 "evalReturningScope(scriptStr, [global])",

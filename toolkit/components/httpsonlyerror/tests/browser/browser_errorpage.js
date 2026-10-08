@@ -10,14 +10,8 @@ const BAD_CERT = "http://expired.example.com/";
 const UNKNOWN_ISSUER = "http://self-signed.example.com/";
 
 const { TabStateFlusher } = ChromeUtils.importESModule(
-  "resource:///modules/sessionstore/TabStateFlusher.sys.mjs"
+  "moz-src:///browser/components/sessionstore/TabStateFlusher.sys.mjs"
 );
-
-add_setup(async function () {
-  await SpecialPowers.pushPrefEnv({
-    set: [["test.wait300msAfterTabSwitch", true]],
-  });
-});
 
 add_task(async function () {
   info("Check that the error pages shows up");

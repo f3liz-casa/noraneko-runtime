@@ -340,11 +340,6 @@ class WaylandSurface final {
   void SetParentLocked(const WaylandSurfaceLock& aProofOfLock,
                        RefPtr<WaylandSurface> aParent);
 
-  bool EnableColorManagementLocked(
-      const WaylandSurfaceLock& aProofOfLock,
-      mozilla::gfx::YUVColorSpace aColorSpace,
-      gfx::TransferFunction aTransferFunction,
-      const mozilla::gfx::HDRMetadata& aHDRMetadata);
   void SetColorRepresentationLocked(const WaylandSurfaceLock& aProofOfLock,
                                     mozilla::gfx::YUVColorSpace aColorSpace,
                                     bool aFullRange,
@@ -364,6 +359,22 @@ class WaylandSurface final {
                             bool aCommitAllowed) {
     mCommitAllowed = aCommitAllowed;
   }
+
+  static bool SetPrimaries(wp_image_description_creator_params_v1* aParams,
+                           mozilla::gfx::YUVColorSpace aColorSpace);
+  static bool SetTransferFunction(
+      wp_image_description_creator_params_v1* aParams,
+      gfx::TransferFunction aTransferFunction);
+
+  void SetHDRMetadata(wp_image_description_creator_params_v1* aParams,
+                      gfx::TransferFunction aTransferFunction,
+                      GdkWindow* aGdkWindow,
+                      const mozilla::gfx::HDRMetadata& aHDRMetadata);
+
+  void SetColorManagementLocked(
+      const WaylandSurfaceLock& aProofOfLock,
+      wp_color_manager_v1* aColorManager,
+      wp_image_description_creator_params_v1* aParams);
 
  private:
   ~WaylandSurface();
@@ -558,6 +569,9 @@ class WaylandSurface final {
   WUniquePtr<wp_color_management_surface_v1> mColorSurface;
   WUniquePtr<wp_color_representation_surface_v1> mColorRepresentationSurface;
   WUniquePtr<wp_image_description_v1> mImageDescription;
+
+  static void SetLuminances(wp_image_description_creator_params_v1* aParams,
+                            float minLum, float maxLum, float refLum);
 
   static void SetContentLightLevel(
       wp_image_description_creator_params_v1* aParams,

@@ -1380,6 +1380,56 @@ function checkAppBundleModTime() {
 }
 
 /**
+ * Checks that the updater wrote update_telemetry.json to the install directory
+ * with a valid, recent install_timestamp. On macOS the updater does not write
+ * this file so we assert it is absent instead.
+ */
+function checkUpdateTelemetry() {
+  if (AppConstants.platform == "macosx") {
+    checkNoUpdateTelemetry();
+    return;
+  }
+  let telemetryFile = getApplyDirFile("update_telemetry.json");
+  Assert.ok(
+    telemetryFile.exists(),
+    "update_telemetry.json should exist in the install directory"
+  );
+  let contents = readFile(telemetryFile);
+  Assert.ok(contents, "update_telemetry.json should not be empty");
+  Assert.ok(
+    !contents.includes("\0"),
+    "update_telemetry.json should be UTF-8 encoded (no null bytes)"
+  );
+  let data = JSON.parse(contents);
+  Assert.ok(
+    "install_timestamp" in data,
+    "update_telemetry.json should contain install_timestamp"
+  );
+  let ts = parseInt(data.install_timestamp, 10);
+  Assert.ok(
+    !isNaN(ts) && ts > 0,
+    "install_timestamp should be a positive number"
+  );
+  let nowMs = Date.now();
+  Assert.less(
+    nowMs - ts,
+    300000,
+    "install_timestamp should be within the last 5 minutes"
+  );
+}
+
+/**
+ * Checks that update_telemetry.json was NOT written to the install directory.
+ */
+function checkNoUpdateTelemetry() {
+  let telemetryFile = getApplyDirFile("update_telemetry.json");
+  Assert.ok(
+    !telemetryFile.exists(),
+    "update_telemetry.json should not exist in the install directory"
+  );
+}
+
+/**
  * Performs Update Manager checks to verify that the update metadata is correct
  * and that it is the same after the update xml files are reloaded.
  *
@@ -4222,19 +4272,50 @@ function checkFilesAfterUpdateCommon(aStageDirExists, aToBeDeletedDirExists) {
   }
 
   debugDump(
-    "testing backup files should not be left behind in the " +
+    "testing temporary files should not be left behind in the " +
       "application directory"
   );
   let applyToDir = getApplyDirFile();
-  checkFilesInDirRecursive(applyToDir, checkForBackupFiles);
+  checkFilesInDirRecursive(applyToDir, checkForTemporaryFiles);
 
   if (stageDir.exists()) {
     debugDump(
-      "testing backup files should not be left behind in the " +
+      "testing temporary files should not be left behind in the " +
         "staging directory"
     );
-    checkFilesInDirRecursive(stageDir, checkForBackupFiles);
+    checkFilesInDirRecursive(stageDir, checkForTemporaryFiles);
   }
+}
+
+/**
+ * Asserts that the tobedeleted directory contains exactly aExpectedCount
+ * relocated files (files whose names start with "moz").
+ *
+ * @param   aExpectedCount
+ *          The number of relocated files that the directory should contain.
+ * @returns
+ *          The relocated files as an array of nsIFile. Relocated files are
+ *          named after a UUID, so this is the only way for a caller to check
+ *          which files were relocated, for instance by comparing contents.
+ */
+function checkToBeDeletedFileCount(aExpectedCount) {
+  let toBeDeletedDir = getApplyDirFile(DIR_TOBEDELETED);
+  let relocatedFiles = [];
+  let dirEntries = toBeDeletedDir.directoryEntries;
+  while (dirEntries.hasMoreElements()) {
+    let entry = dirEntries.nextFile;
+    if (entry.isFile() && entry.leafName.startsWith("moz")) {
+      relocatedFiles.push(entry);
+    }
+  }
+  Assert.equal(
+    relocatedFiles.length,
+    aExpectedCount,
+    "the tobedeleted directory should contain " +
+      aExpectedCount +
+      " relocated file(s)"
+  );
+  return relocatedFiles;
 }
 
 /**
@@ -4426,18 +4507,22 @@ async function waitForFilesInUse() {
 }
 
 /**
- * Helper function for updater binary tests for verifying there are no update
- * backup files left behind after an update.
+ * Helper function for updater binary tests for verifying there are no temporary
+ * update files left behind after an update.
  *
  * @param   aFile
- *          An nsIFile to check if it has moz-backup for its extension.
+ *          An nsIFile to check if it has moz-backup or moz-draft for its
+ *          extension.
  */
-function checkForBackupFiles(aFile) {
-  Assert.notEqual(
-    getFileExtension(aFile),
-    "moz-backup",
-    "the file's extension should not equal moz-backup" + getMsgPath(aFile.path)
-  );
+function checkForTemporaryFiles(aFile) {
+  for (const extension of ["moz-backup", "moz-draft"]) {
+    Assert.notEqual(
+      getFileExtension(aFile),
+      extension,
+      `the file's extension should not equal ${extension}` +
+        getMsgPath(aFile.path)
+    );
+  }
 }
 
 /**

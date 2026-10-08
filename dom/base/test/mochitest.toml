@@ -433,6 +433,8 @@ skip-if = [
   "http3",
 ]
 
+["test_focus_move_during_composition.html"]
+
 ["test_focus_radio.html"]
 
 ["test_focus_scroll_padding_tab.html"]
@@ -754,6 +756,14 @@ skip-if = [
   "debug && verify-standalone",
   "http2",
   "http3",
+]
+
+["test_wasm_offthread_compile.html"]
+support-files = [
+  "file_wasm_offthread_module.sjs",
+]
+skip-if = [
+  "!nightly_build",
 ]
 
 ["test_window_close.html"]

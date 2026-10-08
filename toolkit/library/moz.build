@@ -25,6 +25,7 @@ def Libxul(name, output_category=None):
 
     DELAYLOAD_DLLS += [
         "avrt.dll",
+        "bcrypt.dll",
         "comdlg32.dll",
         "credui.dll",
         "crypt32.dll",
@@ -390,7 +391,10 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
     ]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
-    OS_LIBS += ["mediandk"]
+    OS_LIBS += [
+        "mediandk",
+        "sync",
+    ]
 
 # The buildid is refreshed on every (incremental) build. But we want to avoid
 # rebuilding libxul every time, so instead of having a source file that

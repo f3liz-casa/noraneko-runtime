@@ -4,22 +4,24 @@
 
 package mozilla.components.browser.thumbnails
 
+import android.os.SystemClock
 import mozilla.components.browser.state.action.BrowserAction
 import mozilla.components.browser.state.action.ContentAction
 import mozilla.components.browser.state.action.TabListAction
 import mozilla.components.browser.state.state.BrowserState
+import mozilla.components.browser.thumbnails.facts.BrowserThumbnailsFacts
+import mozilla.components.browser.thumbnails.facts.emitBrowserThumbnailsFact
 import mozilla.components.browser.thumbnails.storage.ThumbnailStorage
 import mozilla.components.concept.base.images.ImageSaveRequest
 import mozilla.components.lib.state.Middleware
 import mozilla.components.lib.state.Store
+import mozilla.components.support.base.facts.Action
 
 /**
- * [Middleware] implementation for handling [ContentAction.UpdateThumbnailAction] and storing
- * the thumbnail to the disk cache.
+ * [Middleware] implementation for handling [ContentAction.UpdateThumbnailAction] and storing the thumbnail to the disk
+ * cache.
  */
-class ThumbnailsMiddleware(
-    private val thumbnailStorage: ThumbnailStorage,
-) : Middleware<BrowserState, BrowserAction> {
+class ThumbnailsMiddleware(private val thumbnailStorage: ThumbnailStorage) : Middleware<BrowserState, BrowserAction> {
     override fun invoke(
         store: Store<BrowserState, BrowserAction>,
         next: (BrowserAction) -> Unit,
@@ -27,14 +29,18 @@ class ThumbnailsMiddleware(
     ) {
         when (action) {
             is TabListAction.RemoveAllNormalTabsAction -> {
-                store.state.tabs.filterNot { it.content.private }.forEach { tab ->
-                    thumbnailStorage.deleteThumbnail(tab.id, isPrivate = false)
-                }
+                store.state.tabs
+                    .filterNot { it.content.private }
+                    .forEach { tab ->
+                        thumbnailStorage.deleteThumbnail(tab.id, isPrivate = false)
+                    }
             }
             is TabListAction.RemoveAllPrivateTabsAction -> {
-                store.state.tabs.filter { it.content.private }.forEach { tab ->
-                    thumbnailStorage.deleteThumbnail(tab.id, isPrivate = true)
-                }
+                store.state.tabs
+                    .filter { it.content.private }
+                    .forEach { tab ->
+                        thumbnailStorage.deleteThumbnail(tab.id, isPrivate = true)
+                    }
             }
             is TabListAction.RemoveAllTabsAction -> {
                 thumbnailStorage.clearThumbnails()
@@ -53,10 +59,23 @@ class ThumbnailsMiddleware(
             is ContentAction.UpdateThumbnailAction -> {
                 // Store the captured tab screenshot from the EngineView when the session's
                 // thumbnail is updated.
-                store.state.tabs.find { it.id == action.sessionId }?.let { session ->
-                    val request = ImageSaveRequest(session.id, session.content.private)
-                    thumbnailStorage.saveThumbnail(request, action.thumbnail)
-                }
+                store.state.tabs
+                    .find { it.id == action.sessionId }
+                    ?.let { session ->
+                        val request = ImageSaveRequest(session.id, session.content.private)
+                        val startedAt = SystemClock.elapsedRealtime()
+                        thumbnailStorage.saveThumbnail(request, action.thumbnail).invokeOnCompletion {
+                            emitBrowserThumbnailsFact(
+                                action = Action.IMPLEMENTATION_DETAIL,
+                                item = BrowserThumbnailsFacts.Items.DISK_WRITE_DURATION,
+                                metadata =
+                                    mapOf(
+                                        BrowserThumbnailsFacts.MetadataKeys.DURATION_MS to
+                                            SystemClock.elapsedRealtime() - startedAt
+                                    ),
+                            )
+                        }
+                    }
                 return // Do not let the thumbnail actions continue through to the reducer.
             }
             else -> {
@@ -66,6 +85,5 @@ class ThumbnailsMiddleware(
         next(action)
     }
 
-    private fun BrowserState.isTabIdPrivate(id: String): Boolean =
-        tabs.any { it.id == id && it.content.private }
+    private fun BrowserState.isTabIdPrivate(id: String): Boolean = tabs.any { it.id == id && it.content.private }
 }

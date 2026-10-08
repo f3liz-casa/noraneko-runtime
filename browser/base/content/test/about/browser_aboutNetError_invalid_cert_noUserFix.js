@@ -3,12 +3,6 @@
 
 "use strict";
 
-add_setup(async function () {
-  await SpecialPowers.pushPrefEnv({
-    set: [["test.wait300msAfterTabSwitch", true]],
-  });
-});
-
 const BAD_CERT = "https://expired.example.com/";
 
 add_task(async function checkNoUserFixCertErrors() {
@@ -51,6 +45,7 @@ add_task(async function checkNoUserFixCertErrors() {
       };
       const info = Cu.cloneInto(mockErrorInfo, netErrorCard);
       netErrorCard.errorInfo = info;
+      netErrorCard.resolvedErrorId = errorCode;
       netErrorCard.errorConfig = netErrorCard.getErrorConfig();
       netErrorCard.advancedShowing = false;
       netErrorCard.hideExceptionButton = netErrorCard.shouldHideExceptionButton(
@@ -72,9 +67,7 @@ add_task(async function checkNoUserFixCertErrors() {
         () => netErrorCard.whyDangerous,
         `The 'Why Dangerous' copy should be rendered for ${errorCode}.`
       );
-      const l10nId = netErrorCard.getNSSErrorWhyDangerousL10nId(
-        netErrorCard.whyDangerous.dataset.l10nId
-      );
+      const l10nId = netErrorCard.getNSSErrorWhyDangerousL10nId(errorCode);
 
       Assert.ok(
         netErrorCard.advancedShowing,

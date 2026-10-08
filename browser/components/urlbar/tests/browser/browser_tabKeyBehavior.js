@@ -8,14 +8,22 @@
 
 "use strict";
 
+const TEST_TOP_SITE = "https://fake.example.com";
+
 add_setup(async function () {
   let sidebarRevampEnabled = Services.prefs.getBoolPref(
     "sidebar.revamp",
     false
   );
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0]],
+    set: [
+      ["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0],
+      // Ensure there is one top site in the list.
+      ["browser.newtabpage.activity-stream.default.sites", TEST_TOP_SITE],
+    ],
   });
+
+  await updateTopSites(sites => sites?.length == 1);
 
   for (let i = 0; i < UrlbarPrefs.get("maxRichResults"); i++) {
     await PlacesTestUtils.addVisits("http://example.com/" + i);
@@ -309,6 +317,24 @@ add_task(async function tabActionsSearchMode() {
   await UrlbarTestUtils.promisePopupClose(window);
 });
 
+// Mirrors UrlbarView's KEYBOARD_SELECTABLE_ELEMENT_SELECTOR to skip disabled rows.
+const KEYBOARD_SELECTABLE_ELEMENT_SELECTOR =
+  '[role=button]:not([keyboard-inaccessible]):not([aria-disabled="true"]), [selectable], a';
+
+function getKeyboardSelectableRowIndexes() {
+  let indexes = [];
+  for (let i = 0; i < UrlbarTestUtils.getResultCount(window); i++) {
+    if (
+      UrlbarTestUtils.getRowAt(window, i).querySelector(
+        KEYBOARD_SELECTABLE_ELEMENT_SELECTOR
+      )
+    ) {
+      indexes.push(i);
+    }
+  }
+  return indexes;
+}
+
 async function expectTabThroughResults(options = { reverse: false }) {
   let resultCount = UrlbarTestUtils.getResultCount(window);
   Assert.greater(resultCount, 0, "There should be results");
@@ -322,7 +348,21 @@ async function expectTabThroughResults(options = { reverse: false }) {
     "Check the initial selection."
   );
 
-  for (let i = initiallySelectedIndex + 1; i < resultCount; i++) {
+  let selectableIndexes = getKeyboardSelectableRowIndexes();
+  Assert.greater(
+    selectableIndexes.length,
+    0,
+    "There should be selectable results"
+  );
+
+  let expectedIndexes = selectableIndexes.filter(
+    index => index != initiallySelectedIndex
+  );
+  if (options.reverse) {
+    expectedIndexes.reverse();
+  }
+
+  for (let expectedIndex of expectedIndexes) {
     EventUtils.synthesizeKey("KEY_Tab", { shiftKey: options.reverse });
     if (
       document.activeElement == document.querySelector(".searchmode-switcher")
@@ -340,7 +380,8 @@ async function expectTabThroughResults(options = { reverse: false }) {
     }
     Assert.equal(
       UrlbarTestUtils.getSelectedRowIndex(window),
-      options.reverse ? resultCount - i : i
+      expectedIndex,
+      `Tab should have selected the row at index ${expectedIndex}.`
     );
   }
 
@@ -352,8 +393,8 @@ async function expectTabThroughResults(options = { reverse: false }) {
   if (!options.reverse) {
     Assert.equal(
       UrlbarTestUtils.getSelectedRowIndex(window),
-      0,
-      "Should be back at index 0 after tabbing out of the unified search button."
+      selectableIndexes[0],
+      "Should be back at the first selectable row after tabbing out of the unified search button."
     );
   }
 

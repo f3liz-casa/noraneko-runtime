@@ -380,4 +380,152 @@ describe("MultiSelect component", () => {
     const checkbox = wrapper.find("input[type='checkbox']").first();
     assert.strictEqual(checkbox.prop("tabIndex"), "-1");
   });
+
+  describe("card item designs", () => {
+    // Both card designs pair a label with a description beneath it. The layout
+    // is CSS-only, so what the component has to get right is the container
+    // class and the description's association with its checkbox.
+    const CARD_DATA = [
+      {
+        id: "interaction-data",
+        type: "checkbox",
+        defaultValue: true,
+        label: "Send technical and interaction data to Mozilla",
+        description: "Data about your device, hardware configuration...",
+      },
+      {
+        id: "crash-data",
+        type: "checkbox",
+        defaultValue: false,
+        label: "Automatically send crash reports",
+        description: "Crash reports allow us to diagnose and fix issues...",
+      },
+    ];
+
+    function assertCardDesign(design) {
+      const CARD_PROPS = { ...MULTISELECT_SCREEN_PROPS };
+      CARD_PROPS.content.tiles.multiSelectItemDesign = design;
+      CARD_PROPS.content.tiles.data = CARD_DATA;
+
+      const wrapper = mount(<MultiSelect {...CARD_PROPS} />);
+      wrapper.setProps({ activeMultiSelect: ["interaction-data"] });
+
+      const container = wrapper.find(".multi-select-container");
+      assert.strictEqual(container.hasClass(design), true);
+      assert.strictEqual(
+        container.hasClass("picker"),
+        false,
+        "Card designs are not pickers"
+      );
+
+      const descriptions = wrapper.find("p#interaction-data-description");
+      assert.lengthOf(descriptions, 1);
+
+      // The description is what the checkbox is described by, so screen
+      // readers announce the second line with the item.
+      const checkbox = wrapper.find("input#interaction-data");
+      assert.strictEqual(
+        checkbox.prop("aria-describedby"),
+        "interaction-data-description"
+      );
+
+      wrapper.unmount();
+    }
+
+    it("should put select-card on the container and describe each item", () => {
+      assertCardDesign("select-card");
+    });
+
+    it("should put grouped-card on the container and describe each item", () => {
+      assertCardDesign("grouped-card");
+    });
+  });
+
+  describe("unchecked notices", () => {
+    let NOTICE_PROPS;
+
+    beforeEach(() => {
+      NOTICE_PROPS = { ...MULTISELECT_SCREEN_PROPS };
+      NOTICE_PROPS.content = { ...MULTISELECT_SCREEN_PROPS.content };
+      NOTICE_PROPS.content.tiles = {
+        type: "multiselect",
+        data: [
+          {
+            id: "checkbox-with-notice",
+            defaultValue: true,
+            label: "Add Firefox to your taskbar",
+            action: { type: "PIN_FIREFOX_TO_TASKBAR" },
+            uncheckedNotice: {
+              title: "Keep Firefox a click away",
+              subtitle: "Quickly jump back in to your favorite sites.",
+            },
+          },
+          {
+            id: "checkbox-without-notice",
+            defaultValue: true,
+            label: "Open all links with Firefox",
+            action: { type: "SET_DEFAULT_BROWSER" },
+          },
+        ],
+      };
+    });
+
+    it("should not render a notice region for items without uncheckedNotice", () => {
+      const wrapper = mount(<MultiSelect {...NOTICE_PROPS} />);
+      assert.lengthOf(wrapper.find(".multi-select-notice-region"), 1);
+      assert.lengthOf(wrapper.find(".multi-select-item-group"), 1);
+    });
+
+    it("should keep the live region mounted but empty while the item is checked", () => {
+      const wrapper = mount(
+        <MultiSelect
+          {...NOTICE_PROPS}
+          activeMultiSelect={["checkbox-with-notice"]}
+        />
+      );
+
+      const region = wrapper.find(".multi-select-notice-region");
+      assert.strictEqual(region.prop("role"), "status");
+      assert.lengthOf(wrapper.find(".multi-select-notice"), 0);
+    });
+
+    it("should render the notice when the item is unchecked", () => {
+      const wrapper = mount(
+        <MultiSelect {...NOTICE_PROPS} activeMultiSelect={[]} />
+      );
+
+      const notice = wrapper.find(".multi-select-notice");
+      assert.lengthOf(notice, 1);
+      assert.include(notice.text(), "Keep Firefox a click away");
+      assert.include(
+        notice.text(),
+        "Quickly jump back in to your favorite sites."
+      );
+    });
+
+    it("should hide the notice again when the item is re-checked", () => {
+      const wrapper = mount(
+        <MultiSelect {...NOTICE_PROPS} activeMultiSelect={[]} />
+      );
+      assert.lengthOf(wrapper.find(".multi-select-notice"), 1);
+
+      wrapper.setProps({ activeMultiSelect: ["checkbox-with-notice"] });
+      assert.lengthOf(wrapper.find(".multi-select-notice"), 0);
+    });
+
+    it("should apply a configured icon URL", () => {
+      NOTICE_PROPS.content.tiles.data[0].uncheckedNotice.iconURL =
+        "chrome://global/skin/icons/shield.svg";
+      const wrapper = mount(
+        <MultiSelect {...NOTICE_PROPS} activeMultiSelect={[]} />
+      );
+
+      assert.deepEqual(
+        wrapper.find(".multi-select-notice-icon").prop("style"),
+        {
+          backgroundImage: 'url("chrome://global/skin/icons/shield.svg")',
+        }
+      );
+    });
+  });
 });

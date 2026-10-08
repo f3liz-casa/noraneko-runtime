@@ -2,6 +2,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+## Monitor Toolbar Button
+
+# Toolbar button that opens the panel where the user creates a monitor
+smartwindow-monitor-button =
+    .label = Monitors
+    .tooltiptext = Monitors
+
 ## AI Tasks
 
 # Desktop notification shown when a AI Tasks fires. A "monitor" is
@@ -110,8 +117,6 @@ ai-tasks-alert-error-max-urls = { $maxUrls ->
 
 ## Accessibility - ARIA labels and accessibility text
 
-ai-tasks-alert-remove-page-label =
-  .aria-label = Remove page
 ai-tasks-alert-show-details =
   .aria-label = Show task details
 ai-tasks-alert-add-url = Add page
@@ -225,6 +230,13 @@ ai-tasks-alert-condition-not-met = No match
 # the user did not say what the page should focus on.
 ai-tab-default-page-title = Generated page
 
+# Shown in place of a generated page when it can no longer be found, for
+# example because the user deleted it.
+ai-tab-page-unavailable = This page isn’t available anymore.
+
+# Shown in place of a generated page when it could not be loaded.
+ai-tab-page-error = Something went wrong loading this page.
+
 ## Smartbar command palette
 ## Slash commands shown in the smartbar when the user types "/".
 
@@ -236,3 +248,83 @@ smartbar-command-watch-description = Get notified when pages change
 # Footer note shown at the bottom of the command palette, hinting that more
 # task command types will be added later.
 smartbar-command-coming-soon = More types of tasks are coming soon
+
+## Smart Form Fill
+
+ai-smart-form-fill-autocomplete-label = Smart Form Fill
+ai-smart-form-fill-autocomplete-loading = Loading
+ai-smart-form-fill-autocomplete-sources-label = Fill from sources
+ai-smart-form-fill-autocomplete-choose-tabs = Open or choose pages related to this form to get autofill suggestions
+ai-smart-form-fill-autocomplete-open-tabs = Open pages related to this form to get autofill suggestions
+ai-smart-form-fill-close-review =
+    .label = Close
+
+# Variables:
+#   $tabs (number) - The number of tabs used as a source for autofill
+ai-smart-form-fill-autocomplete-tabs-count =
+    { $tabs ->
+        [one] { $tabs } tab
+       *[other] { $tabs } tabs
+    }
+
+# Sources are what tabs the Smart Form Fill should use to generate field values
+ai-smart-form-fill-edit-sources = Edit sources
+ai-smart-form-fill-suggested-tabs = Suggested tabs
+ai-smart-form-fill-other-tabs = Other tabs
+
+# Variables:
+#   $tabTitle (string) - Title of the tab controlled by the toggle
+ai-smart-form-fill-tab-select-toggle =
+    .aria-label = Toggle tab selection for “{ $tabTitle }”
+
+ai-smart-form-fill-cancel-tab-select =
+    .label = Cancel
+
+ai-smart-form-fill-accept-tab-select =
+    .label = Done
+
+ai-smart-form-fill-fill-form =
+    .label = Fill form
+
+ai-smart-form-fill-review-heading = Review suggestions
+
+# Variables:
+#   $count (number) - The number of generated form field suggestions
+ai-smart-form-fill-review-description =
+    { $count ->
+        [one] We found suggestions for { $count } field. Edit or delete anything that’s not correct.
+       *[other] We found suggestions for { $count } fields. Edit or delete anything that’s not correct.
+    }
+
+ai-smart-form-fill-field =
+    .label = Field
+
+ai-smart-form-fill-jump-to-bottom =
+    .tooltiptext = Jump to bottom
+    .aria-label = Jump to bottom of suggestions
+
+ai-smart-form-fill-cancel-review =
+    .label = Cancel
+
+ai-smart-form-fill-finding-suggestions = Finding suggestions
+
+ai-smart-form-fill-stop-finding-suggestions =
+    .aria-label = Stop finding suggestions
+
+ai-smart-form-fill-success-heading = Suggestions added to form
+ai-smart-form-fill-success-description = Review the form and fill any remaining fields before you submit.
+
+ai-smart-form-fill-no-changes-heading = No changes applied
+ai-smart-form-fill-no-changes-description = Smart Form Fill didn’t fill any fields. Check the form and try again.
+
+ai-smart-form-fill-no-suggestions-heading = No suggestions found
+ai-smart-form-fill-no-suggestions-description = Smart Form Fill wasn’t able to generate any suggestions for this form.
+
+ai-smart-form-fill-error-try-again-heading = Suggestions weren’t added to the form
+ai-smart-form-fill-error-try-again-description = Something went wrong. Try adding suggestions again.
+
+ai-smart-form-fill-error-heading = Suggestions weren’t added
+ai-smart-form-fill-error-description = Something went wrong. To try again, select a form field and choose Fill from sources.
+
+ai-smart-form-fill-try-again =
+    .label = Try again

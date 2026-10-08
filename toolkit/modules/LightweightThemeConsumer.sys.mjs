@@ -422,7 +422,7 @@ LightweightThemeConsumer.prototype = {
     }
     let builtinThemeConfig = lazy.BuiltInThemeConfig.get(theme.id);
     let hasTheme = theme.id != DEFAULT_THEME_ID && !builtinThemeConfig?.inApp;
-    this._doc.forceNonNativeTheme = !!builtinThemeConfig?.nonNative;
+    this._doc.forceNonNativeTheme = theme.id != DEFAULT_THEME_ID;
 
     let root = this._doc.documentElement;
     root.toggleAttribute("lwtheme-image", !!(hasTheme && theme.headerImage));
@@ -436,18 +436,19 @@ LightweightThemeConsumer.prototype = {
     root.toggleAttribute(
       "theme-image-in-toolbox",
       (() => {
-        if (hasTheme) {
-          // TODO(emilio): Consider adding an opt-in to lwthemes into this
-          // behavior.
-          return !!theme.backgroundsAlignment?.split(",").some(alignment => {
+        if (theme.backgroundsArea && theme.backgroundsArea != "auto") {
+          return theme.backgroundsArea == "top_toolbars";
+        }
+        return (
+          hasTheme &&
+          !!theme.backgroundsAlignment?.split(",").some(alignment => {
             if (alignment == "center" || alignment == "bottom") {
               return true;
             }
             let [, y] = alignment.split(" ");
             return y == "center" || y == "bottom";
-          });
-        }
-        return this.BROWSER_NOVA_ENABLED;
+          })
+        );
       })()
     );
     this._setExperiment(hasTheme, themeData.experiment, theme.experimental);

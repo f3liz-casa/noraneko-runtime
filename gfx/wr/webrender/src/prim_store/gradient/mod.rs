@@ -34,16 +34,6 @@ fn stops_and_min_alpha(stop_keys: &[GradientStopKey]) -> (Vec<GradientStop>, f32
     (stops, min_alpha)
 }
 
-// If the gradient is not tiled we know that any content outside of the clip will not
-// be shown. Applying the clip early reduces how much of the gradient we
-// render and cache. We do this optimization separately on each axis.
-// Returns the offset between the new and old primitive rect origin, to apply to the
-// gradient parameters that are relative to the primitive origin.
-// `apply_gradient_local_clip` now lives in `webrender_api::prim_geometry` so
-// content-process interning can share it. Re-exported here to keep existing
-// references working.
-pub use api::prim_geometry::apply_gradient_local_clip;
-
 #[test]
 #[cfg(target_pointer_width = "64")]
 fn test_struct_sizes() {
@@ -55,14 +45,14 @@ fn test_struct_sizes() {
     // (b) You made a structure larger. This is not necessarily a problem, but should only
     //     be done with care, and after checking if talos performance regresses badly.
     assert_eq!(mem::size_of::<LinearGradient>(), 72, "LinearGradient size changed");
-    assert_eq!(mem::size_of::<LinearGradientTemplate>(), 72, "LinearGradientTemplate size changed");
-    assert_eq!(mem::size_of::<LinearGradientKey>(), 72, "LinearGradientKey size changed");
+    assert_eq!(mem::size_of::<LinearGradientTemplate>(), 104, "LinearGradientTemplate size changed");
+    assert_eq!(mem::size_of::<LinearGradientKey>(), 104, "LinearGradientKey size changed");
 
     assert_eq!(mem::size_of::<RadialGradient>(), 72, "RadialGradient size changed");
-    assert_eq!(mem::size_of::<RadialGradientTemplate>(), 80, "RadialGradientTemplate size changed");
-    assert_eq!(mem::size_of::<RadialGradientKey>(), 72, "RadialGradientKey size changed");
+    assert_eq!(mem::size_of::<RadialGradientTemplate>(), 112, "RadialGradientTemplate size changed");
+    assert_eq!(mem::size_of::<RadialGradientKey>(), 112, "RadialGradientKey size changed");
 
     assert_eq!(mem::size_of::<ConicGradient>(), 72, "ConicGradient size changed");
-    assert_eq!(mem::size_of::<ConicGradientTemplate>(), 80, "ConicGradientTemplate size changed");
-    assert_eq!(mem::size_of::<ConicGradientKey>(), 72, "ConicGradientKey size changed");
+    assert_eq!(mem::size_of::<ConicGradientTemplate>(), 112, "ConicGradientTemplate size changed");
+    assert_eq!(mem::size_of::<ConicGradientKey>(), 112, "ConicGradientKey size changed");
 }

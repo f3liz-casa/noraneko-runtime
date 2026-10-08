@@ -10,6 +10,7 @@ import { DiscoveryStreamBase } from "content-src/components/DiscoveryStreamBase/
 import { ErrorBoundary } from "content-src/components/ErrorBoundary/ErrorBoundary";
 import { CustomizeMenu } from "content-src/components/CustomizeMenu/CustomizeMenu";
 import { BaseContext } from "content-src/lib/BaseContext";
+import { CUSTOMIZE_SUBPANELS } from "content-src/lib/constants";
 import React, { useState, useEffect } from "react";
 import { Search } from "content-src/components/Search/Search";
 import { TopSites } from "content-src/components/TopSites/TopSites";
@@ -32,17 +33,30 @@ import {
 } from "../../lib/asrouter-message-utils.mjs";
 import {
   WIDGET_REGISTRY,
+  hasContentAreaWidgets,
   isWidgetEnabled,
   isWidgetToggleVisible,
   isWidgetsContainerVisible,
-  resolveWidgetHasSidebar,
-  resolveWidgetSize,
 } from "common/WidgetsRegistry.mjs";
+import {
+  isSideBySideActive,
+  isSpaceOverridden,
+  isSpacesActive,
+  SPACE_IDS,
+  sideBySideBandClasses,
+  spacesBandClasses,
+} from "common/PageLayoutVariants.mjs";
+
+const CLOSED_SUBPANELS = {
+  activeSubpanel: null,
+  wallpapersPanelCategory: null,
+};
 
 const VISIBLE = "visible";
 const VISIBILITY_CHANGE_EVENT = "visibilitychange";
-// Minimum scroll distance in pixels to record a scroll telemetry event.
-const SCROLL_TELEMETRY_THRESHOLD = 50;
+// Scroll distances in pixels, in ascending order, that each record a scroll
+// telemetry event the first time they are passed in a session.
+const SCROLL_TELEMETRY_THRESHOLDS = [50, 100, 250];
 const PREF_INFERRED_PERSONALIZATION_SYSTEM =
   "discoverystream.sections.personalization.inferred.enabled";
 const PREF_INFERRED_PERSONALIZATION_USER =
@@ -134,11 +148,14 @@ export class BaseContent extends React.PureComponent {
     this.toggleWidgetsManagementPanel =
       this.toggleWidgetsManagementPanel.bind(this);
     this.toggleThemesPanel = this.toggleThemesPanel.bind(this);
+    this.openWallpapersPanel = this.openWallpapersPanel.bind(this);
+    this.closeWallpapersPanel = this.closeWallpapersPanel.bind(this);
+    this.closeSubpanels = this.closeSubpanels.bind(this);
     this.openWidgetsPanel = this.openWidgetsPanel.bind(this);
     this.attachSearchSentinel = this.attachSearchSentinel.bind(this);
     this.onSearchSentinelIntersect = this.onSearchSentinelIntersect.bind(this);
     this.searchStickyObserver = null;
-    this._hasScrolledForSession = false;
+    this._nextScrollThreshold = 0;
     this.state = {
       fixedSearch: false,
       colorMode: "",
@@ -146,9 +163,7 @@ export class BaseContent extends React.PureComponent {
       wallpaperTheme: "",
       showDownloadHighlightOverride: null,
       visible: false,
-      showSectionsMgmtPanel: false,
-      showWidgetsManagementPanel: false,
-      showThemesPanel: false,
+      ...CLOSED_SUBPANELS,
     };
     this.spocPlaceholderStartTime = null;
   }
@@ -381,6 +396,10 @@ export class BaseContent extends React.PureComponent {
         prefs["newtabWallpapers.customWallpaper.theme"];
       const prevUploadedWallpaperTheme =
         prevPrefs["newtabWallpapers.customWallpaper.theme"];
+      const uploadedWallpaperPosition =
+        prefs["newtabWallpapers.customWallpaper.position"];
+      const prevUploadedWallpaperPosition =
+        prevPrefs["newtabWallpapers.customWallpaper.position"];
 
       // don't update wallpaper unless the wallpaper is being changed.
       if (
@@ -391,7 +410,8 @@ export class BaseContent extends React.PureComponent {
         wallpaperList !== prevWallpaperList || // remote settings wallpaper list updates
         this.props.App.isForStartupCache.Wallpaper !==
           prevProps.App.isForStartupCache.Wallpaper || // Startup cached page wallpaper is updating
-        uploadedWallpaperTheme !== prevUploadedWallpaperTheme
+        uploadedWallpaperTheme !== prevUploadedWallpaperTheme ||
+        uploadedWallpaperPosition !== prevUploadedWallpaperPosition
       ) {
         this.updateWallpaper();
       }
@@ -463,12 +483,17 @@ export class BaseContent extends React.PureComponent {
   }
 
   onWindowScroll() {
-    if (
-      !this._hasScrolledForSession &&
-      global.scrollY > SCROLL_TELEMETRY_THRESHOLD
+    // A single scroll can pass several thresholds at once, so report every
+    // threshold that hasn't been reported yet.
+    while (
+      this._nextScrollThreshold < SCROLL_TELEMETRY_THRESHOLDS.length &&
+      global.scrollY > SCROLL_TELEMETRY_THRESHOLDS[this._nextScrollThreshold]
     ) {
-      this._hasScrolledForSession = true;
-      this.props.dispatch(ac.OnlyToMain({ type: at.NEW_TAB_SCROLL }));
+      const threshold =
+        SCROLL_TELEMETRY_THRESHOLDS[this._nextScrollThreshold++];
+      this.props.dispatch(
+        ac.OnlyToMain({ type: at.NEW_TAB_SCROLL, data: { threshold } })
+      );
     }
 
     if (this.props.Prefs.values[PREF_NOVA_ENABLED]) {
@@ -554,7 +579,6 @@ export class BaseContent extends React.PureComponent {
 
   openCustomizationMenu() {
     this.props.dispatch({ type: at.SHOW_PERSONALIZE });
-    this.props.dispatch(ac.UserEvent({ event: "SHOW_PERSONALIZE" }));
   }
 
   closeCustomizationMenu() {
@@ -587,19 +611,33 @@ export class BaseContent extends React.PureComponent {
     }
   }
 
+  // The saved image the page is showing, used to read its attribution.
+  appliedSavedWallpaper() {
+    const { customWallpapers } = this.props.Wallpapers;
+    const filename =
+      this.props.Prefs.values["newtabWallpapers.customWallpaper.uuid"];
+    if (!filename) {
+      return null;
+    }
+    return customWallpapers?.find(wallpaper => wallpaper.filename === filename);
+  }
+
   renderWallpaperAttribution() {
     const { wallpaperList } = this.props.Wallpapers;
     const activeWallpaper =
       this.props.Prefs.values[`newtabWallpapers.wallpaper`] ||
       this.props.Prefs.values[`newtabWallpapers.initialWallpaper`];
-    const selected = wallpaperList.find(wp => wp.title === activeWallpaper);
+    const attribution =
+      activeWallpaper === "custom"
+        ? this.appliedSavedWallpaper()?.attribution
+        : wallpaperList.find(wp => wp.title === activeWallpaper)?.attribution;
     // make sure a wallpaper is selected and that the attribution also exists
-    if (!selected?.attribution) {
+    if (!attribution) {
       return null;
     }
 
-    const { name: authorDetails, webpage } = selected.attribution;
-    if (activeWallpaper && wallpaperList && authorDetails.url) {
+    const { name: authorDetails, webpage } = attribution;
+    if (activeWallpaper && authorDetails?.url && webpage?.url) {
       return (
         <p
           className={`wallpaper-attribution`}
@@ -669,8 +707,10 @@ export class BaseContent extends React.PureComponent {
     if (selectedWallpaper === "custom" && uploadedWallpaperUrl) {
       url = uploadedWallpaperUrl;
       color = "transparent";
-      // Note: There is no method to set a specific background position for custom wallpapers
-      backgroundPosition = "center";
+      // Nobody picks a position. An upload is centered, and a saved Firefox
+      // wallpaper keeps the crop it shipped with through this pref.
+      backgroundPosition =
+        prefs["newtabWallpapers.customWallpaper.position"] || "center";
       newTheme = uploadedWallpaperTheme || colorMode;
     } else if (wallpaperList) {
       const wallpaper = wallpaperList.find(
@@ -795,32 +835,48 @@ export class BaseContent extends React.PureComponent {
     return 0.2125 * r + 0.7154 * g + 0.0721 * b <= 110;
   }
 
-  toggleSectionsMgmtPanel() {
+  toggleSubpanel(id) {
     this.setState(prevState => ({
-      showSectionsMgmtPanel: !prevState.showSectionsMgmtPanel,
+      activeSubpanel: prevState.activeSubpanel === id ? null : id,
     }));
+  }
+
+  toggleSectionsMgmtPanel() {
+    this.toggleSubpanel(CUSTOMIZE_SUBPANELS.SECTIONS);
   }
 
   toggleWidgetsManagementPanel() {
-    this.setState(prevState => ({
-      showWidgetsManagementPanel: !prevState.showWidgetsManagementPanel,
-    }));
+    this.toggleSubpanel(CUSTOMIZE_SUBPANELS.WIDGETS);
   }
 
   toggleThemesPanel() {
-    this.setState(prevState => ({
-      showThemesPanel: !prevState.showThemesPanel,
-    }));
+    this.toggleSubpanel(CUSTOMIZE_SUBPANELS.THEMES);
+  }
+
+  openWallpapersPanel(categoryId) {
+    this.setState({
+      activeSubpanel: CUSTOMIZE_SUBPANELS.WALLPAPERS,
+      wallpapersPanelCategory: categoryId,
+    });
+  }
+
+  // Keeps wallpapersPanelCategory so the heading and wallpaper list stay
+  // populated while the subpanel slides out. The next open overwrites it.
+  closeWallpapersPanel() {
+    this.setState(prevState =>
+      prevState.activeSubpanel === CUSTOMIZE_SUBPANELS.WALLPAPERS
+        ? { activeSubpanel: null }
+        : null
+    );
+  }
+
+  closeSubpanels() {
+    this.setState(CLOSED_SUBPANELS);
   }
 
   openWidgetsPanel() {
     this.openCustomizationMenu();
-    if (!this.state.showWidgetsManagementPanel) {
-      this.setState({
-        showWidgetsManagementPanel: true,
-        showSectionsMgmtPanel: false,
-      });
-    }
+    this.setState({ activeSubpanel: CUSTOMIZE_SUBPANELS.WIDGETS });
   }
 
   shouldDisplayTopicSelectionModal() {
@@ -895,7 +951,9 @@ export class BaseContent extends React.PureComponent {
 
     const topSitesEnabled = prefs["feeds.topsites"];
     const pocketEnabled =
-      prefs["feeds.section.topstories"] && prefs["feeds.system.topstories"];
+      (prefs["feeds.section.topstories"] ||
+        isSpaceOverridden(SPACE_IDS.STORIES, prefs)) &&
+      prefs["feeds.system.topstories"];
     // @nova-cleanup(remove): pre-Nova; `filteredSections` is the legacy
     // Sections redux slice that no longer drives Nova layout. Nova uses
     // `noContentSectionsEnabled` (declared in the Nova branch below).
@@ -905,7 +963,10 @@ export class BaseContent extends React.PureComponent {
       filteredSections.filter(section => section.enabled).length === 0;
     const enabledSections = {
       topSitesEnabled,
-      pocketEnabled: prefs["feeds.section.topstories"],
+      // So the toggle does not read off while the Stories space is showing.
+      pocketEnabled:
+        prefs["feeds.section.topstories"] ||
+        isSpaceOverridden(SPACE_IDS.STORIES, prefs),
       showInferredPersonalizationEnabled:
         prefs[PREF_INFERRED_PERSONALIZATION_USER],
       topSitesRowsCount: prefs.topSitesRows,
@@ -947,6 +1008,7 @@ export class BaseContent extends React.PureComponent {
     const mayHaveCrosswordWidget = widgetVisibleById("crossword");
     const mayHaveStocksWidget = widgetVisibleById("stocks");
     const mayHavePictureOfTheDayWidget = widgetVisibleById("pictureOfTheDay");
+    const mayHaveRecentSearchesWidget = widgetVisibleById("recentSearches");
 
     // These prefs set the initial values on the Customize panel toggle switches
     const enabledWidgets = {
@@ -961,6 +1023,7 @@ export class BaseContent extends React.PureComponent {
       crosswordEnabled: prefs["widgets.crossword.enabled"],
       stocksEnabled: prefs["widgets.stocks.enabled"],
       pictureOfTheDayEnabled: prefs["widgets.pictureOfTheDay.enabled"],
+      recentSearchesEnabled: prefs["widgets.recentSearches.enabled"],
       widgetsMaximized: prefs["widgets.maximized"],
       widgetsMayBeMaximized: prefs["widgets.system.maximized"],
     };
@@ -1054,6 +1117,12 @@ export class BaseContent extends React.PureComponent {
 
     const baseContextValue = { openWidgetsPanel: this.openWidgetsPanel };
 
+    // The experiment can turn the Widgets space on for a profile that had
+    // widgets off, and both the layout and the customize menu toggle have to
+    // agree with what is on the page.
+    const widgetsEnabled =
+      prefs["widgets.enabled"] || isSpaceOverridden(SPACE_IDS.WIDGETS, prefs);
+
     // @nova-cleanup(remove-conditional): Remove this conditional and
     // always render the Nova layout below. The classic render() return
     // and all its supporting variables (featureClassName, outerClassName,
@@ -1065,27 +1134,51 @@ export class BaseContent extends React.PureComponent {
       // anchors the inline-start sidebar. If the page has nothing on it
       // (no content sections, no search, no widgets), the Logo is
       // suppressed entirely via `isPageEmpty`.
-      const weatherWidget = WIDGET_REGISTRY.find(w => w.id === "weather");
-      const weatherGoesToSidebar =
-        resolveWidgetHasSidebar(weatherWidget, prefs) &&
-        resolveWidgetSize(weatherWidget, prefs) === "small";
-      const widgetsEnabled = prefs["widgets.enabled"];
       const hasAnyEnabledWidget = WIDGET_REGISTRY.some(w =>
         isWidgetEnabled(w, prefs, widgetsEnabled)
       );
-      const hasContentWidgets = WIDGET_REGISTRY.some(
-        w =>
-          isWidgetEnabled(w, prefs, widgetsEnabled) &&
-          !(w.id === "weather" && weatherGoesToSidebar)
-      );
+      const hasContentWidgets = hasContentAreaWidgets(prefs, widgetsEnabled);
       const highlightsEnabled = prefs["feeds.section.highlights"];
       const noContentSectionsEnabled =
         !topSitesEnabled && !pocketEnabled && !highlightsEnabled;
       const isPageEmpty =
         noContentSectionsEnabled && !prefs.showSearch && !hasAnyEnabledWidget;
       const hasManyTopSitesRows = topSitesEnabled && prefs.topSitesRows > 2;
+      // Recent activity is then alone in the band, and the logo leaves the sidebar.
+      const noFeedOrContentWidgets = !pocketEnabled && !hasContentWidgets;
+      // Gated here rather than in CSS, so the stylesheet never has to infer
+      // whether widgets or stories exist. The lead class alone means the
+      // experiment is assigned, which is enough to frame a lone section; the
+      // two-column layout additionally needs both sections.
+      const bandClassName = [
+        "content-full-width",
+        ...sideBySideBandClasses(prefs),
+        isSideBySideActive(prefs) && "side-by-side-active",
+        // Unlike side-by-side, an assigned-but-inactive spaces variant renders
+        // the ordinary band, so there is no Spaces container for these classes
+        // to describe.
+        ...(isSpacesActive(prefs) ? spacesBandClasses(prefs) : []),
+        noFeedOrContentWidgets && "highlights-only",
+      ]
+        .filter(Boolean)
+        .join(" ");
       const logoShouldBeCentered =
-        !pocketEnabled && !hasContentWidgets && !hasManyTopSitesRows;
+        noFeedOrContentWidgets && !hasManyTopSitesRows;
+      // The 5-column story grid is driven by the layout data alone: the content
+      // band only widens when every section has a columnCount: 5 entry. Sections
+      // share one subgrid track count, so a layout set where only some sections
+      // define 5 columns has to stay at 4 — widening it would leave the others
+      // with no tile for the active breakpoint, and nothing to render.
+      const sectionsWithLayouts = Object.values(
+        props.DiscoveryStream.feeds?.data ?? {}
+      ).find(feed => feed?.data?.sections?.length)?.data?.sections;
+      const hasFiveColumnLayout =
+        !!sectionsWithLayouts?.length &&
+        sectionsWithLayouts.every(section =>
+          section.layout?.responsiveLayouts?.some(
+            layout => layout.columnCount === 5
+          )
+        );
       // Rendered as a direct child of .container unless the logo is centered,
       // so position: sticky is bounded by .container (which spans the whole
       // page) rather than .content (which now ends above the content band).
@@ -1138,7 +1231,7 @@ export class BaseContent extends React.PureComponent {
             className={`nova-outer-wrapper${this.state.fixedSearch ? " stuck-search" : ""}`}
           >
             <div
-              className={`container nova-enabled${logoShouldBeCentered ? " logo-in-content" : ""}`}
+              className={`container nova-enabled${logoShouldBeCentered ? " logo-in-content" : ""}${hasFiveColumnLayout ? " sections-5-col" : ""}`}
             >
               <aside className="sidebar-inline-start">
                 {!prefs.hideLogo && !logoShouldBeCentered && !isPageEmpty && (
@@ -1239,8 +1332,13 @@ export class BaseContent extends React.PureComponent {
                 {/* Widgets + content feed, in a band spanning all three columns
               on the row below the grid. See _Grid.scss. */}
                 {contentFeed && (
-                  <div className="content-full-width">{contentFeed}</div>
+                  <div className={bandClassName}>{contentFeed}</div>
                 )}
+                {/* Nova only shows the wallpaper when both prefs are on, unlike
+              classic; see updateWallpaper. */}
+                {wallpapersEnabled &&
+                  wallpapersUserEnabled &&
+                  this.renderWallpaperAttribution()}
               </main>
             </div>
             <ConfirmDialog />
@@ -1269,20 +1367,21 @@ export class BaseContent extends React.PureComponent {
                 mayHaveCrosswordWidget={mayHaveCrosswordWidget}
                 mayHaveStocksWidget={mayHaveStocksWidget}
                 mayHavePictureOfTheDayWidget={mayHavePictureOfTheDayWidget}
+                mayHaveRecentSearchesWidget={mayHaveRecentSearchesWidget}
                 mayHaveWeatherForecast={
                   prefs["widgets.system.weatherForecast.enabled"]
                 }
                 weatherDisplay={prefs["weather.display"]}
                 showing={customizeMenuVisible}
                 toggleSectionsMgmtPanel={this.toggleSectionsMgmtPanel}
-                showSectionsMgmtPanel={this.state.showSectionsMgmtPanel}
-                showWidgetsManagementPanel={
-                  this.state.showWidgetsManagementPanel
-                }
+                activeSubpanel={this.state.activeSubpanel}
                 toggleWidgetsManagementPanel={this.toggleWidgetsManagementPanel}
                 toggleThemesPanel={this.toggleThemesPanel}
-                showThemesPanel={this.state.showThemesPanel}
-                widgetsEnabled={prefs["widgets.enabled"]}
+                wallpapersPanelCategory={this.state.wallpapersPanelCategory}
+                openWallpapersPanel={this.openWallpapersPanel}
+                closeWallpapersPanel={this.closeWallpapersPanel}
+                closeSubpanels={this.closeSubpanels}
+                widgetsEnabled={widgetsEnabled}
                 dispatch={this.props.dispatch}
               />
               {(shouldShowOMCHighlight(
@@ -1448,15 +1547,19 @@ export class BaseContent extends React.PureComponent {
               mayHaveCrosswordWidget={mayHaveCrosswordWidget}
               mayHaveStocksWidget={mayHaveStocksWidget}
               mayHavePictureOfTheDayWidget={mayHavePictureOfTheDayWidget}
+              mayHaveRecentSearchesWidget={mayHaveRecentSearchesWidget}
               mayHaveWeatherForecast={
                 prefs["widgets.system.weatherForecast.enabled"]
               }
               weatherDisplay={prefs["weather.display"]}
               showing={customizeMenuVisible}
               toggleSectionsMgmtPanel={this.toggleSectionsMgmtPanel}
-              showSectionsMgmtPanel={this.state.showSectionsMgmtPanel}
+              activeSubpanel={this.state.activeSubpanel}
               toggleThemesPanel={this.toggleThemesPanel}
-              showThemesPanel={this.state.showThemesPanel}
+              wallpapersPanelCategory={this.state.wallpapersPanelCategory}
+              openWallpapersPanel={this.openWallpapersPanel}
+              closeWallpapersPanel={this.closeWallpapersPanel}
+              closeSubpanels={this.closeSubpanels}
             />
             {shouldShowOMCHighlight(
               this.props.Messages,

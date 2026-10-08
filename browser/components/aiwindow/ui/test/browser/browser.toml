@@ -7,7 +7,10 @@ prefs = [
 ]
 support-files = [
   "head.js",
+  "head_aiwindow_group_tabs_button.js",
+  "head_smartformfill_autocomplete.js",
   "head_history_thumbnails.js",
+  "head_smartformfill_form_review.js",
   "test_agent_monitor_item_page.html",
   "test_agent_monitor_item.mjs",
   "test_ai_action_result_page.html",
@@ -27,10 +30,20 @@ support-files = [
   "test_memories_icon_button.mjs",
   "test_grouped_chips_page.html",
   "test_grouped_chips.mjs",
+  "test_smartformfill_autocomplete.html",
+  "test_smartwindow_promo_page.html",
+  "test_smartwindow_promo.mjs",
+  "test_smartformfill_telemetry.html",
   "test_smartwindow_prompts_page.html",
   "test_smartwindow_prompts.mjs",
   "test_smartwindow_panel_list_page.html",
   "test_smartwindow_panel_list.mjs",
+  "test_smartformfill.html",
+  "test_smartformfill_formless_fields.html",
+  "test_smartformfill_multiple_forms.html",
+  "test_smartformfill_populated_fields.html",
+  "test_smartformfill_shadow_dom.html",
+  "test_smartformfill_supported_fields.html",
   "test_website_chip_page.html",
   "test_website_chip.mjs",
   "test_website_select_page.html",
@@ -70,6 +83,10 @@ skip-if = [
 
 ["browser_aichat_same_link_click.js"]
 
+["browser_aitab_page.js"]
+
+["browser_aitab_store_integration.js"]
+
 ["browser_aiwindow_account_auth.js"]
 
 ["browser_aiwindow_agent_monitor_chat.js"]
@@ -81,6 +98,9 @@ skip-if = [
 ["browser_aiwindow_ai_action_confirmation.js"]
 
 ["browser_aiwindow_ai_action_result.js"]
+skip-if = [
+  "verify", # Bug 2057151 - intermittent no-output timeout under test-verify (post-test focus race in CI); same class as bug 2060705
+]
 
 ["browser_aiwindow_aifeature_contract.js"]
 
@@ -102,7 +122,22 @@ skip-if = [
 
 ["browser_aiwindow_followup_tokens.js"]
 
-["browser_aiwindow_group_tabs_button.js"]
+["browser_aiwindow_group_tabs_button_interaction.js"]
+skip-if = [
+  "verify", # Bug 2060705
+]
+
+["browser_aiwindow_group_tabs_button_model.js"]
+skip-if = [
+  "verify", # Bug 2060705
+]
+
+["browser_aiwindow_group_tabs_button_suggestions.js"]
+skip-if = [
+  "verify", # Bug 2060705
+]
+
+["browser_aiwindow_group_tabs_button_tab_management.js"]
 skip-if = [
   "verify", # Bug 2060705
 ]
@@ -123,6 +158,8 @@ skip-if = [
 
 ["browser_aiwindow_memories_toggle_prefs.js"]
 
+["browser_aiwindow_monitor_button.js"]
+
 ["browser_aiwindow_monitor_create.js"]
 
 ["browser_aiwindow_new_chat_button.js"]
@@ -130,6 +167,8 @@ skip-if = [
 ["browser_aiwindow_newtab_preload.js"]
 
 ["browser_aiwindow_organize_tabs_callout.js"]
+
+["browser_aiwindow_panels.js"]
 
 ["browser_aiwindow_session_restore.js"]
 
@@ -168,11 +207,15 @@ skip-if = [
 
 ["browser_aiwindow_smartbar_tab_switch.js"]
 
+["browser_aiwindow_smartbar_tabgroups.js"]
+
 ["browser_aiwindow_smartbar_telemetry.js"]
 skip-if = [
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && tsan",
   "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && ccov",
 ]
+
+["browser_aiwindow_smartwindow_promo.js"]
 
 ["browser_aiwindow_stop_generation.js"]
 
@@ -223,6 +266,20 @@ skip-if = [
 
 ["browser_sidebar_aiwindow.js"]
 
+["browser_smartformfill_form_review_editing.js"]
+
+["browser_smartformfill_form_review_filling.js"]
+
+["browser_smartformfill_form_review_generation.js"]
+
+["browser_smartformfill_initialization.js"]
+
+["browser_smartformfill_mutations.js"]
+
+["browser_smartformfill_shadow_dom.js"]
+
+["browser_smartformfill_tab_selector.js"]
+
 ["browser_smartwindow_abort_on_tab_close.js"]
 
 ["browser_smartwindow_assistant_ui_errors.js"]
@@ -252,6 +309,8 @@ skip-if = [
 ["browser_smartwindow_default_startup.js"]
 
 ["browser_smartwindow_disclaimer.js"]
+
+["browser_smartwindow_duplicate_chat_tabs.js"]
 
 ["browser_smartwindow_footer.js"]
 
@@ -314,6 +373,12 @@ skip-if = [
 
 ["browser_smartwindow_smartbar_tab_state.js"]
 
+["browser_smartwindow_smartformfill_autocomplete.js"]
+
+["browser_smartwindow_smartformfill_metadata_lifecycle.js"]
+
+["browser_smartwindow_smartformfill_telemetry.js"]
+
 ["browser_smartwindow_switcher_telemetry.js"]
 
 ["browser_smartwindow_tab_move.js"]
@@ -327,15 +392,6 @@ skip-if = [
 ["browser_smartwindow_tasks_actors.js"]
 
 ["browser_smartwindow_telemetry.js"]
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # Bug 2024015
-  "os == 'mac' && os_version == '10.15' && arch == 'x86_64' && opt", # Bug 2024015
-  "os == 'win' && debug && standalone", # Bug 2024015
-  "os == 'win' && os_version == '11.26100' && arch == 'x86'", # Bug 2024015
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64'", # Bug 2024015
-  "os == 'win' && os_version == '11.26200' && arch == 'x86'", # Bug 2024015
-  "os == 'win' && os_version == '11.26200' && arch == 'x86_64'", # Bug 2024015
-]
 
 ["browser_smartwindow_topsites.js"]
 

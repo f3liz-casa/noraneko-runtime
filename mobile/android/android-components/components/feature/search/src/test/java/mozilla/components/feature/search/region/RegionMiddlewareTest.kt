@@ -35,162 +35,165 @@ class RegionMiddlewareTest {
     fun setUp() {
         clock = FakeClock()
         locationService = FakeLocationService()
-        regionManager = RegionManager(
-            context = FakeContext(),
-            locationService = locationService,
-            currentTime = clock::time,
-            preferences = lazy { FakeSharedPreferences() },
-        )
+        regionManager =
+            RegionManager(
+                context = FakeContext(),
+                locationService = locationService,
+                currentTime = clock::time,
+                preferences = lazy { FakeSharedPreferences() },
+            )
     }
 
     @Test
-    fun `GIVEN a locale is already selected WHEN the locale changes THEN update region on RefreshSearchEngines`() = runTest {
-        val middleware = RegionMiddleware(FakeContext(), locationService, testDispatcher)
-        middleware.regionManager = regionManager
+    fun `GIVEN a locale is already selected WHEN the locale changes THEN update region on RefreshSearchEngines`() =
+        runTest(testDispatcher) {
+            val middleware = RegionMiddleware(FakeContext(), locationService, testDispatcher, this)
+            middleware.regionManager = regionManager
 
-        locationService.region = LocationService.Region("FR", "France")
-        regionManager.update()
+            locationService.region = LocationService.Region("FR", "France")
+            regionManager.update()
 
-        val store = BrowserStore(
-            middleware = listOf(middleware),
-        )
+            val store = BrowserStore(middleware = listOf(middleware))
 
-        middleware.invoke(
-            store,
-            {},
-            UpdateDistribution("testId"),
-        )
-        testDispatcher.scheduler.advanceUntilIdle()
+            middleware.invoke(
+                store,
+                {},
+                UpdateDistribution("testId"),
+            )
+            testDispatcher.scheduler.advanceUntilIdle()
 
-        assertEquals("FR", store.state.search.region!!.home)
-        assertEquals("FR", store.state.search.region!!.current)
+            assertEquals("FR", store.state.search.region!!.home)
+            assertEquals("FR", store.state.search.region!!.current)
 
-        locationService.region = LocationService.Region("DE", "Germany")
-        regionManager.update()
+            locationService.region = LocationService.Region("DE", "Germany")
+            regionManager.update()
 
-        store.dispatch(RefreshSearchEnginesAction)
-        testDispatcher.scheduler.advanceUntilIdle()
+            store.dispatch(RefreshSearchEnginesAction)
+            testDispatcher.scheduler.advanceUntilIdle()
 
-        assertEquals("FR", store.state.search.region!!.home)
-        assertEquals("DE", store.state.search.region!!.current)
-    }
+            assertEquals("FR", store.state.search.region!!.home)
+            assertEquals("DE", store.state.search.region!!.current)
+        }
 
     @Test
-    fun `WHEN the UpdateDistribution action is received THEN the distribution is updated`() = runTest {
-        val captureActionsMiddleware = CaptureActionsMiddleware<BrowserState, BrowserAction>()
-        val middleware = RegionMiddleware(FakeContext(), locationService, testDispatcher)
-        val regionManager: RegionManager = mock()
-        middleware.regionManager = regionManager
-        val store = BrowserStore(middleware = listOf(captureActionsMiddleware))
+    fun `WHEN the UpdateDistribution action is received THEN the distribution is updated`() =
+        runTest(testDispatcher) {
+            val captureActionsMiddleware = CaptureActionsMiddleware<BrowserState, BrowserAction>()
+            val middleware = RegionMiddleware(FakeContext(), locationService, testDispatcher, this)
+            val regionManager: RegionManager = mock()
+            middleware.regionManager = regionManager
+            val store = BrowserStore(middleware = listOf(captureActionsMiddleware))
 
-        // null RegionState
-        `when`(regionManager.region()).thenReturn(null)
+            // null RegionState
+            `when`(regionManager.region()).thenReturn(null)
 
-        middleware.invoke(
-            store,
-            {},
-            UpdateDistribution("testId"),
-        )
+            middleware.invoke(
+                store,
+                {},
+                UpdateDistribution("testId"),
+            )
 
-        testDispatcher.scheduler.advanceUntilIdle()
+            testDispatcher.scheduler.advanceUntilIdle()
 
-        captureActionsMiddleware.assertFirstAction(SearchAction.SetRegionAction::class) { action ->
-            assertEquals(RegionState.Default, action.regionState)
-            assertEquals("testId", action.distribution)
+            captureActionsMiddleware.assertFirstAction(SearchAction.SetRegionAction::class) { action ->
+                assertEquals(RegionState.Default, action.regionState)
+                assertEquals("testId", action.distribution)
+            }
+
+            // non null RegionState
+            `when`(regionManager.region()).thenReturn(RegionState("US", "US"))
+
+            middleware.invoke(
+                store,
+                {},
+                UpdateDistribution("testId"),
+            )
+
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            captureActionsMiddleware.assertLastAction(SearchAction.SetRegionAction::class) { action ->
+                assertEquals(RegionState("US", "US"), action.regionState)
+                assertEquals("testId", action.distribution)
+            }
+
+            // region manager update has a new RegionState
+            `when`(regionManager.region()).thenReturn(null)
+            `when`(regionManager.update()).thenReturn(RegionState("DE", "DE"))
+
+            middleware.invoke(
+                store,
+                {},
+                UpdateDistribution("testId"),
+            )
+
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            captureActionsMiddleware.assertLastAction(SearchAction.SetRegionAction::class) { action ->
+                assertEquals(RegionState("DE", "DE"), action.regionState)
+                assertEquals("testId", action.distribution)
+            }
         }
-
-        // non null RegionState
-        `when`(regionManager.region()).thenReturn(RegionState("US", "US"))
-
-        middleware.invoke(
-            store,
-            {},
-            UpdateDistribution("testId"),
-        )
-
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        captureActionsMiddleware.assertLastAction(SearchAction.SetRegionAction::class) { action ->
-            assertEquals(RegionState("US", "US"), action.regionState)
-            assertEquals("testId", action.distribution)
-        }
-
-        // region manager update has a new RegionState
-        `when`(regionManager.region()).thenReturn(null)
-        `when`(regionManager.update()).thenReturn(RegionState("DE", "DE"))
-
-        middleware.invoke(
-            store,
-            {},
-            UpdateDistribution("testId"),
-        )
-
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        captureActionsMiddleware.assertLastAction(SearchAction.SetRegionAction::class) { action ->
-            assertEquals(RegionState("DE", "DE"), action.regionState)
-            assertEquals("testId", action.distribution)
-        }
-    }
 
     @Test
-    fun `WHEN the RefreshSearchEngines action is received THEN the distribution is updated`() = runTest {
-        val captureActionsMiddleware = CaptureActionsMiddleware<BrowserState, BrowserAction>()
-        val middleware = RegionMiddleware(FakeContext(), locationService, testDispatcher)
-        val regionManager: RegionManager = mock()
-        middleware.regionManager = regionManager
-        val store = BrowserStore(
-            BrowserState(distributionId = "testId"),
-            middleware = listOf(captureActionsMiddleware),
-        )
+    fun `WHEN the RefreshSearchEngines action is received THEN the distribution is updated`() =
+        runTest(testDispatcher) {
+            val captureActionsMiddleware = CaptureActionsMiddleware<BrowserState, BrowserAction>()
+            val middleware = RegionMiddleware(FakeContext(), locationService, testDispatcher, this)
+            val regionManager: RegionManager = mock()
+            middleware.regionManager = regionManager
+            val store =
+                BrowserStore(
+                    BrowserState(distributionId = "testId"),
+                    middleware = listOf(captureActionsMiddleware),
+                )
 
-        // null RegionState
-        `when`(regionManager.region()).thenReturn(null)
+            // null RegionState
+            `when`(regionManager.region()).thenReturn(null)
 
-        middleware.invoke(
-            store,
-            {},
-            RefreshSearchEnginesAction,
-        )
+            middleware.invoke(
+                store,
+                {},
+                RefreshSearchEnginesAction,
+            )
 
-        testDispatcher.scheduler.advanceUntilIdle()
+            testDispatcher.scheduler.advanceUntilIdle()
 
-        captureActionsMiddleware.assertFirstAction(SearchAction.SetRegionAction::class) { action ->
-            assertEquals(RegionState.Default, action.regionState)
-            assertEquals("testId", action.distribution)
+            captureActionsMiddleware.assertFirstAction(SearchAction.SetRegionAction::class) { action ->
+                assertEquals(RegionState.Default, action.regionState)
+                assertEquals("testId", action.distribution)
+            }
+
+            // non null RegionState
+            `when`(regionManager.region()).thenReturn(RegionState("US", "US"))
+
+            middleware.invoke(
+                store,
+                {},
+                RefreshSearchEnginesAction,
+            )
+
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            captureActionsMiddleware.assertLastAction(SearchAction.SetRegionAction::class) { action ->
+                assertEquals(RegionState("US", "US"), action.regionState)
+                assertEquals("testId", action.distribution)
+            }
+
+            // region manager update has a new RegionState
+            `when`(regionManager.region()).thenReturn(null)
+            `when`(regionManager.update()).thenReturn(RegionState("DE", "DE"))
+
+            middleware.invoke(
+                store,
+                {},
+                RefreshSearchEnginesAction,
+            )
+
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            captureActionsMiddleware.assertLastAction(SearchAction.SetRegionAction::class) { action ->
+                assertEquals(RegionState("DE", "DE"), action.regionState)
+                assertEquals("testId", action.distribution)
+            }
         }
-
-        // non null RegionState
-        `when`(regionManager.region()).thenReturn(RegionState("US", "US"))
-
-        middleware.invoke(
-            store,
-            {},
-            RefreshSearchEnginesAction,
-        )
-
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        captureActionsMiddleware.assertLastAction(SearchAction.SetRegionAction::class) { action ->
-            assertEquals(RegionState("US", "US"), action.regionState)
-            assertEquals("testId", action.distribution)
-        }
-
-        // region manager update has a new RegionState
-        `when`(regionManager.region()).thenReturn(null)
-        `when`(regionManager.update()).thenReturn(RegionState("DE", "DE"))
-
-        middleware.invoke(
-            store,
-            {},
-            RefreshSearchEnginesAction,
-        )
-
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        captureActionsMiddleware.assertLastAction(SearchAction.SetRegionAction::class) { action ->
-            assertEquals(RegionState("DE", "DE"), action.regionState)
-            assertEquals("testId", action.distribution)
-        }
-    }
 }

@@ -17,7 +17,7 @@ ChromeUtils.defineESModuleGetters(
   {
     BLOCK_WORDS_ENCODED: "chrome://global/content/ml/BlockWords.sys.mjs",
     ModelHub: "chrome://global/content/ml/ModelHub.sys.mjs",
-    MLEngine: "resource://gre/actors/MLEngineParent.sys.mjs",
+    MLEngine: "moz-src:///toolkit/components/ml/actors/MLEngineParent.sys.mjs",
     EngineProcess: "chrome://global/content/ml/EngineProcess.sys.mjs",
     RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
     TranslationsParent: "resource://gre/actors/TranslationsParent.sys.mjs",
@@ -1081,6 +1081,38 @@ export function featureEngineIdToFluentId(engineId) {
   for (const config of Object.values(lazy.FEATURES)) {
     if (config.engineId === engineId) {
       return config.fluentId;
+    }
+  }
+  return null;
+}
+
+/**
+ * Looks up display info (a human-readable name and a homepage URL) for one
+ * of a downloaded model's files, from the feature registered for one of
+ * engineIds. Features register their file display info via
+ * FEATURES[...].fileDisplayInfoModule, a module whose default export maps
+ * file name to {name, hfUrl}.
+ *
+ * @param {Array<string>} [engineIds] A model with no recorded engineIds has no
+ *   feature to look up, and gets no display info.
+ * @param {Array<string>} files
+ * @returns {Promise<{name: string, hfUrl: string}|null>}
+ */
+export async function fileDisplayInfoForEngineIds(engineIds, files) {
+  for (const config of Object.values(lazy.FEATURES)) {
+    if (
+      !config.fileDisplayInfoModule ||
+      !engineIds?.includes(config.engineId)
+    ) {
+      continue;
+    }
+    const { default: info } = await ChromeUtils.importESModule(
+      config.fileDisplayInfoModule
+    );
+    for (const file of files) {
+      if (info[file]) {
+        return info[file];
+      }
     }
   }
   return null;

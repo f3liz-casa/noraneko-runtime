@@ -126,15 +126,25 @@ export class UrlbarProviderGlobalActions extends UrlbarProvider {
     addCallback(this, result);
   }
 
+  /**
+   * @param {UrlbarQueryContext} queryContext
+   * @param {UrlbarParentController} controller
+   * @param {object} details
+   */
   async onEngagement(queryContext, controller, details) {
     let key = details.pickedActionKey;
     let action = details.result.payload.actionsResults.find(a => a.key == key);
     let provider = globalActionsProviders.find(
       p => p.name == action.providerName
     );
-    provider.onPick(queryContext, controller, action);
+    provider.onPick(queryContext, controller, action, details);
   }
 
+  /**
+   * @param {UrlbarQueryContext} queryContext
+   * @param {UrlbarParentController} controller
+   * @param {object} details
+   */
   onSearchSessionEnd(queryContext, controller, details) {
     let showOnboardingLabel = queryContext.results?.find(
       r => r.providerName == this.name
@@ -176,12 +186,8 @@ export class UrlbarProviderGlobalActions extends UrlbarProvider {
         ],
       };
 
-      if (action.dataset?.style) {
-        let style = "";
-        for (let [prop, val] of Object.entries(action.dataset.style)) {
-          style += `${prop}: ${val};`;
-        }
-        btn.attributes.style = style;
+      if (action.style) {
+        btn.style = action.style;
       }
 
       if (action.dataset?.providesSearchMode) {

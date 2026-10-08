@@ -15,9 +15,13 @@ support-files = [
 
 tags = "os_integration"
 
+["browser_container_select.js"]
+
 ["browser_containers_name_input.js"]
 
 ["browser_containers_reorder.js"]
+
+["browser_containers_site_associations.js"]
 
 ["browser_privacy_dnsoverhttps_policy_srd.js"]
 
@@ -26,6 +30,8 @@ tags = "os_integration"
 ["browser_privacy_history_search_l10n_ids.js"]
 
 ["browser_privacy_ipprotection.js"]
+
+["browser_privacy_ipprotection_siterules_srd.js"]
 
 ["browser_privacy_passwordGenerationAndAutofill_srd.js"]
 

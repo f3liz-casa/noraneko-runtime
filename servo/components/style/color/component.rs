@@ -6,10 +6,7 @@
 
 use std::fmt::Write;
 
-use super::{
-    parsing::{rcs_enabled, ChannelKeyword},
-    AbsoluteColor,
-};
+use super::{AbsoluteColor, parsing::ChannelKeyword};
 use crate::derives::*;
 use crate::typed_om::NumericType;
 use crate::{
@@ -20,7 +17,7 @@ use crate::{
         specified::calc::{CalcNode, CalcParseFlags, Leaf, PercentageContext},
     },
 };
-use cssparser::{color::OPAQUE, Parser, Token};
+use cssparser::{Parser, Token, color::OPAQUE};
 use style_traits::{ParseError, StyleParseErrorKind, ToCss};
 
 /// A single color component.
@@ -69,46 +66,40 @@ pub trait ColorComponentType: Sized + Clone {
 
 impl<ValueType: ColorComponentType> ColorComponent<ValueType> {
     /// Parse a single [ColorComponent].
-    pub fn parse<'i, 't>(
+    pub fn parse(
         context: &ParserContext,
-        input: &mut Parser<'i, 't>,
+        input: &mut Parser,
         allow_none: bool,
         allowed_channel_keywords: ChannelKeyword,
         percentage_context: PercentageContext,
-    ) -> Result<Self, ParseError<'i>> {
-        let location = input.current_source_location();
-
+    ) -> Result<Self, ParseError> {
         match *input.next()? {
             Token::Ident(ref value) if allow_none && value.eq_ignore_ascii_case("none") => {
                 Ok(ColorComponent::None)
             },
-            ref t @ Token::Ident(ref ident) => Ok(match ChannelKeyword::from_ident(ident) {
+            Token::Ident(ref ident) => Ok(match ChannelKeyword::from_ident(ident) {
                 Ok(channel_keyword) if allowed_channel_keywords.contains(channel_keyword) => {
                     ColorComponent::ChannelKeyword(channel_keyword)
                 },
-                _ => return Err(location.new_unexpected_token_error(t.clone())),
+                _ => return Err(ParseError::unexpected_token()),
             }),
             Token::Function(ref name) => {
-                let function = CalcNode::math_function(context, name, location)?;
+                let function = CalcNode::math_function(context, name)?;
                 let mut flags = CalcParseFlags::new(percentage_context);
-                flags.color_components = if rcs_enabled() {
-                    allowed_channel_keywords
-                } else {
-                    ChannelKeyword::empty()
-                };
+                flags.color_components = allowed_channel_keywords;
                 let mut node = CalcNode::parse(context, input, function, flags)?;
                 node.simplify_and_sort();
                 if !node
                     .numeric_type()
                     .is_ok_and(|ty| ValueType::is_valid_type(&ty))
                 {
-                    return Err(location.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
                 }
                 Ok(Self::Calc(Box::new(node)))
             },
             ref t => ValueType::try_from_token(t)
                 .map(Self::Value)
-                .map_err(|_| location.new_unexpected_token_error(t.clone())),
+                .map_err(|_| ParseError::unexpected_token()),
         }
     }
 
@@ -139,13 +130,12 @@ impl<ValueType: ColorComponentType> ColorComponent<ValueType> {
                 // Try to compute, substitute channels and fold the calc tree in a
                 // single pass. If it resolves to a concrete value, collapse to a
                 // value; otherwise keep the computed (still symbolic) calc tree.
-                if let Ok(value) = node
+                match node
                     .resolve_map(|leaf| Ok(leaf.to_computed_value(context, origin_color)))
                     .and_then(|leaf| ValueType::try_from_leaf(&leaf))
                 {
-                    Self::Value(value)
-                } else {
-                    Self::Calc(Box::new(node.to_computed_value(context, origin_color)))
+                    Ok(value) => Self::Value(value),
+                    Err(..) => Self::Calc(Box::new(node.to_computed_value(context, origin_color))),
                 }
             },
             Self::AlphaOmitted => match origin_color {

@@ -398,18 +398,11 @@ pref("gfx.downloadable_fonts.fallback_delay_short", 100);
 pref("gfx.canvas.azure.backends", "skia");
 pref("gfx.content.azure.backends", "skia");
 
-#ifdef XP_WIN
-  pref("gfx.webrender.flip-sequential", false);
-  pref("gfx.webrender.dcomp-win.enabled", true);
-  pref("gfx.webrender.triple-buffering.enabled", true);
-#endif
-
 // WebRender debugging utilities.
 pref("gfx.webrender.debug.texture-cache", false);
 pref("gfx.webrender.debug.texture-cache.clear-evicted", true);
 pref("gfx.webrender.debug.render-targets", false);
 pref("gfx.webrender.debug.gpu-cache", false);
-pref("gfx.webrender.debug.alpha-primitives", false);
 pref("gfx.webrender.debug.profiler", false);
 pref("gfx.webrender.debug.gpu-time-queries", false);
 pref("gfx.webrender.debug.gpu-sample-queries", false);
@@ -417,7 +410,6 @@ pref("gfx.webrender.debug.disable-batching", false);
 pref("gfx.webrender.debug.epochs", false);
 pref("gfx.webrender.debug.echo-driver-messages", false);
 pref("gfx.webrender.debug.show-overdraw", false);
-pref("gfx.webrender.debug.slow-frame-indicator", false);
 pref("gfx.webrender.debug.picture-caching", false);
 pref("gfx.webrender.debug.picture-borders", false);
 pref("gfx.webrender.debug.force-picture-invalidation", false);
@@ -471,17 +463,15 @@ pref("ui.textHighlightBackground", "#ef0fff");
 // Used with nsISelectionController::SELECTION_FIND
 pref("ui.textHighlightForeground", "#ffffff");
 
-// We want the ability to forcibly disable platform a11y, because
-// some non-a11y-related components attempt to bring it up.  See bug
-// 538530 for details about Windows; we have a pref here that allows it
-// to be disabled for performance and testing resons.
-// See bug 761589 for the crossplatform aspect.
-//
-// This pref is checked only once, and the browser needs a restart to
-// pick up any changes.
-//
-// Values are -1 always on. 1 always off, 0 is auto as some platform perform
-// further checks.
+// Forcibly enable or disable accessibility. This is useful for testing. Values:
+// 0: auto: enable accessibility if an accessibility client is detected.
+// 1: force disable: Disable accessibility, even if a client attempts to enable it.
+// -1: force enable: Enable accessibility, even if there is no client. On some
+// platforms (e.g. Android), accessibility events can't be fired to the platform
+// in this case because the platform doesn't allow it. However, the Gecko
+// accessibility code will still run.
+// Changes to this pref are picked up without a restart: setting it to 1
+// shuts accessibility down, and setting it to -1 starts it up.
 pref("accessibility.force_disabled", 0);
 
 pref("focusmanager.testmode", false);
@@ -1380,9 +1370,6 @@ pref("network.negotiate-auth.allow-proxies", true);
 // Path to a specific gssapi library
 pref("network.negotiate-auth.gsslib", "");
 
-// Specify if the gss lib comes standard with the OS
-pref("network.negotiate-auth.using-native-gsslib", true);
-
 #ifdef XP_WIN
   // Default to using the SSPI intead of GSSAPI on windows
   pref("network.auth.use-sspi", true);
@@ -1914,10 +1901,6 @@ pref("dom.ipc.keepProcessesAlive.privilegedabout", 1);
 
 // Disable support for SVG
 pref("svg.disabled", false);
-
-// This pref will cause assertions when a remoteType triggers a process switch
-// to a new remoteType it should not be able to trigger.
-pref("browser.tabs.remote.enforceRemoteTypeRestrictions", false);
 
 // Pref to control whether we use a separate privileged content process
 // for about: pages. This pref name did not age well: we will have multiple
@@ -3038,7 +3021,9 @@ pref("signon.storage.rust.restoreEnabled", true);
 pref("signon.storage.rust.active", false);
 pref("signon.storage.rust.migrationAttempts", 0);
 pref("signon.storage.rust.restoreAttempts", 0);
-pref("signon.storage.rust.restoreDone", false);
+pref("signon.storage.rust.restoreAttemptsVersion", 0);
+pref("signon.storage.rust.restoreVersion", 0);
+pref("signon.storage.rust.restoreTargetVersion", 1);
 
 // Satchel (Form Manager) prefs
 pref("browser.formfill.debug",            false);
@@ -3360,7 +3345,7 @@ pref("urlclassifier.features.antifraud.annotate.blocklistTables", "anti-fraud-tr
 pref("urlclassifier.features.antifraud.annotate.allowlistTables", "mozstd-trackwhite-digest256");
 
 // These tables will never trigger a gethash call.
-pref("urlclassifier.disallow_completions", "goog-downloadwhite-digest256,base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256,social-tracking-protection-digest256,social-tracking-protection-facebook-digest256,social-tracking-protection-linkedin-digest256,social-tracking-protection-twitter-digest256,base-email-track-digest256,content-email-track-digest256,consent-manager-track-digest256,anti-fraud-track-digest256,harmful-addon-block-digest256");
+pref("urlclassifier.disallow_completions", "goog-downloadwhite-digest256,base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256,social-tracking-protection-digest256,social-tracking-protection-facebook-digest256,social-tracking-protection-linkedin-digest256,social-tracking-protection-twitter-digest256,base-email-track-digest256,content-email-track-digest256,consent-manager-track-digest256,anti-fraud-track-digest256,harmful-addon-block-digest256");
 
 // Workaround for Google Recaptcha
 pref("urlclassifier.trackingAnnotationSkipURLs", "");
@@ -3453,9 +3438,9 @@ pref("browser.safebrowsing.provider.google5.advisoryName", "Google Safe Browsing
 
 pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozilla.com/?url=");
 
-// Mozilla Safe Browsing provider (for tracking protection and plugin blocking)
+// Mozilla Safe Browsing provider (for tracking protection)
 pref("browser.safebrowsing.provider.mozilla.pver", "2.2");
-pref("browser.safebrowsing.provider.mozilla.lists", "base-track-digest256,mozstd-trackwhite-digest256,google-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256,social-tracking-protection-digest256,social-tracking-protection-facebook-digest256,social-tracking-protection-linkedin-digest256,social-tracking-protection-twitter-digest256,base-email-track-digest256,content-email-track-digest256,consent-manager-track-digest256,anti-fraud-track-digest256,harmful-addon-block-digest256,harmful-addon-entitylist-digest256");
+pref("browser.safebrowsing.provider.mozilla.lists", "base-track-digest256,mozstd-trackwhite-digest256,google-trackwhite-digest256,content-track-digest256,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256,social-tracking-protection-digest256,social-tracking-protection-facebook-digest256,social-tracking-protection-linkedin-digest256,social-tracking-protection-twitter-digest256,base-email-track-digest256,content-email-track-digest256,consent-manager-track-digest256,anti-fraud-track-digest256,harmful-addon-block-digest256,harmful-addon-entitylist-digest256");
 pref("browser.safebrowsing.provider.mozilla.updateURL", "moz-sbrs:://antitracking");
 pref("browser.safebrowsing.provider.mozilla.gethashURL", "https://shavar.services.mozilla.com/gethash?client=SAFEBROWSING_ID&appver=%MAJOR_VERSION%&pver=2.2");
 // Set to a date in the past to force immediate download in new profiles.
@@ -3465,12 +3450,8 @@ pref("browser.safebrowsing.provider.mozilla.nextupdatetime", "1");
 pref("browser.safebrowsing.provider.mozilla.lists.base", "moz-std");
 pref("browser.safebrowsing.provider.mozilla.lists.content", "moz-full");
 
-// The table and global pref for blocking plugin content
-#ifdef NIGHTLY_BUILD
-  pref("urlclassifier.blockedTable", "moztest-block-simple,mozplugin-block-digest256");
-#else
-  pref("urlclassifier.blockedTable", "moztest-block-simple");
-#endif
+// The table and global pref for blocking URIs
+pref("urlclassifier.blockedTable", "moztest-block-simple");
 
 #ifdef XP_MACOSX
   #if !defined(RELEASE_OR_BETA) || defined(DEBUG)
@@ -3486,8 +3467,8 @@ pref("browser.search.log", false);
 pref("browser.search.update", true);
 pref("browser.search.suggest.enabled", true);
 pref("browser.search.suggest.enabled.private", false);
-pref("browser.search.separatePrivateDefault", true);
-pref("browser.search.separatePrivateDefault.ui.enabled", false);
+pref("browser.search.separatePrivateDefault.enabled", false);
+pref("browser.search.separatePrivateDefault.featureGate", false);
 pref("browser.search.removeEngineInfobar.enabled", true);
 
 // GMPInstallManager prefs
@@ -3670,6 +3651,7 @@ pref("browser.ai.control.smartTabGroups", "default");
 pref("browser.ai.control.linkPreviewKeyPoints", "default");
 pref("browser.ai.control.sidebarChatbot", "default");
 pref("browser.ai.control.smartWindow", "default");
+pref("browser.ai.control.speechRecognition", "default");
 
 // Enable the experimental machine learning inference engine.
 pref("browser.ml.enable", true);
@@ -3916,12 +3898,22 @@ pref("services.common.log.logger.tokenserverclient", "Debug");
     pref("remote.experimental.enabled", false);
   #endif
 
-  // Allow Marionette and the Remote Agent to be started dynamically at runtime.
-  #if defined(NIGHTLY_BUILD)
-    pref("remote.experimental.dynamicstart.enabled", true);
-  #else
-    pref("remote.experimental.dynamicstart.enabled", false);
-  #endif
+  // Enable features related to starting Marionette / Remote Agent dynamically,
+  // built for AI Assistant integrations (e.g. Claude cowork). On Nightly,
+  // enabling this preference will enable the Remote Control panel. On other
+  // channels, there is no user facing entry point for now.
+  pref("remote.experimental.dynamicstart.enabled", false);
+
+  // Display a connection prompt when trying to create a session via dynamically
+  // started Marionette / Remote Agent servers.
+  pref("remote.experimental.dynamicstart.prompt.enabled", true);
+
+  // Display a banner while the servers are running after a dynamic start, and
+  // another one while an application is connected to them. Both banners are
+  // only relevant when the servers were started dynamically, so they are
+  // enabled on all channels.
+  pref("remote.experimental.dynamicstart.banner.enabled", true);
+  pref("remote.experimental.dynamicstart.connectionbanner.enabled", true);
 
   // Defines the verbosity of the internal logger.
   //
@@ -4071,11 +4063,44 @@ pref("extensions.formautofill.addresses.supported", "detect");
 #else
 pref("extensions.formautofill.useml", false);
 #endif
+
 // Set at runtime once we have asked the inference process whether the native
 // ONNX runtime is available. Until then we stay on the regex heuristics.
 pref("extensions.formautofill.useml.nativeOnnxAvailable", false);
+
+// Use the two-engine (encoder + fusion head) field classifier instead of the
+// single text-classification model. Controlled by the form-autofill-ml Nimbus
+// feature.
+pref("extensions.formautofill.useml.twoHead", true);
+// How long an idle ML autofill engine is kept alive, in milliseconds. -1 means
+// never time out. Controlled by the form-autofill-ml Nimbus feature.
+pref("extensions.formautofill.useml.timeoutMS", 120000);
+// Comma separated list of field types the ML model is not trusted with. Those
+// types are classified by the regular expression based heuristics instead, and
+// any prediction the model makes for one of them is discarded. Related field
+// types belong on the list together, see `_getRegexpHeuristicFieldNames`.
+// Controlled by the autofill-ml-ignore-field-types Nimbus feature.
+pref("extensions.formautofill.useml.ignoreFieldTypes", "");
+
+// Optional AutoFill tokenizer features, as a JSON array of feature keys that
+// change a field's exported mlData:
+//   "select_option"    - "<first>...<last>" option-range token for a <select>.
+//   "input_attributes" - "**maxlen<N>"/"**inputmode<mode>" tokens.
+//   "strip_common"     - in forms with 3+ fields, drop tokens present in EVERY
+//                        field (form-wide boilerplate like "form1"/"ctl00").
+//   "strip_frequent"   - like strip_common but drops tokens present in >=85% of
+//                        the form's fields (catches near-universal boilerplate).
+// Default "[]" (none). Each feature changes the mlData contract, so the consuming
+// model must be trained with the same features enabled.
+pref("extensions.formautofill.useml.features", "[]");
+
+// Pin the ML model revision to load (the encoder and head engines share one
+// version). Empty = use the Remote Settings default.
+pref("extensions.formautofill.useml.modelVersion", "");
+
 pref("extensions.formautofill.addresses.enabled", true);
 pref("extensions.formautofill.addresses.capture.enabled", true);
+
 #if defined(ANDROID)
   // On android we have custom logic to control this. Ideally we should use nimbus there as well.
   // https://github.com/mozilla-mobile/firefox-android/blob/d566743ea0f041ce27c1204da903de380f96b46e/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt#L1502-L1510
@@ -4087,9 +4112,38 @@ pref("extensions.formautofill.addresses.capture.enabled", true);
 pref("extensions.formautofill.addresses.ignoreAutocompleteOff", true);
 // Supported countries need to follow ISO 3166-1 to align with "browser.search.region"
 pref("extensions.formautofill.addresses.supportedCountries", "US,CA,GB,FR,DE,BR,ES,JP,AT,IN,IT,PL,AU,NL");
+
+// Move desktop addresses to the Application Services autofill store. Read at
+// startup and watched afterwards: the addresses are copied over to the store
+// this asks for, which then serves them once that copy is verified complete.
+pref("extensions.formautofill.addresses.storage.rust.enabled", false);
+// Which store is in fact serving addresses. Managed by Firefox, not a knob:
+// the pref above only asks, and a profile whose copy has not completed keeps
+// reading from where its addresses are.
+pref("extensions.formautofill.addresses.storage.rust.active", false);
+// Run the migration purely to measure it, while the pref above is still off.
+// The copy is reported through migrate_to_rust and then wiped. Nightly only,
+// and once per profile per generation: it is what says whether the real move is
+// safe to make.
+#ifdef NIGHTLY_BUILD
+  pref("extensions.formautofill.addresses.storage.rust.runMigrationTest", true);
+#else
+  pref("extensions.formautofill.addresses.storage.rust.runMigrationTest", false);
+#endif
+// Which generation of the dry run above this profile has done, so a build that
+// fixes a migration bug can bump it and measure the same profiles again.
+pref("extensions.formautofill.addresses.storage.rust.migrationTestVersion", 0);
+// How many launches have already tried and failed to migrate. Managed by
+// Firefox, which gives up after a budget.
+pref("extensions.formautofill.addresses.storage.rust.migrationAttempts", 0);
+
 pref("extensions.formautofill.creditCards.supported", "on");
 pref("extensions.formautofill.creditCards.enabled", true);
 pref("extensions.formautofill.creditCards.ignoreAutocompleteOff", true);
+
+// Temporary pref for the in-progress CVV/CSC autofill work. When true, the CVV
+// (cc-csc) field participates in autofill and autocomplete.
+pref("extensions.formautofill.creditCards.cvv.enabled", false);
 
 // Supported countries need to follow ISO 3166-1 to align with "browser.search.region"
 pref("extensions.formautofill.creditCards.supportedCountries", "US,CA,GB,FR,DE,IT,ES,AT,BE,PL");

@@ -4,12 +4,15 @@
 
 import {
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
 import { basename, join } from "path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 // eslint-disable-next-line mozilla/reject-import-system-module-from-non-system
 import { ObjectUtils } from "../../../../modules/ObjectUtils.sys.mjs";
@@ -34,126 +37,6 @@ const FIGMA_VALUE_MAP = {
   Value: "",
 };
 const TOKEN_VALUE_KEYS = new Set(["light", "dark", "forcedColors", "value"]);
-// Figma variables that we deliberately don't import, because the corresponding
-// base token relies on platform structure that Figma can't express (e.g.
-// `color-mix()` on `currentColor`, a `prefers-contrast` treatment, or a
-// brand/platform surface split). Ignoring the variable lets the Nova token fall
-// back to the carefully-chosen base value instead of a flattened light/dark pair.
-const FIGMA_IGNORES = new Set([
-  "focus/outline",
-  "focus/outline/inset",
-  "text/color/deemphasized",
-  "text/color/disabled",
-  "panel/separator/color",
-  // Base already has `inherit`; Figma stores a token reference that would overwrite it.
-  "urlbar/box/text/color",
-]);
-
-// Nova overrides whose value must keep platform structure that Figma flattens
-// away. Keyed by resolved token path (with `@base` segments removed). When the
-// importer reaches one of these tokens it emits this value verbatim and consumes
-// the matching Figma variables, so the structure survives a re-import. The colors
-// still come from Figma; only the surrounding structure is maintained here.
-// See bug 2031765.
-const NOVA_STRUCTURAL_OVERRIDES = {
-  "page-nav/focus/padding": {
-    default: "calc(var(--focus-outline-offset) + var(--focus-outline-width))",
-  },
-  "text/color": {
-    prefersContrast: "CanvasText",
-    nativeTheme: "currentColor",
-    light: "{color.violet-desaturated.90}",
-    dark: "{color.violet-desaturated.0}",
-  },
-  "text/color/error": {
-    light: "{color.red.50}",
-    dark: "{color.red.20}",
-    prefersContrast: "inherit",
-  },
-  "text/color/accent/primary/selected": {
-    forcedColors: "SelectedItemText",
-    brand: {
-      light: "{color.white.@base}",
-      dark: "{color.gray.55}",
-    },
-    platform: {
-      default: "SelectedItemText",
-    },
-  },
-  "tab/border/color/accent":
-    "linear-gradient(96deg, var(--tab-border-color-selected-leading) 20.68%, var(--tab-border-color-selected-trailing) 79.34%)",
-  // Tab HCM overrides are handled in CSS; strip forcedColors from these tokens.
-  "tab/background/color/hover": {
-    nativeTheme: "color-mix(in srgb, currentColor 17%, transparent)",
-    default: "{toolbarbutton.background.color.hover}",
-  },
-  "tab/background/color/selected": {
-    nativeTheme: "var(--toolbar-background-color)",
-    default: "{background.color.box.@base}",
-  },
-  "tab/loading/fill": "{color.accent.primary.@base}",
-  "tab/outline/color": "transparent",
-  "toolbar/field/border/color/focus": {
-    nativeTheme: "color-mix(in srgb, {focus.outline.color} 50%, transparent)",
-    default: "{focus.outline.color}",
-    prefersContrast: "{focus.outline.color}",
-  },
-  // color-mix() on currentColor for nativeTheme can't be stored in Figma.
-  "urlbar/box/background/color": {
-    nativeTheme: "color-mix(in srgb, currentColor 16%, transparent)",
-    default: "{urlbarview.background.color.hover}",
-  },
-  "urlbar/box/background/color/hover": {
-    nativeTheme: "color-mix(in srgb, currentColor 22%, transparent)",
-    default: "{urlbarview.background.color.selected}",
-  },
-  "urlbar/box/background/color/active": {
-    nativeTheme: "color-mix(in srgb, currentColor 30%, transparent)",
-    light: "rgba(117, 102, 159, 0.6)",
-    dark: "rgba(176, 163, 210, 0.6)",
-  },
-  // Figma's HCM mode maps to `forcedColors`, but the token intentionally uses
-  // `prefersContrast` (a different media query).
-  "urlbar/icon/fill/opacity": {
-    nativeTheme: "0.9",
-    light: "0.7",
-    dark: "0.95",
-    prefersContrast: "1",
-  },
-  "message-bar/background/color/warning": {
-    default: "{message-bar.background.color.@base}",
-  },
-  "message-bar/background/color/success": {
-    default: "{message-bar.background.color.@base}",
-  },
-  "message-bar/background/color/critical": {
-    default: "{message-bar.background.color.@base}",
-  },
-  "message-bar/container/padding/inline": {
-    comment:
-      "Using rem-based space tokens ends up causing subpixel rendering issues that cause the icon to look uncentered",
-    default: "8px",
-  },
-  "message-bar/icon/container/border": {
-    default: "1px solid {message-bar.icon.container.border.color}",
-  },
-  "message-bar/icon/container/color": {
-    default: "transparent",
-    forcedColors: "{message-bar.icon.color}",
-  },
-  "message-bar/icon/container/height": {
-    default: "{message-bar.icon.size}",
-  },
-  "message-bar/icon/container/margin/block-start": {
-    default: "0",
-  },
-  "message-bar/icon/container/padding": {
-    default: "calc({space.small} - 1px)",
-  },
-  "message-bar/text/container/padding/block": {
-    default: "0",
-  },
-};
 
 function transformValue(val, tokenNames, figmaName) {
   if (typeof val === "number") {
@@ -212,7 +95,11 @@ function transformValue(val, tokenNames, figmaName) {
   return varName;
 }
 
-function getTokenFiles(globalDirs) {
+// Collect the base `*.tokens.json` files keyed by their prop name. By default
+// stale generated `*.nova.tokens.json` files are removed so the build can
+// regenerate them; pass `{ prune: false }` for a read-only pass (used when
+// computing which tokens a Figma import would change).
+function getTokenFiles(globalDirs, { prune = true } = {}) {
   let files = {};
   for (const group of globalDirs) {
     const tokenFiles = readdirSync(group, { recursive: true }).filter(path =>
@@ -225,7 +112,9 @@ function getTokenFiles(globalDirs) {
         prop = prop.substring(4);
       }
       if (remainder.startsWith("nova")) {
-        unlinkSync(path);
+        if (prune) {
+          unlinkSync(path);
+        }
         continue;
       }
       files[prop] = path;
@@ -242,9 +131,7 @@ function normalizeFigma(figma, path) {
   for (const node in figma) {
     if (node in FIGMA_VALUE_MAP) {
       let figmaVar = `${path}${FIGMA_VALUE_MAP[node]}`;
-      if (!FIGMA_IGNORES.has(path)) {
-        vars[figmaVar] = figma[node];
-      }
+      vars[figmaVar] = figma[node];
     }
     let value = figma[node];
     if (!value || typeof value === "string" || typeof value === "number") {
@@ -279,28 +166,37 @@ function normalizeTokens(tokens, path) {
   return tokenNames;
 }
 
-// Main
-const FIGMA_GROUPS = ["Surface", "Primitives", "Colors", "Theme", "Components"];
-const tokenFiles = getTokenFiles(TOKEN_DIRS);
-const exportData = JSON.parse(
-  readFileSync(joinRelativePath("nova-export-clean-variables.json"), "utf8")
-);
-let figmaVars = {};
-let localTokenNames = new Set();
+export const FIGMA_GROUPS = [
+  "Surface",
+  "Primitives",
+  "Colors",
+  "Theme",
+  "Components",
+];
+let localOverrides = {};
 
-for (const group of FIGMA_GROUPS) {
-  for (const prop in exportData[group]) {
-    figmaVars = {
-      ...figmaVars,
-      ...normalizeFigma(exportData[group][prop], prop),
-    };
+function buildFigmaVars(exportData) {
+  let figmaVars = {};
+  for (const group of FIGMA_GROUPS) {
+    for (const prop in exportData[group]) {
+      figmaVars = {
+        ...figmaVars,
+        ...normalizeFigma(exportData[group][prop], prop),
+      };
+    }
   }
+  return figmaVars;
 }
-for (const prop in tokenFiles) {
-  localTokenNames = new Set([
-    ...localTokenNames,
-    ...normalizeTokens(JSON.parse(readFileSync(tokenFiles[prop])), prop),
-  ]);
+
+function buildTokenNames(tokenFiles) {
+  let localTokenNames = new Set();
+  for (const prop in tokenFiles) {
+    localTokenNames = new Set([
+      ...localTokenNames,
+      ...normalizeTokens(JSON.parse(readFileSync(tokenFiles[prop])), prop),
+    ]);
+  }
+  return localTokenNames;
 }
 
 function matchesFigmaVar(resolvedPath, figmaVar) {
@@ -316,31 +212,26 @@ function matchesFigmaVar(resolvedPath, figmaVar) {
   );
 }
 
-function consumeFigmaVars(resolvedPath, vars) {
-  for (const figmaVar in vars) {
-    if (matchesFigmaVar(resolvedPath, figmaVar)) {
-      const figmaName = figmaVar.slice(resolvedPath.length + 1);
-      if (!figmaName || TOKEN_VALUE_KEYS.has(figmaName)) {
-        delete vars[figmaVar];
-      }
-    }
-  }
-}
-
 function walkUpdateNovaTokens(tokens, vars, tokenNames, path = []) {
+  if (tokens.ignoreFigma) {
+    localOverrides[path.join("/")] = tokens;
+    return null;
+  }
+
   for (const tokenProp in tokens) {
     if (tokenProp === "comment") {
       continue;
     }
     if (tokenProp === "value") {
-      let resolvedPath = path.filter(p => p !== "@base").join("/");
-      if (resolvedPath in NOVA_STRUCTURAL_OVERRIDES) {
-        consumeFigmaVars(resolvedPath, vars);
-        tokens.value = JSON.parse(
-          JSON.stringify(NOVA_STRUCTURAL_OVERRIDES[resolvedPath])
-        );
+      // Skip any tokens that have local Nova overrides in code.
+      // This happens when values can't be expressed in Figma or when Figma
+      // hasn't been updated to use the correct values yet.
+      if (tokens.value.nova) {
+        localOverrides[path.join("/")] = tokens.value.nova;
         continue;
       }
+
+      let resolvedPath = path.filter(p => p !== "@base").join("/");
       let newValue = {};
       let { nativeTheme } = tokens.value;
       for (const figmaVar in vars) {
@@ -472,10 +363,149 @@ function updateNovaTokens(filePath, prop, vars, tokenNames) {
   updateTokens(filePath, tokens);
 }
 
-for (const prop in tokenFiles) {
-  updateNovaTokens(tokenFiles[prop], prop, figmaVars, localTokenNames);
+function collectStrippedValues(node, path, out) {
+  if (!node || typeof node !== "object") {
+    return;
+  }
+  for (const key in node) {
+    if (key === "comment" || key === "override") {
+      continue;
+    }
+    if (key === "value") {
+      const resolvedPath = path.filter(p => p !== "@base").join("/");
+      out.set(resolvedPath, JSON.stringify(node.value));
+    } else {
+      collectStrippedValues(node[key], [...path, key], out);
+    }
+  }
 }
-writeTokens();
 
-// eslint-disable-next-line no-console
-console.log("Remaining Figma vars:", figmaVars);
+// Compute the Nova override value for every token, keyed by its resolved path
+// (e.g. `button/background/color/hover`), for a given figma-variables export
+// object. Only tokens that actually override their base value are included,
+// mirroring what the build writes to the `*.nova.tokens.json` files. The fetch
+// step uses this to show which tokens a Figma import would really change,
+// rather than diffing the raw export (which lists no-op changes too).
+export function computeNovaValues(exportData) {
+  const tokenFiles = getTokenFiles(TOKEN_DIRS, { prune: false });
+  const figmaVars = buildFigmaVars(exportData);
+  const tokenNames = buildTokenNames(tokenFiles);
+  const values = new Map();
+  for (const prop in tokenFiles) {
+    const original = JSON.parse(readFileSync(tokenFiles[prop]));
+    const updated = walkUpdateNovaTokens(
+      JSON.parse(JSON.stringify(original)),
+      figmaVars,
+      tokenNames,
+      [prop]
+    );
+    collectStrippedValues(
+      stripUnchangedTokens(updated, original),
+      [prop],
+      values
+    );
+  }
+  return values;
+}
+
+// The curated subset of the Figma export that the build actually imports (same
+// collection/mode shape as `figma-variables-all.json`, but only the chosen
+// tokens). The build reads this file rather than the full export, so unselected
+// token changes are never picked up. The fetch step maintains it;
+// `figma-variables-all.json` is only a full mirror it diffs against.
+export const IMPORTED_VARIABLES_FILENAME = "nova-export-clean-variables.json";
+
+/**
+ * Compare tokens from Figma to tokens defined in code, and
+ * write their definitions in files for three cases:
+ * - tokens that only exist in Figma
+ * - tokens that only exist in code
+ * - tokens that are overridden in code due to incorrect values in Figma or limitations in Figma
+ *
+ * @param {object} figmaTokens
+ * @param {object} codeTokens
+ */
+const writeTokenAuditData = (figmaTokens, codeTokens) => {
+  const unusedFigmaTokens = {};
+  const codeOnlyTokens = {};
+  const codeOverrideTokens = {};
+
+  for (const [tokenName, tokenValue] of Object.entries(figmaTokens)) {
+    const normalizedTokenName = tokenName.replace("/@base", "");
+    if (!codeTokens[normalizedTokenName]) {
+      unusedFigmaTokens[normalizedTokenName] = tokenValue;
+    } else {
+      codeOverrideTokens[normalizedTokenName] = {
+        figma: tokenValue,
+        code: codeTokens[normalizedTokenName],
+      };
+    }
+  }
+
+  for (const [tokenName, tokenValue] of Object.entries(codeTokens)) {
+    const normalizedTokenName = tokenName.replace("/@base", "");
+    if (!figmaTokens[normalizedTokenName]) {
+      codeOnlyTokens[normalizedTokenName] = tokenValue;
+    }
+
+    const normalizedTokenValue = {
+      light: figmaTokens[`${normalizedTokenName}/light`],
+      dark: figmaTokens[`${normalizedTokenName}/dark`],
+      forcedColors: figmaTokens[`${normalizedTokenName}/forcedColors`],
+    };
+
+    if (
+      normalizedTokenValue.light ||
+      normalizedTokenValue.dark ||
+      normalizedTokenValue.forcedColors
+    ) {
+      codeOverrideTokens[normalizedTokenName] = {
+        figma: normalizedTokenValue,
+        code: tokenValue,
+      };
+
+      delete codeOnlyTokens[normalizedTokenName];
+      delete unusedFigmaTokens[`${normalizedTokenName}/light`];
+      delete unusedFigmaTokens[`${normalizedTokenName}/dark`];
+      delete unusedFigmaTokens[`${normalizedTokenName}/forcedColors`];
+    }
+  }
+
+  const OUTPUT_PATH = "../dist/token-audit";
+  if (!existsSync(joinRelativePath(OUTPUT_PATH))) {
+    mkdirSync(joinRelativePath(OUTPUT_PATH));
+  }
+
+  writeFileSync(
+    joinRelativePath(OUTPUT_PATH, "unused-figma-tokens.json"),
+    JSON.stringify(unusedFigmaTokens, null, 2),
+    "utf8"
+  );
+  writeFileSync(
+    joinRelativePath(OUTPUT_PATH, "code-only-tokens.json"),
+    JSON.stringify(codeOnlyTokens, null, 2),
+    "utf8"
+  );
+  writeFileSync(
+    joinRelativePath(OUTPUT_PATH, "code-override-tokens.json"),
+    JSON.stringify(codeOverrideTokens, null, 2),
+    "utf8"
+  );
+};
+
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMain) {
+  const exportData = JSON.parse(
+    readFileSync(joinRelativePath(IMPORTED_VARIABLES_FILENAME), "utf8")
+  );
+  const tokenFiles = getTokenFiles(TOKEN_DIRS);
+  const figmaVars = buildFigmaVars(exportData);
+  const localTokenNames = buildTokenNames(tokenFiles);
+
+  for (const prop in tokenFiles) {
+    updateNovaTokens(tokenFiles[prop], prop, figmaVars, localTokenNames);
+  }
+  writeTokens();
+
+  writeTokenAuditData(figmaVars, localOverrides);
+}

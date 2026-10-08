@@ -109,8 +109,6 @@ WasmFrameIter::WasmFrameIter(JitActivation* activation, wasm::Frame* fp)
     const TrapData& trapData = activation->wasmTrapData();
     void* unwoundPC = trapData.unwoundPC;
 
-    code_ = &instance_->code();
-
     const wasm::CodeRange* unwoundCodeRange = nullptr;
     const wasm::Code* unwoundCode = LookupCode(unwoundPC, &unwoundCodeRange);
     MOZ_RELEASE_ASSERT(unwoundCode);
@@ -141,6 +139,7 @@ WasmFrameIter::WasmFrameIter(JitActivation* activation, wasm::Frame* fp)
 
     // For a Function code range the unwound PC is in the trapping function,
     // which runs with instance_, so its code must match.
+    code_ = &instance_->code();
     MOZ_RELEASE_ASSERT(unwoundCode == code_);
     bytecodeOffset_ = trapData.trapSite.bytecodeOffset.offset();
     funcIndex_ =
@@ -174,6 +173,11 @@ WasmFrameIter::WasmFrameIter(JitActivation* activation, wasm::Frame* fp)
   // at the caller of the exit frame, whose Code, CodeRange and CallSite are
   // indicated by the returnAddress of the exit stub's frame. If the caller
   // was Ion, we can just skip the wasm frames.
+
+  // The exit frame is about to be skipped, so no iterated frame will report
+  // the instance whose stub is running at this exit. Remember it so GC can
+  // keep its code alive.
+  exitInstance_ = instance_;
 
   // Skip the exit frame.
   popFrame(/*isLeavingFrame=*/false);

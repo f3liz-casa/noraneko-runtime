@@ -104,6 +104,7 @@ load audiocontext-after-unload-1.html
 load audiocontext-after-xhr.html
 load audiocontext-double-suspend.html
 skip-if(Android) load audioworkletnode-after-unload-1.html # Needs secure context
+skip-if(Android) load audioworklet-port-without-addmodule.html # Needs secure context
 load buffer-source-duration-1.html
 skip-if(gtkWidget&&/^24\.04$/.test(os_version)) load buffer-source-ended-1.html
 load buffer-source-resampling-start-1.html
@@ -221,5 +222,6 @@ load 1536243.html
 load 2027160.html
 load 2035081.html
 pref(media.autoplay.default,0) load bug2032944.html
+pref(media.autoplay.default,0) pref(media.autoplay.blocking_policy,0) pref(media.forcestereo.enabled,false) pref(accessibility.monoaudio.enable,false) load 2045765.html
 load 1617315.html
 pref(media.autoplay.default,0) pref(media.forcestereo.enabled,true) load bug2021955.html

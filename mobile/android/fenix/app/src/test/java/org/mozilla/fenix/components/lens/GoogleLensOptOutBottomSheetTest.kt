@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import mozilla.components.compose.base.theme.Theme
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -21,20 +22,29 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.fenix.R
 import org.mozilla.fenix.theme.FirefoxTheme
-import org.mozilla.fenix.theme.Theme
 
 @RunWith(AndroidJUnit4::class)
 class GoogleLensOptOutBottomSheetTest {
 
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    @get:Rule val composeTestRule = createComposeRule()
 
-    private val resources get() = ApplicationProvider.getApplicationContext<Context>().resources
-    private val title get() = resources.getString(R.string.lens_opt_out_title)
-    private val description get() = resources.getString(R.string.lens_opt_out_description)
-    private val settingsLink get() = resources.getString(R.string.lens_opt_out_settings_link)
-    private val tryItNow get() = resources.getString(R.string.lens_opt_out_try_it_now_button)
-    private val notNow get() = resources.getString(R.string.lens_opt_out_not_now_button)
+    private val resources
+        get() = ApplicationProvider.getApplicationContext<Context>().resources
+
+    private val title
+        get() = resources.getString(R.string.lens_opt_out_title)
+
+    private val description
+        get() = resources.getString(R.string.lens_opt_out_description)
+
+    private val settingsLink
+        get() = resources.getString(R.string.lens_opt_out_settings_link)
+
+    private val tryItNow
+        get() = resources.getString(R.string.lens_opt_out_try_it_now_button)
+
+    private val notNow
+        get() = resources.getString(R.string.lens_opt_out_not_now_button)
 
     private var tryItNowClicked = false
     private var notNowClicked = false

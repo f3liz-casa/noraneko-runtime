@@ -9,9 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import org.mozilla.fenix.tabstray.repository.uistate.TabManagerUiStateRepository
 import org.mozilla.fenix.tabstray.repository.uistate.data.PersistedUIState
 
-class FakeTabManagerUiStateRepository(
-    initialPersistedUIState: PersistedUIState? = null,
-) : TabManagerUiStateRepository {
+class FakeTabManagerUiStateRepository(initialPersistedUIState: PersistedUIState? = null) : TabManagerUiStateRepository {
 
     private val uiStateFlow: MutableStateFlow<PersistedUIState?> = MutableStateFlow(initialPersistedUIState)
 
@@ -39,6 +37,12 @@ class FakeTabManagerUiStateRepository(
     override suspend fun recordTabGroupsPageViewed(): Boolean {
         val currentSnapshot = uiStateFlow.value ?: PersistedUIState()
         uiStateFlow.emit(currentSnapshot.copy(hasViewedTabGroupsPage = true))
+        return true
+    }
+
+    override suspend fun setSkipUngroupConfirmation(): Boolean {
+        val currentSnapshot = uiStateFlow.value ?: PersistedUIState()
+        uiStateFlow.emit(currentSnapshot.copy(skipUngroupConfirmation = true))
         return true
     }
 }

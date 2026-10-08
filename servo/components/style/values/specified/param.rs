@@ -6,8 +6,8 @@
 
 use crate::custom_properties::VariableValue;
 use crate::parser::{Parse, ParserContext};
-use crate::values::fmt;
 use crate::values::CssWriter;
+use crate::values::fmt;
 use crate::{derives::*, values::DashedIdent};
 use cssparser::Parser;
 use std::fmt::Write;
@@ -82,10 +82,7 @@ impl LinkParameters {
 }
 
 impl Parse for LinkParameters {
-    fn parse<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
             return Ok(Self::none());
         }
@@ -97,7 +94,7 @@ impl Parse for LinkParameters {
                 input.expect_comma()?;
                 // if a comma exists then parse it and set value as specified, even if no value provided
                 // need to handle url references properly https://bugzilla.mozilla.org/show_bug.cgi?id=2028998
-                let parsed = VariableValue::parse(input, None, &context.url_data)?;
+                let parsed = VariableValue::parse(input, None, context.url_data)?;
                 let value = LinkParamValue(OwnedStr::from(parsed.css));
                 Ok(LinkParam { name, value })
             })

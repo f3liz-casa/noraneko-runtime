@@ -353,6 +353,9 @@ void AudioDecoderInputTrack::HandleSPSCData(SPSCData& aData) {
   if (aData.IsClearFutureData()) {
     LOG("Clear future data");
     mBufferedData.Clear();
+    if (mTimeStretcher) {
+      mTimeStretcher->clear();
+    }
     if (!Ended()) {
       LOG("Clear EOS");
       mReceivedEOS = false;
@@ -617,6 +620,15 @@ uint32_t AudioDecoderInputTrack::NumberOfChannels() const {
   const uint32_t maxChannelCount = GetData<AudioSegment>()->MaxChannelCount();
   return maxChannelCount ? maxChannelCount : mInitialInputChannels;
 }
+
+#ifdef ENABLE_TESTS
+uint32_t AudioDecoderInputTrack::TimeStretcherSamplesForTesting() {
+  AssertOnGraphThread();
+  return mTimeStretcher ? mTimeStretcher->numSamples().unverified_safe_because(
+                              "Only used by an AudioDecoderInputTrack gtest.")
+                        : 0;
+}
+#endif
 
 void AudioDecoderInputTrack::EnsureTimeStretcher() {
   AssertOnGraphThread();

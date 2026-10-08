@@ -6,8 +6,6 @@
 
 #include "DocumentInlines.h"
 #include "mozilla/AttributeStyles.h"
-#include "mozilla/EditorBase.h"
-#include "mozilla/HTMLEditor.h"
 #include "mozilla/MappedDeclarationsBuilder.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/dom/BindContext.h"
@@ -199,8 +197,7 @@ nsMapRuleToAttributesFunc HTMLBodyElement::GetAttributeMappingFunction() const {
   return &MapAttributesIntoRule;
 }
 
-NS_IMETHODIMP_(bool)
-HTMLBodyElement::IsAttributeMapped(const nsAtom* aAttribute) const {
+bool HTMLBodyElement::IsNoNamespaceAttrMapped(const nsAtom* aAttribute) const {
   static const MappedAttributeEntry attributes[] = {
       {nsGkAtoms::link},
       {nsGkAtoms::vlink},
@@ -220,29 +217,6 @@ HTMLBodyElement::IsAttributeMapped(const nsAtom* aAttribute) const {
   };
 
   return FindAttributeDependence(aAttribute, map);
-}
-
-already_AddRefed<EditorBase> HTMLBodyElement::GetAssociatedEditor() {
-  MOZ_ASSERT(!GetTextEditorInternal());
-
-  // Make sure this is the actual body of the document
-  if (this != OwnerDoc()->GetBodyElement()) {
-    return nullptr;
-  }
-
-  // For designmode, try to get document's editor
-  nsPresContext* presContext = GetPresContext(eForComposedDoc);
-  if (!presContext) {
-    return nullptr;
-  }
-
-  nsCOMPtr<nsIDocShell> docShell = presContext->GetDocShell();
-  if (!docShell) {
-    return nullptr;
-  }
-
-  RefPtr<HTMLEditor> htmlEditor = docShell->GetHTMLEditor();
-  return htmlEditor.forget();
 }
 
 bool HTMLBodyElement::IsEventAttributeNameInternal(nsAtom* aName) {

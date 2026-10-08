@@ -305,12 +305,7 @@ class SingleLinkedList {
       return *this;
     }
 
-    bool operator!=(const Iterator& other) const {
-      return current_ != other.current_;
-    }
-    bool operator==(const Iterator& other) const {
-      return current_ == other.current_;
-    }
+    bool operator==(const Iterator& other) const = default;
   };
 
   Iterator begin() const { return Iterator(head_.get()); }

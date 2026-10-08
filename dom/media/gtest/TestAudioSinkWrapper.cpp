@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <algorithm>
+
 #include "AudioSampleFormat.h"
 #include "AudioSink.h"
 #include "AudioSinkWrapper.h"
@@ -269,8 +271,9 @@ class AudioSinkWrapperReuseTest : public ::testing::Test {
   void ProcessPending() { NS_ProcessPendingEvents(mThread); }
 
   // Start or resume playback at aTime, then drain pending events.
-  void Start(const media::TimeUnit& aTime) {
-    mWrapper->Start(aTime, mInfo);
+  void Start(const media::TimeUnit& aTime,
+             MediaSink::StartType aStartType = MediaSink::StartType::Initial) {
+    mWrapper->Start(aTime, mInfo, aStartType);
     ProcessPending();
   }
 
@@ -291,6 +294,9 @@ class AudioSinkWrapperReuseTest : public ::testing::Test {
   // Frames requested per manual data callback, kept under the mock's
   // per-callback frame cap so a callback is never rejected.
   static constexpr long kCallbackFrames = 512;
+  // The mock device's output latency, the amount by which its play cursor
+  // trails its write cursor.
+  uint32_t OutputLatencyFrames() const { return mInfo.mAudio.mRate / 10; }
   // Upper bound on callbacks used to drain a buffer, so a test cannot loop
   // forever if the stream stops producing output early.
   static constexpr int kMaxDrainCallbacks = 64;
@@ -364,14 +370,30 @@ class AudioSinkWrapperReuseTest : public ::testing::Test {
     return played;
   }
 
+  void ResumeWithData(uint32_t aFrames, AudioDataValue aValue,
+                      const media::TimeUnit& aTarget) {
+    mAudioQueue.Reset();
+    PushAudio(aTarget, aFrames, aValue);
+    Start(aTarget, MediaSink::StartType::SeekResume);
+  }
+
   // Seek with reuse: stop, reset the decode queue as the decoder would across a
   // seek, then queue aPostFrames of post-seek audio at aTarget and resume.
   void SeekAndSupplyPostSeekAudio(uint32_t aPostFrames, AudioDataValue aValue,
                                   const media::TimeUnit& aTarget) {
     SeekStop();
-    mAudioQueue.Reset();
-    PushAudio(aTarget, aPostFrames, aValue);
-    Start(aTarget);
+    ResumeWithData(aPostFrames, aValue, aTarget);
+  }
+
+  nsTArray<AudioDataValue> PlayAudioFromStart(uint32_t aFrames,
+                                              long aPlayFrames,
+                                              AudioDataValue aValue) {
+    PushAudio(media::TimeUnit::Zero(), aFrames, aValue);
+    Start(media::TimeUnit::Zero());
+    MOZ_RELEASE_ASSERT(mStream);
+    mStream->SetOutputRecordingEnabled(true);
+    DriveCallback(aPlayFrames);
+    return TakeRecorded();
   }
 
   // Arrange a reused seek: start with aPreFrames of pre-seek audio, play
@@ -385,14 +407,21 @@ class AudioSinkWrapperReuseTest : public ::testing::Test {
                                                uint32_t aPostFrames,
                                                AudioDataValue aPostValue,
                                                const media::TimeUnit& aTarget) {
-    PushAudio(media::TimeUnit::Zero(), aPreFrames, aPreValue);
-    Start(media::TimeUnit::Zero());
-    MOZ_RELEASE_ASSERT(mStream);
-    mStream->SetOutputRecordingEnabled(true);
-    DriveCallback(aPlayFrames);
-    nsTArray<AudioDataValue> prePlayed = TakeRecorded();
+    nsTArray<AudioDataValue> prePlayed =
+        PlayAudioFromStart(aPreFrames, aPlayFrames, aPreValue);
     SeekAndSupplyPostSeekAudio(aPostFrames, aPostValue, aTarget);
     return prePlayed;
+  }
+
+  static size_t SamplesMatchingNum(const nsTArray<AudioDataValue>& aSamples,
+                                   AudioDataValue aValue) {
+    return static_cast<size_t>(
+        std::count(aSamples.begin(), aSamples.end(), aValue));
+  }
+
+  static size_t AudibleSamplesNum(const nsTArray<AudioDataValue>& aSamples) {
+    return aSamples.Length() -
+           SamplesMatchingNum(aSamples, static_cast<AudioDataValue>(0));
   }
 
   // Fails if the reported clock is ahead of the audible audio. The small
@@ -418,11 +447,29 @@ class AudioSinkWrapperReuseTest : public ::testing::Test {
         << " target=" << aTarget.ToSeconds();
   }
 
-  // Play from time 0 and drive one callback so playback is running normally.
+  // Play from time 0 until the device is holding a full output-latency window
+  // of unplayed audio. Driving a single callback is not enough: the unplayed
+  // amount at a seek taken from here would be one callback rather than the
+  // latency, which is too small to distinguish a clock that reports written
+  // audio from one that reports audible audio.
   void PlayFromZeroToSteadyState() {
-    PushAudio(media::TimeUnit::Zero(), kBufferFrames, kPreSeekDataValue);
+    const uint32_t rate = mInfo.mAudio.mRate;
+    const int preSeekCallbacks =
+        static_cast<int>(OutputLatencyFrames() / kCallbackFrames) + 1;
+    const uint32_t framesNeeded =
+        static_cast<uint32_t>(preSeekCallbacks * kCallbackFrames);
+    const uint32_t buffers = (framesNeeded + kBufferFrames - 1) / kBufferFrames;
+    for (uint32_t i = 0; i < buffers; ++i) {
+      PushAudio(
+          media::TimeUnit(CheckedInt64(static_cast<int64_t>(i)) * kBufferFrames,
+                          rate),
+          kBufferFrames, kPreSeekDataValue);
+    }
     Start(media::TimeUnit::Zero());
-    DriveCallback(kCallbackFrames);
+    for (int i = 0; i < preSeekCallbacks; ++i) {
+      ASSERT_EQ(DriveCallback(kCallbackFrames),
+                MockCubebStream::KeepProcessing::Yes);
+    }
   }
 
   // Seek, then resume playback at aTarget with post-seek audio queued.
@@ -476,12 +523,19 @@ class AudioSinkWrapperReuseTest : public ::testing::Test {
     // Drive enough callbacks that the play cursor clears the output-latency
     // window and settles into steady state.
     const int steadyStateCallbacks =
-        static_cast<int>((rate / 10) / kCallbackFrames) + 5;
+        static_cast<int>(OutputLatencyFrames() / kCallbackFrames) + 5;
     int64_t framesFed = 0;
     for (int i = 0; i < steadyStateCallbacks; ++i) {
       ASSERT_EQ(DriveCallback(kCallbackFrames),
                 MockCubebStream::KeepProcessing::Yes);
       framesFed += kCallbackFrames;
+      if (framesFed < static_cast<int64_t>(OutputLatencyFrames())) {
+        // The device is still draining the carried window, so none of the
+        // post-seek audio is audible yet and the clock must hold exactly at the
+        // target rather than creep forward with the frames written.
+        ExpectClockHeldAt(mWrapper->GetPosition(), aTarget,
+                          "while the carried window drains");
+      }
       // Pace callbacks at the rate a real device consumes them so wall-clock
       // time advances in step with the frames fed; a clock that wrongly sampled
       // the system clock would then be caught leading the audible audio.
@@ -489,22 +543,23 @@ class AudioSinkWrapperReuseTest : public ::testing::Test {
       PR_Sleep(PR_MillisecondsToInterval(sleepMsPerCallback));
     }
 
-    // The clock may not exceed everything written so far, the seek target plus
-    // the frames fed. For example, seeking to 10s and feeding about 0.15s of
-    // audio, it must stay at or below 10.15s; leading that would mean reporting
-    // audio that has not even been written to the stream yet.
-    const media::TimeUnit fedCeiling =
-        aTarget + media::TimeUnit(CheckedInt64(framesFed), rate);
-    ExpectClockNotAhead(mWrapper->GetPosition(), fedCeiling, "in steady state");
-
-    // Lower bound: the clock must have caught up to the audible audio, the play
-    // cursor that trails the write cursor by the output latency. This proves
-    // the hold released and the clock now tracks the audio, rather than staying
-    // frozen at the target.
-    const int64_t latencyFrames = rate / 10;
-    const int64_t audibleFrames = framesFed - latencyFrames;
+    // The audible position: the play cursor, which trails the write cursor by
+    // the output latency.
+    const int64_t audibleFrames =
+        framesFed - static_cast<int64_t>(OutputLatencyFrames());
     const media::TimeUnit audiblePosition =
         aTarget + media::TimeUnit(CheckedInt64(audibleFrames), rate);
+
+    // Upper bound: the clock may not lead the audible audio. Bounding it by
+    // everything written instead would leave a whole output-latency window of
+    // slack, which is wide enough for a clock reporting written-but-unheard
+    // audio to pass.
+    ExpectClockNotAhead(mWrapper->GetPosition(), audiblePosition,
+                        "in steady state");
+
+    // Lower bound: the clock must have caught up to the audible audio, proving
+    // the hold released and the clock now tracks the audio rather than staying
+    // frozen at the target.
     EXPECT_GE(mWrapper->GetPosition().ToSeconds(),
               audiblePosition.ToSeconds() - kClockLeadToleranceSec)
         << "reported clock lags the audible audio in steady state: reported="
@@ -642,6 +697,117 @@ TEST_F(AudioSinkWrapperReuseTest, DeadStreamWhileStashedIsRecreatedNotReused) {
   Start(media::TimeUnit::FromSeconds(10));
   EXPECT_EQ(mDestroys, 1) << "dead stashed stream should be discarded";
   EXPECT_EQ(mInits, 2) << "a fresh stream should be created, not the dead one";
+}
+
+// A seek stashes the sink with its cubeb stream still running, so the callback
+// keeps consuming the ring buffer while the sink is stopped. What is left there
+// is audio from the position being left behind, so nothing but silence may
+// reach the backend until the seek resumes, and the resume must still reuse the
+// stream and play the post-seek audio in full.
+TEST_F(AudioSinkWrapperReuseTest, OnlySilenceAudioOutputDuringSeeking) {
+  CreateWrapper(ReuseStream::Enabled, MockCubeb::RunningMode::Manual);
+  const uint32_t channels = mInfo.mAudio.mChannels;
+  const media::TimeUnit target = media::TimeUnit::FromSeconds(10);
+  // Cover everything still queued when the seek starts, plus one callback past
+  // it so the underrun after the drop is exercised. With this fixture's values:
+  // 2048 frames pushed, 512 played before the seek, leaving 1536 queued, which
+  // is 3 callbacks of 512, plus 1 = 4 callbacks, so 4 * 512 * 2 channels =
+  // 4096 samples are expected out of the gap.
+  const uint32_t queuedAtSeek = kBufferFrames - kCallbackFrames;
+  const int seekGapCallbacks =
+      static_cast<int>(queuedAtSeek / kCallbackFrames) + 1;
+  const uint32_t gapSamples = seekGapCallbacks * kCallbackFrames * channels;
+
+  // Play audio before seeking; every sample out must be the pre-seek value.
+  nsTArray<AudioDataValue> prePlayed =
+      PlayAudioFromStart(kBufferFrames, kCallbackFrames, kPreSeekDataValue);
+  ASSERT_GT(prePlayed.Length(), 0u);
+  EXPECT_EQ(SamplesMatchingNum(prePlayed, kPreSeekDataValue),
+            prePlayed.Length())
+      << "audio before the seek must play normally";
+
+  // Start seeking. The stream is stashed and keeps running, so from here it
+  // must output only silence. Callbacks are driven manually, so none lands
+  // between the seek pause and the seek stop.
+  SeekStop();
+  EXPECT_EQ(mDestroys, 0) << "stream should be stashed and kept running";
+
+  nsTArray<AudioDataValue> gapPlayed = DrainRecordedOutput(gapSamples);
+  EXPECT_EQ(gapPlayed.Length(), gapSamples)
+      << "the stashed stream must keep producing across the seek, rather than "
+         "draining once its buffer is emptied";
+  EXPECT_EQ(AudibleSamplesNum(gapPlayed), 0u)
+      << "a sink stopped for a seek must output silence, not the pre-seek "
+         "audio still queued in it";
+
+  // Seek finished. The stream must be reused, and the silent gap must not have
+  // counted as played audio, so the clock resumes at the target.
+  ResumeWithData(kBufferFrames, kPostSeekDataValue, target);
+  EXPECT_EQ(mInits, 1) << "stream should be reused, not recreated";
+  EXPECT_EQ(mDestroys, 0);
+  ExpectClockHeldAt(mWrapper->GetPosition(), target, "after the seek gap");
+
+  // Only post-seek audio may play now: no stale pre-seek data, and no silence.
+  nsTArray<AudioDataValue> postPlayed =
+      DrainRecordedOutput(kBufferFrames * channels);
+  EXPECT_EQ(postPlayed.Length(), kBufferFrames * channels)
+      << "the whole post-seek buffer must play";
+  EXPECT_EQ(SamplesMatchingNum(postPlayed, kPostSeekDataValue),
+            postPlayed.Length())
+      << "only post-seek audio may play after the resume";
+}
+
+// Emptying the ring buffer for the seek must not be mistaken for the source
+// ending. When the audio queue has already finished, as it has for a seek
+// issued near the end of the stream, the deliberately starved stream must stay
+// alive and still be reused on resume instead of draining and forcing a new
+// one.
+TEST_F(AudioSinkWrapperReuseTest, SeekWithFinishedAudioQueueStillReusesStream) {
+  CreateWrapper(ReuseStream::Enabled, MockCubeb::RunningMode::Manual);
+  const uint32_t channels = mInfo.mAudio.mChannels;
+  const media::TimeUnit target = media::TimeUnit::FromSeconds(1);
+  const uint32_t gapSamples = 2 * kCallbackFrames * channels;
+
+  // Play audio before seeking, then finish the decode queue so the sink treats
+  // its processed queue as finished while the ring buffer still holds the rest
+  // of the pre-seek audio. This is the state a seek near end of stream begins
+  // from, and the state that ends the stream as soon as the buffer empties.
+  PlayAudioFromStart(kBufferFrames, kCallbackFrames, kPreSeekDataValue);
+  mAudioQueue.Finish();
+  ProcessPending();
+
+  // Start seeking; the deliberately starved stream must stay alive and silent.
+  SeekStop();
+  EXPECT_EQ(mDestroys, 0) << "stream should be stashed, not destroyed";
+
+  nsTArray<AudioDataValue> gapPlayed = DrainRecordedOutput(gapSamples);
+  EXPECT_EQ(gapPlayed.Length(), gapSamples)
+      << "the starved stream must keep producing rather than draining";
+  EXPECT_EQ(AudibleSamplesNum(gapPlayed), 0u) << "the seek gap must be silent";
+
+  // Seek finished; the stream must be reused despite the finished queue.
+  ResumeWithData(kBufferFrames, kPostSeekDataValue, target);
+  EXPECT_EQ(mInits, 1) << "a finished queue must not cost the stream reuse";
+  EXPECT_EQ(mDestroys, 0);
+
+  // Keeping the stream alive across the seek must be temporary. The resume
+  // refilled the decode queue, which cleared the finished state, so finish it a
+  // second time and play the rest out: the stream still has to reach its normal
+  // end. A sink left in the stopped-for-seek state would never report the
+  // source as ended, so the stream would never drain and playback would hang
+  // here at end of media.
+  bool drained = false;
+  MediaEventListener stateListener =
+      mStream->StateEvent().Connect(mThread, [&](cubeb_state aState) {
+        drained = drained || aState == CUBEB_STATE_DRAINED;
+      });
+  mAudioQueue.Finish();
+  ProcessPending();
+  DrainRecordedOutput(kBufferFrames * channels);
+  DriveCallback(kCallbackFrames);
+  stateListener.Disconnect();
+  EXPECT_TRUE(drained)
+      << "the stream must still end once the post-seek audio is exhausted";
 }
 
 // A seek that reuses the stream must drop the stale pre-seek audio still queued
@@ -853,13 +1019,13 @@ void AudioSinkWrapperReuseTest::RunSeekResumeClockFollowsAudible(
     ReuseStream aReuse) {
   // Model a device whose play cursor lags the write cursor by its output
   // latency, so audio becomes audible only after a delay.
-  mCubeb->SetDefaultOutputLatencyFrames(mInfo.mAudio.mRate / 10);
+  mCubeb->SetDefaultOutputLatencyFrames(OutputLatencyFrames());
   const media::TimeUnit target = media::TimeUnit::FromSeconds(10);
 
-  PlayFromZeroToSteadyState();
+  ASSERT_NO_FATAL_FAILURE(PlayFromZeroToSteadyState());
   SeekAndResumeAt(target);
   ExpectClockHoldsAtTargetWhileSilent(target, aReuse);
-  ExpectClockFollowsAudioOncePlaying(target);
+  ASSERT_NO_FATAL_FAILURE(ExpectClockFollowsAudioOncePlaying(target));
 }
 
 TEST_F(AudioSinkWrapperReuseTest, SeekResumeClockFollowsAudibleFreshStream) {
@@ -870,6 +1036,37 @@ TEST_F(AudioSinkWrapperReuseTest, SeekResumeClockFollowsAudibleFreshStream) {
 TEST_F(AudioSinkWrapperReuseTest, SeekResumeClockFollowsAudibleReusedStream) {
   CreateWrapper(ReuseStream::Enabled, MockCubeb::RunningMode::Manual);
   RunSeekResumeClockFollowsAudible(ReuseStream::Enabled);
+}
+
+// A pause before the seek stops the backend, discarding its queued audio.
+// Waiting for audio that will never play would leave the clock an
+// output-latency window behind for the rest of playback.
+TEST_F(AudioSinkWrapperReuseTest, SeekResumeAfterPauseIgnoresDiscardedAudio) {
+  CreateWrapper(ReuseStream::Enabled, MockCubeb::RunningMode::Manual);
+  mCubeb->SetDefaultOutputLatencyFrames(OutputLatencyFrames());
+  const media::TimeUnit target = media::TimeUnit::FromSeconds(10);
+
+  ASSERT_NO_FATAL_FAILURE(PlayFromZeroToSteadyState());
+
+  // Pause first, so the seek resume restarts a stopped backend rather than
+  // taking over a running one.
+  mWrapper->SetPlaying(false);
+  SeekAndResumeAt(target);
+
+  EXPECT_EQ(mInits, 1) << "the stream must be reused, not recreated";
+  EXPECT_EQ(mDestroys, 0) << "the stream must be reused, not recreated";
+
+  ASSERT_EQ(DriveCallback(kCallbackFrames),
+            MockCubebStream::KeepProcessing::Yes);
+  const media::TimeUnit expected =
+      target +
+      media::TimeUnit(CheckedInt64(kCallbackFrames), mInfo.mAudio.mRate);
+  // The frame history converts frames to microseconds with integer division, so
+  // allow the one microsecond that truncation costs.
+  EXPECT_NEAR(mWrapper->GetPosition().ToMicroseconds(),
+              expected.ToMicroseconds(), 1)
+      << "the clock advances by exactly the post-seek callback rather than "
+         "waiting out audio the backend had already discarded";
 }
 
 // A seek resume that begins while muted has no audio sink, so playback advances

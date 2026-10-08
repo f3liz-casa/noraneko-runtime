@@ -4,27 +4,52 @@
 
 package org.mozilla.fenix.ui.efficiency.selectors
 
+import org.mozilla.fenix.R
+import org.mozilla.fenix.helpers.DataGenerationHelper.getStringResource
+import org.mozilla.fenix.ui.efficiency.helpers.PageReadinessProfiles
 import org.mozilla.fenix.ui.efficiency.helpers.Selector
+import org.mozilla.fenix.ui.efficiency.helpers.SelectorContainer
 import org.mozilla.fenix.ui.efficiency.helpers.SelectorStrategy
 
-object SettingsTurnOnSyncSelectors {
+object SettingsTurnOnSyncSelectors : SelectorContainer {
 
-    val USE_EMAIL_INSTEAD_BUTTON = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR_WITH_RES_ID,
-        value = "signInEmailButton",
-        description = "Use email instead button",
-        groups = listOf("requiredForPage"),
-    )
+    val TOOLBAR_TITLE =
+        navigationToolbarTitle(
+            title = getStringResource(R.string.preferences_sign_in),
+            description = "Sign in toolbar title",
+        )
 
-    val READY_TO_SCAN_BUTTON = Selector(
-        strategy = SelectorStrategy.UIAUTOMATOR_WITH_RES_ID,
-        value = "signInScanButton",
-        description = "Use email instead button",
-        groups = listOf("requiredForPage"),
-    )
+    val USE_EMAIL_INSTEAD_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR_WITH_RES_ID,
+            value = "signInEmailButton",
+            description = "Use email instead button",
+            readiness = PageReadinessProfiles.READY_CONTENT,
+        )
 
-    val all = listOf(
-        USE_EMAIL_INSTEAD_BUTTON,
-        READY_TO_SCAN_BUTTON,
-    )
+    val READY_TO_SCAN_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR_WITH_RES_ID,
+            value = "signInScanButton",
+            description = "Ready to scan button",
+            readiness = PageReadinessProfiles.READY_CONTENT,
+        )
+
+    // The camera-permission dialog Fenix shows when pairing is attempted without the permission. Matched on
+    // text because the dialog is a MaterialAlertDialog whose buttons carry no ids of their own, and via
+    // UiObject2 because dismissing a dialog is exactly the "slow reaction" case where UiObject's clickAndSync
+    // reports a successful click as a failure.
+    val PERMISSION_DIALOG_DISMISS_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_TEXT,
+            value = getStringResource(R.string.camera_permissions_needed_negative_button_text),
+            description = "Camera permission dialog Dismiss button",
+        )
+
+    val PERMISSION_DIALOG_GO_TO_SETTINGS_BUTTON =
+        Selector(
+            strategy = SelectorStrategy.UIAUTOMATOR2_BY_TEXT,
+            value = getStringResource(R.string.camera_permissions_needed_positive_button_text),
+            description = "Camera permission dialog Go to settings button",
+        )
 }

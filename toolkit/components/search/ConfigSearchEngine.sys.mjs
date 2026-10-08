@@ -309,9 +309,7 @@ const ParamPreferenceCache = {
     let branchFetcher = AppConstants.NIGHTLY_BUILD
       ? "getBranch"
       : "getDefaultBranch";
-    this.branch = Services.prefs[branchFetcher](
-      lazy.SearchUtils.BROWSER_SEARCH_PREF + "param."
-    );
+    this.branch = Services.prefs[branchFetcher]("browser.search.param.");
     this.cache = new Map();
     this.nimbusCache = new Map();
     for (let prefName of this.branch.getChildList("")) {
@@ -693,7 +691,7 @@ export class ConfigSearchEngine extends SearchEngine {
 
     for (const [type, urlData] of Object.entries(engineConfig.urls)) {
       if (urlData) {
-        this.#setUrl(type, urlData, engineConfig.partnerCode);
+        this.#setUrl(type, urlData);
       }
     }
   }
@@ -705,20 +703,38 @@ export class ConfigSearchEngine extends SearchEngine {
    *   The type of url. This could be a url for search, suggestions, or trending.
    * @param {object} urlData
    *   The url data contains the template/base url and url params.
-   * @param {string} partnerCode
-   *   The partner code associated with the search engine.
    */
-  #setUrl(type, urlData, partnerCode) {
+  #setUrl(type, urlData) {
     let urlType = ConfigSearchEngine.URL_TYPE_MAP.get(type);
     if (!urlType) {
       console.warn("unexpected engine url type.", type);
       return;
     }
 
+    let partnerCodeMap = new Map([
+      [
+        "default",
+        { partnerCode: this.#partnerCode, telemetryId: this.telemetryId },
+      ],
+    ]);
+    if (this.id == "google") {
+      for (let sapSource of ["errorpage"]) {
+        partnerCodeMap.set(sapSource, {
+          partnerCode: "",
+          telemetryId: "google-com-nocodes",
+        });
+      }
+      partnerCodeMap.set("newtab_search_widget", {
+        partnerCode: "firefox-b-exp1",
+        telemetryId: "google-b-exp1",
+      });
+    }
+
     let engineURL = new EngineURL({
       ...urlData,
       type: urlType,
       template: urlData.base,
+      partnerCodeMap,
     });
 
     if (urlData.params) {
@@ -731,10 +747,7 @@ export class ConfigSearchEngine extends SearchEngine {
         switch (true) {
           case param.value != undefined:
             if (!isEnterprise || !enterpriseParams.includes(param.name)) {
-              engineURL.addParam(
-                param.name,
-                param.value == "{partnerCode}" ? partnerCode : param.value
-              );
+              engineURL.addParam(param.name, param.value);
             }
             break;
           case param.experimentConfig != undefined:
@@ -746,12 +759,7 @@ export class ConfigSearchEngine extends SearchEngine {
             break;
           case param.enterpriseValue != undefined:
             if (isEnterprise) {
-              engineURL.addParam(
-                param.name,
-                param.enterpriseValue == "{partnerCode}"
-                  ? partnerCode
-                  : param.enterpriseValue
-              );
+              engineURL.addParam(param.name, param.enterpriseValue);
             }
             break;
         }

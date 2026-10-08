@@ -130,6 +130,7 @@ namespace jit {
   _(ToDouble)                     \
   _(ToFloat32)                    \
   _(ToFloat16)                    \
+  _(UnsignedToDouble)             \
   _(TruncateToInt32)              \
   _(CanonicalizeNaN)              \
   _(NewObject)                    \
@@ -138,6 +139,7 @@ namespace jit {
   _(NewTypedArray)                \
   _(NewArray)                     \
   _(NewIterator)                  \
+  _(NewBoundFunction)             \
   _(NewDateObject)                \
   _(NewCallObject)                \
   _(Lambda)                       \
@@ -887,6 +889,14 @@ class RToFloat16 final : public RInstruction {
                              SnapshotIterator& iter) const override;
 };
 
+class RUnsignedToDouble final : public RInstruction {
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(UnsignedToDouble, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
 class RTruncateToInt32 final : public RInstruction {
  public:
   RINSTRUCTION_HEADER_NUM_OP_(TruncateToInt32, 1)
@@ -960,6 +970,14 @@ class RNewIterator final : public RInstruction {
 
  public:
   RINSTRUCTION_HEADER_NUM_OP_(NewIterator, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
+class RNewBoundFunction final : public RInstruction {
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(NewBoundFunction, 1)
 
   [[nodiscard]] bool recover(JSContext* cx,
                              SnapshotIterator& iter) const override;

@@ -132,18 +132,24 @@ input:is([type="number"], [type="text"]) {
 }
 
 input[type="number"] {
-  box-sizing: content-box;
+  box-sizing: border-box;
   min-height: unset;
-  padding: 0;
-  padding-inline-start: var(--space-small);
+  padding-block: var(--space-xsmall);
+  padding-inline: var(--space-small);
   margin: 0;
-  height: 1.5em;
-  width: 4em;
+  width: 5em;
 }
 
 input:is([type="checkbox"], [type="radio"]):disabled + label,
 input[type="radio"]:disabled + span > label {
   opacity: 0.5;
+}
+
+#orientation-control {
+  --button-font-size-small: none;
+
+  width: 100%;
+  box-sizing: border-box;
 }
 
 #custom-range {
@@ -158,18 +164,6 @@ input[type="radio"]:disabled + span > label {
   &:disabled {
     /* Let clicks on the disabled input select the radio button */
     pointer-events: none;
-  }
-}
-
-.toggle-group-label {
-  padding: var(--space-xsmall) var(--space-small);
-
-  #landscape + &::before {
-    content: url("chrome://global/skin/icons/page-landscape.svg");
-  }
-
-  #portrait + &::before {
-    content: url("chrome://global/skin/icons/page-portrait.svg");
   }
 }
 

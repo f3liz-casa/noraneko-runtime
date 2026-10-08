@@ -15,16 +15,16 @@ import org.mozilla.fenix.helpers.Constants
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
 import org.mozilla.fenix.helpers.TestAssetHelper.getGenericAsset
 import org.mozilla.fenix.ui.efficiency.helpers.BaseTest
+import org.mozilla.fenix.ui.efficiency.navigation.LaunchConfig
 import org.mozilla.fenix.ui.efficiency.selectors.BookmarksSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.BrowserPageSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.HomeSelectors
+import org.mozilla.fenix.ui.efficiency.selectors.MainMenuSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.SearchBarSelectors
-import org.mozilla.fenix.ui.efficiency.selectors.SettingsCustomizeSelectors
+import org.mozilla.fenix.ui.efficiency.selectors.ShareOverlaySelectors
 import org.mozilla.fenix.ui.efficiency.selectors.ToolbarSelectors
 
-class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) {
-
-    private val mockWebServer get() = fenixTestRule.mockWebServer
+class NavigationToolbarExpandedTest : BaseTest(LaunchConfig(shouldUseExpandedToolbar = true)) {
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/3333211
     // Converted from legacy NavigationToolbarExpandedTest.verifyTheExpandedToolbarAddBookmarkButtonTest
@@ -36,7 +36,7 @@ class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) 
         on.browserPage.mozClick(ToolbarSelectors.EXPANDED_TOOLBAR_ADD_BOOKMARK_BUTTON)
         on.browserPage.mozWaitUntilAbsent(BrowserPageSelectors.SNACKBAR)
         on.browserPage.mozClick(ToolbarSelectors.EXPANDED_TOOLBAR_EDIT_BOOKMARK_BUTTON)
-        on.bookmarks.mozVerifyElementsByGroup("editBookmarksView")
+        on.bookmarks.mozVerifyElementsByGroup(BookmarksSelectors.Group.EDIT_BOOKMARKS_VIEW)
         on.bookmarks.mozClick(BookmarksSelectors.DELETE_BOOKMARK_BUTTON)
         on.browserPage.verifyPageContent(website.content)
     }
@@ -52,7 +52,7 @@ class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) 
 
         on.browserPage.navigateToPage(website.url.toString())
         on.browserPage.mozClick(ToolbarSelectors.EXPANDED_TOOLBAR_SHARE_BUTTON)
-        on.shareOverlay.mozVerifyElementsByGroup("shareTabLayout")
+        on.shareOverlay.mozVerifyElementsByGroup(ShareOverlaySelectors.Group.SHARE_TAB_LAYOUT)
         on.shareOverlay.verifySharingWithSelectedApp(
             appName = Constants.GMAIL_APP_NAME,
             appPackageName = Constants.PackageName.GMAIL_APP,
@@ -72,8 +72,7 @@ class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) 
 
         val website = mockWebServer.getGenericAsset(1)
 
-        on.browserPage.navigateToPage(website.url.toString())
-            .verifyPageContent(website.content)
+        on.browserPage.navigateToPage(website.url.toString()).verifyPageContent(website.content)
 
         setScreenOrientation(orientationRule, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
 
@@ -102,8 +101,7 @@ class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) 
 
         val website = mockWebServer.getGenericAsset(1)
 
-        on.browserPage.navigateToPage(website.url.toString())
-            .verifyPageContent(website.content)
+        on.browserPage.navigateToPage(website.url.toString()).verifyPageContent(website.content)
 
         setScreenOrientation(orientationRule, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
 
@@ -126,8 +124,7 @@ class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) 
 
         val website = mockWebServer.getGenericAsset(1)
 
-        on.browserPage.navigateToPage(website.url.toString())
-            .verifyPageContent(website.content)
+        on.browserPage.navigateToPage(website.url.toString()).verifyPageContent(website.content)
 
         setScreenOrientation(orientationRule, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
 
@@ -149,15 +146,12 @@ class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) 
 
         val website = mockWebServer.getGenericAsset(1)
 
-        on.browserPage.navigateToPage(website.url.toString())
-            .verifyPageContent(website.content)
+        on.browserPage.navigateToPage(website.url.toString()).verifyPageContent(website.content)
 
         setScreenOrientation(orientationRule, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
 
-        on.browserPage
-            .openMainMenu()
-        on.mainMenu
-            .mozVerifyElementsByGroup("browserViewMainMenuItems")
+        on.browserPage.openMainMenu()
+        on.mainMenu.mozVerifyElementsByGroup(MainMenuSelectors.Group.BROWSER_VIEW_MAIN_MENU_ITEMS)
 
         setScreenOrientation(orientationRule, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
     }
@@ -170,8 +164,7 @@ class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) 
         val website = mockWebServer.getGenericAsset(1)
         on.browserPage.navigateToPage(website.url.toString())
         on.browserPage.verifyPageContent(website.content)
-        on.mainMenu.navigateToPage()
-            .mozVerifyElementsByGroup("browserViewMainMenuItems")
+        on.mainMenu.navigateToPage().mozVerifyElementsByGroup(MainMenuSelectors.Group.BROWSER_VIEW_MAIN_MENU_ITEMS)
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/3333214
@@ -200,7 +193,7 @@ class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) 
         on.browserPage.mozClick(ToolbarSelectors.NEW_TAB_BUTTON)
         // The new tab lands in the search view in edit mode: verify it opened (search-engine selector),
         // the address bar is in edit mode showing its placeholder, and the keyboard came up for input.
-        on.searchBar.mozVerifyElementsByGroup("requiredForPage")
+        on.searchBar.mozVerifyReadiness()
         on.searchBar.mozVerify(SearchBarSelectors.TOOLBAR_IN_EDIT_MODE)
         on.searchBar.mozVerify(SearchBarSelectors.SEARCH_BAR_PLACEHOLDER)
         on.searchBar.mozVerifyKeyboardVisible()
@@ -234,7 +227,8 @@ class NavigationToolbarExpandedTest : BaseTest(shouldUseExpandedToolbar = true) 
             it.isTabStripEnabled = true
         }
 
-        on.browserPage.navigateToPage(website.url.toString())
+        on.browserPage
+            .navigateToPage(website.url.toString())
             .verifyPageContent(website.content)
             .verifyUrl(website.url.toString())
         on.browserPage.mozVerify(ToolbarSelectors.SITE_INFO_BUTTON)

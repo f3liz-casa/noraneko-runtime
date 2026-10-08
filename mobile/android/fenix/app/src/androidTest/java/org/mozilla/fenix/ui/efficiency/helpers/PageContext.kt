@@ -5,7 +5,14 @@
 package org.mozilla.fenix.ui.efficiency.helpers
 
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.compose.ui.test.junit4.v2.AndroidComposeTestRule as AndroidComposeTestRuleV2
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationGraph
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationNode
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationNodeId
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationNodeKind
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationNodes
+import org.mozilla.fenix.ui.efficiency.navigation.PageCatalog
 import org.mozilla.fenix.ui.efficiency.pageObjects.AddToHomeScreenComponent
 import org.mozilla.fenix.ui.efficiency.pageObjects.BookmarkSearchPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.BookmarksPage
@@ -39,6 +46,7 @@ import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsHomepagePage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsLanguagePage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsOpenLinksInAppsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsPage
+import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsPageSummariesPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsPasswordsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsPrivateBrowsingPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsSavePasswordsPage
@@ -47,8 +55,10 @@ import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsSearchAddSearchEngine
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsSearchDefaultSearchEnginePage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsSearchManageShortcutsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsSearchPage
+import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsSiteSettingsAutoplayPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsSiteSettingsExceptionsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsSiteSettingsPage
+import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsSiteSettingsPermissionsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsTabsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsTurnOnSyncPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.ShareOverlayPage
@@ -58,8 +68,8 @@ import org.mozilla.fenix.ui.efficiency.pageObjects.TabHistoryPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.ToolbarComponent
 import org.mozilla.fenix.ui.efficiency.pageObjects.UnifiedTrustPanelPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.WebCompatReporterPage
-import androidx.compose.ui.test.junit4.v2.AndroidComposeTestRule as AndroidComposeTestRuleV2
 
+/** Composes the page catalog, readiness oracles, and one isolated navigation graph for a running test. */
 class PageContext(val composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>) {
     // Let's make sure we have them in a lexicographic order
     val addToHomescreen = AddToHomeScreenComponent(composeRule)
@@ -100,6 +110,7 @@ class PageContext(val composeRule: AndroidComposeTestRule<HomeActivityIntentTest
     val settingsHTTPSOnlyMode = SettingsHTTPSOnlyModePage(composeRule)
     val settingsLanguage = SettingsLanguagePage(composeRule)
     val settingsOpenLinksInApps = SettingsOpenLinksInAppsPage(composeRule)
+    val settingsPageSummaries = SettingsPageSummariesPage(composeRule)
     val settingsPasswords = SettingsPasswordsPage(composeRule)
     val settingsPrivateBrowsing = SettingsPrivateBrowsingPage(composeRule)
     val settingsSavePasswords = SettingsSavePasswordsPage(composeRule)
@@ -109,6 +120,8 @@ class PageContext(val composeRule: AndroidComposeTestRule<HomeActivityIntentTest
     val settingsSearchDefaultSearchEngine = SettingsSearchDefaultSearchEnginePage(composeRule)
     val settingsSearchManageShortcuts = SettingsSearchManageShortcutsPage(composeRule)
     val settingsSiteSettings = SettingsSiteSettingsPage(composeRule)
+    val settingsSiteSettingsAutoplay = SettingsSiteSettingsAutoplayPage(composeRule)
+    val settingsSiteSettingsPermissions = SettingsSiteSettingsPermissionsPage(composeRule)
     val settingsSiteSettingsExceptions = SettingsSiteSettingsExceptionsPage(composeRule)
     val settingsTabs = SettingsTabsPage(composeRule)
     val settingsTurnOnSync = SettingsTurnOnSyncPage(composeRule)
@@ -120,6 +133,30 @@ class PageContext(val composeRule: AndroidComposeTestRule<HomeActivityIntentTest
     val unifiedTrustPanel = UnifiedTrustPanelPage(composeRule)
     val webCompatReporter = WebCompatReporterPage(composeRule)
 
+    val navigationGraph: NavigationGraph
+
+    init {
+        val pages =
+            PageCatalog.discoverNavigablePages().map { pageRef ->
+                val page = pageRef.getter(this)
+                check(page.declaredReadinessProfiles() == PageReadinessProfile.entries.toSet()) {
+                    "${page.pageName} must declare every page readiness profile"
+                }
+                page
+            }
+        val nodes =
+            pages.mapTo(mutableSetOf()) {
+                NavigationNode(NavigationNodeId(it.pageName), NavigationNodeKind.PAGE)
+            } + setOf(NavigationNodes.APP_ENTRY, NavigationNodes.GOOGLE_PLAY)
+        val builder = NavigationGraph.Builder(nodes)
+        pages.forEach { page ->
+            page.registerNavigation(builder)
+            builder.registerCheckpointVerifier(page.pageName, page::waitForNavigationCheckpoint)
+        }
+        navigationGraph = builder.build()
+        pages.forEach { it.bindNavigationGraph(navigationGraph) }
+    }
+
     fun initTestRule(
         skipOnboarding: Boolean = true,
         isPageLoadTranslationsPromptEnabled: Boolean = false,
@@ -128,7 +165,9 @@ class PageContext(val composeRule: AndroidComposeTestRule<HomeActivityIntentTest
             HomeActivityIntentTestRule(
                 skipOnboarding = skipOnboarding,
                 isPageLoadTranslationsPromptEnabled = isPageLoadTranslationsPromptEnabled,
-            ),
-        ) { it.activity }
+            )
+        ) {
+            it.activity
+        }
     }
 }

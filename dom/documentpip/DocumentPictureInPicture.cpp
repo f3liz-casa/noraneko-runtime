@@ -78,8 +78,10 @@ void DocumentPictureInPicture::OnPiPResized() {
 
   int x = innerWindow->GetScreenLeft(CallerType::System, IgnoreErrors());
   int y = innerWindow->GetScreenTop(CallerType::System, IgnoreErrors());
-  int width = static_cast<int>(innerWindow->GetInnerWidth(IgnoreErrors()));
-  int height = static_cast<int>(innerWindow->GetInnerHeight(IgnoreErrors()));
+  int width = static_cast<int>(std::round(
+      innerWindow->GetInnerWidth(dom::CallerType::System, IgnoreErrors())));
+  int height = static_cast<int>(std::round(
+      innerWindow->GetInnerHeight(dom::CallerType::System, IgnoreErrors())));
 
   mPreviousExtent = Some(CSSIntRect(x, y, width, height));
 
@@ -150,7 +152,7 @@ static nsresult OpenPiPWindowUtility(nsPIDOMWindowOuter* aParent,
     features += ",disallow_return_to_opener";
   }
 
-  rv = pww->OpenWindow2(aParent, uri, "_blank"_ns, features,
+  rv = pww->OpenWindow2(aParent, uri, u"_blank"_ns, features,
                         mozilla::dom::UserActivation::Modifiers::None(), false,
                         false, true, nullptr, false, false, false,
                         nsPIWindowWatcher::PrintKind::PRINT_NONE, loadState,

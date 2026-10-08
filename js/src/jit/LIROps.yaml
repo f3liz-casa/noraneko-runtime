@@ -205,6 +205,11 @@
   num_temps: 1
   mir_op: true
 
+- name: NewBoundFunction
+  result_type: WordSized
+  num_temps: 1
+  mir_op: true
+
 - name: NewTypedArray
   result_type: WordSized
   call_instruction: true
@@ -979,7 +984,8 @@
   num_temps: 1
 
 - name: Return
-  gen_boilerplate: false
+  operands:
+    value: BoxedValue
 
 - name: MinMaxI
   result_type: WordSized
@@ -2205,9 +2211,7 @@
     newval: WordSized
   # Needs additional temps on LL/SC platforms to extract/insert bits of word.
 #if defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
-  num_temps: 4
-#else
-  num_temps: 1
+  num_temps: 3
 #endif
   mir_op: true
 
@@ -2219,9 +2223,7 @@
     value: WordSized
   # Needs additional temps on LL/SC platforms to extract/insert bits of word.
 #if defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
-  num_temps: 4
-#else
-  num_temps: 1
+  num_temps: 3
 #endif
   mir_op: true
 
@@ -2233,9 +2235,9 @@
     value: WordSized
   # Needs additional temps on LL/SC platforms to extract/insert bits of word.
 #if defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
-  num_temps: 4
+  num_temps: 3
 #else
-  num_temps: 2
+  num_temps: 1
 #endif
   mir_op: true
 
@@ -2681,6 +2683,9 @@
   successors: [ifTrue, ifFalse]
   operands:
     input: BoxedValue
+
+- name: IsResumingGeneratorAndBranch
+  successors: [ifTrue, ifFalse]
 
 - name: CloseIterCache
   operands:
@@ -3351,9 +3356,6 @@
 - name: WasmNullConstant
   result_type: WordSized
 
-- name: WasmCallIndirectAdjunctSafepoint
-  gen_boilerplate: false
-
 - name: WasmCall
   gen_boilerplate: false
 
@@ -3378,6 +3380,10 @@
   gen_boilerplate: false
 
 #ifdef ENABLE_WASM_JSPI
+- name: WasmSuspend
+  gen_boilerplate: false
+- name: WasmPrepareResume
+  gen_boilerplate: false
 - name: WasmResume
   gen_boilerplate: false
 #endif
@@ -3666,22 +3672,16 @@
   mir_op: Unbox
 
 # Convert a 32-bit unsigned integer to a double.
-- name: WasmUint32ToDouble
+- name: Uint32ToDouble
   result_type: WordSized
   operands:
     input: WordSized
-#ifdef JS_CODEGEN_X86
-  num_temps: 1
-#endif
 
 # Convert a 32-bit unsigned integer to a float32.
-- name: WasmUint32ToFloat32
+- name: Uint32ToFloat32
   result_type: WordSized
   operands:
     input: WordSized
-#ifdef JS_CODEGEN_X86
-  num_temps: 1
-#endif
 
 - name: DivI
   result_type: WordSized

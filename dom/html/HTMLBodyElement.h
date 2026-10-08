@@ -6,11 +6,7 @@
 
 #include "nsGenericHTMLElement.h"
 
-namespace mozilla {
-
-class EditorBase;
-
-namespace dom {
+namespace mozilla::dom {
 
 class OnBeforeUnloadEventHandlerNonNull;
 
@@ -90,8 +86,7 @@ class HTMLBodyElement final : public nsGenericHTMLElement {
                       nsIPrincipal* aMaybeScriptedPrincipal,
                       nsAttrValue& aResult) override;
   nsMapRuleToAttributesFunc GetAttributeMappingFunction() const override;
-  NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const override;
-  already_AddRefed<EditorBase> GetAssociatedEditor() override;
+  bool IsNoNamespaceAttrMapped(const nsAtom* aAttribute) const override;
   nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
 
   bool IsEventAttributeNameInternal(nsAtom* aName) override;
@@ -108,7 +103,6 @@ class HTMLBodyElement final : public nsGenericHTMLElement {
   static void MapAttributesIntoRule(MappedDeclarationsBuilder&);
 };
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom
 
 #endif /* HTMLBodyElement_h_ */

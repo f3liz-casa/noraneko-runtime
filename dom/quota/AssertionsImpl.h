@@ -8,6 +8,7 @@
 #include <type_traits>
 
 #include "mozilla/Assertions.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/dom/quota/Assertions.h"
 #include "mozilla/dom/quota/QuotaCommon.h"
 
@@ -33,16 +34,22 @@ struct IntChecker<T, true> {
 }  // namespace detail
 
 template <typename T>
-void AssertNoOverflow(uint64_t aDest, T aArg) {
+void AssertNoOverflow(int64_t aDest, T aArg) {
   detail::IntChecker<T>::Assert(aDest);
   detail::IntChecker<T>::Assert(aArg);
-  MOZ_ASSERT(UINT64_MAX - aDest >= uint64_t(aArg));
+  MOZ_ASSERT((CheckedInt64{aDest} + aArg).isValid());
 }
 
 template <typename T, typename U>
-void AssertNoUnderflow(T aDest, U aArg, const nsACString& context) {
+void AssertNoUnderflow(T aDest, U aArg) {
   detail::IntChecker<T>::Assert(aDest);
   detail::IntChecker<T>::Assert(aArg);
+  MOZ_ASSERT(uint64_t(aDest) >= uint64_t(aArg));
+}
+
+template <typename T>
+void AssertNotNegative(T aValue, const nsACString& context) {
+  static_assert(std::is_signed_v<T>, "Expected a signed integer!");
 #if defined(NIGHTLY_BUILD) || defined(DEBUG)
   {
     const auto scope =
@@ -50,11 +57,25 @@ void AssertNoUnderflow(T aDest, U aArg, const nsACString& context) {
             ? Nothing{}
             : Some(quota::ScopedLogExtraInfo{
                   quota::ScopedLogExtraInfo::kTagContextTainted, context});
-    const bool noUnderflow = uint64_t(aDest) >= uint64_t(aArg);
-    MOZ_ASSERT(noUnderflow);
-    QM_TRY(OkIf(noUnderflow), QM_VOID, QM_NO_CLEANUP,
-           ([&context]() { return ShouldReportUnderflow(context); }));
+    const bool notNegative = aValue >= 0;
+    MOZ_ASSERT(notNegative);
+    QM_TRY(OkIf(notNegative), QM_VOID, QM_NO_CLEANUP,
+           ([&context]() { return ShouldReportDiagnostic(context); }));
   }
+#endif
+}
+
+// Reports when a usage value tracked in memory disagrees with real value (e.g.
+// a file's actual size).
+// This is used to help find which client/code path is corrupting quota usage
+// counters (bug 1585978).
+inline void ReportUsageDriftIfAny(int64_t aTracked, int64_t aReal,
+                                  const nsACString& aContext) {
+#if defined(NIGHTLY_BUILD) || defined(DEBUG)
+  MOZ_ASSERT_DEBUG_OR_FUZZING(aTracked == aReal);
+  QM_SCOPED_CONTEXT(aContext);
+  QM_TRY(OkIf(aTracked == aReal), QM_VOID, QM_NO_CLEANUP,
+         ([&aContext]() { return ShouldReportDiagnostic(aContext); }));
 #endif
 }
 

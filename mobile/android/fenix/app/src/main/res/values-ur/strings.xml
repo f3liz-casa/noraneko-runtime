@@ -63,12 +63,6 @@
   <string name="home_screen_shortcut_open_new_tab_2">نیا ٹیب</string>
   <!-- Shortcut action to open new private tab -->
   <string name="home_screen_shortcut_open_new_private_tab_2">نیا نجی ٹیب</string>
-  <!--
-    Recent Tabs
-
-    Header text for jumping back into the recent tab in the home screen
-  -->
-  <string name="recent_tabs_header">واپس جائیں</string>
   <!-- Button text for showing all the tabs in the tabs tray -->
   <string name="recent_tabs_show_all">تمام دکھائیں</string>
   <!--
@@ -253,8 +247,6 @@
   <string name="customize_addon_collection_hint">مجموعہ کا نام</string>
   <!-- Hint displayed on input field for custom collection user ID -->
   <string name="customize_addon_collection_user_hint">مجموعہ کرنے والا مالک (صارف شناخت)</string>
-  <!-- Header text for jumping back into the recent tab in customize the home screen -->
-  <string name="customize_toggle_jump_back_in">واپس جائیں</string>
   <!--
     Title for the customize home screen section with recently visited. Recently visited is
     a section where users see a list of tabs that they have visited in the past few days
@@ -509,16 +501,6 @@
     %1$d is the number of bookmarks selected
   -->
   <string name="history_multi_select_title">%1$d منتخب کیا گیا</string>
-  <!-- Text for the header that groups the history for today -->
-  <string name="history_today">آج</string>
-  <!-- Text for the header that groups the history for yesterday -->
-  <string name="history_yesterday">کل</string>
-  <!-- Text for the header that groups the history the past 7 days -->
-  <string name="history_7_days">پچھلے 7 دن</string>
-  <!-- Text for the header that groups the history the past 30 days -->
-  <string name="history_30_days">پچھلے 30 دن</string>
-  <!-- Text for the header that groups the history older than the last month -->
-  <string name="history_older">‏‏زیادہ پرانا</string>
   <!-- Text shown when no history exists -->
   <string name="history_empty_message">یہاں کوئی سابقات نہیں ہے</string>
   <!--
@@ -924,8 +906,6 @@
   <string name="add_to_homescreen_cancel">منسوخ کریں</string>
   <!-- Add button text for the Add to Homescreen dialog -->
   <string name="add_to_homescreen_add">شامل کریں</string>
-  <!-- Continue to website button text for the first-time Add to Homescreen dialog -->
-  <string name="add_to_homescreen_continue">ویب سائٹ پر جاری رکھیں</string>
   <!-- Placeholder text for the TextView in the Add to Homescreen dialog -->
   <string name="add_to_homescreen_text_placeholder">شارٹکٹ کے نام</string>
   <!-- Preference option for asking to save passwords in Fenix -->

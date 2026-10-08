@@ -7,7 +7,7 @@
 
 void KungFuDeathGripChecker::registerMatchers(MatchFinder *AstMatcher) {
   AstMatcher->addMatcher(varDecl(hasType(isRefPtr()), hasLocalStorage(),
-                                       hasInitializer(anything()),
+                                 hasInitializer(anything()),
                                  unless(anyOf(isReferenced(), isParameter())))
                              .bind("decl"),
                          this);
@@ -71,6 +71,7 @@ void KungFuDeathGripChecker::check(const MatchFinder::MatchResult &Result) {
   if (TD && TD->getIdentifier()) {
     static const char *IgnoreTypes[] = {
         "already_AddRefed",
+        "GetServiceHelper",
         "nsGetServiceByCID",
         "nsGetServiceByCIDWithError",
         "nsGetServiceByContractID",

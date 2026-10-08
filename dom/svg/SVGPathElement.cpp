@@ -199,9 +199,9 @@ bool SVGPathElement::HasValidDimensions() const {
 //----------------------------------------------------------------------
 // nsIContent methods
 
-NS_IMETHODIMP_(bool)
-SVGPathElement::IsAttributeMapped(const nsAtom* name) const {
-  return name == nsGkAtoms::d || SVGPathElementBase::IsAttributeMapped(name);
+bool SVGPathElement::IsNoNamespaceAttrMapped(const nsAtom* name) const {
+  return name == nsGkAtoms::d ||
+         SVGPathElementBase::IsNoNamespaceAttrMapped(name);
 }
 
 already_AddRefed<Path> SVGPathElement::GetOrBuildPathForMeasuring() {
@@ -251,9 +251,8 @@ void SVGPathElement::GetAsSimplePath(SimplePath* aSimplePath) {
   auto callback = [&](const ComputedStyle* s) {
     const nsStyleSVGReset* styleSVGReset = s->StyleSVGReset();
     if (styleSVGReset->mD.IsPath()) {
-      auto pathData = styleSVGReset->mD.AsPath()._0.AsSpan();
-      auto maybeRect = SVGPathSegUtils::SVGPathToAxisAlignedRect(pathData);
-      if (maybeRect.isSome()) {
+      if (auto maybeRect = SVGPathSegUtils::SVGPathToAxisAlignedRect(
+              styleSVGReset->mD.AsPath()._0.AsSpan())) {
         maybeRect->Scale(s->EffectiveZoom().ToFloat());
         aSimplePath->SetRect(*maybeRect);
       }

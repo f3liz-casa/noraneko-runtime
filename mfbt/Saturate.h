@@ -126,14 +126,9 @@ class Saturate {
 
   // Compare operators
 
-  bool operator==(const Saturate<T>& aRhs) const {
-    return mValue == aRhs.mValue;
-  }
-
-  bool operator!=(const Saturate<T>& aRhs) const { return !operator==(aRhs); }
+  bool operator==(const Saturate& aRhs) const = default;
 
   bool operator==(const T& aRhs) const { return mValue == aRhs; }
-
   bool operator!=(const T& aRhs) const { return !operator==(aRhs); }
 
   // Assignment operators

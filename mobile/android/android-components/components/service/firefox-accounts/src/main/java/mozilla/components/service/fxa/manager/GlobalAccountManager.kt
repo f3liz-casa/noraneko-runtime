@@ -7,28 +7,46 @@ package mozilla.components.service.fxa.manager
 import androidx.annotation.VisibleForTesting
 import java.lang.ref.WeakReference
 import java.util.concurrent.TimeUnit
+import kotlin.time.Instant
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import mozilla.components.service.fxa.sync.RustSyncManager
+import mozilla.components.service.fxa.sync.SyncStateStorage
 
 /**
- * A singleton which exposes an instance of [FxaAccountManager] for internal consumption.
- * Populated during initialization of [FxaAccountManager].
- * This exists to allow various internal parts without a direct reference to an instance of
- * [FxaAccountManager] to notify it of encountered auth errors via [authError].
+ * A singleton which exposes an instance of [FxaAccountManager] for internal consumption. Populated during
+ * initialization of [FxaAccountManager]. This exists to allow various internal parts without a direct reference to an
+ * instance of [FxaAccountManager] to notify it of encountered auth errors via [authError].
  */
 internal object GlobalAccountManager {
+
+    private var rustSyncManager: RustSyncManager? = null
+
+    /** A [SyncStateStorage.Provider] to be used to create a [SyncStateStorage] */
+    private var syncStorageProvider: SyncStateStorage.Provider? = null
     private var instance: WeakReference<FxaAccountManager>? = null
     private var lastAuthErrorCheckPoint: Long = 0L
     private var authErrorCountWithinWindow: Int = 0
 
     internal interface Clock {
         fun getTimeCheckPoint(): Long
+
+        /** The [Instant] value representing the current system time. */
+        fun now(): Instant
     }
 
-    private val systemClock = object : Clock {
-        override fun getTimeCheckPoint(): Long {
-            // nanoTime to decouple from wall-time.
-            return TimeUnit.NANOSECONDS.toMillis(System.nanoTime())
+    var systemClock: Clock =
+        object : Clock {
+            override fun getTimeCheckPoint(): Long {
+                // nanoTime to decouple from wall-time.
+                return TimeUnit.NANOSECONDS.toMillis(System.nanoTime())
+            }
+
+            override fun now(): Instant {
+                return kotlin.time.Clock.System.now()
+            }
         }
-    }
+        private set
 
     internal fun setInstance(am: FxaAccountManager) {
         instance = WeakReference(am)
@@ -47,11 +65,12 @@ internal object GlobalAccountManager {
     ) {
         val authErrorCheckPoint: Long = clock.getTimeCheckPoint()
 
-        val timeSinceLastAuthErrorMs: Long? = if (lastAuthErrorCheckPoint == 0L) {
-            null
-        } else {
-            authErrorCheckPoint - lastAuthErrorCheckPoint
-        }
+        val timeSinceLastAuthErrorMs: Long? =
+            if (lastAuthErrorCheckPoint == 0L) {
+                null
+            } else {
+                authErrorCheckPoint - lastAuthErrorCheckPoint
+            }
         lastAuthErrorCheckPoint = authErrorCheckPoint
 
         if (timeSinceLastAuthErrorMs == null) {
@@ -81,5 +100,36 @@ internal object GlobalAccountManager {
         return requireNotNull(instance?.get()) {
             "Trying to access the account manager without calling GlobalAccountManager.setInstance"
         }
+    }
+
+    /** Sets the [RustSyncManager] to be used for sync operations */
+    internal fun setRustSyncManager(rustSyncManager: RustSyncManager) {
+        this.rustSyncManager = rustSyncManager
+    }
+
+    /** Coroutine dispatcher that allows us to test the operation of sync */
+    internal var syncIoDispatcher: CoroutineDispatcher = Dispatchers.IO
+
+    internal fun requireRustSyncManager(): RustSyncManager {
+        return requireNotNull(rustSyncManager) {
+            "Trying to access the rust sync manager without calling GlobalAccountManager.setRustSyncManager"
+        }
+    }
+
+    internal fun requireSyncStateStorageProvider(): SyncStateStorage.Provider {
+        return requireNotNull(syncStorageProvider) {
+            "Trying to access the sync state storage provider without calling " +
+                "GlobalAccountManager.setSyncStateStorageProvider"
+        }
+    }
+
+    internal fun setSyncStateStorageProvider(provider: SyncStateStorage.Provider) {
+        this.syncStorageProvider = provider
+    }
+
+    /** Overrides the [systemClock] for testing purposes */
+    @VisibleForTesting
+    internal fun setTestClock(clock: Clock) {
+        this.systemClock = clock
     }
 }

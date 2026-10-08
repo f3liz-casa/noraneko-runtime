@@ -16,8 +16,18 @@ if [[ "$ARTIFACT_NAME" == *"android"* ]]; then
   IS_ANDROID=true
 fi
 
-mkdir custom_car
-cd custom_car
+# Windows has a 260 character MAX_PATH limit, and some Chromium GCS
+# dependencies (chromium-bidi's node_modules) unpack to paths that overflow it
+# Use shorter directory names to avoid this.
+CAR_DIR_NAME=custom_car
+CHROMIUM_DIR_NAME=chromium
+if [[ $(uname -o) == "Msys" ]]; then
+  CAR_DIR_NAME=car
+  CHROMIUM_DIR_NAME=cr
+fi
+
+mkdir "$CAR_DIR_NAME"
+cd "$CAR_DIR_NAME"
 CUSTOM_CAR_DIR=$PWD
 
 # Setup depot_tools
@@ -84,7 +94,7 @@ fi
 # Logic for macosx64
 if [[ $(uname -s) == "Darwin" ]]; then
   export MACOS_SYSROOT="$MOZ_FETCHES_DIR/MacOSX26.5.sdk"
-  CONFIG=$(echo $CONFIG mac_sdk_path='"'$MACOS_SYSROOT'"')
+  CONFIG=$(echo $CONFIG mac_sdk_path='"//out/Default/MacOSX.sdk"')
 
   PGO_SUBSTR="chrome-mac-arm-main"
 
@@ -131,8 +141,8 @@ if [[ $(uname -o) == "Msys" ]]; then
 fi
 
 # Get chromium source code and dependencies
-mkdir chromium
-cd chromium
+mkdir "$CHROMIUM_DIR_NAME"
+cd "$CHROMIUM_DIR_NAME"
 
 fetch --no-history --nohooks $FETCH_NAME
 
@@ -196,7 +206,7 @@ gclient runhooks
 
 # PGO data should be in src/chrome/build/pgo_profiles/
 # with a name like "chrome-{OS}-<some unique identifier>"
-export PGO_DATA_DIR="$CUSTOM_CAR_DIR/chromium/src/chrome/build/pgo_profiles"
+export PGO_DATA_DIR="$CUSTOM_CAR_DIR/$CHROMIUM_DIR_NAME/src/chrome/build/pgo_profiles"
 for entry in "$PGO_DATA_DIR"/*
 do
   if [ -f "$entry" ]; then
@@ -210,9 +220,10 @@ done
 
 PGO_FILE=$PGO_DATA_PATH
 if [[ $(uname -o) == "Msys" ]]; then
-  # Compute a relative path that the build scripts looks for.
-  # This odd pathing seems to only happen on windows
-  PGO_FILE=${PGO_DATA_PATH#*/*/*/*/*/*/*/*/*/}
+  # gn resolves a bare `inputs` entry relative to the directory of the BUILD.gn
+  # declaring it, so hand the build just the file name and move the profile into
+  # that directory below.
+  PGO_FILE=$(basename "$PGO_DATA_PATH")
   mv $PGO_DATA_PATH build/config/compiler/pgo/
 fi
 
@@ -220,12 +231,9 @@ CONFIG=$(echo $CONFIG pgo_data_path='"'$PGO_FILE'"')
 
 # Set up then build chrome
 if [[ $(uname -s) == "Darwin" ]]; then
-  # Bug 2045375: build/config/mac/BUILD.gn's sdk_inputs action declares SDK
-  # files as outputs so RBE remote workers can access them. We don't use RBE,
-  # and GN rejects the action when mac_sdk_path is outside root_build_dir.
-  sed -i '' 's/if (use_system_xcode && current_toolchain == default_toolchain)/if (false)/' build/config/mac/BUILD.gn
-  grep -q 'use_system_xcode && current_toolchain == default_toolchain' build/config/mac/BUILD.gn && \
-    { echo "ERROR: sdk_inputs patch failed - upstream BUILD.gn may have changed"; exit 1; }
+  # Bug 2045375/2066139: Chromium requires sdk_inputs to be inside root_build_dir.
+  mkdir -p out/Default
+  ln -s "$MACOS_SYSROOT" out/Default/MacOSX.sdk
 fi
 
 gn gen out/Default --args="$CONFIG"

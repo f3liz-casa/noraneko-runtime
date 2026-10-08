@@ -81,15 +81,12 @@ impl<'a> SceneBuilder<'a> {
         spatial_node_index: SpatialNodeIndex,
         clip_node_id: ClipNodeId,
     ) {
-        let mut border = *border;
-        ensure_no_corner_overlap(&mut border.radius, info.rect.size());
-
         self.add_primitive(
             spatial_node_index,
             clip_node_id,
             info,
             NormalBorderPrim {
-                border: border.into(),
+                border: (*border).into(),
                 widths: widths.to_au(),
             },
         );
@@ -562,6 +559,26 @@ pub fn create_border_segments(
         widths.left - overlap.width / 2.0,
     );
 
+    // Where the corner segments' clips meet in the middle when the widths
+    // overlap. `min + non_overlapping.top` and `max - non_overlapping.bottom`
+    // are the same number mathematically (the two non-overlapping widths sum to
+    // the rect size) but not in f32, and a one-ULP disagreement is enough for
+    // the two adjoining segments to round their shared, non-antialiased device
+    // edge in opposite directions, leaving a 1px hole (bug 2059620). Evaluate
+    // each split once so both sides see identical bits.
+    let split_x = rect.min.x + non_overlapping_widths.left;
+    let split_y = rect.min.y + non_overlapping_widths.top;
+    let (clip_split_x_from_min, clip_split_x_from_max) = if overlap.width > 0.0 {
+        (split_x, split_x)
+    } else {
+        (split_x, rect.max.x - non_overlapping_widths.right)
+    };
+    let (clip_split_y_from_min, clip_split_y_from_max) = if overlap.height > 0.0 {
+        (split_y, split_y)
+    } else {
+        (split_y, rect.max.y - non_overlapping_widths.bottom)
+    };
+
     let inset_tl = LayoutSize::new(border.inset.left, border.inset.top);
     let inset_tr = LayoutSize::new(border.inset.right, border.inset.top);
     let inset_br = LayoutSize::new(border.inset.right, border.inset.bottom);
@@ -729,8 +746,8 @@ pub fn create_border_segments(
         LayoutRect::from_floats(
             rect.min.x,
             rect.min.y,
-            rect.max.x - non_overlapping_widths.right,
-            rect.max.y - non_overlapping_widths.bottom
+            clip_split_x_from_max,
+            clip_split_y_from_max,
         ),
         border.left,
         border.top,
@@ -756,10 +773,10 @@ pub fn create_border_segments(
             rect.min.y + local_size_tr.height,
         ),
         LayoutRect::from_floats(
-            rect.min.x + non_overlapping_widths.left,
+            clip_split_x_from_min,
             rect.min.y,
             rect.max.x,
-            rect.max.y - non_overlapping_widths.bottom,
+            clip_split_y_from_max,
         ),
         border.top,
         border.right,
@@ -785,8 +802,8 @@ pub fn create_border_segments(
             rect.min.y + rect.height(),
         ),
         LayoutRect::from_floats(
-            rect.min.x + non_overlapping_widths.left,
-            rect.min.y + non_overlapping_widths.top,
+            clip_split_x_from_min,
+            clip_split_y_from_min,
             rect.max.x,
             rect.max.y,
         ),
@@ -815,8 +832,8 @@ pub fn create_border_segments(
         ),
         LayoutRect::from_floats(
             rect.min.x,
-            rect.min.y + non_overlapping_widths.top,
-            rect.max.x - non_overlapping_widths.right,
+            clip_split_y_from_min,
+            clip_split_x_from_max,
             rect.max.y,
         ),
         border.bottom,
@@ -857,10 +874,13 @@ fn add_segment(
     v_adjacent_corner_radius: DeviceSize,
     gpu_buffer_builder: &mut GpuBufferBuilderF,
 ) {
+    let superellipse = shape != 1.0;
+
     let base_flags = (segment as i32) |
                      ((style0 as i32) << 8) |
                      ((style1 as i32) << 16) |
-                     ((do_aa as i32) << 28);
+                     ((do_aa as i32) << 28) |
+                     ((superellipse as i32) << 29);
 
     let instance_gpu_data = BorderInstanceGpuData {
         local_rect: task_rect,
@@ -877,7 +897,7 @@ fn add_segment(
         task_origin: DevicePoint::zero(),
         flags: base_flags,
         clip_params: [0.0; 8],
-        gpu_data_address: instance_gpu_data.write(gpu_buffer_builder)
+        gpu_data_address: instance_gpu_data.write(superellipse, gpu_buffer_builder)
     };
 
     match segment {
@@ -1230,11 +1250,19 @@ pub fn build_border_instances(
     let color0 = side0.border_color(flip0);
     let color1 = side1.border_color(flip1);
 
-    let widths = (LayoutSize::from_au(cache_key.size) * scale).ceil();
-    let radius = (LayoutSize::from_au(cache_key.radius) * scale).ceil();
+    // The corner box is a whole number of device pixels (see `snap_radius` in
+    // `prim_store::borders`), so the geometry below is representable in the task
+    // exactly. Rounding it up here instead would draw the arc with a radius and
+    // thickness of up to a whole pixel more than was asked for. A hairline side
+    // still gets a texel of its own so it can't drop out of the cached arc
+    // entirely, but a side with no width keeps none.
+    let side_texels = |v: f32| if v > 0.0 { (v * scale.0).max(1.0) } else { 0.0 };
+    let size = LayoutSize::from_au(cache_key.size);
+    let widths = DeviceSize::new(side_texels(size.width), side_texels(size.height));
+    let radius = LayoutSize::from_au(cache_key.radius) * scale;
     let shape = f32::from_bits(cache_key.shape);
-    let shape_offset = (LayoutSize::from_au(cache_key.shape_offset) * scale).ceil();
-    let inset = (LayoutSize::from_au(cache_key.inset) * scale).ceil();
+    let shape_offset = LayoutSize::from_au(cache_key.shape_offset) * scale;
+    let inset = LayoutSize::from_au(cache_key.inset) * scale;
 
     let h_corner_outer = (LayoutPoint::from_au(cache_key.h_adjacent_corner_outer) * scale).round();
     let h_corner_radius = (LayoutSize::from_au(cache_key.h_adjacent_corner_radius) * scale).ceil();

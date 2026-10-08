@@ -1762,8 +1762,6 @@ void WebRtcVoiceSendChannel::OnNetworkRouteChanged(
     const NetworkRoute& network_route) {
   RTC_DCHECK_RUN_ON(&network_thread_checker_);
 
-  call_->OnAudioTransportOverheadChanged(network_route.packet_overhead);
-
   worker_thread_->PostTask(SafeTask(
       task_safety_.flag(),
       [this, name = std::string(transport_name), route = network_route] {
@@ -2048,9 +2046,10 @@ class WebRtcVoiceReceiveChannel::WebRtcAudioReceiveStream {
  public:
   WebRtcAudioReceiveStream(AudioReceiveStreamInterface::Config config,
                            Call* call)
-      : call_(call), stream_(call_->CreateAudioReceiveStream(config)) {
-    RTC_DCHECK(call);
-    RTC_DCHECK(stream_);
+      : call_(call),
+        stream_(call_->CreateAudioReceiveStream(std::move(config))) {
+    RTC_DCHECK(call != nullptr);
+    RTC_DCHECK(stream_ != nullptr);
   }
 
   WebRtcAudioReceiveStream() = delete;

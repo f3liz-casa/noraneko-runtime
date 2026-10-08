@@ -317,6 +317,9 @@ bool ShouldUsePortal(PortalKind aPortalKind) {
         return StaticPrefs::widget_use_xdg_desktop_portal_mime_handler();
       case PortalKind::NativeMessaging:
         return StaticPrefs::widget_use_xdg_desktop_portal_native_messaging();
+      case PortalKind::NativeMessagingProxy:
+        return StaticPrefs::
+            widget_use_xdg_desktop_portal_native_messaging_proxy();
       case PortalKind::Settings:
         autoBehavior = true;
         return StaticPrefs::widget_use_xdg_desktop_portal_settings();
@@ -324,6 +327,11 @@ bool ShouldUsePortal(PortalKind aPortalKind) {
         return StaticPrefs::widget_use_xdg_desktop_portal_location();
       case PortalKind::OpenUri:
         return StaticPrefs::widget_use_xdg_desktop_portal_open_uri();
+      case PortalKind::Notification:
+        // The portal notification backend is not feature complete yet, so it
+        // is opt-in for now regardless of the environment.
+        autoBehavior = false;
+        return StaticPrefs::widget_use_xdg_desktop_portal_notification();
     }
     return 2;
   }();

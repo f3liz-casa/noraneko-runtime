@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <algorithm>
+
 #include "AnimationSurfaceProvider.h"
 #include "Common.h"
 #include "DecodePool.h"
@@ -19,6 +21,7 @@
 #include "ProgressTracker.h"
 #include "SourceBuffer.h"
 #include "imgIContainer.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/gfx/2D.h"
@@ -430,6 +433,36 @@ static void CheckDownscaleDuringDecode(const ImageTestCase& aTestCase) {
       });
 }
 
+static void CheckExifOrientationDownscale(const ImageTestCase& aTestCase) {
+  // An EXIF-rotated JPEG decoded to a non-aspect-preserving output size with
+  // libjpeg-turbo IDCT downscaling must still decode. The scale factor has to
+  // be computed in the same unoriented space as the downscaling filter, or the
+  // decode hard-fails.
+  bool oldValue = false;
+  Preferences::GetBool("image.jpeg.dct-scaling.enabled", &oldValue);
+  Preferences::SetBool("image.jpeg.dct-scaling.enabled", true);
+  auto resetPref = MakeScopeExit([&] {
+    Preferences::SetBool("image.jpeg.dct-scaling.enabled", oldValue);
+  });
+
+  WithSingleChunkDecode(
+      aTestCase, Some(aTestCase.mOutputSize), /* aUseDecodePool */ false,
+      [&](image::Decoder* aDecoder) {
+        // The decode must not fail: prior to the fix the surface pipe was
+        // rejected here and the decoder ended in an error state.
+        ASSERT_FALSE(aDecoder->HasError());
+        EXPECT_TRUE(aDecoder->GetDecodeDone());
+
+        RawAccessFrameRef currentFrame = aDecoder->GetCurrentFrameRef();
+        ASSERT_TRUE(bool(currentFrame));
+        RefPtr<SourceSurface> surface = currentFrame->GetSourceSurface();
+        ASSERT_TRUE(surface != nullptr);
+
+        EXPECT_EQ(aTestCase.mOutputSize, surface->GetSize());
+        EXPECT_TRUE(IsSolidColor(surface, aTestCase.Color(), aTestCase.Fuzz()));
+      });
+}
+
 static void CheckAnimationDecoderResults(const ImageTestCase& aTestCase,
                                          AnimationSurfaceProvider* aProvider,
                                          image::Decoder* aDecoder) {
@@ -822,6 +855,10 @@ TEST_F(ImageDecoders, ICOWithANDMaskDownscaleDuringDecode) {
   CheckDownscaleDuringDecode(DownscaledTransparentICOWithANDMaskTestCase());
 }
 
+TEST_F(ImageDecoders, JPGExifOrientationDctDownscale) {
+  CheckExifOrientationDownscale(ExifOrientationDownscaleJPGTestCase());
+}
+
 TEST_F(ImageDecoders, WebPLargeMultiChunk) {
   CheckDecoderMultiChunk(LargeWebPTestCase(), /* aChunkSize */ 64);
 }
@@ -1041,6 +1078,184 @@ TEST_F(ImageDecoders, JXLLargeMultiChunkPipeWriteCount) {
 TEST_F(ImageDecoders, JXLProgressiveAlphaMultiGroupMultiChunk) {
   for (uint64_t chunkSize : {8, 16, 32, 64, 128, 256}) {
     CheckDecoderMultiChunk(ProgressiveAlphaMultiGroupJXLTestCase(), chunkSize);
+  }
+}
+
+// aParticipants determines the number of participants (threads).
+// aUseDecodePool picks which of the two places a decode can run: false is a
+// synchronous decode on the main thread, true puts it on a DecodePool thread.
+// The helpers go to the JXL decode pool either way.
+static already_AddRefed<SourceSurface> DecodeLargeJXL(uint32_t aParticipants,
+                                                      bool aUseDecodePool) {
+  uint32_t oldValue = Preferences::GetUint("image.jxl.decode_participants", 1);
+  auto restore = MakeScopeExit(
+      [&] { Preferences::SetUint("image.jxl.decode_participants", oldValue); });
+  Preferences::SetUint("image.jxl.decode_participants", aParticipants);
+
+  ImageTestCase testCase = LargeJXLTestCase();
+  RefPtr<SourceSurface> surface;
+  WithSingleChunkDecode(testCase, Nothing(), aUseDecodePool,
+                        [&](image::Decoder* aDecoder) {
+                          surface = CheckDecoderState(testCase, aDecoder);
+                        });
+  return surface.forget();
+}
+
+// aMaxPixels is how many pixels may differ at all, aMaxChannelDiff how far any
+// one channel of those may be off.
+//
+// Walks row by row rather than comparing in one go, because the two surfaces
+// are allocated separately and need not share a stride, and to not compare
+// padding bytes.
+static void ExpectSurfacesSimilar(SourceSurface* aExpected,
+                                  SourceSurface* aActual, uint32_t aMaxPixels,
+                                  uint8_t aMaxChannelDiff) {
+  ASSERT_TRUE(aExpected && aActual);
+  ASSERT_EQ(aExpected->GetSize(), aActual->GetSize());
+  ASSERT_EQ(aExpected->GetFormat(), aActual->GetFormat());
+
+  RefPtr<DataSourceSurface> expected = aExpected->GetDataSurface();
+  RefPtr<DataSourceSurface> actual = aActual->GetDataSurface();
+  ASSERT_TRUE(expected && actual);
+
+  DataSourceSurface::ScopedMap expectedMap(expected, DataSourceSurface::READ);
+  DataSourceSurface::ScopedMap actualMap(actual, DataSourceSurface::READ);
+  ASSERT_TRUE(expectedMap.IsMapped() && actualMap.IsMapped());
+
+  const IntSize size = expected->GetSize();
+  const size_t bytesPerPixel = BytesPerPixel(expected->GetFormat());
+  // On an opaque surface the fourth byte is padding, and two decoders need not
+  // agree on what they leave there.
+  const size_t channels =
+      expected->GetFormat() == SurfaceFormat::OS_RGBX ? 3 : bytesPerPixel;
+
+  uint32_t differingPixels = 0;
+  uint32_t worstChannelDiff = 0;
+  for (int32_t row = 0; row < size.height; ++row) {
+    const uint8_t* expectedRow =
+        expectedMap.GetData() + row * expectedMap.GetStride();
+    const uint8_t* actualRow =
+        actualMap.GetData() + row * actualMap.GetStride();
+    for (int32_t col = 0; col < size.width; ++col) {
+      uint32_t pixelDiff = 0;
+      for (size_t channel = 0; channel < channels; ++channel) {
+        const size_t i = col * bytesPerPixel + channel;
+        const uint32_t diff = expectedRow[i] > actualRow[i]
+                                  ? expectedRow[i] - actualRow[i]
+                                  : actualRow[i] - expectedRow[i];
+        pixelDiff = std::max(pixelDiff, diff);
+      }
+      if (pixelDiff > 0) {
+        ++differingPixels;
+        worstChannelDiff = std::max(worstChannelDiff, pixelDiff);
+      }
+    }
+  }
+
+  EXPECT_LE(differingPixels, aMaxPixels)
+      << "worst channel difference " << worstChannelDiff;
+  EXPECT_LE(worstChannelDiff, uint32_t(aMaxChannelDiff))
+      << differingPixels << " pixels differ";
+}
+
+static void ExpectSurfacesIdentical(SourceSurface* aExpected,
+                                    SourceSurface* aActual) {
+  ExpectSurfacesSimilar(aExpected, aActual, /* aMaxPixels */ 0,
+                        /* aMaxChannelDiff */ 0);
+}
+
+// Run a jxl decode serially and in parallel and check the result is identical.
+TEST_F(ImageDecoders, JXLParallelDecodeMatchesSerial) {
+  // Make the pool at full size if it's not already made so that it's not
+  // created with fewer threads. The first parallel decode determines the pool
+  // size for the remainder of the process lifetime. This only works if the pref
+  // defaults to either 1 or 0, otherwise the preceding jxl tests would create
+  // a pool at the default pref value.
+  RefPtr<SourceSurface> discarded =
+      DecodeLargeJXL(0, /* aUseDecodePool */ false);
+
+  // reference surface = 1 decode thread which is the main thread.
+  RefPtr<SourceSurface> reference =
+      DecodeLargeJXL(1, /* aUseDecodePool */ false);
+
+  {
+    // Compare to the same image in another format to make sure it's the right
+    // reference.
+    const uint32_t kLibjxlMaxDifferingPixels = 18;
+    const uint8_t kLibjxlMaxChannelDiff = 1;
+    ImageTestCase referenceCase = LargeJXLReferenceWebPTestCase();
+    RefPtr<SourceSurface> webpReference;
+    WithSingleChunkDecode(referenceCase, Nothing(), /* aUseDecodePool */ false,
+                          [&](image::Decoder* aDecoder) {
+                            webpReference =
+                                CheckDecoderState(referenceCase, aDecoder);
+                          });
+    ExpectSurfacesSimilar(webpReference, reference, kLibjxlMaxDifferingPixels,
+                          kLibjxlMaxChannelDiff);
+  }
+
+  for (bool useDecodePool : {false, true}) {
+    for (uint32_t participants : {1u, 0u, 2u, 8u, 64u}) {
+      SCOPED_TRACE(testing::Message() << "participants=" << participants
+                                      << " useDecodePool=" << useDecodePool);
+      RefPtr<SourceSurface> surface =
+          DecodeLargeJXL(participants, useDecodePool);
+      ExpectSurfacesIdentical(reference, surface);
+    }
+  }
+}
+
+// Stress test the pool with many more tasks than it has threads.
+TEST_F(ImageDecoders, JXLConcurrentDecodes) {
+  uint32_t oldValue = Preferences::GetUint("image.jxl.decode_participants", 1);
+  auto restore = MakeScopeExit(
+      [&] { Preferences::SetUint("image.jxl.decode_participants", oldValue); });
+
+  RefPtr<SourceSurface> reference =
+      DecodeLargeJXL(1, /* aUseDecodePool */ false);
+
+  Preferences::SetUint("image.jxl.decode_participants", 0);
+
+  ImageTestCase testCase = LargeJXLTestCase();
+  nsTArray<RefPtr<image::Decoder>> decoders;
+  nsTArray<RefPtr<MonitorAnonymousDecodingTask>> tasks;
+
+  for (size_t i = 0; i < 16; ++i) {
+    nsCOMPtr<nsIInputStream> inputStream = LoadFile(testCase.mPath);
+    ASSERT_TRUE(inputStream != nullptr);
+
+    uint64_t length;
+    ASSERT_NS_SUCCEEDED(inputStream->Available(&length));
+
+    auto sourceBuffer = MakeNotNull<RefPtr<SourceBuffer>>();
+    sourceBuffer->ExpectLength(length);
+    ASSERT_NS_SUCCEEDED(
+        sourceBuffer->AppendFromInputStream(inputStream, length));
+    sourceBuffer->Complete(NS_OK);
+
+    RefPtr<image::Decoder> decoder = DecoderFactory::CreateAnonymousDecoder(
+        DecoderFactory::GetDecoderType(testCase.mMimeType), sourceBuffer,
+        Nothing(), DefaultDecoderFlags() | DecoderFlags::FIRST_FRAME_ONLY,
+        testCase.mSurfaceFlags);
+    ASSERT_TRUE(decoder != nullptr);
+
+    decoders.AppendElement(decoder);
+    tasks.AppendElement(MakeRefPtr<MonitorAnonymousDecodingTask>(
+        WrapNotNull(decoder.get()), /* aResumable */ false));
+  }
+
+  // Queue them all before waiting on any, or the pool is never contended.
+  for (auto& task : tasks) {
+    DecodePool::Singleton()->AsyncRun(task.get());
+  }
+  for (auto& task : tasks) {
+    task->WaitUntilFinished();
+  }
+
+  for (size_t i = 0; i < decoders.Length(); ++i) {
+    SCOPED_TRACE(testing::Message() << "decode=" << i);
+    RefPtr<SourceSurface> surface = CheckDecoderState(testCase, decoders[i]);
+    ExpectSurfacesIdentical(reference, surface);
   }
 }
 #endif /* MOZ_JXL */
@@ -1473,4 +1688,53 @@ TEST_F(ImageDecoders, MultipleSizesICOSingleChunk) {
 TEST_F(ImageDecoders, ExifResolutionEven) {
   RefPtr<Image> image = TestCaseToDecodedImage(ExifResolutionTestCase());
   EXPECT_EQ(image->GetResolution(), Resolution(2.0, 2.0));
+}
+
+TEST_F(ImageDecoders, AVIFConcurrentFilmGrainDecode) {
+  // Route AVIF through libaom instead of dav1d to hit the vulnerable path.
+  nsresult rv = Preferences::SetBool("image.avif.use-dav1d", false);
+  ASSERT_NS_SUCCEEDED(rv);
+  auto cleanup =
+      MakeScopeExit([] { Preferences::SetBool("image.avif.use-dav1d", true); });
+
+  ImageTestCase testCase420("avif_420_film_grain.avif", "image/avif",
+                            IntSize(128, 128), TEST_CASE_IGNORE_OUTPUT);
+  ImageTestCase testCase444("avif_444_film_grain.avif", "image/avif",
+                            IntSize(128, 128), TEST_CASE_IGNORE_OUTPUT);
+
+  const int kIterations = 50;
+  nsTArray<RefPtr<MonitorAnonymousDecodingTask>> tasks;
+
+  for (int i = 0; i < kIterations; ++i) {
+    const ImageTestCase& tc = (i % 2 == 0) ? testCase420 : testCase444;
+
+    nsCOMPtr<nsIInputStream> inputStream = LoadFile(tc.mPath);
+    ASSERT_TRUE(inputStream != nullptr);
+
+    uint64_t length;
+    rv = inputStream->Available(&length);
+    ASSERT_NS_SUCCEEDED(rv);
+
+    auto sourceBuffer = MakeNotNull<RefPtr<SourceBuffer>>();
+    sourceBuffer->ExpectLength(length);
+    rv = sourceBuffer->AppendFromInputStream(inputStream, length);
+    ASSERT_NS_SUCCEEDED(rv);
+    sourceBuffer->Complete(NS_OK);
+
+    DecoderType decoderType = DecoderFactory::GetDecoderType(tc.mMimeType);
+    RefPtr<image::Decoder> decoder = DecoderFactory::CreateAnonymousDecoder(
+        decoderType, sourceBuffer, Nothing(),
+        DefaultDecoderFlags() | DecoderFlags::FIRST_FRAME_ONLY,
+        tc.mSurfaceFlags);
+    ASSERT_TRUE(decoder != nullptr);
+
+    RefPtr<MonitorAnonymousDecodingTask> task =
+        new MonitorAnonymousDecodingTask(WrapNotNull(decoder), false);
+    tasks.AppendElement(task);
+    DecodePool::Singleton()->AsyncRun(task.get());
+  }
+
+  for (auto& task : tasks) {
+    task->WaitUntilFinished();
+  }
 }

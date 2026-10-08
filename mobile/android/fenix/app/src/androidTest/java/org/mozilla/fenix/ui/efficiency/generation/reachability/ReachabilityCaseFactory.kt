@@ -1,7 +1,10 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.fenix.ui.efficiency.generation.reachability
 
 import android.util.Log
-import org.mozilla.fenix.ui.efficiency.generation.NavigationGraphBootstrap
 import org.mozilla.fenix.ui.efficiency.generation.NavigationTestPlanner
 import org.mozilla.fenix.ui.efficiency.generation.ShardUtils
 import org.mozilla.fenix.ui.efficiency.generation.toDisplayLabel
@@ -10,10 +13,7 @@ object ReachabilityCaseFactory {
 
     private const val TAG = "ReachabilityCaseFactory"
 
-    fun buildReachabilityCases(
-        runState: String,
-    ): List<ReachabilityCase> {
-        NavigationGraphBootstrap.ensureInitialized()
+    fun buildReachabilityCases(runState: String): List<ReachabilityCase> {
         val generatedCases = NavigationTestPlanner.buildReachabilityCases()
 
         val cases = generatedCases.map { generated ->
@@ -36,11 +36,12 @@ object ReachabilityCaseFactory {
         shardCount: Int,
     ): List<ReachabilityCase> {
         val allCases = buildReachabilityCases(runState)
-        val shardCases = ShardUtils.filterForShard(
-            items = allCases,
-            shardIndex = shardIndex,
-            shardCount = shardCount,
-        )
+        val shardCases =
+            ShardUtils.filterForShard(
+                items = allCases,
+                shardIndex = shardIndex,
+                shardCount = shardCount,
+            )
 
         Log.i(
             TAG,

@@ -9,7 +9,10 @@
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-import { UrlbarProvider } from "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs";
+import {
+  UrlbarProvider,
+  UrlbarUtils,
+} from "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs";
 import { UrlbarShared } from "chrome://browser/content/urlbar/UrlbarShared.mjs";
 
 const lazy = {};
@@ -84,6 +87,16 @@ export class UrlbarProviderSearchTips extends UrlbarProvider {
   /** @type {?UrlbarProviderSearchTips} */
   static #instance = null;
 
+  /**
+   * Whether and what kind of tip we've shown in the current engagement.
+   *
+   * @type {Values<typeof UrlbarShared.SEARCH_TIP_TYPE>}
+   */
+  showedTipTypeInCurrentEngagement = UrlbarShared.SEARCH_TIP_TYPE.NONE;
+
+  /** @type {Values<typeof UrlbarShared.SEARCH_TIP_TYPE>} */
+  currentTip = UrlbarShared.SEARCH_TIP_TYPE.NONE;
+
   constructor() {
     super();
     if (UrlbarProviderSearchTips.#instance) {
@@ -103,9 +116,6 @@ export class UrlbarProviderSearchTips extends UrlbarProvider {
         break;
       }
     }
-
-    // Whether and what kind of tip we've shown in the current engagement.
-    this.showedTipTypeInCurrentEngagement = UrlbarShared.SEARCH_TIP_TYPE.NONE;
 
     // Used to track browser windows we've seen.
     this._seenWindows = new WeakSet();
@@ -147,8 +157,9 @@ export class UrlbarProviderSearchTips extends UrlbarProvider {
    * @param {UrlbarQueryContext} queryContext
    * @param {(provider: UrlbarProvider, result: UrlbarResult) => void} addCallback
    *   Callback invoked by the provider to add a new result.
+   * @param {UrlbarParentController} controller The controller instance.
    */
-  async startQuery(queryContext, addCallback) {
+  async startQuery(queryContext, addCallback, controller) {
     let instance = this.queryInstance;
 
     let tip = this.currentTip;
@@ -156,7 +167,7 @@ export class UrlbarProviderSearchTips extends UrlbarProvider {
     this.currentTip = UrlbarShared.SEARCH_TIP_TYPE.NONE;
 
     let defaultEngine = await lazy.SearchService.getDefault();
-    let icon = await defaultEngine.getIconURL();
+    let icon = await UrlbarUtils.getEngineIconUrl(defaultEngine, controller);
     if (instance != this.queryInstance) {
       return;
     }
@@ -216,6 +227,11 @@ export class UrlbarProviderSearchTips extends UrlbarProvider {
     );
   }
 
+  /**
+   * @param {UrlbarQueryContext} queryContext
+   * @param {UrlbarParentController} controller
+   * @param {object} details
+   */
   onEngagement(queryContext, controller, details) {
     this.#pickResult(details.result, controller.browserWindow);
   }

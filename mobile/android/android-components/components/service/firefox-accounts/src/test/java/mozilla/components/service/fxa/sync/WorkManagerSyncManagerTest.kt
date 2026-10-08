@@ -10,17 +10,14 @@ import androidx.work.WorkInfo
 import androidx.work.WorkerParameters
 import androidx.work.impl.utils.taskexecutor.TaskExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import kotlinx.coroutines.test.StandardTestDispatcher
 import mozilla.components.concept.sync.SyncConfig
 import mozilla.components.concept.sync.SyncEngine
-import mozilla.components.service.fxa.sync.FakeSyncStatusObserver.Event.OnIdle
-import mozilla.components.service.fxa.sync.FakeSyncStatusObserver.Event.OnStarted
 import mozilla.components.service.fxa.sync.WorkManagerSyncWorker.Companion.SYNC_STAGGER_BUFFER_MS
 import mozilla.components.service.fxa.sync.WorkManagerSyncWorker.Companion.engineSyncTimestamp
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.testContext
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -32,6 +29,7 @@ class WorkManagerSyncManagerTest {
     private lateinit var mockParam: WorkerParameters
     private lateinit var mockTags: Set<String>
     private lateinit var mockTaskExecutor: TaskExecutor
+    private val testDispatcher = StandardTestDispatcher()
 
     @Before
     fun setUp() {
@@ -46,28 +44,6 @@ class WorkManagerSyncManagerTest {
             testContext,
             Configuration.Builder().build(),
         )
-    }
-
-    @Test
-    fun `sync state access`() {
-        assertNull(getSyncState(testContext))
-        assertEquals(0L, getLastSynced(testContext))
-
-        // 'clear' doesn't blow up for empty state
-        clearSyncState(testContext)
-        // ... and doesn't affect anything, either
-        assertNull(getSyncState(testContext))
-        assertEquals(0L, getLastSynced(testContext))
-
-        setSyncState(testContext, "some state")
-        assertEquals("some state", getSyncState(testContext))
-
-        setLastSynced(testContext, 123L)
-        assertEquals(123L, getLastSynced(testContext))
-
-        clearSyncState(testContext)
-        assertNull(getSyncState(testContext))
-        assertEquals(0L, getLastSynced(testContext))
     }
 
     @Test
@@ -116,52 +92,6 @@ class WorkManagerSyncManagerTest {
     }
 
     @Test
-    fun `WHEN workerStateChanged receives RUNNING state THEN onStarted is notified`() {
-        val observer = FakeSyncStatusObserver()
-        val syncManager = createSyncManager(observer)
-
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.RUNNING))
-
-        assertEquals(listOf(OnStarted), observer.events)
-        assertTrue(syncManager.isSyncActive())
-    }
-
-    @Test
-    fun `WHEN workerStateChanged receives SUCCEEDED state THEN onIdle is notified`() {
-        val observer = FakeSyncStatusObserver()
-        val syncManager = createSyncManager(observer)
-
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.ENQUEUED))
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.SUCCEEDED))
-
-        assertEquals(listOf(OnIdle), observer.events)
-        assertFalse(syncManager.isSyncActive())
-    }
-
-    @Test
-    fun `WHEN workerStateChanged receives FAILED state THEN onIdle is notified`() {
-        val observer = FakeSyncStatusObserver()
-        val syncManager = createSyncManager(observer)
-
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.ENQUEUED))
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.FAILED))
-
-        assertEquals(listOf(OnIdle), observer.events)
-        assertFalse(syncManager.isSyncActive())
-    }
-
-    @Test
-    fun `WHEN workerStateChanged receives CANCELLED state THEN onIdle is notified`() {
-        val observer = FakeSyncStatusObserver()
-        val syncManager = createSyncManager(observer)
-
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.CANCELLED))
-
-        assertEquals(listOf(OnIdle), observer.events)
-        assertFalse(syncManager.isSyncActive())
-    }
-
-    @Test
     fun `WHEN workerStateChanged receives null state THEN nothing happens`() {
         val observer = FakeSyncStatusObserver()
         val syncManager = createSyncManager(observer)
@@ -194,59 +124,14 @@ class WorkManagerSyncManagerTest {
         assertFalse(syncManager.isSyncActive())
     }
 
-    @Test
-    fun `WHEN workerStateChanged receives RUNNING then SUCCEEDED THEN both onStarted and onIdle are notified in right order`() {
-        val observer = FakeSyncStatusObserver()
-        val syncManager = createSyncManager(observer)
-
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.ENQUEUED))
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.RUNNING))
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.SUCCEEDED))
-
-        assertEquals(listOf(OnStarted, OnIdle), observer.events)
-        assertFalse(syncManager.isSyncActive())
-    }
-
-    @Test
-    fun `WHEN workerStateChanged is called with multiple workers in different states including one RUNNING THEN onStarted is notified`() {
-        val observer = FakeSyncStatusObserver()
-        val syncManager = createSyncManager(observer)
-
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING))
-
-        // Verify onStarted was called (because at least one is RUNNING)
-        assertEquals(listOf(OnStarted), observer.events)
-        assertTrue(syncManager.isSyncActive())
-    }
-
-    @Test
-    fun `WHEN workerStateChanged is called with multiple workers in different states including one SUCCEEDED THEN onIdle is notified`() {
-        val observer = FakeSyncStatusObserver()
-        val syncManager = createSyncManager(observer)
-
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.SUCCEEDED, WorkInfo.State.FAILED))
-
-        assertEquals(listOf(OnIdle), observer.events)
-        assertFalse(syncManager.isSyncActive())
-    }
-
-    @Test
-    fun `WHEN workerStateChanged is called with multiple workers in different states including one SUCCEEDED and one RUNNING THEN onStarted is notified`() {
-        val observer = FakeSyncStatusObserver()
-        val syncManager = createSyncManager(observer)
-
-        syncManager.syncDispatcher?.workersStateChanged(listOf(WorkInfo.State.SUCCEEDED, WorkInfo.State.RUNNING))
-
-        assertEquals(listOf(OnStarted), observer.events)
-        assertTrue(syncManager.isSyncActive())
-    }
-
     private fun createSyncManager(observer: FakeSyncStatusObserver): WorkManagerSyncManager =
         WorkManagerSyncManager(
-            testContext,
-            SyncConfig(supportedEngines = setOf(SyncEngine.Tabs), periodicSyncConfig = null),
-        ).apply {
-            registerSyncStatusObserver(observer)
-            start()
-        }
+                context = testContext,
+                syncConfig = SyncConfig(supportedEngines = setOf(SyncEngine.Tabs), periodicSyncConfig = null),
+                coroutineContext = testDispatcher,
+            )
+            .apply {
+                registerSyncStatusObserver(observer)
+                start()
+            }
 }

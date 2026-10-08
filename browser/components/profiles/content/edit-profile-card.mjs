@@ -106,6 +106,7 @@ export class EditProfileCard extends MozLitElement {
 
   updateNameDebouncer = null;
   clearSavedMessageTimer = null;
+  hasRecordedThemePickerShown = false;
 
   get themeCards() {
     if (this.novaEnabled) {
@@ -135,8 +136,10 @@ export class EditProfileCard extends MozLitElement {
     window.addEventListener("pagehide", this);
     document.addEventListener("Profiles:CustomAvatarUpload", this);
     document.addEventListener("Profiles:AvatarSelected", this);
-    document.addEventListener("ThemePickerThemeUpdated", this);
+    window.addEventListener("ThemePickerThemeUpdated", this);
     window.addEventListener("ThemePickerDeviceAppearanceUpdated", this);
+    document.addEventListener("visibilitychange", this);
+    this.addEventListener("ThemePickerInitialState", this);
 
     this.init().then(() => (this.initialized = true));
   }
@@ -148,8 +151,10 @@ export class EditProfileCard extends MozLitElement {
     window.removeEventListener("pagehide", this);
     document.removeEventListener("Profiles:CustomAvatarUpload", this);
     document.removeEventListener("Profiles:AvatarSelected", this);
-    document.removeEventListener("ThemePickerThemeUpdated", this);
+    window.removeEventListener("ThemePickerThemeUpdated", this);
     window.removeEventListener("ThemePickerDeviceAppearanceUpdated", this);
+    document.removeEventListener("visibilitychange", this);
+    this.removeEventListener("ThemePickerInitialState", this);
   }
 
   async init() {
@@ -187,6 +192,36 @@ export class EditProfileCard extends MozLitElement {
     this.novaEnabled = novaEnabled;
 
     await this.setInitialInput();
+  }
+
+  #shouldRecordThemePickerShown() {
+    return (
+      this.isConnected && !this.hasRecordedThemePickerShown && !document.hidden
+    );
+  }
+
+  async maybeRecordThemePickerShown() {
+    if (!this.novaEnabled || !this.#shouldRecordThemePickerShown()) {
+      return;
+    }
+
+    await this.getUpdateComplete();
+
+    const themePicker = this.themesPicker;
+    if (!themePicker?.themes.length) {
+      return;
+    }
+
+    await themePicker.updateComplete;
+
+    if (!this.#shouldRecordThemePickerShown()) {
+      return;
+    }
+
+    this.hasRecordedThemePickerShown = true;
+    themePicker.shown();
+    document.removeEventListener("visibilitychange", this);
+    this.removeEventListener("ThemePickerInitialState", this);
   }
 
   async setInitialInput() {
@@ -271,6 +306,11 @@ export class EditProfileCard extends MozLitElement {
         RPMSendAsyncMessage("Profiles:PageHide");
         break;
       }
+      case "ThemePickerInitialState":
+      case "visibilitychange": {
+        this.maybeRecordThemePickerShown();
+        break;
+      }
       case "Profiles:CustomAvatarUpload": {
         let { file } = event.detail;
         this.updateAvatar(file);
@@ -281,7 +321,14 @@ export class EditProfileCard extends MozLitElement {
         this.updateAvatar(avatar);
         break;
       }
-      case "ThemePickerThemeUpdated":
+      case "ThemePickerThemeUpdated": {
+        RPMSendAsyncMessage(
+          "Profiles:RecordThemeTelemetry",
+          this.profile?.themeId
+        );
+        this.refreshProfile();
+        break;
+      }
       case "ThemePickerDeviceAppearanceUpdated": {
         this.refreshProfile();
         break;
@@ -469,20 +516,21 @@ export class EditProfileCard extends MozLitElement {
   }
 
   themesTemplate() {
+    if (this.novaEnabled) {
+      return html`<theme-picker
+        id="themes"
+        installsource="profiles"
+      ></theme-picker>`;
+    }
+
+    return this.legacyThemesTemplate();
+  }
+
+  legacyThemesTemplate() {
     if (!this.themes) {
       return null;
     }
 
-    if (!this.novaEnabled) {
-      return this.legacyThemesTemplate();
-    }
-    return html`<theme-picker
-      id="themes"
-      installsource="profiles"
-    ></theme-picker>`;
-  }
-
-  legacyThemesTemplate() {
     return html`<moz-visual-picker
       type="listbox"
       id="themes"
@@ -560,7 +608,6 @@ export class EditProfileCard extends MozLitElement {
       </div>
       <div class="avatar-selector-parent">
         <profile-avatar-selector
-          hidden
           value=${this.profile.avatar}
         ></profile-avatar-selector>
       </div>

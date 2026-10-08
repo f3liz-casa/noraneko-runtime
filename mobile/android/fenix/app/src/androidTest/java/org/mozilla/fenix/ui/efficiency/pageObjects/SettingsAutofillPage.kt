@@ -14,7 +14,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
-import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.platform.app.InstrumentationRegistry
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
 import org.mozilla.fenix.helpers.TestAssetHelper.waitingTimeLong
@@ -24,8 +23,8 @@ import org.mozilla.fenix.settings.creditcards.ui.CreditCardEditorTestTags
 import org.mozilla.fenix.ui.efficiency.data.AddressDetails
 import org.mozilla.fenix.ui.efficiency.data.CreditCardDetails
 import org.mozilla.fenix.ui.efficiency.helpers.BasePage
-import org.mozilla.fenix.ui.efficiency.helpers.Selector
-import org.mozilla.fenix.ui.efficiency.navigation.NavigationRegistry
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationGraph
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationOptions
 import org.mozilla.fenix.ui.efficiency.navigation.NavigationStep
 import org.mozilla.fenix.ui.efficiency.selectors.SettingsAutofillSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.SettingsSelectors
@@ -33,33 +32,35 @@ import org.mozilla.fenix.ui.efficiency.selectors.SettingsSelectors
 class SettingsAutofillPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>) : BasePage(composeRule) {
     override val pageName = "SettingsAutofillPage"
 
-    init {
-        NavigationRegistry.register(
+    internal override fun registerNavigation(builder: NavigationGraph.Builder) {
+        builder.register(
             from = pageName,
             to = "SettingsPage",
             steps = listOf(NavigationStep.Click(SettingsSelectors.GO_BACK_BUTTON)),
         )
     }
 
-    override fun mozGetSelectorsByGroup(group: String): List<Selector> {
-        return SettingsAutofillSelectors.all.filter { it.groups.contains(group) }
-    }
+    override val selectorCatalog = SettingsAutofillSelectors
 
     // Narrow the return type to this page so callers can fluently chain page-specific helpers
     // (e.g. fillAndSaveAddress) directly off navigateToPage().
-    override fun navigateToPage(url: String, forceNavigation: Boolean): SettingsAutofillPage {
-        super.navigateToPage(url = url, forceNavigation = forceNavigation)
+    override fun navigateToPage(
+        url: String,
+        forceNavigation: Boolean,
+        navigationOptions: NavigationOptions,
+    ): SettingsAutofillPage {
+        super.navigateToPage(url = url, forceNavigation = forceNavigation, navigationOptions = navigationOptions)
         return this
     }
 
     /**
-     * Open the "Add address" form, fill every field, and save — leaving the screen back on the
-     * Autofill list (asserted via the "Manage addresses" button).
+     * Open the "Add address" form, fill every field, and save — leaving the screen back on the Autofill list (asserted
+     * via the "Manage addresses" button).
      *
-     * Screen-specific flow (dropdown popups + soft-keyboard timing + scroll-to-save) is encapsulated
-     * here rather than expressed as raw test steps, mirroring the legacy SettingsSubMenuAutofillRobot
-     * .fillAndSaveAddress. Text fields go through mozEnterText; the Country/State dropdowns and the
-     * Save button need direct Compose handling (touch-input toggle, last-matching-option, popup drain).
+     * Screen-specific flow (dropdown popups + soft-keyboard timing + scroll-to-save) is encapsulated here rather than
+     * expressed as raw test steps, mirroring the legacy SettingsSubMenuAutofillRobot .fillAndSaveAddress. Text fields
+     * go through mozEnterText; the Country/State dropdowns and the Save button need direct Compose handling
+     * (touch-input toggle, last-matching-option, popup drain).
      */
     fun fillAndSaveAddress(address: AddressDetails): SettingsAutofillPage {
         // navigateToPage() returns as soon as the "Autofill" toolbar title renders, but the
@@ -96,11 +97,11 @@ class SettingsAutofillPage(composeRule: AndroidComposeTestRule<HomeActivityInten
     }
 
     /**
-     * Fill the Add card form and save, leaving the Autofill list with one saved card (asserted via the
-     * "Manage cards" button), mirroring the legacy SettingsSubMenuAutofillRobot.fillAndSaveCreditCard.
+     * Fill the Add card form and save, leaving the Autofill list with one saved card (asserted via the "Manage cards"
+     * button), mirroring the legacy SettingsSubMenuAutofillRobot.fillAndSaveCreditCard.
      *
-     * The expiry month/year are dropdowns rather than text fields, so they reuse [selectDropdownOption]
-     * — the same popup-drain handling the address Country/State fields need.
+     * The expiry month/year are dropdowns rather than text fields, so they reuse [selectDropdownOption] — the same
+     * popup-drain handling the address Country/State fields need.
      */
     fun fillAndSaveCreditCard(card: CreditCardDetails): SettingsAutofillPage {
         mozVerify(SettingsAutofillSelectors.ADD_CREDIT_CARD_BUTTON)
@@ -130,9 +131,13 @@ class SettingsAutofillPage(composeRule: AndroidComposeTestRule<HomeActivityInten
         onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().size
 
     /**
-     * @param substring match the option by substring, case-insensitively. The card expiry dropdowns
-     * render their options with surrounding text (e.g. the month number alongside the name), so an exact
-     * match finds nothing there; the address dropdowns render the value on its own and match exactly.
+     * Opens [dropdownTag] and picks the entry matching [optionText].
+     *
+     * @param dropdownTag the test tag of the dropdown to open.
+     * @param optionText the text of the option to select.
+     * @param substring match the option by substring, case-insensitively. The card expiry dropdowns render their
+     *   options with surrounding text (e.g. the month number alongside the name), so an exact match finds nothing
+     *   there; the address dropdowns render the value on its own and match exactly.
      */
     private fun selectDropdownOption(dropdownTag: String, optionText: String, substring: Boolean = false) {
         waitForKeyboardDismiss()
@@ -158,10 +163,13 @@ class SettingsAutofillPage(composeRule: AndroidComposeTestRule<HomeActivityInten
                     composeRule.waitForIdle()
                 }
                 composeRule.onAllNodes(option)[nodeCount - 1].performClick()
-            // Throwable, not Exception: Compose's waitUntil raises ComposeTimeoutException, which extends
-            // Throwable directly, so catching Exception here let a timeout escape instead of retrying.
+                // Throwable, not Exception: Compose's waitUntil raises ComposeTimeoutException, which extends
+                // Throwable directly, so catching Exception here let a timeout escape instead of retrying.
             } catch (e: Throwable) {
-                Log.w("SettingsAutofillPage", "selectDropdownOption: attempt $attempt for '$optionText' failed: ${e.message?.take(120)}")
+                Log.w(
+                    "SettingsAutofillPage",
+                    "selectDropdownOption: attempt $attempt for '$optionText' failed: ${e.message?.take(120)}",
+                )
                 continue
             }
             waitForPopupToDismiss()
@@ -171,7 +179,7 @@ class SettingsAutofillPage(composeRule: AndroidComposeTestRule<HomeActivityInten
     }
 
     private fun waitForKeyboardDismiss(timeoutMs: Long = 15_000L) {
-        closeSoftKeyboard()
+        dismissSoftKeyboard()
         waitForAppWindowToBeUpdated()
         val startTime = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() - startTime < timeoutMs) {
@@ -185,10 +193,10 @@ class SettingsAutofillPage(composeRule: AndroidComposeTestRule<HomeActivityInten
         val startTime = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() - startTime < timeoutMs) {
             // Compose's DropdownMenu renders into a separate popup window titled "Pop-Up".
-            val hasPopup = InstrumentationRegistry.getInstrumentation()
-                .uiAutomation
-                .windows
-                .any { it.title?.contains("Pop-Up", ignoreCase = true) == true }
+            val hasPopup =
+                InstrumentationRegistry.getInstrumentation().uiAutomation.windows.any {
+                    it.title?.contains("Pop-Up", ignoreCase = true) == true
+                }
             if (!hasPopup) return
             composeRule.waitForIdle()
             SystemClock.sleep(100)

@@ -1,29 +1,23 @@
+// A page render can be cancelled, for example by the scale change the sidebar
+// triggers when it opens, and then no "textlayerrendered" is dispatched for it.
+// So check the state of the DOM instead of pairing up the render events.
 function waitForPdfJS(browser, url = null) {
-  // Runs tests after all "load" event handlers have fired off
-  const loadPromise = new Promise(resolve => {
-    let pageCounter = 0;
-    const removeEventListener1 = BrowserTestUtils.addContentEventListener(
-      browser,
-      "pagerender",
-      () => {
-        pageCounter += 1;
-      },
-      { capture: false, wantUntrusted: true }
-    );
-    const removeEventListener2 = BrowserTestUtils.addContentEventListener(
-      browser,
-      "textlayerrendered",
-      () => {
-        pageCounter -= 1;
-        if (pageCounter === 0) {
-          removeEventListener1();
-          removeEventListener2();
-          resolve();
-        }
-      },
-      { capture: false, wantUntrusted: true }
-    );
-  });
+  const loadPromise = BrowserTestUtils.waitForContentEvent(
+    browser,
+    "textlayerrendered",
+    false,
+    event => {
+      const doc = event.target.ownerDocument || event.target;
+      const pages = doc.querySelectorAll(".page[data-loaded='true']");
+      return (
+        !!pages.length &&
+        Array.from(pages).every(page =>
+          page.querySelector(".textLayer:not([hidden]) .endOfContent")
+        )
+      );
+    },
+    true
+  );
   if (url) {
     BrowserTestUtils.startLoadingURIString(browser, url);
   }
@@ -86,7 +80,17 @@ async function waitForPdfJSAllLayers(browser, url, layers) {
     annotationEditorPromise,
   ]);
 
-  await SpecialPowers.spawn(browser, [layers], async function (layers) {
+  await waitForPdfJSLayers(browser, layers);
+}
+
+/**
+ * Wait for each page's expected PDF layers.
+ *
+ * @param {MozBrowser|BrowsingContext} target Target containing the viewer.
+ * @param {Array<Array<string>>} layers Expected layer classes by page.
+ */
+async function waitForPdfJSLayers(target, layers) {
+  await SpecialPowers.spawn(target, [layers], async function (layers) {
     const { ContentTaskUtils } = ChromeUtils.importESModule(
       "resource://testing-common/ContentTaskUtils.sys.mjs"
     );
@@ -302,21 +306,11 @@ async function countElements(browser, selector) {
  */
 async function clickAt(browser, x, y, n = 1) {
   info(`Click at: (${x}, ${y}), ${n} times`);
+  // Keep mousedown and mouseup in one content query.
   await BrowserTestUtils.synthesizeMouseAtPoint(
     x,
     y,
     {
-      type: "mousedown",
-      button: 0,
-      clickCount: n,
-    },
-    browser
-  );
-  await BrowserTestUtils.synthesizeMouseAtPoint(
-    x,
-    y,
-    {
-      type: "mouseup",
       button: 0,
       clickCount: n,
     },
@@ -333,20 +327,10 @@ async function clickAt(browser, x, y, n = 1) {
  */
 async function clickOn(browser, selector) {
   await waitForSelector(browser, selector);
-  const [x, y] = await SpecialPowers.spawn(
-    browser,
-    [selector],
-    async selector => {
-      const element = content.document.querySelector(selector);
-      Assert.ok(
-        !!element,
-        `Element "${selector}" must be available in order to be clicked`
-      );
-      const { x, y, width, height } = element.getBoundingClientRect();
-      return [x + width / 2, y + height / 2];
-    }
-  );
-  await clickAt(browser, x, y);
+  info(`Click on: ${selector}`);
+  // Resolve the target and dispatch its click in the same content query.
+  await BrowserTestUtils.synthesizeMouseAtCenter(selector, {}, browser);
+  await TestUtils.waitForTick();
 }
 
 function focusEditorLayer(browser) {
@@ -503,6 +487,22 @@ async function cleanupDownloads(listId = Downloads.PUBLIC) {
     await downloadList.remove(download);
     await download.finalize();
   }
+}
+
+async function closeDownloadPanel() {
+  if (DownloadsPanel.panel.state !== "closed") {
+    const hiddenPromise = BrowserTestUtils.waitForEvent(
+      DownloadsPanel.panel,
+      "popuphidden"
+    );
+    DownloadsPanel.hidePanel();
+    await hiddenPromise;
+  }
+  is(
+    DownloadsPanel.panel.state,
+    "closed",
+    "Check that the download panel is closed"
+  );
 }
 
 function makePDFJSHandler() {

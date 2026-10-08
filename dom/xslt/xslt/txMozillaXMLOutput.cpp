@@ -190,7 +190,8 @@ nsresult txMozillaXMLOutput::comment(const nsString& aData) {
   return error.StealNSResult();
 }
 
-nsresult txMozillaXMLOutput::endDocument(nsresult aResult) {
+nsresult txMozillaXMLOutput::endDocument(nsresult aResult)
+    MOZ_CAN_RUN_SCRIPT_BOUNDARY {
   TX_ENSURE_CURRENTNODE;
 
   if (NS_FAILED(aResult)) {
@@ -215,7 +216,7 @@ nsresult txMozillaXMLOutput::endDocument(nsresult aResult) {
     MOZ_ASSERT(mDocument->GetReadyStateEnum() == Document::READYSTATE_LOADING,
                "Bad readyState");
     mDocument->SetReadyStateInternal(Document::READYSTATE_INTERACTIVE);
-    if (ScriptLoader* loader = mDocument->GetScriptLoader()) {
+    if (const RefPtr<ScriptLoader> loader = mDocument->GetScriptLoader()) {
       loader->ParsingComplete(false);
     }
   }
@@ -227,7 +228,7 @@ nsresult txMozillaXMLOutput::endDocument(nsresult aResult) {
   return NS_OK;
 }
 
-nsresult txMozillaXMLOutput::endElement() {
+nsresult txMozillaXMLOutput::endElement() MOZ_CAN_RUN_SCRIPT_BOUNDARY {
   TX_ENSURE_CURRENTNODE;
 
   if (mBadChildLevel) {
@@ -512,7 +513,7 @@ nsresult txMozillaXMLOutput::closePrevious(bool aFlushText) {
     }
 
     ErrorResult error;
-    mCurrentNode->AppendChildTo(mOpenedElement, true, error);
+    mCurrentNode->AppendChild(*mOpenedElement, error);
     if (error.Failed()) {
       return error.StealNSResult();
     }
@@ -588,10 +589,8 @@ nsresult txMozillaXMLOutput::createTxWrapper() {
       ++j;
 #endif
     } else {
-      mDocument->RemoveChildNode(childContent, true);
-
       ErrorResult error;
-      wrapper->AppendChildTo(childContent, true, error);
+      wrapper->AppendChild(*childContent, error);
       if (error.Failed()) {
         return error.StealNSResult();
       }
@@ -605,7 +604,7 @@ nsresult txMozillaXMLOutput::createTxWrapper() {
   NS_ASSERTION(rootLocation == mDocument->GetChildCount(),
                "Incorrect root location");
   ErrorResult error;
-  mDocument->AppendChildTo(wrapper, true, error);
+  mDocument->AppendChild(*wrapper, error);
   return error.StealNSResult();
 }
 
@@ -923,7 +922,8 @@ void txTransformNotifier::SignalTransformEnd(nsresult aResult) {
   nsCOMPtr<nsIScriptLoaderObserver> kungFuDeathGrip(this);
 
   if (mDocument) {
-    if (dom::ScriptLoader* scriptLoader = mDocument->GetScriptLoader()) {
+    if (const RefPtr<dom::ScriptLoader> scriptLoader =
+            mDocument->GetScriptLoader()) {
       scriptLoader->DeferCheckpointReached();
       scriptLoader->RemoveObserver(this);
       // XXX Maybe we want to cancel script loads if NS_FAILED(rv)?

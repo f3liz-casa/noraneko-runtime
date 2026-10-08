@@ -4,22 +4,12 @@
 
 import { actionTypes as at } from "resource://newtab/common/Actions.mjs";
 import { Dedupe } from "resource:///modules/Dedupe.sys.mjs";
-// Namespace import: a named import of an export missing on older train-hop
-// platforms is a link error; a namespace member is just undefined.
-import * as PlatformTopSitesConstants from "resource:///modules/topsites/constants.mjs";
 
 export {
   TOP_SITES_DEFAULT_ROWS,
+  TOP_SITES_MAX_ROWS,
   TOP_SITES_MAX_SITES_PER_ROW,
 } from "resource:///modules/topsites/constants.mjs";
-
-// @backward-compat { version 154 }
-// TOP_SITES_MAX_ROWS lands in platform constants.mjs in 154; until that reaches
-// Release it's absent on train-hop, so fall back to 4. At 154-Release: drop the
-// namespace import above, delete this shim, and add TOP_SITES_MAX_ROWS to the
-// re-export block above.
-export const TOP_SITES_MAX_ROWS =
-  PlatformTopSitesConstants.TOP_SITES_MAX_ROWS ?? 4;
 
 const dedupe = new Dedupe(site => site && site.url);
 
@@ -70,7 +60,7 @@ export const INITIAL_STATE = {
   },
   Prefs: {
     initialized: false,
-    values: { featureConfig: {} },
+    values: { featureConfig: {}, lockedPrefs: [] },
   },
   Dialog: {
     visible: false,
@@ -169,6 +159,12 @@ export const INITIAL_STATE = {
     highlightSeenCounter: 0,
     categories: [],
     uploadedWallpaper: "",
+    uploadResult: null,
+    // The images someone has saved, newest first. Shown as "Your images".
+    customWallpapers: [],
+    // Picker thumbnails, one { filename, file } per saved image. The library
+    // is not reachable by URL, so the bytes come over when the picker opens.
+    customWallpaperThumbnails: [],
   },
   SectionsLayout: {
     configs: {},
@@ -205,6 +201,12 @@ export const INITIAL_STATE = {
     tickers: [],
     lastUpdated: null,
     error: false,
+    watchlistTickers: [],
+    watchlistReconciledSymbols: [],
+    searchResults: [],
+    searchStatus: "idle",
+    activeRequestId: null,
+    submittedQuery: "",
   },
   PictureOfTheDay: {
     initialized: false,
@@ -297,6 +299,10 @@ export const INITIAL_STATE = {
     // "sites where we blocked something"; see PrivacyFeed).
     sitesToday: 0,
     lastUpdated: null,
+    // True when the user has turned off every Enhanced Tracking Protection
+    // blocking option, so nothing is being counted (Bug 2063525). The widget
+    // shows a warning card instead of the readout.
+    etpOff: false,
     // Secondary-message decision chosen by PrivacyFeed's selector
     // (Bug 2050954). variant: empty | blank | streak | tip. `category` is the
     // message family (CATEGORY) so the UI can tell a celebration from an
@@ -315,6 +321,27 @@ export const INITIAL_STATE = {
     // { awardedAt, fromCount, toCount }, plus `forcedTier` when the debug
     // pref made it; `awardedAt` doubles as its id.
     celebration: null,
+  },
+  RecentSearches: {
+    initialized: false,
+    /**
+     * @type {[{value: string, lastUsed: number}]}
+     *   Recent searches, newest first, as { value, lastUsed } where lastUsed is
+     *   a ms epoch.
+     */
+    searches: [],
+    /**
+     * @type {?Array<string>}
+     *   Trending search strings for the default engine. Null until a user opens
+     *   the Trending tab and the engine answers, so an empty list means the
+     *   engine had nothing rather than that nothing has been asked for yet.
+     */
+    trending: null,
+    /**
+     * Name of the default engine, for the Trending tab attribution. Empty until
+     * the first update arrives, and for a profile with no default engine.
+     */
+    engineName: "",
   },
 };
 
@@ -1118,6 +1145,12 @@ function Wallpapers(prevState = INITIAL_STATE.Wallpapers, action) {
       return { ...prevState, categories: action.data };
     case at.WALLPAPERS_CUSTOM_SET:
       return { ...prevState, uploadedWallpaper: action.data };
+    case at.WALLPAPERS_CUSTOM_LIBRARY_SET:
+      return { ...prevState, customWallpapers: action.data };
+    case at.WALLPAPERS_CUSTOM_THUMBNAILS_SET:
+      return { ...prevState, customWallpaperThumbnails: action.data };
+    case at.WALLPAPER_UPLOAD_RESULT:
+      return { ...prevState, uploadResult: action.data };
     default:
       return prevState;
   }
@@ -1283,6 +1316,19 @@ function PrivacyWidget(prevState = INITIAL_STATE.PrivacyWidget, action) {
   }
 }
 
+function RecentSearches(prevState = INITIAL_STATE.RecentSearches, action) {
+  switch (action.type) {
+    case at.WIDGETS_RECENT_SEARCHES_UPDATE:
+      return {
+        ...prevState,
+        ...action.data,
+        initialized: prevState.initialized || "searches" in action.data,
+      };
+    default:
+      return prevState;
+  }
+}
+
 function Ads(prevState = INITIAL_STATE.Ads, action) {
   switch (action.type) {
     case at.ADS_INIT:
@@ -1392,6 +1438,37 @@ function Stocks(prevState = INITIAL_STATE.Stocks, action) {
         tickers: action.data.tickers,
         lastUpdated: action.data.lastUpdated,
         error: action.data.error ?? false,
+      };
+    case at.WIDGETS_STOCKS_WATCHLIST_UPDATE:
+      return {
+        ...prevState,
+        watchlistTickers: action.data.watchlistTickers,
+        watchlistReconciledSymbols: action.data.reconciledSymbols,
+      };
+    case at.WIDGETS_STOCKS_SEARCH_STARTED:
+      return {
+        ...prevState,
+        searchStatus: "loading",
+        searchResults: [],
+        activeRequestId: action.data.requestId,
+        submittedQuery: action.data.query,
+      };
+    case at.WIDGETS_STOCKS_SEARCH_RESPONSE:
+      if (action.data.requestId !== prevState.activeRequestId) {
+        return prevState;
+      }
+      return {
+        ...prevState,
+        searchStatus: action.data.status,
+        searchResults: action.data.values || [],
+      };
+    case at.WIDGETS_STOCKS_SEARCH_CLEAR:
+      return {
+        ...prevState,
+        searchStatus: "idle",
+        searchResults: [],
+        activeRequestId: null,
+        submittedQuery: "",
       };
     default:
       return prevState;
@@ -1556,4 +1633,5 @@ export const reducers = {
   SportsWidget,
   PrivacyWidget,
   PictureOfTheDay,
+  RecentSearches,
 };

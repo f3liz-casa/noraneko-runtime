@@ -14,13 +14,14 @@ import androidx.annotation.RequiresApi
 import androidx.annotation.VisibleForTesting
 import androidx.annotation.VisibleForTesting.Companion.PRIVATE
 import androidx.core.content.edit
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import mozilla.components.support.base.log.logger.Logger
 import org.mozilla.fenix.GleanMetrics.AppExitInfo
 import org.mozilla.fenix.R
 import org.mozilla.fenix.ext.getPreferenceKey
 import org.mozilla.fenix.perf.ApplicationExitInfoMetrics.recordProcessExits
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * Contains logic for recording the processes that exited in the previous sessions, i.e historical
@@ -48,13 +49,14 @@ object ApplicationExitInfoMetrics {
         }
     }
 
-    @VisibleForTesting(otherwise = PRIVATE)
-    internal const val PREFERENCE_NAME = "app_exit_info"
+    @VisibleForTesting(otherwise = PRIVATE) internal const val PREFERENCE_NAME = "app_exit_info"
+
+    private val logger = Logger("ApplicationExitInfoMetrics")
 
     /**
-     * Returns all historical process exits mapped to [ProcessExitRecord] for display purposes.
-     * Unlike [recordProcessExits], this does not apply timestamp deduplication and returns the
-     * full contents of the ring buffer.
+     * Returns all historical process exits mapped to [ProcessExitRecord] for display purposes. Unlike
+     * [recordProcessExits], this does not apply timestamp deduplication and returns the full contents of the ring
+     * buffer.
      *
      * @param context Application [Context]
      */
@@ -93,11 +95,20 @@ object ApplicationExitInfoMetrics {
         record(context, lastTimeHandled, historicalExitReasons)
     }
 
+    // Some OEM AMS implementations violate the platform contract and throw
+    // IllegalArgumentException from getHistoricalProcessExitReasons (bug 2072086). Return an
+    // empty list on failure — callers already treat empty as "no data".
+    @Suppress("TooGenericExceptionCaught")
     @RequiresApi(Build.VERSION_CODES.R)
     private fun getHistoricalProcessExits(context: Context): List<ApplicationExitInfo> {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val applicationExitInfoList =
-            activityManager.getHistoricalProcessExitReasons(null, 0, 0)
+            try {
+                activityManager.getHistoricalProcessExitReasons(null, 0, 0)
+            } catch (e: RuntimeException) {
+                logger.warn("getHistoricalProcessExitReasons threw", e)
+                return emptyList()
+            }
         applicationExitInfoList.retainAll {
             shouldRetainApplicationExitInfo(it)
         }
@@ -130,7 +141,7 @@ object ApplicationExitInfoMetrics {
                         pss = historicalExit.pss.toValueInMB(),
                         rss = historicalExit.rss.toValueInMB(),
                         reason = historicalExit.toProcessExitReason(),
-                    ),
+                    )
                 )
             }
         }
@@ -150,9 +161,7 @@ object ApplicationExitInfoMetrics {
         return mostRecentProcessExitTimestamp > lastTimeHandled
     }
 
-    private fun shouldRetainApplicationExitInfo(
-        appExitInfo: ApplicationExitInfo?,
-    ): Boolean {
+    private fun shouldRetainApplicationExitInfo(appExitInfo: ApplicationExitInfo?): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             TRACKED_REASONS.contains(appExitInfo?.reason)
         } else {
@@ -197,9 +206,7 @@ object ApplicationExitInfoMetrics {
 
     @RequiresApi(Build.VERSION_CODES.R)
     private fun ApplicationExitInfo.toProcessExitReason(): String? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            reason == ApplicationExitInfo.REASON_FREEZER
-        ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && reason == ApplicationExitInfo.REASON_FREEZER) {
             return "freezer"
         }
         return when (reason) {

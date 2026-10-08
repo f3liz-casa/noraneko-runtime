@@ -91,7 +91,7 @@ extern int Debug;
 #define SSL_DBG(b)
 #endif
 
-#define LSB(x) ((unsigned char)((x)&0xff))
+#define LSB(x) ((unsigned char)((x) & 0xff))
 #define MSB(x) ((unsigned char)(((unsigned)(x)) >> 8))
 
 #define CONST_CAST(T, X) ((T *)(X))
@@ -131,7 +131,7 @@ typedef enum { SSLAppOpRead = 0,
 #define DTLS_RETRANSMIT_FINISHED_MS 30000
 
 /* default number of entries in namedGroupPreferences */
-#define SSL_NAMED_GROUP_COUNT 36
+#define SSL_NAMED_GROUP_COUNT 35
 
 /* The maximum DH and RSA bit-length supported. */
 #define SSL_MAX_DH_KEY_BITS 8192
@@ -264,7 +264,7 @@ typedef struct {
 #define MAX_DTLS_SRTP_CIPHER_SUITES 4
 
 /* MAX_SIGNATURE_SCHEMES allows for all the values we support. */
-#define MAX_SIGNATURE_SCHEMES 18
+#define MAX_SIGNATURE_SCHEMES 21
 
 #define MAX_SUPPORTED_CERTIFICATE_COMPRESSION_ALGS 32
 
@@ -1000,7 +1000,7 @@ typedef struct SessionTicketStr {
 ** This is "ci", as in "ss->sec.ci".
 **
 ** Protection:  All the variables in here are protected by
-** firstHandshakeLock AND ssl3HandshakeLock
+** firstHandshakeLock AND ssl3HandshakeLock, except where noted per field.
 */
 struct sslConnectInfoStr {
     /* outgoing handshakes appended to this. */
@@ -1009,6 +1009,12 @@ struct sslConnectInfoStr {
     PRIPv6Addr peer;
     unsigned short port;
 
+    /* Assign only with ssl_SetSocketSID and clear only with
+     * ssl_TakeSocketSID; both swap and release under the session cache lock.
+     * A thread holding neither handshake lock -- an application calling
+     * SSL_GetChannelInfo, say -- must read this with ssl_ReferenceSocketSID,
+     * because the peer can replace the session at any time by renegotiating
+     * or by sending a new session ticket. */
     sslSessionID *sid;
 };
 
@@ -1198,6 +1204,9 @@ struct sslSocketStr {
      */
     /* True when the current session is a stateless resume. */
     PRBool statelessResume;
+    /* Like ss->ssl3.hs, this is handshake state: it is written by the
+     * extension handlers and senders, and is protected by
+     * ssl3HandshakeLock. */
     TLSExtensionData xtnData;
 
     /* Whether we are doing stream or datagram mode */
@@ -1325,6 +1334,9 @@ extern sslSessionID *ssl_LookupSID(PRTime now, const PRIPv6Addr *addr,
 extern void ssl_FreeSID(sslSessionID *sid);
 extern void ssl_DestroySID(sslSessionID *sid, PRBool freeIt);
 extern sslSessionID *ssl_ReferenceSID(sslSessionID *sid);
+extern void ssl_SetSocketSID(sslSocket *ss, sslSessionID *sid);
+extern sslSessionID *ssl_TakeSocketSID(sslSocket *ss);
+extern sslSessionID *ssl_ReferenceSocketSID(sslSocket *ss);
 
 extern int ssl3_SendApplicationData(sslSocket *ss, const PRUint8 *in,
                                     int len, int flags);
@@ -1752,12 +1764,14 @@ SECStatus ssl3_HandleServerSpki(sslSocket *ss);
 SECStatus ssl3_AuthCertificate(sslSocket *ss);
 SECStatus ssl_ReadCertificateStatus(sslSocket *ss, PRUint8 *b,
                                     PRUint32 length);
-SECStatus ssl3_EncodeSigAlgs(const sslSocket *ss, PRUint16 minVersion, PRBool forCert,
+SECStatus ssl3_EncodeSigAlgs(const sslSocket *ss, PRUint16 maxVersion,
+                             PRUint16 minVersion, PRBool forCert,
                              PRBool grease, sslBuffer *buf);
 SECStatus ssl3_EncodeFilteredSigAlgs(const sslSocket *ss,
                                      const SSLSignatureScheme *schemes,
                                      PRUint32 numSchemes, PRBool grease, sslBuffer *buf);
-SECStatus ssl3_FilterSigAlgs(const sslSocket *ss, PRUint16 minVersion, PRBool disableRsae, PRBool forCert,
+SECStatus ssl3_FilterSigAlgs(const sslSocket *ss, PRUint16 maxVersion, PRUint16 minVersion,
+                             PRBool disableRsae, PRBool forCert,
                              unsigned int maxSchemes, SSLSignatureScheme *filteredSchemes,
                              unsigned int *numFilteredSchemes);
 SECStatus ssl_GetCertificateRequestCAs(const sslSocket *ss,

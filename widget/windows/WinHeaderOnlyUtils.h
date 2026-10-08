@@ -165,13 +165,7 @@ class WindowsError final {
     return Nothing();
   }
 
-  constexpr bool operator==(const WindowsError& aOther) const {
-    return mHResult == aOther.mHResult;
-  }
-
-  constexpr bool operator!=(const WindowsError& aOther) const {
-    return mHResult != aOther.mHResult;
-  }
+  constexpr bool operator==(const WindowsError& aOther) const = default;
 
   static DWORD NtStatusToWin32Error(NTSTATUS aNtStatus) {
     static const StaticDynamicallyLinkedFunctionPtr<

@@ -4,7 +4,7 @@
 "use strict";
 
 const { TabStateFlusher } = ChromeUtils.importESModule(
-  "resource:///modules/sessionstore/TabStateFlusher.sys.mjs"
+  "moz-src:///browser/components/sessionstore/TabStateFlusher.sys.mjs"
 );
 const { sinon } = ChromeUtils.importESModule(
   "resource://testing-common/Sinon.sys.mjs"
@@ -12,10 +12,7 @@ const { sinon } = ChromeUtils.importESModule(
 
 add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["test.wait300msAfterTabSwitch", true],
-      ["browser.tabs.groups.enabled", true],
-    ],
+    set: [["browser.tabs.groups.enabled", true]],
   });
   forgetSavedTabGroups();
   window.gTabsPanel.init();

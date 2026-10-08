@@ -362,6 +362,111 @@ newtab:
     send_in_pings:
       - newtab
 
+  wallpaper_saved_add:
+    type: event
+    description: >
+      Recorded when an image is added to the "Your images" folder. Sent by the
+      parent process once the image is really saved, so an upload the parent
+      refuses is not counted. Covers an image someone added and a Picture of
+      the Day they kept. A Firefox wallpaper kept for them when it was retired
+      is saved during a background sync with no page to attribute it to, so it
+      is not counted here. Applying a picture already saved is reported as a
+      selection rather than another save.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2067845
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2067845
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - dgrant@mozilla.com
+    expires: never
+    extra_keys:
+      wallpaper_source:
+        description: >
+          Where the image came from: "custom" for an image someone added,
+          "potd" for a Picture of the Day they kept
+        type: string
+      saved_wallpaper_count:
+        description: >
+          How many wallpapers the user has saved once this one is in
+        type: quantity
+      newtab_visit_id: *newtab_visit_id
+    send_in_pings:
+      - newtab
+
+  wallpaper_saved_click:
+    type: event
+    description: >
+      Recorded when a wallpaper from the "Your images" folder has been applied.
+      Sent by the parent process once the image is really applied, so a request
+      the parent refuses is not counted. A saved wallpaper can be a file the
+      user uploaded, a Picture of the Day they chose to keep, or a Firefox
+      wallpaper kept for them when it was retired. Recorded in addition to
+      wallpaper_click, which reports every saved wallpaper as "custom" and so
+      cannot tell them apart; the two together describe one selection, not two.
+      Carries no name of any kind. An image someone added is known only by a
+      number, and a kept picture is known by its own description.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2067845
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2067845
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - dgrant@mozilla.com
+    expires: never
+    extra_keys:
+      saved_wallpaper_count:
+        description: >
+          How many wallpapers the user has saved at the time of the click
+        type: quantity
+      wallpaper_source:
+        description: >
+          Where the picked image came from: "custom" for an image someone
+          added, "potd" for a Picture of the Day they kept, "builtin" for a
+          Firefox wallpaper kept for them when it was retired
+        type: string
+      newtab_visit_id: *newtab_visit_id
+    send_in_pings:
+      - newtab
+
+  wallpaper_saved_remove:
+    type: event
+    description: >
+      Recorded when a wallpaper has been removed from the "Your images" folder.
+      Sent by the parent process once the image is really gone, so a removal
+      that fails is not counted. A saved wallpaper can be a file the user
+      uploaded, a Picture of the Day they chose to keep, or a Firefox wallpaper
+      kept for them when it was retired. Carries no name of any kind.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2067845
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2067845
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - dgrant@mozilla.com
+    expires: never
+    extra_keys:
+      saved_wallpaper_count:
+        description: >
+          How many wallpapers the user has saved after the removal
+        type: quantity
+      was_applied:
+        description: >
+          Whether the removed wallpaper was the one currently on the page
+        type: boolean
+      wallpaper_source:
+        description: >
+          Where the removed image came from: "custom" for a file the user
+          uploaded, "potd" for a Picture of the Day they kept, or "builtin"
+          for a Firefox wallpaper kept when it was retired
+        type: string
+      newtab_visit_id: *newtab_visit_id
+    send_in_pings:
+      - newtab
+
   wallpaper_highlight_cta_click:
     type: event
     description: >
@@ -416,6 +521,71 @@ newtab:
         description: >
           Which wallpaper category selected by user
         type: string
+      newtab_visit_id: *newtab_visit_id
+    send_in_pings:
+      - newtab
+
+  customize_panel_open:
+    type: event
+    description: >
+      Recorded when the customize panel becomes visible, whichever control
+      or message opened it.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2066344
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2066344
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - npypchenko@mozilla.com
+    expires: never
+    extra_keys:
+      newtab_visit_id: *newtab_visit_id
+    send_in_pings:
+      - newtab
+
+  customize_panel_subpanel_open:
+    type: event
+    description: >
+      Recorded when one of the customize panel's subpanels becomes visible,
+      whether opened from the panel, from a widget's context menu, or by a
+      message deep link.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2066344
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2066344
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - npypchenko@mozilla.com
+    expires: never
+    extra_keys:
+      newtab_visit_id: *newtab_visit_id
+      panel:
+        description: >
+          Which subpanel opened. One of themes_management,
+          wallpaper_categories, sections_management, widgets_management,
+          the ids of CUSTOMIZE_SUBPANELS in
+          browser/extensions/newtab/content-src/lib/constants.mjs.
+        type: string
+    send_in_pings:
+      - newtab
+
+  appearance_explore_more_themes_click:
+    type: event
+    description: >
+      Recorded when the user clicks Explore more themes in the customize
+      panel's themes subpanel, which opens the about:addons themes list.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2066344
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2066344
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - npypchenko@mozilla.com
+    expires: never
+    extra_keys:
       newtab_visit_id: *newtab_visit_id
     send_in_pings:
       - newtab
@@ -591,10 +761,6 @@ newtab:
     expires: never
     extra_keys:
       newtab_visit_id: *newtab_visit_id
-      section:
-        description: >
-          section that had impression event
-        type: string
       section_position:
         description: >
           position of section on newtab
@@ -629,10 +795,6 @@ newtab:
     expires: never
     extra_keys:
       newtab_visit_id: *newtab_visit_id
-      section:
-        description: >
-          section that had impression event
-        type: string
       section_position:
         description: >
           position of section on newtab
@@ -663,10 +825,6 @@ newtab:
     expires: never
     extra_keys:
       newtab_visit_id: *newtab_visit_id
-      section:
-        description: >
-          section that had impression event
-        type: string
       section_position:
         description: >
           position of section on newtab
@@ -694,10 +852,6 @@ newtab:
     expires: never
     extra_keys:
       newtab_visit_id: *newtab_visit_id
-      section:
-        description: >
-          section that had impression event
-        type: string
       section_position:
         description: >
           position of section on newtab
@@ -725,10 +879,6 @@ newtab:
     expires: never
     extra_keys:
       newtab_visit_id: *newtab_visit_id
-      section:
-        description: >
-          section that had unblock event
-        type: string
       section_position:
         description: >
           position of section on newtab
@@ -758,6 +908,73 @@ newtab:
     expires: never
     extra_keys:
       newtab_visit_id: *newtab_visit_id
+    send_in_pings:
+      - newtab
+
+  carousel_navigate:
+    type: event
+    description: >
+      Recorded when the previous or next control on the story carousel is used.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065554
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065554
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - ini@mozilla.com
+      - sdowne@mozilla.com
+    expires: never
+    extra_keys:
+      newtab_visit_id: *newtab_visit_id
+      direction:
+        description: >
+          Which control was used, "previous" or "next"
+        type: string
+      slide_index:
+        description: >
+          Zero-based index of the slide moved to
+        type: quantity
+      section:
+        description: >
+          Name of the section the carousel belongs to
+        type: string
+      section_position:
+        description: >
+          position of section on newtab
+        type: string
+    send_in_pings:
+      - newtab
+
+  carousel_toggle_autoplay:
+    type: event
+    description: >
+      Recorded when the story carousel's rotation control is used to stop or
+      start automatic rotation.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065554
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2065554
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - ini@mozilla.com
+      - sdowne@mozilla.com
+    expires: never
+    extra_keys:
+      newtab_visit_id: *newtab_visit_id
+      paused:
+        description: >
+          Whether the control paused rotation, as opposed to resuming it
+        type: boolean
+      section:
+        description: >
+          Name of the section the carousel belongs to
+        type: string
+      section_position:
+        description: >
+          position of section on newtab
+        type: string
     send_in_pings:
       - newtab
 
@@ -813,6 +1030,35 @@ newtab:
       topic_position:
         description: >
           position of the topic within the inline selection component (index point starting at 0)
+        type: string
+    send_in_pings:
+      - newtab
+
+  topic_navigation_click:
+    type: event
+    description: >
+      Recorded when a topic in the topic navigation strip above the stories is
+      clicked, scrolling the page to that section.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2066897
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2066897
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - ini@mozilla.com
+      - sdowne@mozilla.com
+    expires: never
+    extra_keys:
+      newtab_visit_id: *newtab_visit_id
+      topic:
+        description: >
+          Key of the section the clicked topic scrolls to
+        type: string
+      event_source:
+        description: >
+          Whether the click came from the topic strip ("TOPIC_STRIP")
+          or the More dropdown ("OVERFLOW_MENU")
         type: string
     send_in_pings:
       - newtab
@@ -1351,6 +1597,67 @@ newtab:
     send_in_pings:
       - newtab
 
+  page_layout_variant:
+    type: string
+    description: >
+      The name of the newtab page layout variant the client is assigned, for
+      layout experimentation. One of nova-full-width,
+      side-by-side-content-lead, side-by-side-widgets-lead,
+      side-by-side-content-lead-five, side-by-side-widgets-lead-five,
+      spaces-buttons-top or spaces-buttons-bottom. The -five variants reach five
+      card columns counting the widgets column, the others four. The spaces
+      variants split the band into separately-navigable panels and differ only
+      in where the segmented control sits. Reports the assigned variant whether
+      or not the page can currently render it, and covers variants set by pref
+      as well as by a Nimbus train-hop configuration.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2061741
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2061741
+    data_sensitivity:
+      - technical
+    notification_emails:
+      - mcrawford@mozilla.com
+    expires: never
+    lifetime: application
+    send_in_pings:
+      - newtab
+
+  spaces_switch:
+    type: event
+    description: >
+      Recorded when the user navigates from one newtab space to another, in the
+      spaces page layout variants. Not recorded for the space the page opens on,
+      only for switches away from it, so the count is the number of deliberate
+      navigations.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2061742
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2061742
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - sdowne@mozilla.com
+    expires: never
+    extra_keys:
+      newtab_visit_id: *newtab_visit_id
+      space:
+        description: >
+          The space navigated to. One of stories, widgets or activity.
+        type: string
+      previous_space:
+        description: >
+          The space navigated away from, same values as space.
+        type: string
+      method:
+        description: >
+          Which control was used: tab (the segmented control), keyboard (arrow
+          keys on the segmented control) or swipe (horizontal wheel, shift plus
+          wheel, or a touch drag).
+        type: string
+    send_in_pings:
+      - newtab
+
   spons_nav_traffic_sent:
     type: memory_distribution
     memory_unit: kilobyte
@@ -1403,13 +1710,80 @@ newtab:
     lifetime: ping
     type: boolean
     description: >
-      Whether the user scrolled more than SCROLL_TELEMETRY_THRESHOLD pixels
-      during a newtab session. Absent if no qualifying scroll occurred during
-      the session.
+      Whether the user scrolled more than 50 pixels during a newtab session.
+      Absent if the session ended before the newtab was ever visible.
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2049897
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2060343
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2049897
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2060343
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - sdowne@mozilla.com
+      - jbrown@mozilla.com
+    expires: never
+    send_in_pings:
+      - newtab
+
+  scroll100:
+    lifetime: ping
+    type: boolean
+    description: >
+      Whether the user scrolled more than 100 pixels during a newtab session.
+      Absent if the session ended before the newtab was ever visible.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2060343
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2060343
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - sdowne@mozilla.com
+      - jbrown@mozilla.com
+    expires: never
+    send_in_pings:
+      - newtab
+
+  scroll250:
+    lifetime: ping
+    type: boolean
+    description: >
+      Whether the user scrolled more than 250 pixels during a newtab session.
+      Absent if the session ended before the newtab was ever visible.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2060343
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2060343
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - sdowne@mozilla.com
+      - jbrown@mozilla.com
+    expires: never
+    send_in_pings:
+      - newtab
+
+  dwell_time:
+    lifetime: ping
+    type: timing_distribution
+    time_unit: millisecond
+    description: >
+      Active time the user spent on this newtab, in milliseconds. Measures
+      how long the user was interacting with the browser, anywhere in the
+      window, while this newtab was the selected tab of the focused window,
+      not how long the tab was open.
+
+      One sample per newtab visit, absent when no active time accrued, so count
+      missing samples as zero when averaging newtab_session_end pings.
+
+      Resolution is about 5 seconds, so expect a cluster just under that from
+      tabs that were opened and then immediately ignored.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2062392
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2062392
     data_sensitivity:
       - interaction
     notification_emails:
@@ -1553,6 +1927,14 @@ topsites:
       smart_weights: &smart_weights
         description: stringified json storing weights for each feature during smart shortcut ranking
         type: string
+      is_ad_eligible_position:
+        description: >
+          Recorded as true when the position this tile occupied is one an ad is
+          allowed to fill, and omitted otherwise. Independent of `is_sponsored`,
+          which reports whether this particular tile is an ad: an ad-eligible
+          position that no ad was available for is filled with an organic or
+          pinned tile and still reports true.
+        type: boolean
     send_in_pings:
       - newtab
 
@@ -1612,10 +1994,7 @@ topsites:
       - achurchwell@mozilla.com
     expires: never
     extra_keys:
-      advertiser_name: *advertiser_name
-      tile_id: *tile_id
       newtab_visit_id: *newtab_visit_id
-      is_sponsored: *is_sponsored
       position: *topsite_position
     send_in_pings:
       - newtab
@@ -1635,10 +2014,7 @@ topsites:
       - achurchwell@mozilla.com
     expires: never
     extra_keys:
-      advertiser_name: *advertiser_name
-      tile_id: *tile_id
       newtab_visit_id: *newtab_visit_id
-      is_sponsored: *is_sponsored
       position: *topsite_position
     send_in_pings:
       - newtab
@@ -1658,10 +2034,7 @@ topsites:
       - achurchwell@mozilla.com
     expires: never
     extra_keys:
-      advertiser_name: *advertiser_name
-      tile_id: *tile_id
       newtab_visit_id: *newtab_visit_id
-      is_sponsored: *is_sponsored
       position: *topsite_position
     send_in_pings:
       - newtab
@@ -1681,10 +2054,7 @@ topsites:
       - achurchwell@mozilla.com
     expires: never
     extra_keys:
-      advertiser_name: *advertiser_name
-      tile_id: *tile_id
       newtab_visit_id: *newtab_visit_id
-      is_sponsored: *is_sponsored
       position: *topsite_position
       has_title_changed: &has_title_changed
         description: Whether the topsite title was changed.
@@ -2010,11 +2380,6 @@ pocket:
       position: &pocket_position
         description: The position (0-index) of the pocket tile.
         type: quantity
-      recommendation_id: &recommendation_id
-        description: >
-          The id from the Pocket API response that returned the recommendation.
-          Like "{61934fe5-fbb0-4f4e-b9dd-7eab5f6ee9cd}".
-        type: string
       tile_id: &pocket_tile_id
         description: >
           A content identifier.
@@ -2043,23 +2408,27 @@ pocket:
       recommended_at: &recommended_at
         description: The time in milliseconds the recomendation was recommended at.
         type: quantity
-      topic:
-        description: The topic of the recommendation. Like "entertainment".
-        type: string
-      selected_topics:
-        description: >
-          The list of topics the user selected
-        type: string
-      section:
-        description: >
-          If click belongs in a section, the name of the section
-        type: string
       section_position:
         description: >
           If click belongs in a section, the numeric position of the section
         type: string
       is_section_followed: *is_section_followed
       layout_name: *layout_name
+      card_column: &card_column
+        description: >
+          The 1-based grid column the card occupied at the time of the event.
+          A card spanning several columns reports its leftmost one.
+        type: quantity
+      is_ad_eligible_position:
+        description: >
+          Recorded as true when the position this card occupied is one an ad is
+          allowed to fill, and omitted otherwise. Never recorded when sponsored
+          content is turned off, either by the user or by Mozilla, since no
+          position can hold an ad then. Independent of `is_sponsored`, which
+          reports whether this particular card is an ad: an ad-eligible position
+          that no ad was available for is filled with organic content and still
+          reports true.
+        type: boolean
       content_redacted:
         description: >
           Are content details sent separately in the newtab_content ping
@@ -2099,7 +2468,6 @@ pocket:
       is_sponsored: *is_sponsored_pocket
       format: *format
       position: *pocket_position
-      recommendation_id: *recommendation_id
       tile_id: *pocket_tile_id
       scheduled_corpus_item_id: *scheduled_corpus_item_id
       corpus_item_id: *corpus_item_id
@@ -2110,17 +2478,6 @@ pocket:
           Returns value based on if a the topic of the pocket recommendation matches one
           of the user-selected topic categories
         type: string
-      topic:
-        description: The topic of the recommendation. Like "entertainment".
-        type: string
-      selected_topics:
-        description: >
-          The list of topics the user selected
-        type: string
-      section:
-        description: >
-          If click belongs in a section, the name of the section
-        type: string
       section_position:
         description: >
           If click belongs in a section, the numeric position of the section
@@ -2128,6 +2485,7 @@ pocket:
       is_section_followed: *is_section_followed
       layout_name: *layout_name
       event_source: *event_source
+      card_column: *card_column
       content_redacted:
         description: >
           Are content details sent separately in the newtab_content ping
@@ -2155,16 +2513,11 @@ pocket:
       is_sponsored: *is_sponsored_pocket
       format: *format
       position: *pocket_position
-      recommendation_id: *recommendation_id
       tile_id: *pocket_tile_id
       scheduled_corpus_item_id: *scheduled_corpus_item_id
       corpus_item_id: *corpus_item_id
       received_rank: *received_rank
       recommended_at: *recommended_at
-      section:
-        description: >
-          If click belongs in a section, the name of the section
-        type: string
       section_position:
         description: >
           If click belongs in a section, the numeric position of the section
@@ -2209,7 +2562,6 @@ pocket:
       is_sponsored: *is_sponsored_pocket
       format: *format
       position: *pocket_position
-      recommendation_id: *recommendation_id
       tile_id: *pocket_tile_id
       scheduled_corpus_item_id: *scheduled_corpus_item_id
       corpus_item_id: *corpus_item_id
@@ -2505,7 +2857,6 @@ newtab_content:
       is_sponsored: *is_sponsored_pocket
       format: *format
       position: *pocket_position
-      recommendation_id: *recommendation_id
       tile_id: *pocket_tile_id
       scheduled_corpus_item_id: *scheduled_corpus_item_id
       corpus_item_id: *corpus_item_id
@@ -2522,14 +2873,11 @@ newtab_content:
         description: >
           If click belongs in a section, the name of the section
         type: string
-      section_position:
-        description: >
-          If click belongs in a section, the numberic position of the section
-        type: string
       is_section_followed:
         description: >
           If click belongs in a section, if that section is followed
         type: boolean
+      layout_name: *layout_name
     send_in_pings:
       - newtab-content
 
@@ -2552,7 +2900,6 @@ newtab_content:
       is_sponsored: *is_sponsored_pocket
       format: *format
       position: *pocket_position
-      recommendation_id: *recommendation_id
       tile_id: *pocket_tile_id
       scheduled_corpus_item_id: *scheduled_corpus_item_id
       corpus_item_id: *corpus_item_id
@@ -2574,14 +2921,11 @@ newtab_content:
         description: >
           If click belongs in a section, the name of the section
         type: string
-      section_position:
-        description: >
-          If click belongs in a section, the numberic position of the section
-        type: string
       is_section_followed:
         description: >
           If click belongs in a section, if that section is followed
         type: boolean
+      layout_name: *layout_name
     send_in_pings:
       - newtab-content
 
@@ -2604,7 +2948,6 @@ newtab_content:
       is_sponsored: *is_sponsored_pocket
       format: *format
       position: *pocket_position
-      recommendation_id: *recommendation_id
       tile_id: *pocket_tile_id
       scheduled_corpus_item_id: *scheduled_corpus_item_id
       corpus_item_id: *corpus_item_id

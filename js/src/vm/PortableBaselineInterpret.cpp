@@ -3870,11 +3870,8 @@ uint64_t ICInterpretOps(uint64_t arg0, uint64_t arg1, ICStub* stub,
       CACHEOP_CASE(Int32MinMaxArrayResult) {
         ObjOperandId arrayId = cacheIRReader.objOperandId();
         bool isMax = cacheIRReader.readBool();
-        // ICs that use this opcode depend on implicit unboxing due to
-        // type-overload on ObjOperandId when a value is loaded
-        // directly from an argument slot. We explicitly unbox here.
-        NativeObject* nobj = reinterpret_cast<NativeObject*>(
-            &READ_VALUE_REG(arrayId.id()).toObject());
+        NativeObject* nobj =
+            reinterpret_cast<NativeObject*>(READ_REG(arrayId.id()));
         uint32_t len = nobj->getDenseInitializedLength();
         if (len == 0) {
           FAIL_IC();
@@ -3903,11 +3900,8 @@ uint64_t ICInterpretOps(uint64_t arg0, uint64_t arg1, ICStub* stub,
       CACHEOP_CASE(NumberMinMaxArrayResult) {
         ObjOperandId arrayId = cacheIRReader.objOperandId();
         bool isMax = cacheIRReader.readBool();
-        // ICs that use this opcode depend on implicit unboxing due to
-        // type-overload on ObjOperandId when a value is loaded
-        // directly from an argument slot. We explicitly unbox here.
-        NativeObject* nobj = reinterpret_cast<NativeObject*>(
-            &READ_VALUE_REG(arrayId.id()).toObject());
+        NativeObject* nobj =
+            reinterpret_cast<NativeObject*>(READ_REG(arrayId.id()));
         uint32_t len = nobj->getDenseInitializedLength();
         if (len == 0) {
           FAIL_IC();
@@ -8050,7 +8044,7 @@ PBIResult PortableBaselineInterpret(
       }
 
       CASE(InitialYield) {
-        // gen => rval, gen, resumeKind
+        // gen => rval, resumeKind
         ReservedRooted<JSObject*> obj0(&state.obj0,
                                        &VIRTSP(0).asValue().toObject());
         uint32_t frameSize = ctx.stack.frameSize(sp, frame);
@@ -8066,7 +8060,7 @@ PBIResult PortableBaselineInterpret(
 
       CASE(Await)
       CASE(Yield) {
-        // rval1, gen => rval2, gen, resumeKind
+        // rval1, gen => rval2, resumeKind
         ReservedRooted<JSObject*> obj0(&state.obj0,
                                        &VIRTPOP().asValue().toObject());
         uint32_t frameSize = ctx.stack.frameSize(sp, frame);
@@ -8091,12 +8085,6 @@ PBIResult PortableBaselineInterpret(
           }
         }
         goto do_return;
-      }
-
-      CASE(IsGenClosing) {
-        bool result = VIRTSP(0).asValue() == MagicValue(JS_GENERATOR_CLOSING);
-        VIRTPUSH(StackVal(BooleanValue(result)));
-        END_OP(IsGenClosing);
       }
 
       CASE(AsyncAwait) {
@@ -8199,27 +8187,6 @@ PBIResult PortableBaselineInterpret(
         GeneratorResumeKind resumeKind = ResumeKindFromPC(pc);
         VIRTPUSH(StackVal(Int32Value(int32_t(resumeKind))));
         END_OP(ResumeKind);
-      }
-
-      CASE(CheckResumeKind) {
-        // rval, gen, resumeKind => rval
-        {
-          GeneratorResumeKind resumeKind =
-              IntToResumeKind(VIRTPOP().asValue().toInt32());
-          ReservedRooted<JSObject*> obj0(
-              &state.obj0,
-              &VIRTPOP().asValue().toObject());  // gen
-          ReservedRooted<Value> value0(&state.value0,
-                                       VIRTSP(0).asValue());  // rval
-          if (resumeKind != GeneratorResumeKind::Next) {
-            PUSH_EXIT_FRAME();
-            MOZ_ALWAYS_FALSE(GeneratorThrowOrReturn(
-                cx, frame, obj0.as<AbstractGeneratorObject>(), value0,
-                resumeKind));
-            GOTO_ERROR();
-          }
-        }
-        END_OP(CheckResumeKind);
       }
 
       CASE(Resume) {

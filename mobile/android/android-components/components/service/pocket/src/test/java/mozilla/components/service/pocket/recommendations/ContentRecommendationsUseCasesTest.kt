@@ -5,12 +5,15 @@
 package mozilla.components.service.pocket.recommendations
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlin.test.assertIs
 import kotlinx.coroutines.test.runTest
 import mozilla.components.concept.fetch.Client
 import mozilla.components.service.pocket.ContentRecommendationsRequestConfig
 import mozilla.components.service.pocket.PocketStory.ContentRecommendation
 import mozilla.components.service.pocket.helpers.PocketTestResources
 import mozilla.components.service.pocket.recommendations.api.ContentRecommendationsEndpoint
+import mozilla.components.service.pocket.recommendations.api.ContentRecommendationsProvider
+import mozilla.components.service.pocket.recommendations.api.MerinoContentRecommendationsProvider
 import mozilla.components.service.pocket.stories.api.PocketResponse
 import mozilla.components.support.test.any
 import mozilla.components.support.test.mock
@@ -30,67 +33,92 @@ import org.mockito.Mockito.verify
 class ContentRecommendationsUseCasesTest {
 
     private val client: Client = mock()
-    private val useCases = spy(
-        ContentRecommendationsUseCases(
-            appContext = testContext,
-            client = client,
-            config = ContentRecommendationsRequestConfig(),
-        ),
-    )
+    private val useCases =
+        spy(
+            ContentRecommendationsUseCases(
+                appContext = testContext,
+                client = client,
+                config = ContentRecommendationsRequestConfig(),
+            )
+        )
     private val repository: ContentRecommendationsRepository = mock()
-    private val endPoint: ContentRecommendationsEndpoint = mock()
+    private val provider: ContentRecommendationsProvider = mock()
 
     @Before
     fun setup() {
-        doReturn(endPoint).`when`(useCases).getContentRecommendationsEndpoint(any(), any())
+        doReturn(provider).`when`(useCases).getContentRecommendationsProvider(any(), any())
         doReturn(repository).`when`(useCases).getContentRecommendationsRepository(any())
     }
 
     @Test
-    fun `WHEN content recommendations getter is called THEN return the list of recommendations from the repository`() = runTest {
-        val recommendations = listOf(PocketTestResources.contentRecommendation)
-        doReturn(recommendations).`when`(repository).getContentRecommendations()
+    fun `WHEN content recommendations getter is called THEN return the list of recommendations from the repository`() =
+        runTest {
+            val recommendations = listOf(PocketTestResources.contentRecommendation)
+            doReturn(recommendations).`when`(repository).getContentRecommendations()
 
-        val result = useCases.GetContentRecommendations().invoke()
+            val result = useCases.GetContentRecommendations().invoke()
 
-        verify(repository).getContentRecommendations()
-        assertEquals(result, recommendations)
+            verify(repository).getContentRecommendations()
+            assertEquals(result, recommendations)
+        }
+
+    @Test
+    fun `GIVEN a successful response WHEN content recommendations are fetched THEN return the list of recommendations from the repository`() =
+        runTest {
+            val fetchUseCase = useCases.FetchContentRecommendations()
+            val response = getSuccessContentRecommendationsResponse()
+            doReturn(response).`when`(provider).getContentRecommendations()
+
+            val result = fetchUseCase.invoke()
+
+            assertTrue(result)
+            verify(provider).getContentRecommendations()
+            verify(repository).updateContentRecommendations((response as PocketResponse.Success).data)
+        }
+
+    @Test
+    fun `GIVEN a failed response WHEN content recommendations are fetched THEN return the list of recommendations from the repository`() =
+        runTest {
+            val fetchUseCase = useCases.FetchContentRecommendations()
+            val response = getFailResponse()
+            doReturn(response).`when`(provider).getContentRecommendations()
+
+            val result = fetchUseCase.invoke()
+
+            assertFalse(result)
+            verify(provider).getContentRecommendations()
+            verify(repository, never()).updateContentRecommendations(any())
+        }
+
+    @Test
+    fun `WHEN content recommendations impressions are updated THEN delegate to the repository to update the recommendations impressions`() =
+        runTest {
+            val updateRecommendationsImpressionsUseCase = useCases.UpdateRecommendationsImpressions()
+            val recommendationsShown: List<ContentRecommendation> = mock()
+
+            updateRecommendationsImpressionsUseCase.invoke(recommendationsShown)
+
+            verify(repository).updateContentRecommendationsImpressions(recommendationsShown)
+        }
+
+    @Test
+    fun `GIVEN the Merino client is disabled WHEN the content recommendations provider is retrieved THEN return the endpoint`() {
+        val config = ContentRecommendationsRequestConfig(useMerinoClient = false)
+        val useCases = ContentRecommendationsUseCases(appContext = testContext, client = client, config = config)
+
+        val provider = useCases.getContentRecommendationsProvider(client, config)
+
+        assertIs<ContentRecommendationsEndpoint>(provider)
     }
 
     @Test
-    fun `GIVEN a successful response WHEN content recommendations are fetched THEN return the list of recommendations from the repository`() = runTest {
-        val fetchUseCase = useCases.FetchContentRecommendations()
-        val response = getSuccessContentRecommendationsResponse()
-        doReturn(response).`when`(endPoint).getContentRecommendations()
+    fun `GIVEN the Merino client is enabled WHEN the content recommendations provider is retrieved THEN return the Merino provider`() {
+        val config = ContentRecommendationsRequestConfig(useMerinoClient = true)
+        val useCases = ContentRecommendationsUseCases(appContext = testContext, client = client, config = config)
 
-        val result = fetchUseCase.invoke()
+        val provider = useCases.getContentRecommendationsProvider(client, config)
 
-        assertTrue(result)
-        verify(endPoint).getContentRecommendations()
-        verify(repository).updateContentRecommendations((response as PocketResponse.Success).data)
-    }
-
-    @Test
-    fun `GIVEN a failed response WHEN content recommendations are fetched THEN return the list of recommendations from the repository`() = runTest {
-        val fetchUseCase = useCases.FetchContentRecommendations()
-        val response = getFailResponse()
-        doReturn(response).`when`(endPoint).getContentRecommendations()
-
-        val result = fetchUseCase.invoke()
-
-        assertFalse(result)
-        verify(endPoint).getContentRecommendations()
-        verify(repository, never()).updateContentRecommendations(any())
-    }
-
-    @Test
-    fun `WHEN content recommendations impressions are updated THEN delegate to the repository to update the recommendations impressions`() = runTest {
-        val updateRecommendationsImpressionsUseCase = useCases.UpdateRecommendationsImpressions()
-        val recommendationsShown: List<ContentRecommendation> = mock()
-
-        updateRecommendationsImpressionsUseCase.invoke(recommendationsShown)
-
-        verify(repository).updateContentRecommendationsImpressions(recommendationsShown)
+        assertIs<MerinoContentRecommendationsProvider>(provider)
     }
 
     private fun getSuccessContentRecommendationsResponse() =

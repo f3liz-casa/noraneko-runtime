@@ -47,6 +47,8 @@ support-files = ["topstories.json"]
 
 ["test_PrivacyFeed.js"]
 
+["test_RecentSearchesFeed.js"]
+
 ["test_RemoteRenderer.js"]
 prefs = [
   "browser.newtabpage.activity-stream.remote-renderer.log=true"
@@ -84,5 +86,7 @@ support-files = ["../schemas/*.schema.json"]
 
 ["test_WallpaperFeed.js"]
 tags = "remote-settings"
+
+["test_WallpaperFileNames.js"]
 
 ["test_WeatherFeed.js"]

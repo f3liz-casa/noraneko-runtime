@@ -103,7 +103,6 @@ const renderListSwitcherOrTitle = ({
       <div className="lists-switcher">
         <span
           className="lists-title"
-          id="lists-switcher-label"
           {...(selectedLabel
             ? {}
             : {
@@ -114,7 +113,7 @@ const renderListSwitcherOrTitle = ({
         </span>
         <moz-button
           aria-haspopup="true"
-          aria-labelledby="lists-switcher-label"
+          data-l10n-id="newtab-widget-lists-change-list"
           className="lists-switcher-button"
           iconSrc="chrome://global/skin/icons/arrow-down-12.svg"
           menuId="lists-switcher-panel"
@@ -855,7 +854,7 @@ function Lists({
           menuId="lists-panel"
           type="ghost"
         />
-        <panel-list id="lists-panel">
+        <panel-list className="panel-list-no-icons" id="lists-panel">
           <panel-item
             data-l10n-id="newtab-widget-lists-menu-edit"
             onClick={() => setIsEditing(true)}
@@ -1021,14 +1020,16 @@ function ListItem({
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  function handleCheckboxChange(e) {
-    const { checked } = e.target;
-    const updatedTask = { ...task, completed: checked };
-    if (checked && !prefersReducedMotion) {
+  function toggleCompleted(completed) {
+    if (completed && !prefersReducedMotion) {
       setExiting(true);
     } else {
-      updateTask(updatedTask, type);
+      updateTask({ ...task, completed }, type);
     }
+  }
+
+  function handleCheckboxChange(e) {
+    toggleCompleted(e.target.checked);
   }
 
   // When the CSS transition finishes, dispatch the real “completed = true”
@@ -1069,8 +1070,9 @@ function ListItem({
     <label
       className="task-label"
       title={task.value}
-      htmlFor={`task-${task.id}`}
-      onClick={() => setIsEditing(true)}
+      onClick={() =>
+        isCompleted ? toggleCompleted(false) : setIsEditing(true)
+      }
     >
       {task.value}
     </label>
@@ -1084,11 +1086,10 @@ function ListItem({
       onTransitionEnd={handleTransitionEnd}
     >
       <div className="checkbox-wrapper" key={isEditing}>
-        <input
-          type="checkbox"
+        <moz-checkbox
           onChange={handleCheckboxChange}
-          checked={task.completed || exiting}
-          id={`task-${task.id}`}
+          checked={task.completed || exiting || undefined}
+          aria-label={task.value}
         />
         {isCompleted ? (
           taskLabel
@@ -1111,7 +1112,7 @@ function ListItem({
         menuId={`panel-task-${task.id}`}
         type="ghost"
       />
-      <panel-list id={`panel-task-${task.id}`}>
+      <panel-list className="panel-list-no-icons" id={`panel-task-${task.id}`}>
         {!isCompleted && (
           <>
             {task.isUrl && (

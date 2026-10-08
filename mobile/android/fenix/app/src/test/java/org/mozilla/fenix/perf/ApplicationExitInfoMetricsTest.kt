@@ -4,8 +4,13 @@
 
 package org.mozilla.fenix.perf
 
+import android.app.ActivityManager
 import android.app.ApplicationExitInfo
+import android.content.Context
 import android.os.Build
+import androidx.test.filters.SdkSuppress
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,17 +22,18 @@ class ApplicationExitInfoMetricsTest {
 
     @Test
     fun `TRACKED_REASONS includes system-driven reasons the user cannot control`() {
-        val expected = listOf(
-            ApplicationExitInfo.REASON_ANR,
-            ApplicationExitInfo.REASON_CRASH,
-            ApplicationExitInfo.REASON_CRASH_NATIVE,
-            ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE,
-            ApplicationExitInfo.REASON_LOW_MEMORY,
-            ApplicationExitInfo.REASON_SIGNALED,
-            ApplicationExitInfo.REASON_OTHER,
-            ApplicationExitInfo.REASON_DEPENDENCY_DIED,
-            ApplicationExitInfo.REASON_INITIALIZATION_FAILURE,
-        )
+        val expected =
+            listOf(
+                ApplicationExitInfo.REASON_ANR,
+                ApplicationExitInfo.REASON_CRASH,
+                ApplicationExitInfo.REASON_CRASH_NATIVE,
+                ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE,
+                ApplicationExitInfo.REASON_LOW_MEMORY,
+                ApplicationExitInfo.REASON_SIGNALED,
+                ApplicationExitInfo.REASON_OTHER,
+                ApplicationExitInfo.REASON_DEPENDENCY_DIED,
+                ApplicationExitInfo.REASON_INITIALIZATION_FAILURE,
+            )
         expected.forEach {
             assertTrue(
                 "TRACKED_REASONS is missing reason code $it",
@@ -39,21 +45,36 @@ class ApplicationExitInfoMetricsTest {
     @Test
     fun `TRACKED_REASONS includes REASON_FREEZER when running on A13+`() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            assertTrue(
-                ApplicationExitInfoMetrics.TRACKED_REASONS.contains(ApplicationExitInfo.REASON_FREEZER),
-            )
+            assertTrue(ApplicationExitInfoMetrics.TRACKED_REASONS.contains(ApplicationExitInfo.REASON_FREEZER))
         }
     }
 
     @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
+    fun `GIVEN AMS getHistoricalProcessExitReasons throws WHEN getProcessExitsForDisplay is called THEN we do not crash and return an empty list`() {
+        val throwingContext = mockk<Context>(relaxed = true)
+        val throwingActivityManager = mockk<ActivityManager>()
+        every { throwingContext.getSystemService(Context.ACTIVITY_SERVICE) } returns throwingActivityManager
+        every {
+            throwingActivityManager.getHistoricalProcessExitReasons(any(), any(), any())
+        } throws IllegalArgumentException("simulated OEM AMS bug 2072086")
+
+        // Must not throw — this is the crash under bug 2072086.
+        val result = ApplicationExitInfoMetrics.getProcessExitsForDisplay(throwingContext)
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
     fun `TRACKED_REASONS excludes user-triggered reasons`() {
-        val userTriggered = listOf(
-            ApplicationExitInfo.REASON_USER_REQUESTED,
-            ApplicationExitInfo.REASON_USER_STOPPED,
-            ApplicationExitInfo.REASON_PERMISSION_CHANGE,
-            ApplicationExitInfo.REASON_PACKAGE_UPDATED,
-            ApplicationExitInfo.REASON_PACKAGE_STATE_CHANGE,
-        )
+        val userTriggered =
+            listOf(
+                ApplicationExitInfo.REASON_USER_REQUESTED,
+                ApplicationExitInfo.REASON_USER_STOPPED,
+                ApplicationExitInfo.REASON_PERMISSION_CHANGE,
+                ApplicationExitInfo.REASON_PACKAGE_UPDATED,
+                ApplicationExitInfo.REASON_PACKAGE_STATE_CHANGE,
+            )
         userTriggered.forEach {
             assertFalse(
                 "TRACKED_REASONS should not include user-triggered reason $it",

@@ -927,7 +927,6 @@ class nsCSSFrameConstructor final : public nsFrameManager {
         MOZ_ASSERT(&mList == &aOther.mList, "Iterators for different lists?");
         return mCurrent == aOther.mCurrent;
       }
-      bool operator!=(const Iterator& aOther) const = default;
 
       Iterator& operator=(const Iterator& aOther) {
         MOZ_ASSERT(&mList == &aOther.mList, "Iterators for different lists?");
@@ -1505,7 +1504,7 @@ class nsCSSFrameConstructor final : public nsFrameManager {
   static const FrameConstructionData* FindXULTagData(const Element&,
                                                      ComputedStyle&);
   // XUL data-finding helper functions and structures
-  static const FrameConstructionData* FindXULLabelOrDescriptionData(
+  static const FrameConstructionData* FindLabelOrDescriptionData(
       const Element&, ComputedStyle&);
 
   /**

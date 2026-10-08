@@ -7,6 +7,9 @@ package org.mozilla.samples.compose.browser
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import mozilla.appservices.remotesettings.RemoteSettingsServer
 import mozilla.components.browser.engine.gecko.GeckoEngine
 import mozilla.components.browser.engine.gecko.fetch.GeckoViewFetchClient
@@ -26,23 +29,22 @@ import mozilla.components.support.remotesettings.RemoteSettingsService
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.samples.compose.browser.app.AppStore
 
-/**
- * Global components of the sample browser.
- */
-class Components(
-    context: Context,
-) {
+/** Global components of the sample browser. */
+class Components(context: Context) {
     private val runtime by lazy { GeckoRuntime.create(context) }
+
+    val applicationScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     val engine: Engine by lazy { GeckoEngine(context, runtime = runtime) }
     val client: Client by lazy { GeckoViewFetchClient(context, runtime = runtime) }
 
     val store: BrowserStore by lazy {
         BrowserStore(
-            middleware = listOf(
-                RegionMiddleware(context, locationService),
-                SearchMiddleware(context),
-            ) + EngineMiddleware.create(engine),
+            middleware =
+                listOf(
+                    RegionMiddleware(context, locationService, applicationScope = applicationScope),
+                    SearchMiddleware(context),
+                ) + EngineMiddleware.create(engine)
         )
     }
 
@@ -67,9 +69,7 @@ class Components(
     }
 }
 
-/**
- * Returns the global [Components] object from within a `@Composable` context.
- */
+/** Returns the global [Components] object from within a `@Composable` context. */
 @Composable
 fun components(): Components {
     return (LocalContext.current.applicationContext as BrowserApplication).components

@@ -129,7 +129,6 @@ const char* StreamTypeToString(VideoSendStream::StreamStats::StreamType type) {
   return nullptr;
 }
 
-
 // Get the default set of supported codecs.
 // is_decoder_factory is needed to keep track of the implict assumption that any
 // H264 decoder also supports constrained base line profile.
@@ -1251,11 +1250,11 @@ bool WebRtcVideoSendChannel::SetSenderParameters(
 void WebRtcVideoSendChannel::RequestEncoderSwitch(
     std::optional<SdpVideoFormat> format,
     bool allow_default_fallback) {
-  auto task =
-      SafeTask(task_safety_.flag(), [this, format, allow_default_fallback] {
-        RTC_DCHECK_RUN_ON(worker_thread_);
-        ApplyEncoderSwitch(std::move(format), allow_default_fallback);
-      });
+  auto task = SafeTask(task_safety_.flag(), [this, format = std::move(format),
+                                             allow_default_fallback]() mutable {
+    RTC_DCHECK_RUN_ON(worker_thread_);
+    ApplyEncoderSwitch(std::move(format), allow_default_fallback);
+  });
   if (encoder_switch_request_callback_) {
     encoder_switch_request_callback_(std::move(task));
   } else {
@@ -1267,7 +1266,6 @@ void WebRtcVideoSendChannel::ApplyEncoderSwitch(
     std::optional<SdpVideoFormat> format,
     bool allow_default_fallback) {
   RTC_DCHECK_RUN_ON(worker_thread_);
-  RTC_DCHECK(format.has_value() || allow_default_fallback);
 
   ChangedSenderParameters params;
   if (!format) {
@@ -1758,7 +1756,6 @@ void WebRtcVideoSendChannel::OnNetworkRouteChanged(
         RtpTransportControllerSendInterface* transport =
             call_->GetTransportControllerSend();
         transport->OnNetworkRouteChanged(name, route);
-        transport->OnTransportOverheadChanged(route.packet_overhead);
       }));
 }
 
@@ -3006,6 +3003,17 @@ void WebRtcVideoReceiveChannel::SetReceive(bool receive) {
   receiving_ = receive;
 }
 
+void WebRtcVideoReceiveChannel::SetReceiveNonSenderRttEnabled(bool enabled) {
+  RTC_DCHECK_RUN_ON(&thread_checker_);
+  if (enable_non_sender_rtt_ == enabled) {
+    return;
+  }
+  enable_non_sender_rtt_ = enabled;
+  for (auto& kv : receive_streams_) {
+    kv.second->SetNonSenderRttMeasurement(enabled);
+  }
+}
+
 bool WebRtcVideoReceiveChannel::ValidateReceiveSsrcAvailability(
     const StreamParams& sp) const {
   for (uint32_t ssrc : sp.ssrcs) {
@@ -3080,6 +3088,7 @@ bool WebRtcVideoReceiveChannel::AddRecvStream(const StreamParams& sp,
   if (unsignaled_frame_transformer_ && !config.frame_transformer)
     config.frame_transformer = unsignaled_frame_transformer_;
 
+  config.rtp.rtcp_xr.receiver_reference_time_report = enable_non_sender_rtt_;
   auto receive_stream = new WebRtcVideoReceiveStream(
       env_, call_, sp, std::move(config), default_stream, recv_codecs_,
       flexfec_config);
@@ -3509,8 +3518,6 @@ WebRtcVideoReceiveChannel::WebRtcVideoReceiveStream::WebRtcVideoReceiveStream(
     config_.rtp.nack.rtp_history_ms = *codec.rtx_time;
   }
 
-  config_.rtp.rtcp_xr.receiver_reference_time_report = HasRrtr(codec.codec);
-
   if (codec.ulpfec.red_rtx_payload_type != -1) {
     config_.rtp
         .rtx_associated_payload_types[codec.ulpfec.red_rtx_payload_type] =
@@ -3605,12 +3612,6 @@ bool WebRtcVideoReceiveChannel::WebRtcVideoReceiveStream::ReconfigureCodecs(
     stream_->SetNackHistory(TimeDelta::Millis(new_history_ms));
   }
 
-  const bool has_rtr = HasRrtr(codec.codec);
-  if (has_rtr != config_.rtp.rtcp_xr.receiver_reference_time_report) {
-    config_.rtp.rtcp_xr.receiver_reference_time_report = has_rtr;
-    stream_->SetRtcpXr(config_.rtp.rtcp_xr);
-  }
-
   if (codec.ulpfec.red_rtx_payload_type != -1) {
     rtx_associated_payload_types[codec.ulpfec.red_rtx_payload_type] =
         codec.ulpfec.red_payload_type;
@@ -3625,8 +3626,8 @@ bool WebRtcVideoReceiveChannel::WebRtcVideoReceiveStream::ReconfigureCodecs(
   bool recreate_needed = false;
 
   if (raw_payload_types != config_.rtp.raw_payload_types) {
+    stream_->SetRawPayloadTypes(raw_payload_types);
     raw_payload_types.swap(config_.rtp.raw_payload_types);
-    recreate_needed = true;
   }
 
   if (decoders != config_.decoders) {
@@ -3797,6 +3798,17 @@ void WebRtcVideoReceiveChannel::WebRtcVideoReceiveStream::SetFrameDecryptor(
   }
 }
 
+void WebRtcVideoReceiveChannel::WebRtcVideoReceiveStream::
+    SetNonSenderRttMeasurement(bool enabled) {
+  RTC_DCHECK_RUN_ON(&thread_checker_);
+  if (config_.rtp.rtcp_xr.receiver_reference_time_report != enabled) {
+    config_.rtp.rtcp_xr.receiver_reference_time_report = enabled;
+    if (stream_) {
+      stream_->SetRtcpXr(config_.rtp.rtcp_xr);
+    }
+  }
+}
+
 bool WebRtcVideoReceiveChannel::WebRtcVideoReceiveStream::
     SetBaseMinimumPlayoutDelayMs(int delay_ms) {
   return stream_ ? stream_->SetBaseMinimumPlayoutDelayMs(delay_ms) : false;
@@ -3867,11 +3879,11 @@ WebRtcVideoReceiveChannel::WebRtcVideoReceiveStream::GetVideoReceiverInfo(
       stats.jitter_buffer_minimum_delay.seconds<double>();
   info.min_playout_delay_ms = stats.min_playout_delay_ms;
   info.render_delay_ms = stats.render_delay_ms;
-  info.frames_received =
-      stats.frame_counts.key_frames + stats.frame_counts.delta_frames;
+  info.frames_received = stats.received_frame_counts.key_frames +
+                         stats.received_frame_counts.delta_frames;
   info.frames_dropped = stats.frames_dropped;
   info.frames_decoded = stats.frames_decoded;
-  info.key_frames_decoded = stats.frame_counts.key_frames;
+  info.key_frames_decoded = stats.key_frames_decoded;
   info.frames_rendered = stats.frames_rendered;
   info.qp_sum = stats.qp_sum;
   info.corruption_score_sum = stats.corruption_score_sum;
@@ -3958,8 +3970,11 @@ WebRtcVideoReceiveChannel::WebRtcVideoReceiveStream::GetVideoReceiverInfo(
   info.sender_reports_packets_sent = stats.sender_reports_packets_sent;
   info.sender_reports_bytes_sent = stats.sender_reports_bytes_sent;
   info.sender_reports_reports_count = stats.sender_reports_reports_count;
-  // TODO(bugs.webrtc.org/12529): RTT-related fields are missing and can only be
-  // present if DLRR is enabled.
+  // Non-sender RTT (RRTR/DLRR), surfaced for recvonly endpoints; mirrors the
+  // audio path.
+  info.round_trip_time = stats.round_trip_time;
+  info.round_trip_time_measurements = stats.round_trip_time_measurements;
+  info.total_round_trip_time = stats.total_round_trip_time;
 
   if (log_stats)
     RTC_LOG(LS_INFO) << stats.ToString(env_.clock().TimeInMilliseconds(),

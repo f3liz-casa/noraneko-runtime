@@ -186,13 +186,13 @@ export class _CardGrid extends React.PureComponent {
             bookmarkGuid={rec.bookmarkGuid}
             ctaButtonSponsors={ctaButtonSponsors}
             ctaButtonVariant={ctaButtonVariant}
-            recommendation_id={rec.recommendation_id}
             mayHaveSectionsCards={mayHaveSectionsCards}
             corpus_item_id={rec.corpus_item_id}
             scheduled_corpus_item_id={rec.scheduled_corpus_item_id}
             recommended_at={rec.recommended_at}
             received_rank={rec.received_rank}
             format={rec.format}
+            is_ad_eligible_position={rec.is_ad_eligible_position}
             alt_text={rec.alt_text}
             isTimeSensitive={rec.isTimeSensitive}
             tabIndex={currentCardIndex === this.state.focusedIndex ? 0 : -1}

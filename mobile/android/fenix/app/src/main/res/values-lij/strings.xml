@@ -317,12 +317,6 @@
     %1$d is the number of bookmarks selected
   -->
   <string name="history_multi_select_title">%1$d seleçionæ</string>
-  <!-- Text for the header that groups the history the past 7 days -->
-  <string name="history_7_days">Urtimi 7 giorni</string>
-  <!-- Text for the header that groups the history the past 30 days -->
-  <string name="history_30_days">Urtimi 30 giorni</string>
-  <!-- Text for the header that groups the history older than the last month -->
-  <string name="history_older">Ciù vegio</string>
   <!-- Text shown when no history exists -->
   <string name="history_empty_message">No gh\'é stöia</string>
   <!--
@@ -714,8 +708,6 @@
   <string name="add_to_homescreen_cancel">Anulla</string>
   <!-- Add button text for the Add to Homescreen dialog -->
   <string name="add_to_homescreen_add">Azonzi</string>
-  <!-- Continue to website button text for the first-time Add to Homescreen dialog -->
-  <string name="add_to_homescreen_continue">Vanni a-o scito</string>
   <!-- Placeholder text for the TextView in the Add to Homescreen dialog -->
   <string name="add_to_homescreen_text_placeholder">Nomme scorsaieu</string>
   <!-- Preference option for asking to save passwords in Fenix -->

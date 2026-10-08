@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitab.mozilla.org/catalogs/aitab/catalog.json",
+  "catalogId": "https://aitab.mozilla.org/catalogs/aitab/catalog.json",
+  "title": "AITab Catalog",
+  "description": "A2UI-compatible custom component catalog for Firefox AITab pages. Adopts the A2UI 1.0 *component/UI model* — a surface is a FLAT list of components (an adjacency list) where each component is `{ \"id\", \"component\": <TypeName>, ...props }`, exactly one has id `root`, parent/child links are id references (never inlined), and all displayed data lives in a separate JSON `dataModel` addressed by JSON-Pointer bindings.  Bindable properties accept a literal value OR a `{ \"path\": \"/...\" }` binding. Repeating regions or non boilerplate information should in bound data in the dataModel section. `components` maps each AITab component name to its property schema. Anything clickable simply carries an `href` (a URL or in-app route).",
+  "$defs": {
+    "ComponentId": {
+      "type": "string",
+      "description": "The `id` of another component in the same surface. Relationships are expressed by id reference, never by inlining the child object."
+    },
+    "DataBinding": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "JSON-Pointer (RFC 6901) into the surface data model. An absolute path starts with `/` and resolves from the data-model root; a bare path (no leading `/`) is relative to the enclosing template/repeater scope."
+        }
+      }
+    },
+    "DynamicString": {
+      "description": "A literal string, or a binding to a string in the data model. Prefer a binding when the value is real content pulled from the user's tabs/history.",
+      "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/DataBinding" }]
+    },
+    "DynamicArray": {
+      "description": "A literal array, or a binding to an array in the data model. Prefer a binding so presentation (this component) stays separate from data (the model). Item shapes for each component are described on the owning property.",
+      "oneOf": [{ "type": "array" }, { "$ref": "#/$defs/DataBinding" }]
+    },
+    "ChildList": {
+      "description": "Children referenced by id: either a fixed array of component ids, or a template repeater `{ componentId, path }` that instantiates the template component once per element of the bound array. Children are never defined inline.",
+      "oneOf": [
+        { "type": "array", "items": { "$ref": "#/$defs/ComponentId" } },
+        {
+          "type": "object",
+          "required": ["componentId", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "componentId": { "$ref": "#/$defs/ComponentId" },
+            "path": {
+              "type": "string",
+              "description": "Absolute JSON-Pointer to the array to repeat over."
+            }
+          }
+        }
+      ]
+    },
+    "Field": {
+      "type": "object",
+      "description": "A column definition for RankedTable. Describes how a value in each row object is labeled, formatted, and placed. This is presentation config (literal), not data.",
+      "required": ["key", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Property name read from each row object in the bound `rows` array."
+        },
+        "label": { "type": "string" },
+        "type": { "enum": ["text", "number", "currency", "rating", "date"] },
+        "role": {
+          "enum": ["title", "subtitle", "detail"],
+          "default": "detail",
+          "description": "Where the value renders in a row: title/subtitle=primary cell; detail=a column."
+        },
+        "prefix": {
+          "type": "string",
+          "description": "What to put before every value (i.e. `$`)"
+        },
+        "suffix": {
+          "type": "string",
+          "description": "What to put after every value (i.e. ` / day`)"
+        },
+        "max": {
+          "type": "number",
+          "description": "Denominator for `rating` (default 5)."
+        },
+        "currency": {
+          "type": "string",
+          "default": "USD",
+          "description": "ISO 4217 code for `currency`."
+        },
+        "goal": {
+          "enum": ["min", "max"],
+          "description": "Which direction is better; drives per-row best-value highlighting and superlatives."
+        }
+      }
+    },
+    "SourceLinks": {
+      "type": "object",
+      "description": "A set of source links. Referenced inline by Header.references and Highlights.sources, and reused by the SourceLinks block component.",
+      "required": ["items"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "$ref": "#/$defs/DynamicString" },
+        "items": {
+          "description": "The source links (a literal array, or a binding to an array in the data model).",
+          "oneOf": [
+            { "type": "array", "items": { "$ref": "#/$defs/SourceLink" } },
+            { "$ref": "#/$defs/DataBinding" }
+          ]
+        }
+      }
+    },
+    "SourceLink": {
+      "type": "object",
+      "description": "One source link.",
+      "required": ["href"],
+      "additionalProperties": false,
+      "properties": {
+        "favicon": { "type": "string", "format": "uri-reference" },
+        "title": { "type": "string" },
+        "href": { "type": "string", "format": "uri-reference" }
+      }
+    },
+    "Card": {
+      "type": "object",
+      "description": "One card in a Cards grid, typically with an image",
+      "required": ["title"],
+      "additionalProperties": false,
+      "properties": {
+        "image": { "type": "string", "format": "uri-reference" },
+        "favicon": { "type": "string", "format": "uri-reference" },
+        "eyebrow": { "type": "string" },
+        "title": { "type": "string" },
+        "link_title": { "type": "string" },
+        "href": { "type": "string", "format": "uri-reference" }
+      }
+    },
+    "ListItem": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": { "text": { "type": "string" } }
+    },
+    "ListGroup": {
+      "type": "object",
+      "description": "A group of list items; omit `heading` for an ungrouped list.",
+      "required": ["items"],
+      "additionalProperties": false,
+      "properties": {
+        "heading": { "type": "string" },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/ListItem" } }
+      }
+    },
+    "TimelineItem": {
+      "type": "object",
+      "required": ["date_label", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "date_label": { "type": "string", "description": "Date or time." },
+        "date_eyebrow": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "HighlightItem": {
+      "type": "object",
+      "description": "One evidence-backed statement.",
+      "anyOf": [{ "required": ["title"] }, { "required": ["body"] }],
+      "additionalProperties": false,
+      "properties": {
+        "eyebrow": { "type": "string" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "sources": { "$ref": "#/$defs/SourceLinks" }
+      }
+    }
+  },
+
+  "components": {
+    "Page": {
+      "type": "object",
+      "description": "Root container for an AITab page. Use as the single component whose id is `root`. Holds a Header and an ordered list of body-block component ids, all by id reference.",
+      "required": ["header", "children"],
+      "additionalProperties": false,
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/ComponentId",
+          "description": "Id of a Header component."
+        },
+        "children": {
+          "$ref": "#/$defs/ChildList",
+          "description": "Ordered ids of the body block components."
+        }
+      }
+    },
+    "Header": {
+      "type": "object",
+      "description": "Single block that opens every page and frames what it's about.",
+      "required": ["title"],
+      "additionalProperties": false,
+      "properties": {
+        "eyebrow": {
+          "$ref": "#/$defs/DynamicString",
+          "description": "Automatically filled in with run date (leave blank)"
+        },
+        "title": {
+          "$ref": "#/$defs/DynamicString",
+          "description": "Max 6 word page title."
+        },
+        "subhead": {
+          "$ref": "#/$defs/DynamicString",
+          "description": "One sentence to add context beyond title. No repetition."
+        },
+        "references": {
+          "$ref": "#/$defs/SourceLinks",
+          "description": "Links to all pages used for this report."
+        }
+      }
+    },
+    "TextBlock": {
+      "type": "object",
+      "description": "Plain prose: a larger lead sentence followed by body paragraphs.",
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["lead"] }, { "required": ["paragraphs"] }],
+      "properties": {
+        "lead": {
+          "$ref": "#/$defs/DynamicString",
+          "description": "Larger lead sentence."
+        },
+        "paragraphs": {
+          "description": "Body paragraphs (a literal array of strings, or a binding to one).",
+          "oneOf": [
+            { "type": "array", "items": { "type": "string" } },
+            { "$ref": "#/$defs/DataBinding" }
+          ]
+        }
+      }
+    },
+    "RankedTable": {
+      "type": "object",
+      "description": "Record-oriented comparison table: many items, a few attributes each. Use for ranking/listing options where each row is one entity. Columns are defined here; the rows come from the data model.",
+      "required": ["columns", "rows"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "$ref": "#/$defs/DynamicString" },
+        "description": {
+          "$ref": "#/$defs/DynamicString",
+          "description": "Optional 1 sentence description"
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/Field" },
+          "description": "Column definitions (presentation config)."
+        },
+        "rows": {
+          "$ref": "#/$defs/DynamicArray",
+          "description": "Row data. Item shape: an object keyed by the column `key`s. Bind to an array in the data model."
+        }
+      }
+    },
+    "Cards": {
+      "type": "object",
+      "description": "A grid of 1 to 3 image-forward cards, each with a superlative eyebrow and a prominent value. Use for a few visual picks (e.g. cheapest / best-rated / closest).",
+      "required": ["items"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "$ref": "#/$defs/DynamicString" },
+        "items": {
+          "description": "1–3 cards (a literal array, or a binding to one).",
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "items": { "$ref": "#/$defs/Card" }
+            },
+            { "$ref": "#/$defs/DataBinding" }
+          ]
+        }
+      }
+    },
+    "SourceLinks": {
+      "$ref": "#/$defs/SourceLinks",
+      "description": "Small auto-expandable list of source links. Use to let the reader get to a link; condenses/expands for any count. Use a short title if available."
+    },
+    "List": {
+      "type": "object",
+      "description": "Optionally grouped list items. Use for informational lists or things a user needs to do. If ungrouped leave heading field off.",
+      "required": ["groups"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "$ref": "#/$defs/DynamicString" },
+        "description": { "$ref": "#/$defs/DynamicString" },
+        "groups": {
+          "description": "Groups of list items; omit `heading` for an ungrouped list. A literal array, or a binding to one.",
+          "oneOf": [
+            { "type": "array", "items": { "$ref": "#/$defs/ListGroup" } },
+            { "$ref": "#/$defs/DataBinding" }
+          ]
+        }
+      }
+    },
+    "Timeline": {
+      "type": "object",
+      "description": "Anything with times or dates attached.",
+      "required": ["items"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "$ref": "#/$defs/DynamicString" },
+        "description": { "$ref": "#/$defs/DynamicString" },
+        "items": {
+          "description": "Timeline entries in order (a literal array, or a binding to one).",
+          "oneOf": [
+            { "type": "array", "items": { "$ref": "#/$defs/TimelineItem" } },
+            { "$ref": "#/$defs/DataBinding" }
+          ]
+        }
+      }
+    },
+
+    "Highlights": {
+      "type": "object",
+      "description": "One or more evidence-backed statements that are related topically or parallel in construction. Use TextBlock instead for unrelated bullet points. Each statement can attach the sources behind it via its own `sources`.",
+      "required": ["items"],
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "$ref": "#/$defs/DynamicString",
+          "description": "Optional heading for the group of statements."
+        },
+        "items": {
+          "description": "The statements (a literal array of HighlightItem, or a binding to one).",
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/HighlightItem" }
+            },
+            { "$ref": "#/$defs/DataBinding" }
+          ]
+        }
+      }
+    }
+  }
+}

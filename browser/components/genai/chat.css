@@ -25,6 +25,7 @@ browser {
   align-items: center;
   /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
   background-color: var(--sidebar-background-color);
+  color: var(--sidebar-text-color);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   flex-direction: row;
@@ -357,7 +358,7 @@ browser {
     grid-template-columns: 1fr auto;
     grid-template-areas: "switcher close";
     position: relative;
-    z-index: 1;
+    z-index: 3;
     background-color: var(--background-color-overlay);
   }
 

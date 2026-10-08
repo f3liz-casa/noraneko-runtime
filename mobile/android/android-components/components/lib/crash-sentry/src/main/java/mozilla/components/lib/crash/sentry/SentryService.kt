@@ -12,21 +12,20 @@ import io.sentry.Sentry
 import io.sentry.SentryLevel
 import io.sentry.android.core.SentryAndroid
 import io.sentry.protocol.SentryId
+import java.util.Locale
 import mozilla.components.Build
+import mozilla.components.concept.base.crash.Breadcrumb as MozillaBreadcrumb
 import mozilla.components.lib.crash.Crash
 import mozilla.components.lib.crash.sentry.eventprocessors.AddMechanismEventProcessor
 import mozilla.components.lib.crash.sentry.eventprocessors.CrashMetadataEventProcessor
 import mozilla.components.lib.crash.sentry.eventprocessors.RustCrashEventProcessor
 import mozilla.components.lib.crash.service.CrashReporterService
-import java.util.Locale
-import mozilla.components.concept.base.crash.Breadcrumb as MozillaBreadcrumb
 
 /**
- * A [CrashReporterService] implementation that uploads crash reports using
- * the Sentry SDK version 5.6.1 and above.
+ * A [CrashReporterService] implementation that uploads crash reports using the Sentry SDK version 5.6.1 and above.
  *
- * This implementation will add default tags to every sent crash report
- * (like which Android Components version is being used) prefixed with "ac".
+ * This implementation will add default tags to every sent crash report (like which Android Components version is being
+ * used) prefixed with "ac".
  *
  * @param applicationContext The application [Context].
  * @param dsn Data Source Name of the Sentry server.
@@ -44,16 +43,14 @@ class SentryService(
     private val environment: String? = null,
     private val sendEventForNativeCrashes: Boolean = false,
     private val sentryProjectUrl: String? = null,
-    private val sendCaughtExceptions: Boolean = true,
+    private val sendCaughtExceptions: Boolean = false,
     private val crashMetadataEventProcessor: CrashMetadataEventProcessor? = null,
 ) : CrashReporterService {
 
     override val id: String = "new-sentry-instance"
     override val name: String = "New Sentry Instance"
 
-    @VisibleForTesting
-    @GuardedBy("this")
-    internal var isInitialized: Boolean = false
+    @VisibleForTesting @GuardedBy("this") internal var isInitialized: Boolean = false
 
     override fun createCrashReportUrl(identifier: String): String? {
         return sentryProjectUrl?.let {
@@ -69,10 +66,11 @@ class SentryService(
 
     override fun report(crash: Crash.NativeCodeCrash): String? {
         return if (sendEventForNativeCrashes) {
-            val level = when (crash.isFatal) {
-                true -> SentryLevel.FATAL
-                else -> SentryLevel.ERROR
-            }
+            val level =
+                when (crash.isFatal) {
+                    true -> SentryLevel.FATAL
+                    else -> SentryLevel.ERROR
+                }
 
             prepareReport(crash.breadcrumbs, level, crash)
 
@@ -114,9 +112,9 @@ class SentryService(
     /**
      * Initializes Sentry if needed.
      *
-     * N.B: We've temporarily made this public so that Fenix can initialize Sentry on startup.
-     * As a result of https://bugzilla.mozilla.org/show_bug.cgi?id=1853059 we will have a better way
-     * to control how / when Sentry gets initialized and we will make this internal again.
+     * N.B: We've temporarily made this public so that Fenix can initialize Sentry on startup. As a result of
+     * https://bugzilla.mozilla.org/show_bug.cgi?id=1853059 we will have a better way to control how / when Sentry gets
+     * initialized and we will make this internal again.
      */
     @Synchronized
     fun initIfNeeded() {
@@ -131,17 +129,31 @@ class SentryService(
     @VisibleForTesting
     internal fun initSentry() {
         SentryAndroid.init(applicationContext) { options ->
-            // Disable uncaught non-native exceptions from being reported.
-            // We already have our own uncaught exception handler [ExceptionHandler],
-            // so we don't need Sentry's default one.
-            options.setEnableUncaughtExceptionHandler(false)
-            // Disable uncaught native exceptions from being reported.
-            // Sentry don't have a way to disable uncaught native exceptions from being reported.
-            // As a fallback we had to disable all native integrations.
-            // More info can be found https://github.com/getsentry/sentry-java/issues/1993
-            options.isEnableNdk = false
+            /* By the time this closure runs, the overrides set it lib-crash AndroidManifest.xml for Sentry have been
+               applied, and we can fine tune them here and be intentional about our desired configuration.
+
+               https://javadoc.io/doc/io.sentry/sentry-android-core/latest/io/sentry/android/core/SentryAndroidOptions.html
+            */
+
+            options.isEnabled = true
             options.dsn = dsn
             options.environment = environment
+
+            // We disable automatic data capture and upload mechanisms in sentry so that lib-crash and it's callers
+            // can ensure any data collection and user consent checks are done by the application. Events should only
+            // be sent when we explicitly ask lib-crash to do so.
+            options.setEnableUncaughtExceptionHandler(false)
+            options.isAnrEnabled = false
+            options.isEnableNdk = false
+            options.isTombstoneEnabled = false
+            options.isEnableAutoSessionTracking = false
+
+            // Metadata enrichment for our JVM crash events
+            options.isCollectAdditionalContext = true
+            options.isSendModules = true
+            options.isEnableActivityLifecycleBreadcrumbs = true
+            options.isEnableAppComponentBreadcrumbs = true
+            options.isEnableAppLifecycleBreadcrumbs = true
             options.addEventProcessor(RustCrashEventProcessor())
             options.addEventProcessor(AddMechanismEventProcessor())
             crashMetadataEventProcessor?.also {
@@ -186,12 +198,13 @@ class SentryService(
 @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
 internal fun MozillaBreadcrumb.toSentryBreadcrumb(): Breadcrumb {
     val sentryLevel = this.level.toSentryBreadcrumbLevel()
-    val breadcrumb = Breadcrumb(this.date).apply {
-        message = this@toSentryBreadcrumb.message
-        category = this@toSentryBreadcrumb.category
-        level = sentryLevel
-        type = this@toSentryBreadcrumb.type.value
-    }
+    val breadcrumb =
+        Breadcrumb(this.date).apply {
+            message = this@toSentryBreadcrumb.message
+            category = this@toSentryBreadcrumb.category
+            level = sentryLevel
+            type = this@toSentryBreadcrumb.type.value
+        }
     this.data.forEach {
         breadcrumb.setData(it.key, it.value)
     }
@@ -199,10 +212,11 @@ internal fun MozillaBreadcrumb.toSentryBreadcrumb(): Breadcrumb {
 }
 
 @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-internal fun MozillaBreadcrumb.Level.toSentryBreadcrumbLevel() = when (this) {
-    MozillaBreadcrumb.Level.CRITICAL -> SentryLevel.FATAL
-    MozillaBreadcrumb.Level.ERROR -> SentryLevel.ERROR
-    MozillaBreadcrumb.Level.WARNING -> SentryLevel.WARNING
-    MozillaBreadcrumb.Level.INFO -> SentryLevel.INFO
-    MozillaBreadcrumb.Level.DEBUG -> SentryLevel.DEBUG
-}
+internal fun MozillaBreadcrumb.Level.toSentryBreadcrumbLevel() =
+    when (this) {
+        MozillaBreadcrumb.Level.CRITICAL -> SentryLevel.FATAL
+        MozillaBreadcrumb.Level.ERROR -> SentryLevel.ERROR
+        MozillaBreadcrumb.Level.WARNING -> SentryLevel.WARNING
+        MozillaBreadcrumb.Level.INFO -> SentryLevel.INFO
+        MozillaBreadcrumb.Level.DEBUG -> SentryLevel.DEBUG
+    }

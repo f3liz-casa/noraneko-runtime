@@ -697,17 +697,19 @@ class AdjustedTarget {
                           const gfx::Rect* aBounds = nullptr,
                           bool aAllowOptimization = false)
       : mCtx(aCtx), mUsedOperation(aCtx->CurrentState().op) {
-    // All rects in this function are in the device space of ctx->mTarget.
+    const bool needShadow = aCtx->NeedToDrawShadow();
+    const bool needFilter = aCtx->NeedToApplyFilter();
 
+    // All rects in this function are in the device space of ctx->mTarget.
     // In order to keep our temporary surfaces as small as possible, we first
     // calculate what their maximum required bounds would need to be if we
     // were to fill the whole canvas. Everything outside those bounds we don't
     // need to render.
     gfx::Rect r(0, 0, aCtx->mWidth, aCtx->mHeight);
     gfx::Rect maxSourceNeededBoundsForShadow =
-        MaxSourceNeededBoundsForShadow(r, aCtx);
-    gfx::Rect maxSourceNeededBoundsForFilter =
-        MaxSourceNeededBoundsForFilter(maxSourceNeededBoundsForShadow, aCtx);
+        MaxSourceNeededBoundsForShadow(r, aCtx, needShadow);
+    gfx::Rect maxSourceNeededBoundsForFilter = MaxSourceNeededBoundsForFilter(
+        maxSourceNeededBoundsForShadow, aCtx, needFilter);
     if (!aCtx->IsTargetValid()) {
       return;
     }
@@ -716,7 +718,7 @@ class AdjustedTarget {
     if (aBounds) {
       bounds = bounds.Intersect(*aBounds);
     }
-    gfx::Rect boundsAfterFilter = BoundsAfterFilter(bounds, aCtx);
+    gfx::Rect boundsAfterFilter = BoundsAfterFilter(bounds, aCtx, needFilter);
     if (!aCtx->IsTargetValid() || !boundsAfterFilter.IsFinite()) {
       return;
     }
@@ -726,9 +728,8 @@ class AdjustedTarget {
     // First set up the shadow draw target, because the shadow goes outside.
     // It applies to the post-filter results, if both a filter and a shadow
     // are used.
-    const bool applyFilter = aCtx->NeedToApplyFilter();
-    if (aCtx->NeedToDrawShadow()) {
-      if (aAllowOptimization && !applyFilter) {
+    if (needShadow) {
+      if (aAllowOptimization && !needFilter) {
         // If only drawing a shadow and no filter, then avoid buffering to an
         // intermediate target while drawing the shadow directly to the final
         // target. When doing so, we want to use the actual composition op
@@ -753,7 +754,7 @@ class AdjustedTarget {
     if (!aCtx->IsTargetValid()) {
       return;
     }
-    if (applyFilter) {
+    if (needFilter) {
       bounds.RoundOut();
 
       if (!mTarget) {
@@ -904,12 +905,12 @@ class AdjustedTarget {
 
  private:
   gfx::Rect MaxSourceNeededBoundsForFilter(const gfx::Rect& aDestBounds,
-                                           CanvasRenderingContext2D* aCtx) {
-    const bool applyFilter = aCtx->NeedToApplyFilter();
+                                           CanvasRenderingContext2D* aCtx,
+                                           bool aNeedFilter) {
     if (!aCtx->IsTargetValid()) {
       return aDestBounds;
     }
-    if (!applyFilter) {
+    if (!aNeedFilter) {
       return aDestBounds;
     }
 
@@ -926,8 +927,9 @@ class AdjustedTarget {
   }
 
   gfx::Rect MaxSourceNeededBoundsForShadow(const gfx::Rect& aDestBounds,
-                                           CanvasRenderingContext2D* aCtx) {
-    if (!aCtx->NeedToDrawShadow()) {
+                                           CanvasRenderingContext2D* aCtx,
+                                           bool aNeedShadow) {
+    if (!aNeedShadow) {
       return aDestBounds;
     }
 
@@ -941,12 +943,12 @@ class AdjustedTarget {
   }
 
   gfx::Rect BoundsAfterFilter(const gfx::Rect& aBounds,
-                              CanvasRenderingContext2D* aCtx) {
-    const bool applyFilter = aCtx->NeedToApplyFilter();
+                              CanvasRenderingContext2D* aCtx,
+                              bool aNeedFilter) {
     if (!aCtx->IsTargetValid()) {
       return aBounds;
     }
-    if (!applyFilter) {
+    if (!aNeedFilter) {
       return aBounds;
     }
 
@@ -1034,12 +1036,9 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(CanvasRenderingContext2D)
       /*
        * XXXjwatt: I don't think this is doing anything useful.  All we do under
        * this function is clear a raw C-style (i.e. not strong) pointer.  That's
-       * clearly not helping in breaking any cycles.  The fact that we MOZ_CRASH
-       * in OnRenderingChange if that pointer is null indicates that this isn't
-       * even doing anything useful in terms of preventing further invalidation
-       * from any observed filters.
+       * clearly not helping in breaking any cycles.
        */
-      autoSVGFiltersObserver->Detach();
+      autoSVGFiltersObserver->SetIsActive(false);
     }
     ImplCycleCollectionUnlink(state.autoSVGFiltersObserver);
   }
@@ -1092,8 +1091,6 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(CanvasRenderingContext2D)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
-CanvasRenderingContext2D::ContextState::ContextState() = default;
-
 CanvasRenderingContext2D::ContextState::ContextState(const ContextState& aOther)
     : fontGroup(aOther.fontGroup),
       fontFont(aOther.fontFont),
@@ -1101,7 +1098,8 @@ CanvasRenderingContext2D::ContextState::ContextState(const ContextState& aOther)
       gradientStyles(aOther.gradientStyles),
       patternStyles(aOther.patternStyles),
       colorStyles(aOther.colorStyles),
-      font(aOther.font),
+      specifiedFont(aOther.specifiedFont),
+      resolvedFont(aOther.resolvedFont),
       textAlign(aOther.textAlign),
       textBaseline(aOther.textBaseline),
       textDirection(aOther.textDirection),
@@ -1113,6 +1111,8 @@ CanvasRenderingContext2D::ContextState::ContextState(const ContextState& aOther)
       wordSpacing(aOther.wordSpacing),
       letterSpacingStr(aOther.letterSpacingStr),
       wordSpacingStr(aOther.wordSpacingStr),
+      lang(aOther.lang),
+      resolvedFontLang(aOther.resolvedFontLang),
       shadowColor(aOther.shadowColor),
       transform(aOther.transform),
       shadowOffset(aOther.shadowOffset),
@@ -1128,13 +1128,21 @@ CanvasRenderingContext2D::ContextState::ContextState(const ContextState& aOther)
       lineJoin(aOther.lineJoin),
       filterString(aOther.filterString),
       filterChain(aOther.filterChain),
-      autoSVGFiltersObserver(aOther.autoSVGFiltersObserver),
       filter(aOther.filter),
       filterAdditionalImages(aOther.filterAdditionalImages.Clone()),
       filterSourceGraphicTainted(aOther.filterSourceGraphicTainted),
-      imageSmoothingEnabled(aOther.imageSmoothingEnabled) {}
+      imageSmoothingEnabled(aOther.imageSmoothingEnabled),
+      explicitLang(aOther.explicitLang) {
+  if (aOther.autoSVGFiltersObserver) {
+    autoSVGFiltersObserver = aOther.autoSVGFiltersObserver->Clone();
+  }
+}
 
-CanvasRenderingContext2D::ContextState::~ContextState() = default;
+CanvasRenderingContext2D::ContextState::~ContextState() {
+  if (autoSVGFiltersObserver.get()) {
+    autoSVGFiltersObserver->SetIsActive(false);
+  }
+}
 
 void CanvasRenderingContext2D::ContextState::SetColorStyle(Style aWhichStyle,
                                                            nscolor aColor) {
@@ -1232,12 +1240,6 @@ CanvasRenderingContext2D::~CanvasRenderingContext2D() {
   RemoveShutdownObserver();
   ResetBitmap();
 
-  for (ContextState& state : mStyleStack) {
-    if (auto* obs = state.autoSVGFiltersObserver.get()) {
-      obs->Detach();
-    }
-  }
-
   sNumLivingContexts.set(sNumLivingContexts.get() - 1);
   if (sNumLivingContexts.get() == 0 && sErrorTarget.get()) {
     RefPtr<DrawTarget> target = dont_AddRef(sErrorTarget.get());
@@ -1304,8 +1306,8 @@ CanvasRenderingContext2D::ParseColorSlow(const nsACString& aString) {
   const StylePerDocumentStyleData* data = set ? set->RawData() : nullptr;
   bool wasCurrentColor = false;
   nscolor color;
-  if (ServoCSSParser::ComputeColor(data, NS_RGB(0, 0, 0), aString, &color,
-                                   &wasCurrentColor, loader)) {
+  if (ServoCSSParser::ComputeColor(data, aString, &color, &wasCurrentColor,
+                                   loader)) {
     result.mWasCurrentColor = wasCurrentColor;
     result.mColor.emplace(color);
   }
@@ -1415,7 +1417,8 @@ void CanvasRenderingContext2D::OnRemoteCanvasLost() {
   // We dispatch because it isn't safe to call into the script event handlers,
   // and we don't want to mutate our state in CanvasShutdownManager.
   NS_DispatchToCurrentThread(NS_NewCancelableRunnableFunction(
-      "CanvasRenderingContext2D::OnRemoteCanvasLost", [self = RefPtr{this}] {
+      "CanvasRenderingContext2D::OnRemoteCanvasLost",
+      [self = RefPtr{this}]() MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
         // 4. Let shouldRestore be the result of firing an event named
         // contextlost at canvas, with the cancelable attribute initialized to
         // true.
@@ -1438,7 +1441,7 @@ void CanvasRenderingContext2D::OnRemoteCanvasRestored() {
   // and we don't want to mutate our state in CanvasShutdownManager.
   NS_DispatchToCurrentThread(NS_NewCancelableRunnableFunction(
       "CanvasRenderingContext2D::OnRemoteCanvasRestored",
-      [self = RefPtr{this}] {
+      [self = RefPtr{this}]() MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
         // 5. If shouldRestore is false, then abort these steps.
         if (!self->mHasShutdown && self->mIsContextLost &&
             self->mAllowContextRestore) {
@@ -1840,6 +1843,10 @@ bool CanvasRenderingContext2D::EnsureTarget(ErrorResult& aError,
         newTarget->CreatePathBuilder(mPath->GetFillRule());
     mPath->StreamToSink(builder);
     mPath = builder->Finish();
+  }
+  if (mRecycledPathBuilder &&
+      mRecycledPathBuilder->GetBackendType() != mPathType) {
+    mRecycledPathBuilder = nullptr;
   }
 
   mTarget = std::move(newTarget);
@@ -2382,9 +2389,13 @@ void CanvasRenderingContext2D::Save() {
     SetErrorState();
     return;
   }
-  mStyleStack[mStyleStack.Length() - 1].transform = GetCurrentTransform();
+  CurrentState().transform = GetCurrentTransform();
   mStyleStack.SetCapacity(mStyleStack.Length() + 1);
   mStyleStack.AppendElement(CurrentState());
+  if (auto* autoSVGFiltersObserver =
+          PreviousState().autoSVGFiltersObserver.get()) {
+    autoSVGFiltersObserver->SetIsActive(false);
+  }
 
   if (mStyleStack.Length() > MAX_STYLE_STACK_SIZE) {
     // This is not fast, but is better than OOMing and shouldn't be hit by
@@ -2410,6 +2421,10 @@ void CanvasRenderingContext2D::Restore() {
   }
 
   mStyleStack.RemoveLastElement();
+  if (auto* autoSVGFiltersObserver =
+          CurrentState().autoSVGFiltersObserver.get()) {
+    autoSVGFiltersObserver->SetIsActive(true);
+  }
 
   mPathTransformDirty = true;
 }
@@ -2977,6 +2992,9 @@ void CanvasRenderingContext2D::SetFilter(const nsACString& aFilter,
     CurrentState().filterString = aFilter;
     CurrentState().filterChain = std::move(filterChain);
     if (mCanvasElement) {
+      if (CurrentState().autoSVGFiltersObserver) {
+        CurrentState().autoSVGFiltersObserver->SetIsActive(false);
+      }
       CurrentState().autoSVGFiltersObserver =
           SVGObserverUtils::ObserveFiltersForCanvasContext(
               this, mCanvasElement, CurrentState().filterChain.AsSpan());
@@ -3630,6 +3648,34 @@ void CanvasRenderingContext2D::StrokeImpl(const gfx::Path& aPath) {
 void CanvasRenderingContext2D::Stroke() {
   mFeatureUsage |= CanvasFeatureUsage::Stroke;
 
+  if (mPathBuilder && !mPath && !mPathPruned && !mPathTransformDirty &&
+      IsTargetValid()) {
+    Maybe<Path::Circle> circle = mPathBuilder->AsCircle();
+    Maybe<Path::Line> line = circle ? Nothing() : mPathBuilder->AsLine();
+    if ((circle && circle->closed) || line) {
+      if (!NeedToCalculateBounds()) {
+        const ContextState& state = CurrentState();
+        StrokeOptions strokeOptions(
+            state.lineWidth, CanvasToGfx(state.lineJoin),
+            CanvasToGfx(state.lineCap), state.miterLimit, state.dash.Length(),
+            state.dash.Elements(), state.dashOffset);
+        if (circle) {
+          mTarget->StrokeCircle(
+              circle->origin, circle->radius,
+              CanvasGeneralPattern().ForStyle(this, Style::STROKE, mTarget),
+              strokeOptions, DrawOptions(state.globalAlpha, state.op));
+        } else {
+          mTarget->StrokeLine(
+              line->origin, line->destination,
+              CanvasGeneralPattern().ForStyle(this, Style::STROKE, mTarget),
+              strokeOptions, DrawOptions(state.globalAlpha, state.op));
+        }
+        Redraw();
+        return;
+      }
+    }
+  }
+
   EnsureTargetAndUserSpacePath();
   if (!IsTargetValid()) {
     return;
@@ -4114,7 +4160,7 @@ bool CanvasRenderingContext2D::EnsureWritablePath() {
 
   if (!mPath) {
     if (mBufferProvider) {
-      mPathBuilder = Factory::CreatePathBuilder(mPathType, fillRule);
+      mPathBuilder = CreateOrRecyclePathBuilder(fillRule);
     } else {
       mPathBuilder = mTarget->CreatePathBuilder(fillRule);
     }
@@ -4122,6 +4168,17 @@ bool CanvasRenderingContext2D::EnsureWritablePath() {
     mPathBuilder = Path::ToBuilder(mPath.forget(), fillRule);
   }
   return true;
+}
+
+already_AddRefed<PathBuilder>
+CanvasRenderingContext2D::CreateOrRecyclePathBuilder(FillRule aFillRule) {
+  if (mRecycledPathBuilder) {
+    if (mRecycledPathBuilder->Reset(aFillRule)) {
+      return mRecycledPathBuilder.forget();
+    }
+    mRecycledPathBuilder = nullptr;
+  }
+  return Factory::CreatePathBuilder(mPathType, aFillRule);
 }
 
 bool CanvasRenderingContext2D::EnsureBufferProvider() {
@@ -4148,13 +4205,14 @@ void CanvasRenderingContext2D::EnsureUserSpacePath(
   }
 
   if (!mPath && !mPathBuilder) {
-    mPathBuilder = Factory::CreatePathBuilder(mPathType, fillRule);
+    mPathBuilder = CreateOrRecyclePathBuilder(fillRule);
   }
 
   if (mPathBuilder) {
     EnsureCapped();
-    mPath = mPathBuilder->Finish();
-    mPathBuilder = nullptr;
+    RefPtr<PathBuilder> builder = mPathBuilder.forget();
+    mPath = builder->Finish();
+    mRecycledPathBuilder = std::move(builder);
   }
 
   if (mPath && mPath->GetFillRule() != fillRule) {
@@ -4219,10 +4277,14 @@ bool CanvasRenderingContext2D::SetFontInternal(const nsACString& aFont,
     return SetFontInternalDisconnected(aFont, aError);
   }
 
+  if (!mFontStyleCache) {
+    mFontStyleCache = MakeUnique<FontStyleCache>();
+  }
+
   nsPresContext* c = presShell->GetPresContext();
   FontStyleCacheKey key{aFont, CurrentState().resolvedFontLang,
                         c->RestyleManager()->GetRestyleGeneration()};
-  auto entry = mFontStyleCache.Lookup(key);
+  auto entry = mFontStyleCache->Lookup(key);
   if (!entry) {
     FontStyleData newData;
     newData.mKey = key;
@@ -4347,7 +4409,8 @@ bool CanvasRenderingContext2D::SetFontInternal(const nsACString& aFont,
   gfxFontGroup* newFontGroup = metrics->GetThebesFontGroup();
   CurrentState().fontGroup = newFontGroup;
   NS_ASSERTION(CurrentState().fontGroup, "Could not get font group");
-  CurrentState().font = data.mUsedFont;
+  CurrentState().specifiedFont = aFont;
+  CurrentState().resolvedFont = data.mUsedFont;
   CurrentState().fontFont = fontStyle->mFont;
   CurrentState().fontFont.size = fontStyle->mSize;
   CurrentState().fontComputedStyle = data.mStyle;
@@ -4396,6 +4459,21 @@ static void SerializeFontForCanvas(const StyleFontFamilyList& aList,
   aUsedFont.Append(FamilyListToString(aList));
 }
 
+bool CanvasRenderingContext2D::FontIsUnchanged(const nsACString& aFont,
+                                               gfxUserFontSet* aFontSet) {
+  // Return true if:
+  // - we have an existing fontGroup
+  // - the specified font shorthand is the same as current
+  // - the user font set hasn't been rebuilt
+  // Note that if font-affecting attributes like fontWidth, fontKerning,
+  // fontVariantCaps, or language have changed, their setters will have
+  // cleared the current fontGroup, so we don't need to check them here.
+  const ContextState& state = CurrentState();
+  return state.fontGroup && state.specifiedFont == aFont &&
+         (!aFontSet || aFontSet->GetRebuildGeneration() ==
+                           state.fontGroup->GetRebuildGeneration());
+}
+
 bool CanvasRenderingContext2D::SetFontInternalDisconnected(
     const nsACString& aFont, ErrorResult& aError) {
   FontFaceSet* fontFaceSet = nullptr;
@@ -4423,6 +4501,35 @@ bool CanvasRenderingContext2D::SetFontInternalDisconnected(
     fontFaceSetImpl->FlushUserFontSet();
   }
 
+  // Try to short-circuit the case where the exact same font is being re-
+  // specified, and no other relevant properties have changed.
+  if (FontIsUnchanged(aFont, fontFaceSetImpl)) {
+    return true;
+  }
+
+  // Do we have a cached fontgroup that corresponds to this `font` value?
+  if (!mFontGroupCache) {
+    mFontGroupCache = MakeUnique<FontGroupCache>();
+  }
+
+  auto& state = CurrentState();
+  FontGroupCacheKey key(
+      aFont, state.resolvedFontLang, state.fontWidth, state.fontVariantCaps,
+      state.fontKerning,
+      fontFaceSetImpl ? fontFaceSetImpl->GetRebuildGeneration() : 0);
+  auto entry = mFontGroupCache->Lookup(key);
+  if (entry) {
+    const auto& data = entry.Data();
+    if (data.mFontGroup) {
+      state.fontGroup = data.mFontGroup;
+      state.specifiedFont = data.mKey.mSpecifiedFont;
+      state.resolvedFont = data.mResolvedFont;
+      state.fontFont = data.mFont;
+      state.fontComputedStyle = nullptr;
+      return true;
+    }
+  }
+
   // In the OffscreenCanvas case we don't have the context necessary to call
   // GetFontStyleForServo(), as we do in the main-thread canvas context, so
   // instead we borrow ParseFontShorthandForMatching to parse the attribute.
@@ -4441,7 +4548,7 @@ bool CanvasRenderingContext2D::SetFontInternalDisconnected(
   fontStyle.allowForceGDIClassic = false;
 #endif
 
-  switch (CurrentState().fontWidth) {
+  switch (state.fontWidth) {
     case CanvasFontStretch::Normal:
       // Leave whatever the shorthand set.
       break;
@@ -4479,7 +4586,7 @@ bool CanvasRenderingContext2D::SetFontInternalDisconnected(
   // XXX(jfkthame) The interaction between the shorthand and the separate attr
   // here is not clearly spec'd, and we may want to reconsider it (or revise
   // the available values); see https://github.com/whatwg/html/issues/8103.
-  switch (CurrentState().fontVariantCaps) {
+  switch (state.fontVariantCaps) {
     case CanvasFontVariantCaps::Normal:
       fontStyle.variantCaps = smallCaps ? NS_FONT_VARIANT_CAPS_SMALL_CAPS
                                         : NS_FONT_VARIANT_CAPS_NORMAL;
@@ -4512,7 +4619,7 @@ bool CanvasRenderingContext2D::SetFontInternalDisconnected(
 
   // Set the kerning feature, if required by the fontKerning attribute.
   gfxFontFeature setting{TRUETYPE_TAG('k', 'e', 'r', 'n'), 0};
-  switch (CurrentState().fontKerning) {
+  switch (state.fontKerning) {
     case CanvasFontKerning::None:
       setting.mValue = 0;
       fontStyle.featureSettings.AppendElement(setting);
@@ -4526,23 +4633,34 @@ bool CanvasRenderingContext2D::SetFontInternalDisconnected(
       break;
   }
 
-  // TODO: Cache fontGroups in the Worker (use an nsFontCache?)
-  gfxFontGroup* fontGroup = new gfxFontGroup(
-      mOffscreenCanvas,  // aFontVisibilityProvider
-      list,              // aFontFamilyList
-      &fontStyle,        // aStyle
-      CurrentState().resolvedFontLang, CurrentState().explicitLang,
-      nullptr,          // aTextPerf
-      fontFaceSetImpl,  // aUserFontSet
-      1.0,              // aDevToCssSize
-      StyleFontVariantEmoji::Normal);
-  auto& state = CurrentState();
-  state.fontGroup = fontGroup;
-  SerializeFontForCanvas(list, fontStyle, state.font);
-  state.fontFont = nsFont(StyleFontFamily{list, false, false},
-                          StyleCSSPixelLength::FromPixels(size));
-  state.fontFont.variantCaps = fontStyle.variantCaps;
-  state.fontComputedStyle = nullptr;
+  nsAutoCString newFont;
+  SerializeFontForCanvas(list, fontStyle, newFont);
+  // TODO: Cache fontGroups in the Worker (use an nsFontCache?). For now, we
+  // just try to re-use the current fontGroup if possible.
+  if (!state.fontGroup || state.resolvedFont != newFont ||
+      (fontFaceSetImpl && fontFaceSetImpl->GetRebuildGeneration() !=
+                              state.fontGroup->GetRebuildGeneration())) {
+    state.fontGroup = MakeRefPtr<gfxFontGroup>(
+        mOffscreenCanvas,  // aFontVisibilityProvider
+        list,              // aFontFamilyList
+        &fontStyle,        // aStyle
+        CurrentState().resolvedFontLang, CurrentState().explicitLang,
+        nullptr,          // aTextPerf
+        fontFaceSetImpl,  // aUserFontSet
+        1.0,              // aDevToCssSize
+        StyleFontVariantEmoji::Normal);
+    state.specifiedFont = aFont;
+    state.resolvedFont = newFont;
+    state.fontFont = nsFont(StyleFontFamily{list, false, false},
+                            StyleCSSPixelLength::FromPixels(size));
+    state.fontFont.variantCaps = fontStyle.variantCaps;
+    state.fontComputedStyle = nullptr;
+  }
+
+  FontGroupCacheData data(key, state.fontGroup, state.resolvedFont,
+                          state.fontFont);
+  entry.Set(std::move(data));
+
   return true;
 }
 
@@ -5448,10 +5566,10 @@ gfxFontGroup* CanvasRenderingContext2D::GetCurrentFontStyle() {
   // If the font has already been set, we're re-creating the fontGroup
   // and should re-use the existing font attribute; if not, we initialize
   // it to the canvas default.
-  // We make a local copy of CurrentState().font because SetFontInternal
+  // We make a local copy of CurrentState().resolvedFont because SetFontInternal
   // may cause a flush and could invalidate any reference to the string in
   // the CurrentState() record.
-  nsAutoCString currentFont(CurrentState().font);
+  nsAutoCString currentFont(CurrentState().resolvedFont);
   if (currentFont.IsEmpty()) {
     currentFont = kDefaultFontStyle;
   }
@@ -5467,12 +5585,12 @@ gfxFontGroup* CanvasRenderingContext2D::GetCurrentFontStyle() {
     gfxFloat devToCssSize = gfxFloat(perDevPixel) / gfxFloat(perCSSPixel);
     const auto* sans =
         Servo_FontFamily_Generic(StyleGenericFontFamily::SansSerif);
-    CurrentState().fontGroup = new gfxFontGroup(
+    CurrentState().fontGroup = MakeRefPtr<gfxFontGroup>(
         visProvider, sans->families, &style, language, explicitLanguage,
         presContext ? presContext->GetTextPerfMetrics() : nullptr, nullptr,
         devToCssSize, StyleFontVariantEmoji::Normal);
     if (CurrentState().fontGroup) {
-      CurrentState().font = kDefaultFontStyle;
+      CurrentState().resolvedFont = kDefaultFontStyle;
     } else {
       NS_ERROR("Default canvas font is invalid");
     }
@@ -5789,39 +5907,20 @@ bool ValidSurfaceDescriptorForRemoteCanvas2d(
     return false;
   }
   const auto& sdrd = sdv.get_SurfaceDescriptorRemoteDecoder();
-  const auto& subdesc = sdrd.subdesc();
-  switch (subdesc.type()) {
-    case layers::RemoteDecoderVideoSubDescriptor::Tnull_t:
+  switch (sdrd.videoType()) {
+    case layers::RemoteDecoderVideoType::Buffer:
       break;
 #ifdef XP_MACOSX
-    case layers::RemoteDecoderVideoSubDescriptor::
-        TSurfaceDescriptorMacIOSurface: {
-      const auto& ssd = subdesc.get_SurfaceDescriptorMacIOSurface();
-      if (ssd.gpuFence()) {
-        return false;
-      }
+    case layers::RemoteDecoderVideoType::MacIOSurface: {
       break;
     }
 #endif
 #ifdef XP_WIN
-    case layers::RemoteDecoderVideoSubDescriptor::TSurfaceDescriptorD3D10: {
+    case layers::RemoteDecoderVideoType::D3D10: {
       if (!StaticPrefs::gfx_canvas_remote_use_draw_image_fast_path_d3d()) {
         return false;
       }
-      const auto& ssd = subdesc.get_SurfaceDescriptorD3D10();
-      if (aResultSd) {
-        *aResultSd = Some(aSd);
-        // Not IPC-able, but it's just an optimization to have this.
-        aResultSd->ref()
-            .get_SurfaceDescriptorGPUVideo()
-            .get_SurfaceDescriptorRemoteDecoder()
-            .subdesc()
-            .get_SurfaceDescriptorD3D10()
-            .handle() = nullptr;
-      } else if (ssd.handle()) {
-        return false;
-      }
-      return true;
+      break;
     }
 #endif
     default:
@@ -6258,8 +6357,8 @@ void CanvasRenderingContext2D::DrawDirectlyToCanvas(
   uint32_t modifiedFlags = aImage.mDrawingFlags | imgIContainer::FLAG_CLAMP;
 
   // XXX hmm is scaledImageSize really in CSS pixels?
-  CSSIntSize sz(scaledImageSize.width, scaledImageSize.height);
-  SVGImageContext svgContext(Some(sz));
+  SVGImageContext svgContext(
+      Some(CSSSize(scaledImageSize.width, scaledImageSize.height)));
 
   if (mContextProperties != CanvasContextProperties::None &&
       aImage.mImgContainer->GetType() == imgIContainer::TYPE_VECTOR) {

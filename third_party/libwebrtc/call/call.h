@@ -78,7 +78,7 @@ class Call {
   virtual void DestroyAudioSendStream(AudioSendStream* send_stream) = 0;
 
   virtual AudioReceiveStreamInterface* CreateAudioReceiveStream(
-      const AudioReceiveStreamInterface::Config& config) = 0;
+      AudioReceiveStreamInterface::Config config) = 0;
   virtual void DestroyAudioReceiveStream(
       AudioReceiveStreamInterface* receive_stream) = 0;
 
@@ -133,9 +133,6 @@ class Call {
   // for each stream separately. Right now it's global per media type.
   virtual void SignalChannelNetworkState(MediaType media,
                                          NetworkState state) = 0;
-
-  virtual void OnAudioTransportOverheadChanged(
-      int transport_overhead_per_packet) = 0;
 
   virtual void OnUpdateSyncGroup(AudioReceiveStreamInterface& stream,
                                  absl::string_view sync_group) = 0;

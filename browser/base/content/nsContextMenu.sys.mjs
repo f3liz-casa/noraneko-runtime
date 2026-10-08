@@ -37,7 +37,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
-import { PdfjsContextMenu } from "resource://pdf.js/PdfjsContextMenu.sys.mjs";
+import { PdfJsContextMenu } from "resource://pdf.js/PdfJsContextMenu.sys.mjs";
 
 ChromeUtils.defineLazyGetter(lazy, "ReferrerInfo", () =>
   Components.Constructor(
@@ -123,6 +123,23 @@ export class nsContextMenu {
    * @type {string}
    */
   #newFeatureBadgeL10nString;
+
+  /**
+   * Cancels the login lookup for this menu once the menu is gone, so that a
+   * result arriving late is discarded instead of being applied to a menu it was
+   * not looked up for.
+   *
+   * @type {?AbortController}
+   */
+  #passwordItemsAbortController = null;
+
+  /**
+   * Settles once the asynchronous part of the password manager items has been
+   * applied or discarded.
+   *
+   * @type {Promise<void>}
+   */
+  #passwordItemsReady = Promise.resolve();
 
   constructor(aXulMenu, aIsShift) {
     this.window = aXulMenu.documentGlobal;
@@ -335,7 +352,7 @@ export class nsContextMenu {
     this.hasTextFragments = context.hasTextFragments;
     this.textFragmentURL = null;
 
-    this.pdfjsContextMenu = new PdfjsContextMenu(this, context);
+    this.pdfjsContextMenu = new PdfJsContextMenu(this, context);
   } // setContext
 
   hiding(aXulMenu) {
@@ -346,6 +363,7 @@ export class nsContextMenu {
     aXulMenu.showHideSeparators = null;
 
     this.contentData = null;
+    this.#passwordItemsAbortController?.abort();
     this.window.InlineSpellCheckerUI.clearSuggestionsFromMenu();
     this.window.InlineSpellCheckerUI.clearDictionaryListFromMenu();
     this.window.InlineSpellCheckerUI.uninit();
@@ -1225,7 +1243,12 @@ export class nsContextMenu {
       }
 
       // Update sub-menu items.
-      this.updatePasswordManagerSubMenuItems(document, formOrigin);
+      this.#passwordItemsAbortController = new AbortController();
+      this.#passwordItemsReady = this.updatePasswordManagerSubMenuItems(
+        document,
+        formOrigin,
+        this.#passwordItemsAbortController.signal
+      );
     } finally {
       const documentURI = this.contentData?.documentURIObject;
       const showRelay =
@@ -1251,14 +1274,35 @@ export class nsContextMenu {
     }
   }
 
-  async updatePasswordManagerSubMenuItems(document, formOrigin) {
+  /**
+   * Settles once the password manager items are done being filled in, which
+   * happens after the menu is already shown. Tests await this instead of
+   * assuming the lookup won the race against `popupshown`.
+   *
+   * @type {Promise<void>}
+   */
+  get passwordItemsReady() {
+    return this.#passwordItemsReady;
+  }
+
+  /**
+   * @param {Document} document
+   *        The context menu owner document.
+   * @param {string} formOrigin
+   *        Origin of the document the menu was opened on.
+   * @param {AbortSignal} signal
+   *        Signalled when the menu these items were looked up for is gone.
+   */
+  async updatePasswordManagerSubMenuItems(document, formOrigin, signal) {
     const fragment = await lazy.LoginManagerContextMenu.addLoginsToMenu(
       this.targetIdentifier,
       this.browser,
       formOrigin
     );
 
-    if (!fragment) {
+    // The menu was dismissed while the logins were being looked up. Appending
+    // now would leave the items behind for whatever the menu shows next.
+    if (!fragment || signal.aborted) {
       return;
     }
 
@@ -1530,6 +1574,7 @@ export class nsContextMenu {
   openLinkInTab(event) {
     let params = {
       userContextId: parseInt(event.target.getAttribute("data-usercontextid")),
+      eventDetail: { containerSource: "content_context_menu" },
       ...this._getGlobalHistoryOptions(),
     };
 
@@ -2874,7 +2919,7 @@ export class nsContextMenu {
       (isPrivateSearchMenuitem &&
         (isBrowserPrivate ||
           !Services.prefs.getBoolPref(
-            "browser.search.separatePrivateDefault.ui.enabled"
+            "browser.search.separatePrivateDefault.featureGate"
           )));
 
     if (!menuitem.hidden) {
@@ -2982,6 +3027,7 @@ export class nsContextMenu {
     let createMenuOptions = {
       isContextMenu: true,
       excludeUserContextId: this.contentData.userContextId,
+      containerSource: "content_context_menu",
     };
     return this.window.createUserContextMenu(aEvent, createMenuOptions);
   }

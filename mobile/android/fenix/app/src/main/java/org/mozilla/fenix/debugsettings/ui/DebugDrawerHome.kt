@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import mozilla.components.compose.base.snackbar.Snackbar
 import mozilla.components.compose.base.snackbar.displaySnackbar
+import mozilla.components.compose.base.theme.PreviewThemeProvider
+import mozilla.components.compose.base.theme.Theme
 import mozilla.components.compose.base.utils.inComposePreview
 import mozilla.components.support.ktx.android.content.appName
 import mozilla.components.support.ktx.android.content.appVersionName
@@ -39,12 +41,8 @@ import org.mozilla.fenix.R
 import org.mozilla.fenix.compose.list.TextListItem
 import org.mozilla.fenix.debugsettings.navigation.DebugDrawerDestination
 import org.mozilla.fenix.theme.FirefoxTheme
-import org.mozilla.fenix.theme.PreviewThemeProvider
-import org.mozilla.fenix.theme.Theme
 
-/**
- * The navigation route for [DebugDrawerHome].
- */
+/** The navigation route for [DebugDrawerHome]. */
 const val DEBUG_DRAWER_HOME_ROUTE = "debug_drawer_home"
 
 /**
@@ -53,9 +51,7 @@ const val DEBUG_DRAWER_HOME_ROUTE = "debug_drawer_home"
  * @param destinations The list of [DebugDrawerDestination]s to display.
  */
 @Composable
-fun DebugDrawerHome(
-    destinations: List<DebugDrawerDestination>,
-) {
+fun DebugDrawerHome(destinations: List<DebugDrawerDestination>) {
     val lazyListState = rememberLazyListState()
 
     val appName: String
@@ -75,9 +71,7 @@ fun DebugDrawerHome(
         ) {
             item(key = "home_header") {
                 Row(
-                    modifier = Modifier
-                        .padding(all = 16.dp)
-                        .fillMaxWidth(),
+                    modifier = Modifier.padding(all = 16.dp).fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
@@ -114,27 +108,26 @@ fun DebugDrawerHome(
 
 @Preview
 @Composable
-private fun DebugDrawerHomePreview(
-    @PreviewParameter(PreviewThemeProvider::class) theme: Theme,
-) {
+private fun DebugDrawerHomePreview(@PreviewParameter(PreviewThemeProvider::class) theme: Theme) {
     val scope = rememberCoroutineScope()
     val snackbarState = remember { SnackbarHostState() }
 
     FirefoxTheme(theme) {
         Box {
             DebugDrawerHome(
-                destinations = List(size = 30) {
-                    DebugDrawerDestination(
-                        route = "screen_$it",
-                        title = R.string.debug_drawer_title,
-                        onClick = {
-                            scope.launch {
-                                snackbarState.displaySnackbar(message = "item $it clicked")
-                            }
-                        },
-                        content = {},
-                    )
-                },
+                destinations =
+                    List(size = 30) {
+                        DebugDrawerDestination(
+                            route = "screen_$it",
+                            title = R.string.debug_drawer_title,
+                            onClick = {
+                                scope.launch {
+                                    snackbarState.displaySnackbar(message = "item $it clicked")
+                                }
+                            },
+                            content = {},
+                        )
+                    }
             )
 
             SnackbarHost(

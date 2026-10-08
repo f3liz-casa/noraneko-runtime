@@ -34,6 +34,7 @@ class MediaPipelineFilter;
 class MediaTransportHandler;
 class RTCStatsIdGenerator;
 class WebrtcCallWrapper;
+class JsepTrack;
 class JsepTrackNegotiatedDetails;
 class PeerConnectionImpl;
 enum class PrincipalPrivacy : uint8_t;
@@ -172,6 +173,17 @@ class RTCRtpTransceiver : public nsISupports, public nsWrapperCache {
       const JsepTrackNegotiatedDetails& aDetails,
       std::vector<VideoCodecConfig>* aConfigs);
 
+  // Like NegotiatedDetailsTo{Audio,Video}CodecConfigs, but works from a
+  // recv JsepTrack's frozen snapshot of what it last offered (not yet
+  // negotiated), taken in JsepTrack::AddToOffer(). Used for early media,
+  // where we want to start receiving based on what we offered, before an
+  // answer exists.
+  static void EarlyRecvCodecsToAudioCodecConfigs(
+      JsepTrack& aTrack, std::vector<AudioCodecConfig>* aConfigs);
+
+  static void EarlyRecvCodecsToVideoCodecConfigs(
+      JsepTrack& aTrack, std::vector<VideoCodecConfig>* aConfigs);
+
   static void ToDomRtpCodec(const JsepCodecDescription& aCodec,
                             RTCRtpCodec* aDomCodec);
 
@@ -211,7 +223,7 @@ class RTCRtpTransceiver : public nsISupports, public nsWrapperCache {
   Canonical<std::string>& CanonicalMid() { return mMid; }
   Canonical<std::string>& CanonicalSyncGroup() { return mSyncGroup; }
 
-  const std::vector<UniquePtr<JsepCodecDescription>>& GetPreferredCodecs() {
+  const nsTArray<UniquePtr<JsepCodecDescription>>& GetPreferredCodecs() {
     return mPreferredCodecs;
   }
 
@@ -278,7 +290,7 @@ class RTCRtpTransceiver : public nsISupports, public nsWrapperCache {
 
   // Preferred codecs to be negotiated set by calling
   // setCodecPreferences.
-  std::vector<UniquePtr<JsepCodecDescription>> mPreferredCodecs;
+  nsTArray<UniquePtr<JsepCodecDescription>> mPreferredCodecs;
   // Identifies if a preferred list and order of codecs is to be used.
   // This is true if setCodecPreferences was called successfully and passed
   // codecs (not empty).

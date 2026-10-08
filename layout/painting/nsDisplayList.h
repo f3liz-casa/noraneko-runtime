@@ -31,6 +31,7 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/MotionPathUtils.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/ResultVariant.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/gfx/UserData.h"
@@ -100,6 +101,14 @@ enum class DisplayListArenaObjectId {
 #undef DISPLAY_LIST_ARENA_OBJECT
   COUNT
 };
+
+/**
+ * Return type of nsDisplayItem::CreateWebRenderCommands. The error case
+ * carries a string literal naming the reason the item could not be expressed
+ * as WebRender commands, which callers use for diagnostics before falling
+ * back to painting the item into an image.
+ */
+using WebRenderCommandsResult = Result<Ok, const char*>;
 
 extern LazyLogModule sContentDisplayListLog;
 extern LazyLogModule sParentDisplayListLog;
@@ -1482,6 +1491,11 @@ class nsDisplayListBuilder {
     // TODO(emilio, bug 1968754): Deal with nested captures properly.
     bool mContainingBlockInViewTransitionCapture;
 
+#ifdef DEBUG
+    // Assert that the asr is as expected.
+    void CheckASR(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame);
+#endif
+
     static nsRect ComputeVisibleRectForFrame(nsDisplayListBuilder* aBuilder,
                                              nsIFrame* aFrame,
                                              const nsRect& aVisibleRect,
@@ -2636,14 +2650,15 @@ class nsDisplayItem {
    * active first and have an early return if the layer state is
    * not active.
    *
-   * @return true if successfully creating webrender commands.
+   * @return Ok if webrender commands were created, or an error holding a
+   *         string literal describing why they could not be.
    */
-  virtual bool CreateWebRenderCommands(
+  virtual WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
       nsDisplayListBuilder* aDisplayListBuilder) {
-    return false;
+    return Err("item type has no WebRender implementation");
   }
 
   /**
@@ -3027,7 +3042,6 @@ struct LinkedListIterator {
   }
 
   bool operator==(const LinkedListIterator<T>&) const = default;
-  bool operator!=(const LinkedListIterator<T>&) const = default;
 
   const T operator*() const {
     MOZ_ASSERT(mNode);
@@ -3672,7 +3686,7 @@ class nsDisplayContainer final : public nsDisplayItem {
     nsDisplayItem::Destroy(aBuilder);
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -3898,7 +3912,7 @@ class nsDisplayCaret final : public nsPaintedDisplayItem {
 
   nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) const override;
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -3922,7 +3936,7 @@ class nsDisplayBorder : public nsPaintedDisplayItem {
 
   bool IsInvisibleInRect(const nsRect& aRect) const override;
   nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) const override;
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4059,7 +4073,7 @@ class nsDisplaySolidColor final : public nsPaintedDisplayItem {
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   void WriteDebugInfo(std::stringstream& aStream) override;
   void SetIsCheckerboardBackground() { mIsCheckerboardBackground = true; }
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4121,7 +4135,7 @@ class nsDisplaySolidColorRegion final : public nsPaintedDisplayItem {
     }
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4198,7 +4212,7 @@ class nsDisplayBackgroundImage : public nsPaintedDisplayItem {
       Maybe<nsDisplayListBuilder::AutoBuildingDisplayList>*
           aAutoBuildingDisplayList = nullptr);
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4360,7 +4374,7 @@ class nsDisplayThemedBackground : public nsPaintedDisplayItem {
   nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
                            bool* aSnap) const override;
   Maybe<nscolor> IsUniform(nsDisplayListBuilder* aBuilder) const override;
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4473,7 +4487,7 @@ class nsDisplayBackgroundColor : public nsPaintedDisplayItem {
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   void PaintWithClip(nsDisplayListBuilder* aBuilder, gfxContext* aCtx,
                      const DisplayItemClip& aClip) override;
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4622,7 +4636,7 @@ class nsDisplayBoxShadowOuter final : public nsPaintedDisplayItem {
   }
 
   bool CanBuildWebRenderDisplayItems() const;
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4673,7 +4687,7 @@ class nsDisplayBoxShadowInner final : public nsPaintedDisplayItem {
   static void CreateInsetBoxShadowWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, const StackingContextHelper& aSc,
       nsRect& aVisibleRect, nsIFrame* aFrame, const nsRect& aBorderRect);
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4694,7 +4708,7 @@ class nsDisplayOutline final : public nsPaintedDisplayItem {
 
   NS_DISPLAY_DECL_NAME("Outline", TYPE_OUTLINE)
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4758,7 +4772,7 @@ class nsDisplayCompositorHitTestInfo final : public nsDisplayItem {
 
   NS_DISPLAY_DECL_NAME("CompositorHitTestInfo", TYPE_COMPOSITOR_HITTEST_INFO)
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4982,7 +4996,7 @@ class nsDisplayWrapList : public nsPaintedDisplayItem {
     return nullptr;
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -4993,7 +5007,7 @@ class nsDisplayWrapList : public nsPaintedDisplayItem {
 
   // Same as the above but with the option to pass the aNewClipList argument to
   // WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList.
-  bool CreateWebRenderCommandsNewClipListOption(
+  WebRenderCommandsResult CreateWebRenderCommandsNewClipListOption(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -5181,7 +5195,7 @@ class nsDisplayOpacity final : public nsDisplayWrapList {
 
   void WriteDebugInfo(std::stringstream& aStream) override;
   bool CanUseAsyncAnimations() override;
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -5247,7 +5261,7 @@ class nsDisplayBlendMode : public nsDisplayWrapList {
     // LayerTreeInvalidation
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -5341,7 +5355,7 @@ class nsDisplayBlendContainer : public nsDisplayWrapList {
   NS_DISPLAY_DECL_NAME("BlendContainer", TYPE_BLEND_CONTAINER)
 
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -5496,7 +5510,7 @@ class nsDisplayOwnLayer : public nsDisplayWrapList {
 
   NS_DISPLAY_DECL_NAME("OwnLayer", TYPE_OWN_LAYER)
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -5505,12 +5519,11 @@ class nsDisplayOwnLayer : public nsDisplayWrapList {
                                    aDisplayListBuilder,
                                    /* aForceIsolation = */ false);
   }
-  bool CreateWebRenderCommands(wr::DisplayListBuilder& aBuilder,
-                               wr::IpcResourceUpdateQueue& aResources,
-                               const StackingContextHelper& aSc,
-                               layers::RenderRootStateManager* aManager,
-                               nsDisplayListBuilder* aDisplayListBuilder,
-                               bool aForceIsolation);
+  WebRenderCommandsResult CreateWebRenderCommands(
+      wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
+      const StackingContextHelper& aSc,
+      layers::RenderRootStateManager* aManager,
+      nsDisplayListBuilder* aDisplayListBuilder, bool aForceIsolation);
   bool UpdateScrollData(layers::WebRenderScrollData* aData,
                         layers::WebRenderLayerScrollData* aLayerData) override;
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override {
@@ -5640,7 +5653,7 @@ class nsDisplayStickyPosition final : public nsDisplayOwnLayer {
                          mFrame->PresContext()->AppUnitsPerDevPixel());
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -5713,7 +5726,7 @@ class nsDisplayViewTransitionCapture final : public nsDisplayOwnLayer {
                          mFrame->PresContext()->AppUnitsPerDevPixel());
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -5755,7 +5768,7 @@ class nsDisplayFixedPosition : public nsDisplayOwnLayer {
                          mFrame->PresContext()->AppUnitsPerDevPixel());
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -5848,7 +5861,7 @@ class nsDisplayScrollInfoLayer final : public nsDisplayWrapList {
       layers::WebRenderLayerManager* aLayerManager);
   bool UpdateScrollData(layers::WebRenderScrollData* aData,
                         layers::WebRenderLayerScrollData* aLayerData) override;
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -6047,7 +6060,7 @@ class nsDisplayMasksAndClipPaths final : public nsDisplayEffectsBase {
 
   const nsTArray<nsRect>& GetDestRects() { return mDestRects; }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -6082,7 +6095,7 @@ class nsDisplayBackdropFilters final : public nsDisplayWrapList {
 
   NS_DISPLAY_DECL_NAME("BackdropFilter", TYPE_BACKDROP_FILTER)
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -6164,7 +6177,7 @@ class nsDisplayFilters final : public nsDisplayEffectsBase {
       nsDisplayListBuilder* aBuilder, gfxContext* aCtx,
       const std::function<void(gfxContext* aContext)>& aPaintChildren);
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -6269,7 +6282,7 @@ class nsDisplayTransform final : public nsPaintedDisplayItem {
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx,
              const Maybe<gfx::Polygon>& aPolygon);
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -6620,7 +6633,7 @@ class nsDisplayPerspective final : public nsPaintedDisplayItem {
   nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
                            bool* aSnap) const override;
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -6689,11 +6702,11 @@ class nsDisplayText final : public nsPaintedDisplayItem {
     }
   }
 
-  bool CreateWebRenderCommands(wr::DisplayListBuilder& aBuilder,
-                               wr::IpcResourceUpdateQueue& aResources,
-                               const StackingContextHelper& aSc,
-                               layers::RenderRootStateManager* aManager,
-                               nsDisplayListBuilder* aDisplayListBuilder) final;
+  WebRenderCommandsResult CreateWebRenderCommands(
+      wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
+      const StackingContextHelper& aSc,
+      layers::RenderRootStateManager* aManager,
+      nsDisplayListBuilder* aDisplayListBuilder) final;
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) final;
 
   nsRect GetComponentAlphaBounds(nsDisplayListBuilder* aBuilder) const final {
@@ -6761,7 +6774,7 @@ class nsDisplaySVGWrapper final : public nsDisplayWrapList {
                          mFrame->PresContext()->AppUnitsPerDevPixel());
   }
   bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override;
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,
@@ -6786,7 +6799,7 @@ class nsDisplayForeignObject final : public nsDisplayWrapList {
                          mFrame->PresContext()->AppUnitsPerDevPixel());
   }
 
-  bool CreateWebRenderCommands(
+  WebRenderCommandsResult CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
       layers::RenderRootStateManager* aManager,

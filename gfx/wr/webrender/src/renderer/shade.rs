@@ -17,8 +17,6 @@ use crate::renderer::{
 };
 use crate::profiler::{self, RenderCommandLog, TransactionProfile, ns_to_ms};
 
-use gleam::gl::GlType;
-
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -46,14 +44,12 @@ fn get_feature_string(kind: ImageBufferKind, texture_external_version: TextureEx
 }
 
 fn has_platform_support(kind: ImageBufferKind, device: &Device) -> bool {
-    match (kind, device.gl().get_type()) {
-        (ImageBufferKind::Texture2D, _) => true,
-        (ImageBufferKind::TextureRect, GlType::Gles) => false,
-        (ImageBufferKind::TextureRect, GlType::Gl) => true,
-        (ImageBufferKind::TextureExternal, GlType::Gles) => true,
-        (ImageBufferKind::TextureExternal, GlType::Gl) => false,
-        (ImageBufferKind::TextureExternalBT709, GlType::Gles) => device.supports_extension("GL_EXT_YUV_target"),
-        (ImageBufferKind::TextureExternalBT709, GlType::Gl) => false,
+    let caps = device.get_capabilities();
+    match kind {
+        ImageBufferKind::Texture2D => true,
+        ImageBufferKind::TextureRect => caps.supports_texture_rect,
+        ImageBufferKind::TextureExternal => caps.supports_texture_external,
+        ImageBufferKind::TextureExternalBT709 => caps.supports_texture_external_bt709,
     }
 }
 
@@ -67,6 +63,7 @@ pub const IMAGE_BUFFER_KINDS: [ImageBufferKind; 4] = [
 const DITHERING_FEATURE: &str = "DITHERING";
 const DUAL_SOURCE_FEATURE: &str = "DUAL_SOURCE_BLENDING";
 const FAST_PATH_FEATURE: &str = "FAST_PATH";
+const SUPERELLIPSE_FEATURE: &str = "SUPERELLIPSE";
 
 pub(crate) enum ShaderKind {
     Primitive,
@@ -414,6 +411,8 @@ pub struct Shaders {
     cs_blur_rgba8: ShaderHandle,
     cs_border_segment: ShaderHandle,
     cs_border_solid: ShaderHandle,
+    cs_border_segment_superellipse: ShaderHandle,
+    cs_border_solid_superellipse: ShaderHandle,
     cs_scale: Vec<Option<ShaderHandle>>,
     cs_line_decoration: ShaderHandle,
     cs_svg_filter_node: ShaderHandle,
@@ -439,6 +438,7 @@ pub struct Shaders {
     ps_quad_repeat: ShaderHandle,
     ps_quad_gradient: ShaderHandle,
     ps_quad_box_shadow: ShaderHandle,
+    ps_quad_box_shadow_superellipse: ShaderHandle,
     // ps_quad_yuv, like ps_quad_textured, comes in sampler-type-specific
     // variants so the YUV planes are sampled with the matching sColor
     // declaration. The variant is selected via PatternKind.
@@ -451,6 +451,7 @@ pub struct Shaders {
     ps_quad_mix_blend: ShaderHandle,
     ps_mask: ShaderHandle,
     ps_mask_fast: ShaderHandle,
+    ps_mask_superellipse: ShaderHandle,
     ps_clear: ShaderHandle,
     ps_copy: ShaderHandle,
 
@@ -465,7 +466,6 @@ pub struct PendingShadersToPrecache {
 impl Shaders {
     pub fn new(
         device: &mut Device,
-        gl_type: GlType,
         options: &WebRenderOptions,
     ) -> Result<Self, ShaderError> {
         let use_dual_source_blending =
@@ -480,7 +480,7 @@ impl Shaders {
         } else {
             TextureExternalVersion::ESSL1
         };
-        let mut shader_flags = get_shader_feature_flags(gl_type, texture_external_version, device);
+        let mut shader_flags = device.shader_feature_flags();
         shader_flags.set(ShaderFeatureFlags::ADVANCED_BLEND_EQUATION, use_advanced_blend_equation);
         shader_flags.set(ShaderFeatureFlags::DUAL_SOURCE_BLENDING, use_dual_source_blending);
         shader_flags.set(ShaderFeatureFlags::DITHERING, options.enable_dithering);
@@ -513,6 +513,13 @@ impl Shaders {
             ShaderKind::Cache(VertexArrayKind::Mask),
             "ps_quad_mask",
             &[FAST_PATH_FEATURE],
+            &shader_list,
+        )?;
+
+        let ps_mask_superellipse = loader.create_shader(
+            ShaderKind::Cache(VertexArrayKind::Mask),
+            "ps_quad_mask",
+            &[SUPERELLIPSE_FEATURE],
             &shader_list,
         )?;
 
@@ -644,6 +651,13 @@ impl Shaders {
             &shader_list,
         )?;
 
+        let ps_quad_box_shadow_superellipse = loader.create_shader(
+            ShaderKind::Primitive,
+            "ps_quad_box_shadow",
+            &[SUPERELLIPSE_FEATURE],
+            &shader_list,
+        )?;
+
         let ps_quad_yuv = loader.create_shader(
             ShaderKind::Primitive,
             "ps_quad_yuv",
@@ -759,15 +773,31 @@ impl Shaders {
             &shader_list,
         )?;
 
-        let composite = CompositorShaders::new(device, gl_type, &mut loader)?;
+        let cs_border_segment_superellipse = loader.create_shader(
+            ShaderKind::Cache(VertexArrayKind::Border),
+            "cs_border_segment",
+             &[SUPERELLIPSE_FEATURE],
+            &shader_list,
+        )?;
+
+        let cs_border_solid_superellipse = loader.create_shader(
+            ShaderKind::Cache(VertexArrayKind::Border),
+            "cs_border_solid",
+            &[SUPERELLIPSE_FEATURE],
+            &shader_list,
+        )?;
+
+        let composite = CompositorShaders::new(device, &mut loader)?;
 
         Ok(Shaders {
             loader,
 
             cs_blur_rgba8,
             cs_border_segment,
-            cs_line_decoration,
             cs_border_solid,
+            cs_border_segment_superellipse,
+            cs_border_solid_superellipse,
+            cs_line_decoration,
             cs_scale,
             cs_svg_filter_node,
             ps_text_run,
@@ -779,6 +809,7 @@ impl Shaders {
             ps_quad_repeat,
             ps_quad_gradient,
             ps_quad_box_shadow,
+            ps_quad_box_shadow_superellipse,
             ps_quad_yuv,
             ps_quad_yuv_external,
             ps_quad_yuv_external_bt709,
@@ -788,6 +819,7 @@ impl Shaders {
             ps_quad_mix_blend,
             ps_mask,
             ps_mask_fast,
+            ps_mask_superellipse,
             ps_split_composite,
             ps_clear,
             ps_copy,
@@ -859,6 +891,7 @@ impl Shaders {
             PatternKind::Gradient => self.ps_quad_gradient,
             PatternKind::Repeat => self.ps_quad_repeat,
             PatternKind::BoxShadow => self.ps_quad_box_shadow,
+            PatternKind::BoxShadowSuperellipse => self.ps_quad_box_shadow_superellipse,
             PatternKind::Yuv => self.ps_quad_yuv,
             PatternKind::YuvTextureExternal => self.ps_quad_yuv_external
                 .expect("bug: ps_quad_yuv TEXTURE_EXTERNAL variant not loaded"),
@@ -915,6 +948,9 @@ impl Shaders {
             BatchKind::Quad(PatternKind::BoxShadow) => {
                 self.ps_quad_box_shadow
             }
+            BatchKind::Quad(PatternKind::BoxShadowSuperellipse) => {
+                self.ps_quad_box_shadow_superellipse
+            }
             BatchKind::Quad(PatternKind::Yuv) => {
                 self.ps_quad_yuv
             }
@@ -958,6 +994,8 @@ impl Shaders {
     pub fn cs_blur_rgba8(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_blur_rgba8) }
     pub fn cs_border_segment(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_border_segment) }
     pub fn cs_border_solid(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_border_solid) }
+    pub fn cs_border_segment_superellipse(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_border_segment_superellipse) }
+    pub fn cs_border_solid_superellipse(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_border_solid_superellipse) }
     pub fn cs_line_decoration(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_line_decoration) }
     pub fn cs_svg_filter_node(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_svg_filter_node) }
     pub fn ps_quad_textured(&mut self) -> &mut LazilyCompiledShader {
@@ -965,6 +1003,7 @@ impl Shaders {
     }
     pub fn ps_mask(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.ps_mask) }
     pub fn ps_mask_fast(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.ps_mask_fast) }
+    pub fn ps_mask_superellipse(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.ps_mask_superellipse) }
     pub fn ps_clear(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.ps_clear) }
     pub fn ps_copy(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.ps_copy) }
 
@@ -998,7 +1037,6 @@ pub struct CompositorShaders {
 impl CompositorShaders {
     pub fn new(
         device: &mut Device,
-        gl_type: GlType,
         loader: &mut ShaderLoader,
     )  -> Result<Self, ShaderError>  {
         let mut yuv_clip_features = Vec::new();
@@ -1016,7 +1054,7 @@ impl CompositorShaders {
             TextureExternalVersion::ESSL1
         };
 
-        let feature_flags = get_shader_feature_flags(gl_type, texture_external_version, device);
+        let feature_flags = device.shader_feature_flags();
         let shader_list = get_shader_features(feature_flags);
 
         for _ in 0..IMAGE_BUFFER_KINDS.len() {
@@ -1132,26 +1170,5 @@ impl CompositorShaders {
 
     fn get_shader_index(buffer_kind: ImageBufferKind) -> usize {
         buffer_kind as usize
-    }
-}
-
-fn get_shader_feature_flags(
-    gl_type: GlType,
-    texture_external_version: TextureExternalVersion,
-    device: &Device
-) -> ShaderFeatureFlags {
-    match gl_type {
-        GlType::Gl => ShaderFeatureFlags::GL,
-        GlType::Gles => {
-            let mut flags = ShaderFeatureFlags::GLES;
-            flags |= match texture_external_version {
-                TextureExternalVersion::ESSL3 => ShaderFeatureFlags::TEXTURE_EXTERNAL,
-                TextureExternalVersion::ESSL1 => ShaderFeatureFlags::TEXTURE_EXTERNAL_ESSL1,
-            };
-            if device.supports_extension("GL_EXT_YUV_target") {
-                flags |= ShaderFeatureFlags::TEXTURE_EXTERNAL_BT709;
-            }
-            flags
-        }
     }
 }

@@ -12,8 +12,10 @@ import mozilla.components.compose.base.theme.AcornColors
 import mozilla.components.compose.base.theme.AcornGradientScheme
 import mozilla.components.compose.base.theme.AcornTheme
 import mozilla.components.compose.base.theme.AcornTypography
+import mozilla.components.compose.base.theme.Theme
 import mozilla.components.compose.base.theme.acornDarkColorScheme
 import mozilla.components.compose.base.theme.acornLightColorScheme
+import mozilla.components.compose.base.theme.acornOledColorScheme
 import mozilla.components.compose.base.theme.acornPrivateColorScheme
 import mozilla.components.compose.base.theme.darkAcornGradientScheme
 import mozilla.components.compose.base.theme.darkColorPalette
@@ -21,6 +23,8 @@ import mozilla.components.compose.base.theme.layout.AcornLayout
 import mozilla.components.compose.base.theme.layout.AcornWindowSize
 import mozilla.components.compose.base.theme.lightAcornGradientScheme
 import mozilla.components.compose.base.theme.lightColorPalette
+import mozilla.components.compose.base.theme.oledAcornGradientScheme
+import mozilla.components.compose.base.theme.oledColorPalette
 import mozilla.components.compose.base.theme.privateAcornGradientScheme
 import mozilla.components.compose.base.theme.privateColorPalette
 
@@ -35,29 +39,37 @@ fun FirefoxTheme(
     theme: Theme = getThemeProvider().provideTheme(),
     content: @Composable () -> Unit,
 ) {
-    val colors: AcornColors = when (theme) {
-        Theme.Light -> lightColorPalette
-        Theme.Dark -> darkColorPalette
-        Theme.Private -> privateColorPalette
-    }
+    val colors: AcornColors =
+        when (theme) {
+            Theme.Light -> lightColorPalette
+            Theme.Dark -> darkColorPalette
+            Theme.Oled -> oledColorPalette
+            Theme.Private -> privateColorPalette
+        }
 
-    val colorScheme: ColorScheme = when (theme) {
-        Theme.Light -> acornLightColorScheme()
-        Theme.Dark -> acornDarkColorScheme()
-        Theme.Private -> acornPrivateColorScheme()
-    }
+    val colorScheme: ColorScheme =
+        when (theme) {
+            Theme.Light -> acornLightColorScheme()
+            Theme.Dark -> acornDarkColorScheme()
+            Theme.Oled -> acornOledColorScheme()
+            Theme.Private -> acornPrivateColorScheme()
+        }
 
-    val gradients: AcornGradientScheme = when (theme) {
-        Theme.Light -> lightAcornGradientScheme
-        Theme.Dark -> darkAcornGradientScheme
-        Theme.Private -> privateAcornGradientScheme
-    }
+    val gradients: AcornGradientScheme =
+        when (theme) {
+            Theme.Light -> lightAcornGradientScheme
+            Theme.Dark -> darkAcornGradientScheme
+            Theme.Oled -> oledAcornGradientScheme
+            Theme.Private -> privateAcornGradientScheme
+        }
 
-    val tabGroupColors: TabGroupColorPalette = when (theme) {
-        Theme.Light -> TabGroupColorPalette.lightPalette
-        Theme.Dark -> TabGroupColorPalette.darkPalette
-        Theme.Private -> TabGroupColorPalette.privatePalette
-    }
+    val tabGroupColors: TabGroupColorPalette =
+        when (theme) {
+            Theme.Light -> TabGroupColorPalette.lightPalette
+            Theme.Dark -> TabGroupColorPalette.darkPalette
+            Theme.Oled -> TabGroupColorPalette.oledPalette
+            Theme.Private -> TabGroupColorPalette.privatePalette
+        }
 
     ProvideFirefoxTokens(tabGroupColors = tabGroupColors) {
         AcornTheme(
@@ -80,35 +92,23 @@ private fun ProvideFirefoxTokens(
     )
 }
 
-/**
- * Provides access to the Firefox design system tokens.
- */
+/** Provides access to the Firefox design system tokens. */
 object FirefoxTheme {
     val colors: AcornColors
-        @Composable
-        @ReadOnlyComposable
-        get() = AcornTheme.colors
+        @Composable @ReadOnlyComposable get() = AcornTheme.colors
 
     val typography: AcornTypography
         get() = AcornTheme.typography
 
     val layout: AcornLayout
-        @Composable
-        @ReadOnlyComposable
-        get() = AcornTheme.layout
+        @Composable @ReadOnlyComposable get() = AcornTheme.layout
 
     val windowSize: AcornWindowSize
-        @Composable
-        @ReadOnlyComposable
-        get() = AcornTheme.windowSize
+        @Composable @ReadOnlyComposable get() = AcornTheme.windowSize
 
     val gradients: AcornGradientScheme
-        @Composable
-        @ReadOnlyComposable
-        get() = AcornTheme.gradients
+        @Composable @ReadOnlyComposable get() = AcornTheme.gradients
 
     val tabGroupColors: TabGroupColorPalette
-        @Composable
-        @ReadOnlyComposable
-        get() = localTabGroupColors.current
+        @Composable @ReadOnlyComposable get() = localTabGroupColors.current
 }

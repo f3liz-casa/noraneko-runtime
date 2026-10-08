@@ -12,19 +12,17 @@ import android.service.autofill.FillRequest
 import android.service.autofill.SaveCallback
 import android.service.autofill.SaveRequest
 import android.widget.inline.InlinePresentationSpec
-import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import mozilla.components.feature.autofill.handler.FillRequestHandler
 import mozilla.components.feature.autofill.handler.MAX_LOGINS
 import mozilla.components.feature.autofill.structure.toRawStructure
 
-/**
- * Service responsible for implementing Android's Autofill framework.
- */
+/** Service responsible for implementing Android's Autofill framework. */
 abstract class AbstractAutofillService : AutofillService() {
     abstract val configuration: AutofillConfiguration
+    abstract val applicationScope: CoroutineScope
 
     private val fillHandler by lazy { FillRequestHandler(context = this, configuration) }
 
@@ -33,26 +31,24 @@ abstract class AbstractAutofillService : AutofillService() {
         cancellationSignal: CancellationSignal,
         callback: FillCallback,
     ) {
-        // We are using GlobalScope here instead of a scope bound to the service since the service
-        // seems to get destroyed before we invoke a method on the callback. So we need a scope that
-        // lives longer than the service.
-        @OptIn(DelicateCoroutinesApi::class)
-        GlobalScope.launch(Dispatchers.IO) {
+        applicationScope.launch(Dispatchers.IO) {
             // You may be wondering why we translate the AssistStructure into a RawStructure and then
             // create a FillResponseBuilder that outputs the FillResponse. This is purely for testing.
             // Neither AssistStructure nor FillResponse can be created by us and they do not let us
             // inspect their data. So we create these intermediate objects that we can create and
             // inspect in unit tests.
             val structure = request.fillContexts.last().structure.toRawStructure()
-            val responseBuilder = fillHandler.handle(
-                structure,
-                maxSuggestionCount = request.getMaxSuggestionCount(),
-            )
-            val response = responseBuilder?.build(
-                this@AbstractAutofillService,
-                configuration,
-                request.getInlinePresentationSpec(),
-            )
+            val responseBuilder =
+                fillHandler.handle(
+                    structure,
+                    maxSuggestionCount = request.getMaxSuggestionCount(),
+                )
+            val response =
+                responseBuilder?.build(
+                    this@AbstractAutofillService,
+                    configuration,
+                    request.getInlinePresentationSpec(),
+                )
             callback.onSuccess(response)
         }
     }
@@ -74,8 +70,9 @@ internal fun FillRequest.getInlinePresentationSpec(): InlinePresentationSpec? {
     }
 }
 
-internal fun FillRequest.getMaxSuggestionCount() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-    (inlineSuggestionsRequest?.maxSuggestionCount ?: 1) - 1 // space for search chip
-} else {
-    MAX_LOGINS
-}
+internal fun FillRequest.getMaxSuggestionCount() =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        (inlineSuggestionsRequest?.maxSuggestionCount ?: 1) - 1 // space for search chip
+    } else {
+        MAX_LOGINS
+    }

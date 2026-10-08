@@ -397,7 +397,7 @@ function testEngine_setup() {
       Services.prefs.clearUserPref("browser.urlbar.suggest.searches");
       Services.prefs.clearUserPref("browser.urlbar.contextualSearch.enabled");
       Services.prefs.clearUserPref(
-        "browser.search.separatePrivateDefault.ui.enabled"
+        "browser.search.separatePrivateDefault.featureGate"
       );
       SearchService.setDefault(
         oldDefaultEngine,
@@ -407,7 +407,7 @@ function testEngine_setup() {
 
     SearchService.setDefault(engine, SearchService.CHANGE_REASON.UNKNOWN);
     Services.prefs.setBoolPref(
-      "browser.search.separatePrivateDefault.ui.enabled",
+      "browser.search.separatePrivateDefault.featureGate",
       false
     );
     Services.prefs.setBoolPref("browser.urlbar.suggest.searches", false);
@@ -638,7 +638,7 @@ function makeTabSwitchResult(
     title,
     // Check against undefined so consumers can pass in the empty string.
     icon: typeof iconUri != "undefined" ? iconUri : `page-icon:${uri}`,
-    userContextId: userContextId || 0,
+    userContext: UrlbarUtils.getUserContextData(userContextId || 0),
     tabGroup,
   };
 
@@ -1122,7 +1122,7 @@ async function check_results({
   // return reliable resultsets, thus we have to wait.
   await PlacesFrecencyRecalculator.recalculateAnyOutdatedFrecencies();
 
-  const controller = UrlbarTestUtils.newMockController({
+  const controller = UrlbarTestUtils.mockChildController({
     input: {
       isPrivate: context.isPrivate,
       getSearchSource() {
@@ -1235,6 +1235,9 @@ async function check_results({
     // payload object, so ignore it. There are Suggest tests specifically for
     // dismissals that indirectly test the important aspects of this property.
     suggestionObject: { ignore: true },
+    // Set by the providers manager on dynamic results, not by their provider.
+    viewTemplate: { optional: true },
+    viewUpdate: { optional: true },
     ...conditionalPayloadProperties,
   };
 

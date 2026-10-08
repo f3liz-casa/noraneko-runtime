@@ -290,7 +290,7 @@ void APZCCallbackHelper::NotifyLayerTransforms(
     const nsTArray<MatrixMessage>& aTransforms) {
   MOZ_ASSERT(NS_IsMainThread());
   for (const MatrixMessage& msg : aTransforms) {
-    BrowserParent* parent =
+    RefPtr<BrowserParent> parent =
         BrowserParent::GetBrowserParentFromLayersId(msg.GetLayersId());
     if (parent) {
       parent->SetChildToParentConversionMatrix(
@@ -881,12 +881,7 @@ void APZCCallbackHelper::NotifyMozMouseScrollEvent(
   if (!targetContent) {
     return;
   }
-  RefPtr<dom::Document> ownerDoc = targetContent->OwnerDoc();
-  if (!ownerDoc) {
-    return;
-  }
-
-  nsContentUtils::DispatchEventOnlyToChrome(ownerDoc, targetContent, aEvent,
+  nsContentUtils::DispatchEventOnlyToChrome(targetContent, aEvent,
                                             CanBubble::eYes, Cancelable::eYes);
 }
 

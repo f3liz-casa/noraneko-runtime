@@ -43,10 +43,12 @@ const Template = ({
   value,
   iconSrc,
   disabled,
+  required,
   l10nId,
   description,
   supportPage,
   accessKey,
+  title,
   hasSlottedDescription,
   hasSlottedSupportLink,
   ellipsized,
@@ -56,9 +58,11 @@ const Template = ({
     value=${ifDefined(value || null)}
     iconsrc=${ifDefined(iconSrc || null)}
     ?disabled=${disabled}
+    ?required=${required}
     data-l10n-id=${l10nId}
     support-page=${ifDefined(supportPage || null)}
     accesskey=${ifDefined(accessKey || null)}
+    title=${ifDefined(title || null)}
     class=${classMap({ "text-truncated-ellipsis": ellipsized })}
   >
     ${hasSlottedDescription
@@ -76,9 +80,11 @@ Default.args = {
   value: "",
   iconSrc: "",
   disabled: false,
+  required: false,
   l10nId: "moz-input-password-label",
   supportPage: "",
   accessKey: "",
+  title: "",
   hasSlottedDescription: false,
   hasSlottedSupportLink: false,
 };
@@ -113,6 +119,13 @@ Disabled.args = {
   ...Default.args,
   l10nId: "moz-input-password-description",
   disabled: true,
+};
+
+export const Required = Template.bind({});
+Required.args = {
+  ...Default.args,
+  l10nId: "moz-input-password-description",
+  required: true,
 };
 
 export const WithAccesskey = Template.bind({});

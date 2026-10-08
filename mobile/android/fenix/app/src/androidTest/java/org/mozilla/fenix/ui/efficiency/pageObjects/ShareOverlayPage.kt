@@ -6,18 +6,25 @@ package org.mozilla.fenix.ui.efficiency.pageObjects
 
 import android.content.Intent
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.intent.Intents
 import androidx.test.espresso.intent.matcher.IntentMatchers
+import androidx.test.espresso.matcher.ViewMatchers.hasSibling
+import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.withId
+import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.uiautomator.UiSelector
 import org.hamcrest.CoreMatchers.containsString
 import org.hamcrest.Matchers.allOf
 import org.junit.Assert.assertTrue
+import org.mozilla.fenix.R
 import org.mozilla.fenix.helpers.AppAndSystemHelper.forceCloseApp
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
 import org.mozilla.fenix.helpers.TestHelper.mDevice
 import org.mozilla.fenix.ui.efficiency.helpers.BasePage
-import org.mozilla.fenix.ui.efficiency.helpers.Selector
-import org.mozilla.fenix.ui.efficiency.navigation.NavigationRegistry
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationGraph
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationOptions
 import org.mozilla.fenix.ui.efficiency.navigation.NavigationStep
 import org.mozilla.fenix.ui.efficiency.selectors.BrowserPageSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.MainMenuSelectors
@@ -26,31 +33,57 @@ import org.mozilla.fenix.ui.efficiency.selectors.ShareOverlaySelectors
 class ShareOverlayPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>) : BasePage(composeRule) {
     override val pageName = "ShareOverlayPage"
 
-    init {
+    internal override fun registerNavigation(builder: NavigationGraph.Builder) {
         // Rooted at BrowserPage, with the menu-opening click inline, because Share exists only in the
         // browser main menu. MainMenuPage is a single graph node standing for two different screens —
         // the home menu and the browser menu — and it is reachable from HomePage in one step, so an
         // edge from MainMenuPage let the planner route AppEntry -> HomePage -> MainMenuPage and then
         // look for a Share item the home menu does not have. Duplicating the menu click here is the
         // cost of that node being ambiguous; FindInPagePage and TabHistoryPage are rooted the same way.
-        NavigationRegistry.register(
+        builder.register(
             from = "BrowserPage",
             to = pageName,
-            steps = listOf(
-                NavigationStep.Click(BrowserPageSelectors.MAIN_MENU_BUTTON),
-                NavigationStep.Click(MainMenuSelectors.SHARE_BUTTON),
-            ),
+            steps =
+                listOf(
+                    NavigationStep.Click(BrowserPageSelectors.MAIN_MENU_BUTTON),
+                    NavigationStep.Click(MainMenuSelectors.SHARE_BUTTON),
+                ),
         )
     }
 
     // Reaching the share sheet means having a page to share, so an empty url still has to load one.
-    override fun navigateToPage(url: String, forceNavigation: Boolean): ShareOverlayPage {
-        super.navigateToPage(url = url.ifBlank { "example.com" }, forceNavigation = forceNavigation)
+    override fun navigateToPage(
+        url: String,
+        forceNavigation: Boolean,
+        navigationOptions: NavigationOptions,
+    ): ShareOverlayPage {
+        super.navigateToPage(
+            url = url.ifBlank { "example.com" },
+            forceNavigation = forceNavigation,
+            navigationOptions = navigationOptions,
+        )
         return this
     }
 
-    override fun mozGetSelectorsByGroup(group: String): List<Selector> {
-        return ShareOverlaySelectors.all.filter { it.groups.contains(group) }
+    override val selectorCatalog = ShareOverlaySelectors
+
+    // Espresso rather than a moz* verb: the share sheet is a plain View fragment (no GeckoView), and the
+    // per-row favicon/url sibling relationship cannot be expressed by a single Selector. Mirrors the
+    // legacy ShareOverlayRobot.verifyShareTabsOverlay.
+    fun verifyShareTabsOverlay(vararg tabTitles: String): ShareOverlayPage {
+        onView(withId(R.id.shared_site_list)).check(matches(isDisplayed()))
+        tabTitles.forEach { title ->
+            onView(withText(title))
+                .check(
+                    matches(
+                        allOf(
+                            hasSibling(withId(R.id.share_tab_favicon)),
+                            hasSibling(withId(R.id.share_tab_url)),
+                        )
+                    )
+                )
+        }
+        return this
     }
 
     fun verifySharingWithSelectedApp(
@@ -63,7 +96,8 @@ class ShareOverlayPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTes
         assertTrue("Sharing app '$appName' not found on device", sharingApp.exists())
         sharingApp.clickAndWaitForNewWindow()
         val urlMatchers = content.split("\n\n").map { IntentMatchers.hasExtra(Intent.EXTRA_TEXT, containsString(it)) }
-        val subjectMatchers = subject.split(", ").map { IntentMatchers.hasExtra(Intent.EXTRA_SUBJECT, containsString(it)) }
+        val subjectMatchers =
+            subject.split(", ").map { IntentMatchers.hasExtra(Intent.EXTRA_SUBJECT, containsString(it)) }
         Intents.intended(allOf(*(urlMatchers + subjectMatchers).toTypedArray()))
         forceCloseApp(appPackageName)
         return this

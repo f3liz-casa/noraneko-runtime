@@ -51,7 +51,10 @@
 // triggers it: macOS freezes :hover on the dragged tile, and we can't block it
 // with pointer-events because the placeholder is the drop target.
 // @nova-cleanup(remove-conditional): Nova gets rid of outer hover background
-.nova-enabled .top-sites-list:not(.dnd-active) .top-site-outer:is(.active, :has(.top-site-inner:is(:hover, :focus-within))) {
+// Reveal on keyboard focus, not any :focus-within. A pointer click can leave
+// focus on the menu button, and :focus-within would then keep the tile expanded
+// once the pointer leaves.
+.nova-enabled .top-sites-list:not(.dnd-active) .top-site-outer:is(.active, :has(.top-site-inner:hover), :has(.top-site-inner :focus-visible)) {
   background: none;
 
   .tile {
@@ -194,13 +197,8 @@
 
 .nova-enabled .edit-topsites {
   .modalOverlayOuter {
-    /*
-     * @backward-compat { version 155 }
-     * The Nova value of --panel-background-color aliases --popup-background-color,
-     * which the platform only defines from 155. Remove the "revert" fallback once
-     * 155 reaches Release.
-     */
-    background: var(--panel-background-color, revert);
+    background: var(--panel-background-color);
+    color: var(--panel-text-color);
     border: 1px solid var(--panel-border-color);
   }
 
@@ -227,6 +225,7 @@
       /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
       width: 368px;
       background-color: var(--panel-background-color);
+      color: var(--panel-text-color);
       border-radius: var(--border-radius-medium);
 
       &:focus-visible {
@@ -274,13 +273,15 @@
 @media (forced-colors: active) {
   .nova-enabled .top-site-outer .tile {
     background-color: var(--button-background-color);
+    color: var(--button-text-color);
   }
 
   .nova-enabled .top-site-outer .context-menu-button {
     background-color: var(--button-background-color);
+    color: var(--button-text-color);
   }
 
-  .nova-enabled .top-site-outer:is(.active, :has(.top-site-inner:is(:hover, :focus-within))) .tile {
+  .nova-enabled .top-site-outer:is(.active, :has(.top-site-inner:hover), :has(.top-site-inner :focus-visible)) .tile {
     background-color: var(--button-background-color-hover);
   }
 

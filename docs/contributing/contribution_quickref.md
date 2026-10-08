@@ -1,3 +1,5 @@
+(firefox-contributors-quick-reference)=
+
 # Firefox Contributors' Quick Reference
 
 Some parts of this process, including cloning and compiling, can take a long time even on modern hardware.
@@ -18,7 +20,7 @@ Please obtain an API Token (Settings >> Conduit API Tokens)
 
 ## Windows dependencies
 
-1. You need a {ref}`supported version of Windows<tier_1_hosts>`.
+1. You need a {ref}`supported version of Windows<tier-1-hosts>`.
 
 2. Download the [MozillaBuild Package.](https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe) Installation directory should be:
 
@@ -177,8 +179,16 @@ For example, here is an example of a good commit message:
 during its own onclick handler. r=person"
 
 To {ref}`find a reviewer or a review group <Getting reviews>`, the easiest way is to run
-`git log <modified-file>` on the relevant files, and look who usually is
-reviewing the actual changes (ie not reformat, renaming of variables, etc).
+`mach file-info reviewers` on the files you modified:
+
+```shell
+./mach file-info reviewers dom/media/mediasink/AudioSink.cpp
+```
+
+It prints the reviewer groups covering those files, starting with the ones Phabricator
+would add on its own. Failing that, run `git log <modified-file>` on the relevant files,
+and look who usually is reviewing the actual changes (ie not reformat, renaming of
+variables, etc).
 
 To visualize your patch in the repository, run:
 

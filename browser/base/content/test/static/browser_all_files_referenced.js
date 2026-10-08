@@ -52,6 +52,10 @@ var gExceptionPaths = [
   "chrome://browser/content/asrouter/assets/tabgroups/vert-animated-light.svg",
   "chrome://browser/content/asrouter/assets/tabgroups/vert-static-dark.svg",
   "chrome://browser/content/asrouter/assets/tabgroups/vert-static-light.svg",
+  "chrome://activity-stream/content/data/content/assets/backdrop-adaptive.svg",
+  "chrome://activity-stream/content/data/content/assets/kit-sit-look-up.svg",
+  "chrome://activity-stream/content/data/content/assets/pic-cursor.svg",
+  "chrome://activity-stream/content/data/content/assets/pic-shield.svg",
 
   // toolkit/components/pdfjs/content/build/pdf.js
   "resource://pdf.js/web/images/",
@@ -197,6 +201,11 @@ var allowlist = [
 
   // SpiderMonkey parser API, currently unused in browser/ and toolkit/
   { file: "moz-src:///toolkit/components/reflect/reflect.sys.mjs" },
+
+  // TODO Bug 2064553: Integrate ConversationStore into the Conversation model
+  {
+    file: "moz-src:///browser/components/aiwindow/ui/modules/ConversationStore.sys.mjs",
+  },
 
   // extensions/pref/autoconfig/src/nsReadConfig.cpp
   { file: "resource://gre/defaults/autoconfig/prefcalls.js" },

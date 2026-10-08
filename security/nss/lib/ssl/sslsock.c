@@ -149,20 +149,20 @@ static const PRUint16 srtpCiphers[] = {
 /* This list is in preference order.  Note that while some smaller groups appear
  * early in the list, smaller groups are generally ignored when iterating
  * through this list. ffdhe_custom must not appear in this list. */
-#define ECGROUP(name, size, oid, assumeSupported)  \
-    {                                              \
-        ssl_grp_ec_##name, size, ssl_kea_ecdh,     \
-            SEC_OID_SECG_EC_##oid, assumeSupported \
+#define ECGROUP(name, size, oid, assumeSupported) \
+    {                                             \
+        ssl_grp_ec_##name, size, ssl_kea_ecdh,    \
+        SEC_OID_SECG_EC_##oid, assumeSupported    \
     }
 #define FFGROUP(size)                           \
     {                                           \
         ssl_grp_ffdhe_##size, size, ssl_kea_dh, \
-            SEC_OID_TLS_FFDHE_##size, PR_TRUE   \
+        SEC_OID_TLS_FFDHE_##size, PR_TRUE       \
     }
 #define HYGROUP(first, second, size, first_oid, second_oid, assumeSupported) \
     {                                                                        \
         ssl_grp_kem_##first##second, size, ssl_kea_ecdh_hybrid,              \
-            SEC_OID_##first_oid##second_oid, assumeSupported                 \
+        SEC_OID_##first_oid##second_oid, assumeSupported                     \
     }
 
 const sslNamedGroupDef ssl_named_groups[] = {
@@ -176,7 +176,6 @@ const sslNamedGroupDef ssl_named_groups[] = {
     HYGROUP(secp256r1, mlkem768, 256, SECP256R1, MLKEM768, PR_TRUE),
     HYGROUP(secp384r1, mlkem1024, 256, SECP384R1, MLKEM1024, PR_TRUE),
     { ssl_grp_kem_mlkem1024, 256, ssl_kea_kem, SEC_OID_ML_KEM_1024, PR_TRUE },
-    { ssl_grp_kem_xyber768d00, 256, ssl_kea_ecdh_hybrid, SEC_OID_XYBER768D00, PR_FALSE },
     FFGROUP(2048),
     FFGROUP(3072),
     FFGROUP(4096),
@@ -2613,9 +2612,15 @@ SSL_ReconfigFD(PRFileDesc *model, PRFileDesc *fd)
 
     /* Reset handshake PSKs on the target socket, re-populating from
      * the (newly copied) external PSK if present.  Pass |ss| (not
-     * |sm|) so that selectedPsk is cleared on the correct socket. */
+     * |sm|) so that selectedPsk is cleared on the correct socket.
+     * ss->ssl3.hs.psks and ss->xtnData are handshake state, so take the
+     * handshake locks, as SSLExp_{Add,Remove}ExternalPsk do. */
+    ssl_Get1stHandshakeLock(ss);
+    ssl_GetSSL3HandshakeLock(ss);
     ss->xtnData.selectedPsk = NULL;
     rv = tls13_ResetHandshakePsks(ss, &ss->ssl3.hs.psks);
+    ssl_ReleaseSSL3HandshakeLock(ss);
+    ssl_Release1stHandshakeLock(ss);
     if (rv != SECSuccess) {
         return NULL;
     }
@@ -4615,8 +4620,7 @@ SSLExp_SetResumptionToken(PRFileDesc *fd, const PRUint8 *token,
 
     // We override any previously set session.
     if (ss->sec.ci.sid) {
-        ssl_FreeSID(ss->sec.ci.sid);
-        ss->sec.ci.sid = NULL;
+        ssl_SetSocketSID(ss, NULL);
     }
 
     PRINT_BUF(50, (ss, "incoming resumption token", token, len));
@@ -4651,7 +4655,7 @@ SSLExp_SetResumptionToken(PRFileDesc *fd, const PRUint8 *token,
     sid->cached = in_external_cache;
     sid->lastAccessTime = ssl_Time(ss);
 
-    ss->sec.ci.sid = sid;
+    ssl_SetSocketSID(ss, sid);
 
     ssl_ReleaseSSL3HandshakeLock(ss);
     ssl_Release1stHandshakeLock(ss);

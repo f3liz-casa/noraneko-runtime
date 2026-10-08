@@ -15,13 +15,16 @@
  * another attempts to copy that file.
  */
 
-const lazy = {};
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-ChromeUtils.defineESModuleGetters(lazy, {
-  sessionStoreLogger: "resource:///modules/sessionstore/SessionLogger.sys.mjs",
-  RunState: "resource:///modules/sessionstore/RunState.sys.mjs",
-  SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
-  SessionWriter: "resource:///modules/sessionstore/SessionWriter.sys.mjs",
+const lazy = XPCOMUtils.declareLazy({
+  sessionStoreLogger:
+    "moz-src:///browser/components/sessionstore/SessionLogger.sys.mjs",
+  RunState: "moz-src:///browser/components/sessionstore/RunState.sys.mjs",
+  SessionStore:
+    "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
+  SessionWriter:
+    "moz-src:///browser/components/sessionstore/SessionWriter.sys.mjs",
 });
 
 const PREF_UPGRADE_BACKUP = "browser.sessionstore.upgradeBackup.latestBuildID";
@@ -272,7 +275,6 @@ var SessionFileInternal = {
           path_key: key,
           loadfail_reason: "N/A",
         });
-        Glean.sessionRestore.corruptFile.false.add();
         Glean.sessionRestore.readFile.accumulateSingleSample(
           Date.now() - startMs
         );
@@ -335,16 +337,21 @@ var SessionFileInternal = {
             path_key: key,
             loadfail_reason: ` ${ex.name}: Corrupt session file (invalid JSON found)`,
           });
+        } else {
+          lazy.sessionStoreLogger.error(
+            `Unexpected error when reading session file: ${key}`,
+            ex
+          );
+          Glean.sessionRestore.backupCanBeLoadedSessionFile.record({
+            can_load: "false",
+            path_key: key,
+            loadfail_reason: ` ${ex.name}: Could not read session file`,
+          });
         }
       } finally {
         if (exists) {
           noFilesFound = false;
           Glean.sessionRestore.corruptFile[corrupted ? "true" : "false"].add();
-          Glean.sessionRestore.backupCanBeLoadedSessionFile.record({
-            can_load: (!corrupted).toString(),
-            path_key: key,
-            loadfail_reason: "N/A",
-          });
         }
       }
     }
@@ -380,9 +387,7 @@ var SessionFileInternal = {
     }
     this._readOrigin = result.origin;
 
-    result.noFilesFound = noFilesFound;
-
-    return result;
+    return { ...result, noFilesFound };
   },
 
   // Initialize SessionWriter and return it as a resolved promise.
@@ -437,10 +442,10 @@ var SessionFileInternal = {
 
     this._attempts++;
     let options = { isFinalWrite, performShutdownCleanup };
-    let promise = this.getWriter().then(writer => writer.write(aData, options));
+    let write = this.getWriter().then(writer => writer.write(aData, options));
 
     // Wait until the write is done.
-    promise = promise.then(
+    let promise = write.then(
       msg => {
         // Record how long the write took.
         if (msg.telemetry.writeFileMs) {

@@ -78,7 +78,9 @@ enum class ImportNameValueType : uint8_t {
   String,
   Namespace,
   Source,
-  AllButDefault
+  // Used for `export * from` entries. The preference decides whether the
+  // default export is included.
+  All
 };
 
 class ModuleRequestObject : public NativeObject {
@@ -626,7 +628,7 @@ class GraphLoadingStateRecordObject : public NativeObject {
   JS_DEFINE_TYPED_SLOT(1, PROMISE_SLOT, Object, Undefined);
   JS_DEFINE_TYPED_SLOT(2, IS_LOADING_SLOT, Int32);
   JS_DEFINE_TYPED_SLOT(3, PENDING_MODULES_COUNT_SLOT, Int32);
-  static constexpr uint32_t HOST_DEFINED_SLOT = 4;
+  JS_DEFINE_UNTYPED_SLOT(4, HOST_DEFINED_SLOT);
   static constexpr uint32_t SLOT_COUNT = 5;
 
  public:

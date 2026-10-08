@@ -15,7 +15,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///browser/components/aiwindow/ui/modules/ChatStore.sys.mjs",
   SmartWindowTelemetry:
     "moz-src:///browser/components/aiwindow/ui/modules/SmartWindowTelemetry.sys.mjs",
-  SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
+  SessionStore:
+    "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
 });
 
 const SIDEBAR_EMPTY_CLOSE_COUNT_PREF =
@@ -116,6 +117,26 @@ export class AIWindowTabStatesManager {
   getActiveConversation() {
     const tab = this.#window?.gBrowser.selectedTab;
     return this.#tabStates.get(tab)?.state?.conversation ?? null;
+  }
+
+  /**
+   * Id of the conversation a tab has messages in, if any. A fresh chat tab
+   * already holds an empty conversation, which does not count. One whose
+   * messages have not been loaded yet (a restored tab) does, since it cannot
+   * be told apart from a conversation with messages.
+   *
+   * @param {MozTabbrowserTab} tab
+   * @returns {?string}
+   */
+  getTabConversationId(tab) {
+    const state = this.#tabStates.get(tab)?.state;
+    if (!state?.conversationId) {
+      return null;
+    }
+    if (state.conversation && !state.conversation.messageCount) {
+      return null;
+    }
+    return state.conversationId;
   }
 
   /**

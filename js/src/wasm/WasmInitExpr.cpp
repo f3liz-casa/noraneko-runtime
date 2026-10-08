@@ -59,20 +59,25 @@ class MOZ_STACK_CLASS InitExprInterpreter {
 
   Instance& instance() { return instanceObj->instance(); }
 
-  [[nodiscard]] bool pushI32(int32_t c) {
-    return stack.append(Val(uint32_t(c)));
+  JSContext* cx() { return instance().cx(); }
+
+  [[nodiscard]] bool push(const Val& val) {
+    if (!stack.append(val)) {
+      ReportOutOfMemory(cx());
+      return false;
+    }
+    return true;
   }
-  [[nodiscard]] bool pushI64(int64_t c) {
-    return stack.append(Val(uint64_t(c)));
-  }
-  [[nodiscard]] bool pushF32(float c) { return stack.append(Val(c)); }
-  [[nodiscard]] bool pushF64(double c) { return stack.append(Val(c)); }
-  [[nodiscard]] bool pushV128(V128 c) { return stack.append(Val(c)); }
+  [[nodiscard]] bool pushI32(int32_t c) { return push(Val(uint32_t(c))); }
+  [[nodiscard]] bool pushI64(int64_t c) { return push(Val(uint64_t(c))); }
+  [[nodiscard]] bool pushF32(float c) { return push(Val(c)); }
+  [[nodiscard]] bool pushF64(double c) { return push(Val(c)); }
+  [[nodiscard]] bool pushV128(V128 c) { return push(Val(c)); }
   [[nodiscard]] bool pushRef(ValType type, AnyRef ref) {
-    return stack.append(Val(type, ref));
+    return push(Val(type, ref));
   }
   [[nodiscard]] bool pushFuncRef(RefType type, FuncRef ref) {
-    return stack.append(Val(type, ref));
+    return push(Val(type, ref));
   }
 
   int32_t popI32() {
@@ -89,7 +94,7 @@ class MOZ_STACK_CLASS InitExprInterpreter {
   bool evalGlobalGet(JSContext* cx, uint32_t index) {
     RootedVal val(cx);
     instance().constantGlobalGet(index, &val);
-    return stack.append(val);
+    return push(val);
   }
   bool evalI32Const(int32_t c) { return pushI32(c); }
   bool evalI64Const(int64_t c) { return pushI64(c); }
@@ -291,7 +296,7 @@ bool InitExprInterpreter::evaluate(JSContext* cx, Decoder& d) {
         }
         CHECK(evalF64Const(c));
       }
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
       case uint16_t(Op::SimdPrefix): {
         MOZ_RELEASE_ASSERT(op.b1 == uint32_t(SimdOp::V128Const));
         V128 c;
@@ -498,7 +503,7 @@ bool wasm::DecodeConstantExpression(Decoder& d, CodeMetadata* codeMeta,
         *literal = Some(LitVal(c));
         break;
       }
-#ifdef ENABLE_WASM_SIMD
+#ifdef ENABLE_JIT_SIMD
       case uint16_t(Op::SimdPrefix): {
         if (!codeMeta->simdAvailable()) {
           return d.fail("v128 not enabled");

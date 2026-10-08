@@ -396,13 +396,6 @@ class Animation : public DOMEventTargetHelper,
   }
 
   /**
-   * Returns true if this animation does not currently need to update
-   * style on the main thread (e.g. because it is empty, or is
-   * running on the compositor).
-   */
-  bool CanThrottle() const;
-
-  /**
    * Updates various bits of state that we need to update as the result of
    * running ComposeStyle().
    * See the comment of KeyframeEffect::WillComposeStyle for more detail.
@@ -467,23 +460,11 @@ class Animation : public DOMEventTargetHelper,
    * https://drafts.csswg.org/web-animations-2/#at-progress-timeline-boundary
    */
   enum class ProgressTimelinePosition : uint8_t { Boundary, NotBoundary };
-  static ProgressTimelinePosition AtProgressTimelineBoundary(
-      const Nullable<TimeDuration>& aTimelineDuration,
-      const Nullable<TimeDuration>& aCurrentTime,
-      const TimeDuration& aEffectStartTime, const double aPlaybackRate);
-  ProgressTimelinePosition AtProgressTimelineBoundary() const {
-    Nullable<TimeDuration> currentTime = GetUnconstrainedCurrentTime();
-    return AtProgressTimelineBoundary(
-        mTimeline ? mTimeline->TimelineDuration(mTimelineRange) : nullptr,
-        // Set unlimited current time based on the first matching condition:
-        // 1. start time is resolved:
-        //    (timeline time - start time) × playback rate
-        // 2. Otherwise:
-        //    animation’s current time
-        !currentTime.IsNull() ? currentTime : GetCurrentTimeAsDuration(),
-        mStartTime.IsNull() ? TimeDuration() : mStartTime.Value(),
-        PlaybackRateInternal());
-  }
+  static ProgressTimelinePosition AtTimelineBoundary(
+      const Nullable<TimeDuration>& aTimelineTime,
+      const TimeDuration& aMinimumTimelineTime,
+      const TimeDuration& aMaximumTimelineTime);
+  ProgressTimelinePosition AtTimelineBoundary() const;
 
   void UpdateNormalizedTimingForTimelineDataChange();
   void MaybeUpdateKeyframeComputedOffsets();

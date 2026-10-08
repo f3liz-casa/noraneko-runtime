@@ -51,6 +51,7 @@ const WIKIPEDIA_LOCALES_INFO = [
   [["ia"]],
   [["id"]],
   [["is"]],
+  [["it", "fur"], "it", "it"],
   [["ja", "ja-JP-macos"], "ja", "ja"],
   [["ka"]],
   [["kab"]],
@@ -58,7 +59,6 @@ const WIKIPEDIA_LOCALES_INFO = [
   [["km"]],
   [["kn"]],
   [["ko"], "ko", "kr"],
-  [["it", "fur", "sc"], "it", "it"],
   [["lij"]],
   [["lo"]],
   [["lt"]],
@@ -79,6 +79,7 @@ const WIKIPEDIA_LOCALES_INFO = [
   [["rm"]],
   [["ro"]],
   [["ru"]],
+  [["sc"]],
   [["si"]],
   [["sk"]],
   [["sl"]],
@@ -181,34 +182,6 @@ async function populateWikipediaConfig() {
 }
 
 const test = new SearchConfigTest([
-  {
-    identifier: "amazondotcom-us",
-    default: {
-      // Not default anywhere.
-    },
-    available: {
-      included: [
-        {
-          // The main regions we ship Amazon to. Below this are special cases.
-          regions: ["us"],
-        },
-      ],
-    },
-    details: [
-      {
-        domain: "amazon.com",
-        telemetryId: "amazondotcom-us-adm",
-        aliases: ["@amazon"],
-        included: [
-          {
-            regions: ["us"],
-          },
-        ],
-        noSuggestionsURL: true,
-        searchUrlCode: "tag=admarketus-20",
-      },
-    ],
-  },
   {
     identifier: "baidu",
     aliases: ["@百度", "@baidu"],

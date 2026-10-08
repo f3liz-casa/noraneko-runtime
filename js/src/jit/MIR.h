@@ -430,10 +430,13 @@ class AliasSet {
     // The SharedArrayRawBuffer::length field.
     SharedArrayRawBufferLength = 1 << 28,
 
-    Last = SharedArrayRawBufferLength,
+    // The frame descriptor's IsResumingGenerator bit.
+    GeneratorResumeState = 1 << 29,
+
+    Last = GeneratorResumeState,
 
     Any = Last | (Last - 1),
-    NumCategories = 29,
+    NumCategories = 30,
 
     // Indicates load or store.
     Store_ = 1 << 31
@@ -896,12 +899,12 @@ class MDefinition : public MNode {
   }
   template <typename MIRType>
   MIRType* to() {
-    MOZ_ASSERT(this->is<MIRType>());
+    MOZ_RELEASE_ASSERT(this->is<MIRType>());
     return static_cast<MIRType*>(this);
   }
   template <typename MIRType>
   const MIRType* to() const {
-    MOZ_ASSERT(this->is<MIRType>());
+    MOZ_RELEASE_ASSERT(this->is<MIRType>());
     return static_cast<const MIRType*>(this);
   }
 #define OPCODE_CASTS(opcode)                                \
@@ -2188,6 +2191,28 @@ class MNewIterator : public MUnaryInstruction, public NoTypePolicy::Data {
 
   JSObject* templateObject() {
     return getOperand(0)->toConstant()->toObjectOrNull();
+  }
+
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+
+  [[nodiscard]] bool writeRecoverData(
+      CompactBufferWriter& writer) const override;
+  bool canRecoverOnBailout() const override { return true; }
+};
+
+class MNewBoundFunction : public MUnaryInstruction, public NoTypePolicy::Data {
+  explicit MNewBoundFunction(MConstant* templateConst)
+      : MUnaryInstruction(classOpcode, templateConst) {
+    setResultType(MIRType::Object);
+    templateConst->setEmittedAtUses();
+  }
+
+ public:
+  INSTRUCTION_HEADER(NewBoundFunction)
+  TRIVIAL_NEW_WRAPPERS
+
+  JSObject* templateObj() const {
+    return &getOperand(0)->toConstant()->toObject();
   }
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
@@ -3494,6 +3519,29 @@ class MToFloat16 : public MToFPInstruction {
   bool canRecoverOnBailout() const override { return true; }
 
   ALLOW_CLONE(MToFloat16)
+};
+
+// Converts a uint32 to a float32.
+class MUnsignedToFloat32 : public MUnaryInstruction, public NoTypePolicy::Data {
+  explicit MUnsignedToFloat32(MDefinition* def)
+      : MUnaryInstruction(classOpcode, def) {
+    setResultType(MIRType::Float32);
+    setMovable();
+  }
+
+ public:
+  INSTRUCTION_HEADER(UnsignedToFloat32)
+  TRIVIAL_NEW_WRAPPERS
+
+  MDefinition* foldsTo(TempAllocator& alloc) override;
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+
+  bool canProduceFloat32() const override { return true; }
+
+  ALLOW_CLONE(MUnsignedToFloat32)
 };
 
 // Converts an int32 value to intptr by sign-extending it.

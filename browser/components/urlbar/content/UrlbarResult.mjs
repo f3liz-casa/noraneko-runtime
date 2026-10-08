@@ -15,13 +15,15 @@
 
 import { UrlbarShared } from "chrome://browser/content/urlbar/UrlbarShared.mjs";
 
-const lazy = {};
+const lazy = typeof ChromeUtils != "undefined" ? {} : null;
 
-ChromeUtils.defineESModuleGetters(lazy, {
-  JsonSchemaValidator:
-    "resource://gre/modules/components-utils/JsonSchemaValidator.sys.mjs",
-  UrlbarUtils: "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs",
-});
+if (lazy) {
+  ChromeUtils.defineESModuleGetters(lazy, {
+    JsonSchemaValidator:
+      "resource://gre/modules/components-utils/JsonSchemaValidator.sys.mjs",
+    UrlbarUtils: "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs",
+  });
+}
 
 /**
  * @typedef UrlbarAutofillData
@@ -175,18 +177,9 @@ export class UrlbarResult {
   id = undefined;
 
   /**
-   * A dynamic result's view template, computed eagerly when the result is
-   * finalized so the view can read it synchronously without asking the
-   * provider (which, on the actor message path, lives in another process).
-   * Undefined for non-dynamic results.
-   *
-   * @type {object|undefined}
-   */
-  viewTemplate = undefined;
-
-  /**
    * The result menu commands the result's provider offers, computed eagerly
-   * alongside `viewTemplate`. Undefined if the provider offers none.
+   * by the providers manager when the result is finalized.
+   * Undefined if the provider offers none.
    *
    * @type {?UrlbarResultCommand[]|undefined}
    */
@@ -453,6 +446,14 @@ export class UrlbarResult {
    * @returns {object} `payload` if it's valid.
    */
   #validatePayload(payload) {
+    if (!lazy) {
+      // The schemas and the validator live in system modules, out of reach of a
+      // content realm. Skipping this does mean that in a content realm, we will
+      // not validate payloads built directly by the view, such as a dismissal
+      // acknowledge tip. All provider results cross the actor boundary already
+      // validated.
+      return payload;
+    }
     let schema = lazy.UrlbarUtils.getPayloadSchema(this.type);
     if (!schema) {
       throw new Error(`Unrecognized result type: ${this.type}`);
@@ -494,8 +495,7 @@ export class UrlbarResult {
    * Serializes this result to a plain, structured-cloneable object for sending
    * across the Urlbar actor boundary. Most data lives in private fields that a
    * bare structuredClone() would drop, so capture it explicitly; `id`,
-   * `rowIndex`, `viewTemplate`, `commands`, and `isSERP` are the public own
-   * properties.
+   * `rowIndex`, `commands`, and `isSERP` are the public own properties.
    *
    * @returns {object} The wire representation; reconstruct with fromWire().
    */
@@ -525,7 +525,6 @@ export class UrlbarResult {
       highlights: this.#highlights,
       id: this.id,
       rowIndex: this.rowIndex,
-      viewTemplate: this.viewTemplate,
       commands: this.commands,
       isSERP: this.isSERP,
     };
@@ -535,16 +534,33 @@ export class UrlbarResult {
    * Reconstructs a UrlbarResult from the plain object produced by toWire(),
    * e.g. after it has crossed the Urlbar actor boundary.
    *
+   * Structured clone strips data that doesn't survive it (e.g. a Rust
+   * suggestion's UniFFI `Suggestion` class), so a reconstruction is a lossy
+   * object distinct from the one that was serialized. Where the originals are
+   * still around -- the parent's own query results -- pass them as
+   * `liveResults` to get the original back instead, carrying over the
+   * view-assigned `rowIndex` the wire preserves (the original never went
+   * through a view).
+   *
    * @param {object} wire The wire representation from toWire().
-   * @returns {UrlbarResult} The reconstructed result.
+   * @param {?UrlbarResult[]} [liveResults] Results to match `wire` against by id.
+   * @returns {UrlbarResult} The matching result from `liveResults`, else the
+   *   reconstruction.
    */
-  static fromWire(wire) {
+  static fromWire(wire, liveResults = null) {
+    let liveResult = liveResults?.find(r => r.id === wire.id);
+    if (liveResult) {
+      if (wire.rowIndex != null) {
+        liveResult.rowIndex = wire.rowIndex;
+      }
+      return liveResult;
+    }
+
     let result = new UrlbarResult({ ...wire, skipPayloadValidation: true });
     // The following aren't constructor parameters, so re-apply them.
     result.providerType = wire.providerType;
     result.id = wire.id;
     result.rowIndex = wire.rowIndex;
-    result.viewTemplate = wire.viewTemplate;
     result.commands = wire.commands;
     result.isSERP = wire.isSERP;
     return result;
