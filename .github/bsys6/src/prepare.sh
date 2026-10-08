@@ -109,7 +109,10 @@ macos)
   $BSYS6/bootstrap.sh
 
   # Add macOS Rust targets
-  $BSYS6/utils/rustup_target.sh "x86_64-apple-darwin" "aarch64-apple-darwin"
+  # macOS は thin LTO で木の clang(今は LLVM 22)の bitcode が rlib に入るので、rustc も
+  # LLVM 22 を読める版にする。木の MINIMUM_RUST_VERSION(1.90 = LLVM 20)は使わない。
+  # 版を上げるときはこの行の 1.95.0 だけ触る。
+  RUST_VERSION="${RUST_VERSION:-1.95.0}" $BSYS6/utils/rustup_target.sh "x86_64-apple-darwin" "aarch64-apple-darwin"
 
   # Install macOS specific toolchain artifacts
   # ホストの arch で fetch する物を変える。x86_64 は従来どおり。
