@@ -17,11 +17,13 @@ if [ -z "${SOURCE:-}" ]; then
   platform_mozconfig="$SOURCEDIR/.github/workflows/mozconfigs/$TARGET-$ARCH.mozconfig"
   
   # Create mozconfig backup if needed
-  if [ ! -f "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH" ]; then
-    if [ -f "$platform_mozconfig" ]; then
-      echo "-> Using platform mozconfig from $platform_mozconfig" >&2
-      cp "$platform_mozconfig" "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH"
-    elif [ -f "$SOURCEDIR/mozconfig" ]; then
+  # 箱のワークスペースは残るので、古い backup を使い続けないよう、repo に platform
+  # mozconfig があれば毎回読み直す(版を上げた設定が効くように)。
+  if [ -f "$platform_mozconfig" ]; then
+    echo "-> Using platform mozconfig from $platform_mozconfig" >&2
+    cp "$platform_mozconfig" "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH"
+  elif [ ! -f "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH" ]; then
+    if [ -f "$SOURCEDIR/mozconfig" ]; then
       echo "-> Creating mozconfig backup" >&2
       cp "$SOURCEDIR/mozconfig" "$SOURCEDIR/mozconfig.backup.$TARGET-$ARCH"
     else
