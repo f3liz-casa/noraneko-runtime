@@ -3953,26 +3953,26 @@ CompatCheckResult CheckCompatibility(nsIFile* aProfileDir,
   
     nsCOMPtr<nsIFile> buildid2_profile;
     aProfileDir->Clone(getter_AddRefs(buildid2_profile));
-    if (!buildid2_profile) return false;
+    if (!buildid2_profile) return result;
     buildid2_profile->AppendNative("buildid2"_ns);
 
     nsCString buildid2_profile_string;
     if (NS_FAILED(_NRReadString(buildid2_profile, buildid2_profile_string))) {
-      return false;
+      return result;
     }
   
     nsCOMPtr<nsIFile> buildid2_appDir;
     aAppDir->Clone(getter_AddRefs(buildid2_appDir));
-    if (!buildid2_appDir) return false;
+    if (!buildid2_appDir) return result;
     buildid2_appDir->AppendNative("buildid2"_ns);
 
     nsCString buildid2_appDir_string;
     if (NS_FAILED(_NRReadString(buildid2_appDir, buildid2_appDir_string))) {
-      return false;
+      return result;
     }
 
     if (!buildid2_profile_string.Equals(buildid2_appDir_string)) {
-      return false;
+      return result;
     }
   }
   /*
