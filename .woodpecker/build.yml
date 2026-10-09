@@ -59,4 +59,19 @@ steps:
         TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 prepare build package || rc=$?
         /usr/local/bin/ci-record build_end target=$BUILD_TARGET arch=$BUILD_ARCH rc=$rc dur_s=$SECONDS kind=woodpecker
         sccache --show-stats > /srv/ci/telemetry/sccache-$(date +%s)-$BUILD_TARGET-$BUILD_ARCH.txt 2>&1 || true
+        # 産物を B2 の artifacts/<commit 10 桁>/ に置く(dl.f3liz.casa が配る)。通ったときだけ。
+        # B2 の鍵(sccache.env)が無い箱では SCCACHE_BUCKET が空なので skip する
+        if [ "$rc" = 0 ] && [ -n "${SCCACHE_BUCKET:-}" ]; then
+          S3="--aws-sigv4 aws:amz:$SCCACHE_REGION:s3 --user $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY"
+          sha=$(echo "$CI_COMMIT_SHA" | cut -c1-10)
+          for f in "$WORK/noraneko-runtime/.github/bsys6"/noraneko-*.tar.xz; do
+            [ -f "$f" ] || continue
+            curl -sf $S3 -T "$f" "$SCCACHE_ENDPOINT/$SCCACHE_BUCKET/artifacts/$sha/$(basename "$f")" && echo "artifact: artifacts/$sha/$(basename "$f")" || true
+            # 最新を指す pointer(dl.f3liz.casa/noraneko-runtime/latest/<target> が読む)。main のときだけ動かす
+            if [ "$CI_COMMIT_BRANCH" = main ]; then
+              printf 'artifacts/%s/%s\n' "$sha" "$(basename "$f")" > /tmp/latest.ptr
+              curl -sf $S3 -T /tmp/latest.ptr "$SCCACHE_ENDPOINT/$SCCACHE_BUCKET/artifacts/latest/$BUILD_TARGET-$BUILD_ARCH" && echo "latest: $BUILD_TARGET-$BUILD_ARCH" || true
+            fi
+          done
+        fi
         exit $rc
