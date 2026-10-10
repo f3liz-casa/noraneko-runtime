@@ -56,7 +56,8 @@ steps:
       - /usr/local/bin/ci-record build_start target=$BUILD_TARGET arch=$BUILD_ARCH commit=$CI_COMMIT_SHA kind=woodpecker
       - |
         rc=0
-        TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 prepare build package || rc=$?
+        # stdin は /dev/null に(bsys6 の中のコマンドが script の残りを食って、後続が消えるのを防ぐ)
+        TARGET=$BUILD_TARGET ARCH=$BUILD_ARCH ./bsys6 prepare build package </dev/null || rc=$?
         /usr/local/bin/ci-record build_end target=$BUILD_TARGET arch=$BUILD_ARCH rc=$rc dur_s=$SECONDS kind=woodpecker
         sccache --show-stats > /srv/ci/telemetry/sccache-$(date +%s)-$BUILD_TARGET-$BUILD_ARCH.txt 2>&1 || true
         exit $rc
