@@ -45,6 +45,8 @@ class BackupTest(MarionetteTestCase):
             # Prevent WallpaperFeed from fetching Remote Settings attachments
             # from the CDN, which is blocked in CI test environments.
             "browser.newtabpage.activity-stream.newtabWallpapers.enabled": False,
+            # Prevent PictureOfTheDayFeed from fetching from Merino.
+            "browser.newtabpage.activity-stream.widgets.system.pictureOfTheDay.enabled": False,
         })
 
         self.marionette.set_context("chrome")
@@ -136,7 +138,7 @@ class BackupTest(MarionetteTestCase):
         archivePath = self.marionette.execute_async_script(
             """
 
-          const { BackupService } = ChromeUtils.importESModule("resource:///modules/backup/BackupService.sys.mjs");
+          const { BackupService } = ChromeUtils.importESModule("moz-src:///browser/components/backup/BackupService.sys.mjs");
           let bs = BackupService.init();
           if (!bs) {
             throw new Error("Could not get initialized BackupService.");
@@ -194,7 +196,7 @@ class BackupTest(MarionetteTestCase):
             """
           const { OSKeyStore } = ChromeUtils.importESModule("resource://gre/modules/OSKeyStore.sys.mjs");
           const { ClientID } = ChromeUtils.importESModule("resource://gre/modules/ClientID.sys.mjs");
-          const { BackupService } = ChromeUtils.importESModule("resource:///modules/backup/BackupService.sys.mjs");
+          const { BackupService } = ChromeUtils.importESModule("moz-src:///browser/components/backup/BackupService.sys.mjs");
           let bs = BackupService.get();
           if (!bs) {
             throw new Error("Could not get initialized BackupService.");
@@ -244,7 +246,7 @@ class BackupTest(MarionetteTestCase):
         # Ensure that all postRecovery actions have completed.
         self.marionette.execute_async_script(
             """
-          const { BackupService } = ChromeUtils.importESModule("resource:///modules/backup/BackupService.sys.mjs");
+          const { BackupService } = ChromeUtils.importESModule("moz-src:///browser/components/backup/BackupService.sys.mjs");
           let bs = BackupService.get();
           if (!bs) {
             throw new Error("Could not get initialized BackupService.");
@@ -331,7 +333,7 @@ class BackupTest(MarionetteTestCase):
 
         [archivePath, lastBackupFileName] = self.marionette.execute_async_script(
             """
-          const { BackupService } = ChromeUtils.importESModule("resource:///modules/backup/BackupService.sys.mjs");
+          const { BackupService } = ChromeUtils.importESModule("moz-src:///browser/components/backup/BackupService.sys.mjs");
           let bs = BackupService.init();
           if (!bs) {
             throw new Error("Could not get initialized BackupService.");
@@ -368,7 +370,7 @@ class BackupTest(MarionetteTestCase):
             """
 
           ChromeUtils.defineESModuleGetters(this, {
-            BackupService: "resource:///modules/backup/BackupService.sys.mjs",
+            BackupService: "moz-src:///browser/components/backup/BackupService.sys.mjs",
             ASRouterTargeting: "resource:///modules/asrouter/ASRouterTargeting.sys.mjs",
           });
 
@@ -991,7 +993,10 @@ class BackupTest(MarionetteTestCase):
             """
           const isCustom = Services.prefs.getStringPref("browser.newtabpage.activity-stream.newtabWallpapers.wallpaper", "") == "custom";
           const wallpaperUUID = Services.prefs.getStringPref("browser.newtabpage.activity-stream.newtabWallpapers.customWallpaper.uuid", "");
-          const wallpaperPath = PathUtils.join(PathUtils.profileDir, "wallpaper", wallpaperUUID);
+          // Ask the feed where saved images live rather than spelling the
+          // folder out here, so this cannot drift from where they are written.
+          const feed = AboutNewTab.activityStream.store.feeds.get("feeds.wallpaperfeed");
+          const wallpaperPath = PathUtils.join(feed.libraryDirectory, wallpaperUUID);
           return [isCustom, wallpaperPath];
         """
         )

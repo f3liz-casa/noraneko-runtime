@@ -6,7 +6,7 @@ const { topChromeWindow } = window.browsingContext;
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
-  GenAI: "resource:///modules/GenAI.sys.mjs",
+  GenAI: "moz-src:///browser/components/genai/GenAI.sys.mjs",
   SpecialMessageActions:
     "resource://messaging-system/lib/SpecialMessageActions.sys.mjs",
 });
@@ -39,6 +39,11 @@ XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
   "sidebarRevampPref",
   "sidebar.revamp"
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "sidebarVisibilityPref",
+  "sidebar.visibility"
 );
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
@@ -182,9 +187,6 @@ async function renderProviders() {
     }
   }
 
-  // Clear warning message from different provider
-  clearWarningMessage();
-
   // Add extra controls after the providers
   select.appendChild(document.createElement("hr"));
   document.l10n.setAttributes(addOption(), "genai-provider-view-details");
@@ -315,6 +317,21 @@ function handleChange({ target }) {
 }
 addEventListener("change", handleChange);
 
+// Only allow summarizing pages that have a URL the provider can access
+function updateSummarizeButton() {
+  document.getElementById("summarize-button").disabled = !lazy.GenAI.getPageUrl(
+    topChromeWindow.gBrowser.selectedBrowser
+  );
+}
+
+const summarizeProgressListener = {
+  onLocationChange(webProgress) {
+    if (webProgress.isTopLevel) {
+      updateSummarizeButton();
+    }
+  },
+};
+
 // Expose a promise for loading and rendering the chat browser element
 var browserPromise = new Promise((resolve, reject) => {
   addEventListener("load", async () => {
@@ -340,6 +357,8 @@ var browserPromise = new Promise((resolve, reject) => {
           }
           await lazy.GenAI.summarizeCurrentPage(topChromeWindow, "footer");
         });
+      updateSummarizeButton();
+      topChromeWindow.gBrowser.addProgressListener(summarizeProgressListener);
     } catch (ex) {
       console.error("Failed to render on load", ex);
       reject(ex);
@@ -356,6 +375,7 @@ var browserPromise = new Promise((resolve, reject) => {
 
 addEventListener("unload", () => {
   node.menu?.remove();
+  topChromeWindow.gBrowser.removeProgressListener(summarizeProgressListener);
   Glean.genaiChatbot.sidebarToggle.record({
     opened: false,
     provider: lazy.GenAI.getProviderId(),
@@ -376,6 +396,21 @@ function showOnboarding(length) {
   document.getElementById(root.id)?.remove();
   document.body.prepend(root);
   history.replaceState("", "");
+  for (
+    let sibling = root.nextElementSibling;
+    sibling;
+    sibling = sibling.nextElementSibling
+  ) {
+    if (
+      sibling.id === "header" &&
+      lazy.sidebarVisibilityPref === "hide-launcher"
+    ) {
+      // The sidebar switcher needs to stay accessible during onboarding.
+      sibling.inert = false;
+      continue;
+    }
+    sibling.inert = true;
+  }
   const script = document.head.appendChild(document.createElement("script"));
   script.src = "chrome://browser/content/aboutwelcome/aboutwelcome.bundle.js";
 
@@ -395,6 +430,13 @@ function showOnboarding(length) {
     AWFinish() {
       if (lazy.providerPref == "") {
         closeSidebar();
+      }
+      for (
+        let sibling = root.nextElementSibling;
+        sibling;
+        sibling = sibling.nextElementSibling
+      ) {
+        sibling.inert = false;
       }
       root.remove();
 
@@ -548,73 +590,6 @@ function showOnboarding(length) {
 var onboardingPromise = new Promise(resolve => {
   showOnboarding.resolve = resolve;
 });
-
-/**
- * Clear message if present
- *
- */
-function clearWarningMessage() {
-  const messageContainer = document.getElementById("message-container");
-
-  if (messageContainer?.hasChildNodes()) {
-    messageContainer.replaceChildren();
-  }
-}
-
-/**
- * Display a warning message in the sidebar chatbot panel when context is too long
- *
- * @param {number} length context length for a request
- */
-async function showSummarizeWarning(length) {
-  // if previous request showed the message clear previous message
-  clearWarningMessage();
-
-  const messageContainer = document.getElementById("message-container");
-  const warningEl = lazy.GenAI.createWarningEl(document, null, true);
-
-  if (!messageContainer) {
-    return;
-  }
-
-  const provider = lazy.GenAI.getProviderId();
-  const type = "page_summarization";
-  document.l10n.setAttributes(warningEl, "genai-page-warning");
-  messageContainer.hidden = false;
-  messageContainer.appendChild(warningEl);
-
-  // Warning message bar impression event
-  Glean.genaiChatbot.lengthDisclaimer.record({
-    type,
-    length,
-    provider,
-  });
-
-  await customElements.whenDefined("moz-message-bar");
-  const dismissButton = warningEl.shadowRoot.querySelector(".close");
-  dismissButton?.addEventListener("click", () => {
-    Glean.genaiChatbot.lengthDisclaimerDismissed.record({
-      type,
-      provider,
-    });
-    messageContainer.hidden = true;
-  });
-}
-
-/**
- * Expose Sidebar entry for new prompt
- *
- * @param {object} opt for new prompt
- * @param {boolean} [opt.show]
- * @param {number} [opt.contextLength]
- */
-window.onNewPrompt = async function (opt = {}) {
-  if (opt.show) {
-    await showSummarizeWarning(opt.contextLength);
-  } else {
-    clearWarningMessage();
-  }
-};
 
 window.addEventListener("SidebarFocused", () =>
   document.querySelector("#browser-container browser").focus()

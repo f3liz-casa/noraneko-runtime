@@ -14,6 +14,13 @@ var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
+const lazy = {};
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  isTrailingDotPolicyDuplicate:
+    "resource://gre/modules/PoliciesHelpers.sys.mjs",
+});
+
 XPCOMUtils.defineLazyServiceGetter(
   this,
   "SiteCategory",
@@ -269,6 +276,15 @@ var gSitePermissionsManager = {
       return;
     }
 
+    if (data === "cleared") {
+      this._permissionGroups.clear();
+      this._permissionsToChange.clear();
+      this._permissionsToDelete.clear();
+      this._loadPermissions();
+      this.buildPermissionsList();
+      return;
+    }
+
     let permission = subject.QueryInterface(Ci.nsIPermission);
     let [type] = permission.type.split(SitePermissions.PERM_KEY_DELIMITER);
 
@@ -440,6 +456,8 @@ var gSitePermissionsManager = {
       type !== this._type ||
       !PERMISSION_STATES.includes(perm.capability) ||
       !SitePermissions.isSupportedPrincipal(perm.principal) ||
+      (perm.expireType === Services.perms.EXPIRE_POLICY &&
+        lazy.isTrailingDotPolicyDuplicate(perm)) ||
       // Skip private browsing session permissions
       (perm.principal.privateBrowsingId !==
         Services.scriptSecurityManager.DEFAULT_PRIVATE_BROWSING_ID &&

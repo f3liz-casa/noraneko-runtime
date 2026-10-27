@@ -5,7 +5,6 @@
 import os
 
 config = {
-    "stage_platform": "linux-rusttests",
     #### 32 bit build specific #####
     "env": {
         "MOZBUILD_STATE_PATH": os.path.join(os.getcwd(), ".mozbuild"),
@@ -19,8 +18,6 @@ config = {
         "XPCOM_DEBUG_BREAK": "stack-and-abort",
         "TINDERBOX_OUTPUT": "1",
     },
-    "app_name": "tools/rusttests",
-    "mozconfig_variant": "rusttests",
     "disable_package_metrics": True,
     #######################
 }

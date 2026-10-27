@@ -98,6 +98,19 @@ nsresult MatroskaDemuxer::SetVideoCodecInfo(nestegg* aContext, int aTrackId) {
         MKV_DEBUG("Failed to set extradata for avc");
         return rv;
       }
+      // A non-zero reorder count means decode order can differ from
+      // presentation order (B-frames), in which case peeked packet
+      // timestamps must not feed endTime calculation. Stays true when the
+      // SPS cannot be parsed.
+      uint32_t reorderPics =
+          H264::ComputeMaxNumReorderFrames(mInfo.mVideo.mExtraData.get());
+      if (reorderPics > 0) {
+        MKV_DEBUG(
+            "AVC stream reorders ({} max reorder pics); decode order "
+            "differs from presentation order",
+            reorderPics);
+        mVideoDecodeOrderIsPresentationOrder = false;
+      }
       break;
     }
     case NESTEGG_CODEC_HEVC: {
@@ -106,6 +119,19 @@ nsresult MatroskaDemuxer::SetVideoCodecInfo(nestegg* aContext, int aTrackId) {
       if (NS_FAILED(rv)) {
         MKV_DEBUG("Failed to set extradata for hevc");
         return rv;
+      }
+      // A non-zero reorder count means decode order can differ from
+      // presentation order (B-frames), in which case peeked packet
+      // timestamps must not feed endTime calculation. Stays true when the
+      // SPS cannot be parsed.
+      uint32_t reorderPics =
+          H265::ComputeMaxReorderPics(mInfo.mVideo.mExtraData.get());
+      if (reorderPics > 0) {
+        MKV_DEBUG(
+            "HEVC stream reorders ({} max reorder pics); decode order "
+            "differs from presentation order",
+            reorderPics);
+        mVideoDecodeOrderIsPresentationOrder = false;
       }
       break;
     }
@@ -162,15 +188,12 @@ nsresult MatroskaDemuxer::SetContainerAudioCodecInfo(
         aacCodecSpecificData.mEncoderDelayFrames = 0;
       }
 
-      uint64_t frameCount;
-      int r = nestegg_read_total_frames_count(aContext, &frameCount);
-      if (r == -1) {
-        return NS_ERROR_FAILURE;
-      }
-      aacCodecSpecificData.mMediaFrameCount = frameCount;
-      MKV_DEBUG(
-          "AAC stream in MKV container, media frames: {}, delay frames : {}",
-          frameCount, aacCodecSpecificData.mEncoderDelayFrames);
+      // Matroska has no table of all frames, so counting them requires
+      // reading every cluster to the end of the file, which would block
+      // ReadMetadata until the whole resource has been downloaded. Leave
+      // mMediaFrameCount unset.
+      MKV_DEBUG("AAC stream in MKV container, delay frames : {}",
+                aacCodecSpecificData.mEncoderDelayFrames);
       mInfo.mAudio.mCodecSpecificConfig =
           AudioCodecSpecificVariant{std::move(aacCodecSpecificData)};
       break;
@@ -191,7 +214,12 @@ bool MatroskaDemuxer::CheckKeyFrameByExamineByteStream(
              frameType == H264::FrameType::I_FRAME_OTHER;
     }
     case NESTEGG_CODEC_HEVC: {
+#ifdef MOZ_APPLEMEDIA
+      // VideoToolbox can only start from IDR, see MP4Demuxer.
       auto isKeyFrame = H265::IsKeyFrame(aSample);
+#else
+      auto isKeyFrame = H265::IsRandomAccessPoint(aSample);
+#endif
       return isKeyFrame.isOk() ? isKeyFrame.unwrap() : false;
     }
     case NESTEGG_CODEC_VP8:

@@ -1646,9 +1646,10 @@ describe("<Base> Nova startup layout stability", () => {
   });
 });
 
-function renderNova(overrides = {}) {
+function renderNova(overrides = {}, stateOverrides = {}) {
   const store = createStore(combineReducers(reducers), {
     ...INITIAL_STATE,
+    ...stateOverrides,
     App: { ...INITIAL_STATE.App, initialized: true },
     Prefs: {
       ...INITIAL_STATE.Prefs,
@@ -1670,8 +1671,6 @@ function renderNova(overrides = {}) {
         "widgets.focusTimer.enabled": false,
         "widgets.system.clocks.enabled": false,
         "widgets.clocks.enabled": false,
-        "widgets.system.sportsWidget.enabled": false,
-        "widgets.sportsWidget.enabled": false,
         ...overrides,
       },
     },
@@ -1757,8 +1756,6 @@ describe("<Base> Nova hides Logo when no sections are enabled", () => {
       "widgets.clocks.enabled": true,
       "widgets.system.focusTimer.enabled": true,
       "widgets.focusTimer.enabled": true,
-      "widgets.system.sportsWidget.enabled": true,
-      "widgets.sportsWidget.enabled": true,
     });
     expect(
       container.querySelector(".logo-and-wordmark-wrapper")
@@ -1776,8 +1773,6 @@ describe("<Base> Nova hides Logo when no sections are enabled", () => {
       "widgets.clocks.enabled": true,
       "widgets.system.focusTimer.enabled": true,
       "widgets.focusTimer.enabled": true,
-      "widgets.system.sportsWidget.enabled": true,
-      "widgets.sportsWidget.enabled": true,
     });
     expect(
       container.querySelector(".container.nova-enabled.logo-in-content")
@@ -1862,6 +1857,71 @@ describe("<Base> Nova logo placement with many topSitesRows", () => {
     expect(
       container.querySelector(".content .logo-and-wordmark-wrapper")
     ).toBeInTheDocument();
+  });
+});
+
+describe("<Base> Nova logo placement with the search bar in variant B", () => {
+  const searchComponent = attributes => ({
+    ExternalComponents: {
+      ...INITIAL_STATE.ExternalComponents,
+      components: [{ type: "SEARCH", attributes }],
+    },
+  });
+
+  // The component has no module to load here, which the wrapper reports.
+  let consoleErrorSpy;
+  beforeEach(() => {
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("anchors the Logo to the sidebar when the search bar is in variant B", () => {
+    const { container, unmount } = renderNova(
+      { showSearch: true },
+      searchComponent({ "variant-b": "" })
+    );
+    expect(
+      container.querySelector(".container.nova-enabled.logo-in-content")
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector(".container.nova-enabled.search-has-own-row")
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(".nova-outer-wrapper.search-has-own-row")
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(
+        ".sidebar-inline-start .logo-and-wordmark-wrapper"
+      )
+    ).toBeInTheDocument();
+    unmount();
+  });
+
+  it("centers the Logo when the search bar is in another variant", () => {
+    const { container, unmount } = renderNova(
+      { showSearch: true },
+      searchComponent({ "variant-a": "" })
+    );
+    expect(
+      container.querySelector(".container.nova-enabled.logo-in-content")
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(".container.nova-enabled.search-has-own-row")
+    ).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it("centers the Logo when search is hidden, whatever its variant", () => {
+    const { container, unmount } = renderNova(
+      { showSearch: false, "feeds.topsites": true },
+      searchComponent({ "variant-b": "" })
+    );
+    expect(
+      container.querySelector(".container.nova-enabled.logo-in-content")
+    ).toBeInTheDocument();
+    unmount();
   });
 });
 
@@ -2037,6 +2097,24 @@ describe("<BaseContent> wallpaper transitions (Bug 2057217)", () => {
       "--newtab-wallpaper",
       expect.anything()
     );
+  });
+
+  // Bug 2072941: a replacement upload clears the applied URL while the file is
+  // written, so this is the ordinary case, not an edge one.
+  it("keeps a painted wallpaper up when the applied URL is cleared", async () => {
+    const inst = makeInstance({ wallpaper: "custom", uploadedWallpaper: null });
+    document.body.style.setProperty(
+      "--newtab-wallpaper",
+      "url(previous-wallpaper.jpg)"
+    );
+    setPropertySpy.mockClear();
+
+    await inst.updateWallpaper();
+
+    expect(document.body.style.getPropertyValue("--newtab-wallpaper")).toBe(
+      "url(previous-wallpaper.jpg)"
+    );
+    expect(setPropertySpy).not.toHaveBeenCalled();
   });
 
   it("crops a saved wallpaper the way its position pref says", async () => {

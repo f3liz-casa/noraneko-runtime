@@ -84,17 +84,24 @@ interface nsIWebBrowserChrome : nsISupports
     // Whether this is a Document Picture-in-Picture window
     const unsigned long CHROME_DOCUMENT_PIP           = 1 << 22;
 
-    // Prevents the new window from auto-entering native fullscreen on its
-    // initial show. On macOS, a window opened while a fullscreen space is
-    // active is otherwise adopted into its own fullscreen space. Only acted
-    // on by the macOS widget; ignored elsewhere.
+    // Prevents the new window from coming up fullscreen on its initial show.
+    // Two things do that: on macOS a window opened while a fullscreen space is
+    // active is otherwise adopted into its own fullscreen space, and on every
+    // platform AppWindow otherwise restores a persisted sizemode="fullscreen"
+    // from the XUL store. This flag suppresses both.
     const unsigned long CHROME_SUPPRESS_INITIAL_FULLSCREEN = 1 << 23;
 
     // Prevents new window animations on MacOS and Windows. Currently
     // ignored for Linux.
     const unsigned long CHROME_SUPPRESS_ANIMATION     = 1 << 24;
 
-    // Two bits are free here.
+    // Whether this is the media Picture-in-Picture player window. Set by
+    // PictureInPicture.sys.mjs via the `mediapip` feature, which only chrome
+    // can pass; the widget code uses it to identify the player rather than
+    // matching on a combination of ordinary window features.
+    const unsigned long CHROME_MEDIA_PIP              = 1 << 25;
+
+    // One bit is free here.
 
     const unsigned long CHROME_CENTER_SCREEN          = 1 << 27;
 

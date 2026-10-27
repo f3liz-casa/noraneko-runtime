@@ -17,7 +17,7 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
-  PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.sys.mjs",
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   TopSites: "resource:///modules/topsites/TopSites.sys.mjs",
   TOP_SITES_DEFAULT_ROWS: "resource:///modules/topsites/constants.mjs",
@@ -167,7 +167,6 @@ export class UrlbarProviderTopSites extends UrlbarProvider {
         // don't have titles but `hostname` instead.
         title: link.label || link.title || link.hostname || "",
         favicon: link.smallFavicon || link.favicon || undefined,
-        sendAttributionRequest: !!link.sendAttributionRequest,
         lastVisitDate: link.lastVisitDate,
       };
       if (site.isSponsored) {
@@ -248,7 +247,6 @@ export class UrlbarProviderTopSites extends UrlbarProvider {
             payload.sponsoredTileId = site.sponsoredTileId;
             payload.sponsoredClickUrl = site.sponsoredClickUrl;
           }
-          payload.sendAttributionRequest = site.sendAttributionRequest;
 
           // The "last visited" result explanation needs a fresh visit date.
           // Top Sites data is cached and isn't refreshed on every visit, and a
@@ -292,6 +290,13 @@ export class UrlbarProviderTopSites extends UrlbarProvider {
               resultSource = lazy.UrlbarShared.RESULT_SOURCE.BOOKMARKS;
               payload.bookmarkDateMs = bookmark.dateAdded.getTime();
             }
+          }
+
+          if (
+            resultSource == lazy.UrlbarShared.RESULT_SOURCE.HISTORY ||
+            resultSource == lazy.UrlbarShared.RESULT_SOURCE.BOOKMARKS
+          ) {
+            payload.isBlockable = true;
           }
 
           let result = new lazy.UrlbarResult({
@@ -366,26 +371,51 @@ export class UrlbarProviderTopSites extends UrlbarProvider {
 
   /**
    * @param {UrlbarQueryContext} queryContext
-   * @param {UrlbarParentController} _controller
+   * @param {UrlbarParentController} controller
    * @param {object} details
    * @param {UrlbarResult} details.result
+   * @param {string} details.selType
    */
-  onEngagement(queryContext, _controller, { result }) {
-    if (result.payload.sendAttributionRequest) {
-      lazy.PartnerLinkAttribution.makeRequest({
-        targetURL: result.payload.url,
-        source: queryContext.sapName,
-        campaignID: Services.prefs.getStringPref(
-          "browser.partnerlink.campaign.topsites"
-        ),
-      });
+  async onEngagement(queryContext, controller, { result, selType }) {
+    if (!result.payload.isBlockable) {
+      return;
+    }
 
-      if (!queryContext.isPrivate) {
-        // The position is 1-based for telemetry
-        const position = result.rowIndex + 1;
-        Glean.contextualServicesTopsites.click[`urlbar_${position}`].add(1);
+    switch (selType) {
+      case "dismiss": {
+        lazy.NewTabUtils.activityStreamLinks.blockURL({
+          url: result.payload.url,
+        });
+        controller.removeResult(result);
+        break;
+      }
+      case "remove_history": {
+        await lazy.PlacesUtils.history.remove(result.payload.url);
+        controller.removeResult(result);
+        break;
       }
     }
+  }
+
+  /**
+   * @param {UrlbarResult} result
+   * @returns {?UrlbarResultCommand[]}
+   */
+  getResultCommands(result) {
+    if (!result.payload.isBlockable) {
+      return null;
+    }
+
+    return [
+      {
+        name: "dismiss",
+        l10n: { id: "urlbar-result-menu-remove-top-site" },
+      },
+      {
+        name: "remove_history",
+        l10n: { id: "urlbar-result-menu-remove-from-history2" },
+      },
+    ];
   }
 
   async #fetchLastVisit(url) {

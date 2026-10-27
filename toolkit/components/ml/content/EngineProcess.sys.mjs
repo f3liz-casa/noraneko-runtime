@@ -9,7 +9,16 @@
  * @typedef {import("../content/Utils.sys.mjs").ProgressAndStatusCallbackParams} ProgressAndStatusCallbackParams
  */
 
-import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
+const lazy = {};
+
+ChromeUtils.defineESModuleGetters(
+  lazy,
+  {
+    TextGenerationEngine:
+      "moz-src:///toolkit/components/ml/textgeneration/TextGenerationEngine.sys.mjs",
+  },
+  { global: "contextual" }
+);
 
 /**
  * @constant
@@ -18,13 +27,6 @@ import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
  * @description The default engine identifier used when no specific engine ID is provided.
  */
 export const DEFAULT_ENGINE_ID = "default-engine";
-
-/**
- * Set once the native ONNX runtime availability has been reported to telemetry,
- * keeping the one-off probe to a single run per profile.
- */
-const ONNX_AVAILABILITY_REPORTED_PREF =
-  "browser.ml.onnxNativeAvailabilityReported";
 
 /**
  * Supported backends.
@@ -252,6 +254,11 @@ export const FEATURES = {
   "search-answer-generation": {
     engineId: "smart-openai",
   },
+  // Exa /answers service.
+  // see browser/components/aiwindow/models/search/SearchWorkflow.sys.mjs
+  "search-answers": {
+    engineId: "smart-openai",
+  },
   aitab: {
     engineId: "aitab-engine",
   },
@@ -263,23 +270,6 @@ export const FEATURES = {
       "resource://gre/modules/SpeechRecognitionModelDisplayInfo.sys.mjs",
   },
 };
-
-/**
- * Whether telemetry this profile records would actually be submitted.
- * `Cu.IsInAutomation` short-circuits the condition to enable testing.
- *
- * @returns {boolean}
- */
-function isTelemetryEnabled() {
-  return (
-    Cu.isInAutomation ||
-    (AppConstants.MOZ_TELEMETRY_REPORTING &&
-      Services.prefs.getBoolPref(
-        "datareporting.healthreport.uploadEnabled",
-        false
-      ))
-  );
-}
 
 /**
  * Custom error class for validation errors.
@@ -634,14 +624,14 @@ export class PipelineOptions {
    *
    * @type {?number}
    */
-  numBatch = 1024;
+  numBatch = 2048;
 
   /**
    * Token batch size
    *
    * @type {?number}
    */
-  numUbatch = 1024;
+  numUbatch = 512;
 
   /**
    * Whether to use flash attention
@@ -1209,19 +1199,6 @@ export class EngineProcess {
    */
   static #nativeOnnxRuntimeAvailabilityPromise = null;
 
-  static #nativeOnnxRuntimeAvailabilityReportSettled = Promise.withResolvers();
-
-  /**
-   * Resolves once `maybeReportNativeOnnxRuntimeAvailability` has settled at
-   * least once, whether or not it recorded anything. Lets tests order
-   * themselves after the `browser-idle-startup` invocation of the report.
-   *
-   * @returns {Promise<void>}
-   */
-  static get nativeOnnxRuntimeAvailabilityReportSettled() {
-    return EngineProcess.#nativeOnnxRuntimeAvailabilityReportSettled.promise;
-  }
-
   /**
    * Get a reference to all running "inference" processes.
    *
@@ -1260,50 +1237,6 @@ export class EngineProcess {
     }
 
     return EngineProcess.#getEngineActor({ actorName: "MLEngine" });
-  }
-
-  /**
-   * Probes and reports the native ONNX runtime availability to telemetry, at
-   * most once per profile. Registered as a `browser-idle-startup` entry.
-   *
-   * First run of this probe spawns an inference process and calls `requestIsNativeOnnxRuntimeAvailable`
-   * to determine availability, and sets browser.ml.onnxNativeAvailabilityReported to true.
-   *
-   * Subsequent runs check browser.ml.onnxNativeAvailabilityReported to make sure the probe is only ever run once.
-   *
-   * @returns {Promise<void>}
-   */
-  static async maybeReportNativeOnnxRuntimeAvailability() {
-    try {
-      if (
-        !isTelemetryEnabled() ||
-        !Services.prefs.getBoolPref("browser.ml.enable") ||
-        Services.prefs.getBoolPref(ONNX_AVAILABILITY_REPORTED_PREF)
-      ) {
-        return;
-      }
-
-      const resultPromise = EngineProcess.requestIsNativeOnnxRuntimeAvailable();
-      const availabilityPromise =
-        EngineProcess.#nativeOnnxRuntimeAvailabilityPromise;
-      const available = await resultPromise;
-
-      // A definitive result stays cached, while a failed probe clears the
-      // cached promise to allow retries, which tells a real `unavailable`
-      // apart from a `probe_error`.
-      let label = "probe_error";
-      if (
-        EngineProcess.#nativeOnnxRuntimeAvailabilityPromise ===
-        availabilityPromise
-      ) {
-        label = available ? "available" : "unavailable";
-      }
-
-      Services.prefs.setBoolPref(ONNX_AVAILABILITY_REPORTED_PREF, true);
-      Glean.firefoxAiRuntime.onnxNativeAvailability[label].add(1);
-    } finally {
-      EngineProcess.#nativeOnnxRuntimeAvailabilityReportSettled.resolve();
-    }
   }
 
   /**
@@ -1469,6 +1402,13 @@ export async function createEngine(
 ) {
   try {
     const pipelineOptions = new PipelineOptions(options);
+    if (lazy.TextGenerationEngine.shouldRoute(pipelineOptions)) {
+      return lazy.TextGenerationEngine.create(
+        pipelineOptions,
+        notificationsCallback,
+        abortSignal
+      );
+    }
     const engineParent = await EngineProcess.getMLEngineParent();
     return engineParent.getEngine({
       pipelineOptions,

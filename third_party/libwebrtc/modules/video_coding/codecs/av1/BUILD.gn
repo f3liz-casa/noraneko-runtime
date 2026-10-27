@@ -82,7 +82,6 @@ rtc_library("libaom_av1_encoder") {
     "../../../../rtc_base:logging",
     "../../../../rtc_base/experiments:encoder_info_settings",
     "../../../../rtc_base/experiments:encoder_speed_experiment",
-    "../../../../rtc_base/experiments:psnr_experiment",
     "../../../../system_wrappers",
     "../../../rtp_rtcp:rtp_rtcp_format",
     "../../svc:scalability_structures",
@@ -104,10 +103,13 @@ rtc_library("libaom_av1_encoder_v2") {
     "libaom_av1_encoder_v2.h",
   ]
   deps = [
+    "../..:video_coding_utility",
+    "../../../../api:media_stream_interface",
     "../../../../api:scoped_refptr",
     "../../../../api/units:data_rate",
     "../../../../api/units:data_size",
     "../../../../api/units:time_delta",
+    "../../../../api/units:timestamp",
     "../../../../api/video:resolution",
     "../../../../api/video:video_codec_constants",
     "../../../../api/video:video_frame",
@@ -131,10 +133,9 @@ rtc_library("libaom_speed_config_factory") {
     "libaom_speed_config_factory.h",
   ]
   deps = [
-    "../../../../api:field_trials_view",
+    "../..:frame_sampler",
     "../../../../api/units:time_delta",
     "../../../../api/video_codecs:video_codecs_api",
-    "../../../../rtc_base/experiments:psnr_experiment",
   ]
 }
 
@@ -239,13 +240,10 @@ if (rtc_include_tests) {
     sources = [ "libaom_speed_config_factory_unittest.cc" ]
     deps = [
       ":libaom_speed_config_factory",
-      "../../../../api:field_trials",
-      "../../../../api/environment",
+      "../..:frame_sampler",
       "../../../../api/units:time_delta",
       "../../../../api/video_codecs:video_codecs_api",
       "../../../../rtc_base:checks",
-      "../../../../test:create_test_environment",
-      "../../../../test:create_test_field_trials",
       "../../../../test:test_support",
     ]
   }

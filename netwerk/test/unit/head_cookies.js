@@ -141,7 +141,10 @@ function do_load_profile(generator) {
 // against 'expected'
 function do_set_single_http_cookie(uri, channel, expected) {
   Services.cookies.setCookieStringFromHttp(uri, "foo=bar", channel);
-  Assert.equal(Services.cookies.countCookiesFromHost(uri.host), expected);
+  Assert.equal(
+    Services.cookies.getCookiesFromHost(uri.host, {}).length,
+    expected
+  );
 }
 
 // Set two cookies; via document.channel and via http request.
@@ -175,11 +178,17 @@ async function do_set_cookies(uri, channel, session, expected) {
   );
   await contentPage.close();
 
-  Assert.equal(Services.cookies.countCookiesFromHost(uri.host), expected[0]);
+  Assert.equal(
+    Services.cookies.getCookiesFromHost(uri.host, {}).length,
+    expected[0]
+  );
 
   // via http request
   Services.cookies.setCookieStringFromHttp(uri, "hot=dog" + suffix, channel);
-  Assert.equal(Services.cookies.countCookiesFromHost(uri.host), expected[1]);
+  Assert.equal(
+    Services.cookies.getCookiesFromHost(uri.host, {}).length,
+    expected[1]
+  );
 }
 
 function do_count_cookies() {

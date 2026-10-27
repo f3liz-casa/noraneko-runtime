@@ -51,10 +51,9 @@ head = "head_addressComponent.js"
 
 ["test_createRecords.js"]
 
+["test_creditCardCVVPrefs.js"]
+
 ["test_creditCardRecords.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1729554
-]
 
 ["test_extractLabelStrings.js"]
 
@@ -69,9 +68,6 @@ skip-if = [
 ["test_getInfo.js"]
 
 ["test_getRecords.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1729554
-]
 
 ["test_inspectFields.js"]
 
@@ -102,31 +98,34 @@ skip-if = [
 ["test_profileAutocompleteResult.js"]
 
 ["test_reconcile.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1729554
-]
 
 ["test_rustStoreShutdown.js"]
 
 ["test_rust_autofill_address_adapter.js"]
 
+["test_rust_autofill_address_bridged_engine.js"]
+
 ["test_rust_autofill_address_migration.js"]
 
 ["test_rust_autofill_address_parity.js"]
 
+["test_rust_autofill_address_sync_engine.js"]
+head = "head.js ../../../../../services/sync/tests/unit/head_appinfo.js ../../../../../services/common/tests/unit/head_helpers.js ../../../../../services/sync/tests/unit/head_helpers.js ../../../../../services/sync/tests/unit/head_http_server.js"
+# Registering the addresses engine at all is conditional, and the pref is read
+# when Service builds its engine table -- too early for the test body to set it.
+prefs = ["services.sync.engine.addresses.available=true"]
+
+["test_rust_autofill_credit_card_adapter.js"]
+
+["test_rust_autofill_credit_card_migration.js"]
+
 ["test_savedFieldNames.js"]
 
 ["test_storage_remove.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1729554
-]
 
 ["test_storage_syncfields.js"]
 
 ["test_storage_tombstones.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1729554
-]
 
 ["test_sync.js"]
 head = "head.js ../../../../../services/sync/tests/unit/head_appinfo.js ../../../../../services/common/tests/unit/head_helpers.js ../../../../../services/sync/tests/unit/head_helpers.js ../../../../../services/sync/tests/unit/head_http_server.js"
@@ -136,13 +135,7 @@ head = "head.js ../../../../../services/sync/tests/unit/head_appinfo.js ../../..
 
 ["test_sync_deprecate_credit_card_v4.js"]
 head = "head.js ../../../../../services/sync/tests/unit/head_appinfo.js ../../../../../services/common/tests/unit/head_helpers.js ../../../../../services/sync/tests/unit/head_helpers.js ../../../../../services/sync/tests/unit/head_http_server.js"
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1729554
-]
 
 ["test_toOneLineAddress.js"]
 
 ["test_transformFields.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1729554
-]

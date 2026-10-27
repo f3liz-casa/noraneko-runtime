@@ -32,6 +32,7 @@
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/FileBlobImpl.h"
 #include "mozilla/dom/FileReader.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/StaticRange.h"
 #include "mozilla/dom/WorkerRef.h"
@@ -75,7 +76,6 @@
 #include "nsNameSpaceManager.h"
 #include "nsNetUtil.h"
 #include "nsPrintfCString.h"
-#include "nsRange.h"
 #include "nsReadableUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsStreamUtils.h"
@@ -206,7 +206,7 @@ nsresult HTMLEditor::LoadHTML(const nsAString& aInputString) {
   }
 
   // Get the first range in the selection, for context:
-  RefPtr<const nsRange> range = SelectionRef().GetRangeAt(0);
+  RefPtr<const dom::Range> range = SelectionRef().GetRangeAt(0);
   if (NS_WARN_IF(!range)) {
     return NS_ERROR_FAILURE;
   }
@@ -216,7 +216,7 @@ nsresult HTMLEditor::LoadHTML(const nsAString& aInputString) {
   RefPtr<DocumentFragment> documentFragment =
       range->CreateContextualFragment(aInputString, error);
   if (error.Failed()) {
-    NS_WARNING("nsRange::CreateContextualFragment() failed");
+    NS_WARNING("Range::CreateContextualFragment() failed");
     return error.StealNSResult();
   }
 
@@ -2749,10 +2749,18 @@ nsresult HTMLEditor::PasteInternal(nsIClipboard::ClipboardType aClipboardType,
 }
 
 nsresult HTMLEditor::HandlePasteTransferable(
-    AutoEditActionDataSetter& aEditActionData, nsITransferable& aTransferable) {
-  // InitializeDataTransfer may fetch input stream in aTransferable, so it
-  // may be invalid after calling this.
-  aEditActionData.InitializeDataTransfer(&aTransferable);
+    AutoEditActionDataSetter& aEditActionData, nsITransferable& aTransferable,
+    DataTransfer* aDataTransfer) {
+  if (aDataTransfer) {
+    // aDataTransfer was already created from aTransferable by the caller.
+    // Reuse it, because creating another one would try to read the input
+    // streams in aTransferable a second time.
+    aEditActionData.InitializeDataTransfer(aDataTransfer);
+  } else {
+    // InitializeDataTransfer may fetch input stream in aTransferable, so it
+    // may be invalid after calling this.
+    aEditActionData.InitializeDataTransfer(&aTransferable);
+  }
 
   nsresult rv = aEditActionData.MaybeDispatchBeforeInputEvent();
   if (NS_FAILED(rv)) {
@@ -4392,11 +4400,11 @@ void HTMLEditor::HTMLWithContextInserter::
   MOZ_ASSERT(aStartPoint.IsSetAndValid());
   MOZ_ASSERT(aEndPoint.IsSetAndValid());
 
-  RefPtr<nsRange> range =
-      nsRange::Create(aStartPoint.ToRawRangeBoundary(),
-                      aEndPoint.ToRawRangeBoundary(), IgnoreErrors());
+  RefPtr<dom::Range> range =
+      dom::Range::Create(aStartPoint.ToRawRangeBoundary(),
+                         aEndPoint.ToRawRangeBoundary(), IgnoreErrors());
   if (!range) {
-    NS_WARNING("nsRange::Create() failed");
+    NS_WARNING("Range::Create() failed");
     return;
   }
   DOMSubtreeIterator iter;

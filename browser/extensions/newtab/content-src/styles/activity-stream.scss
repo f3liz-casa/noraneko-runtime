@@ -188,11 +188,6 @@ panel-list:not(:defined) {
 @import '../components/Widgets/WidgetCelebration';
 @import '../components/Widgets/Lists/Lists';
 @import '../components/Widgets/FocusTimer/FocusTimer';
-@import '../components/Widgets/SportsWidget/SportsWidget';
-@import '../components/Widgets/SportsWidget/SportsMatchRow';
-@import '../components/Widgets/SportsWidget/SportsResultCelebration';
-@import '../components/Widgets/SportsWidget/WatchLiveModal';
-@import '../components/Widgets/SportsWidget/LivePagination';
 @import '../components/Widgets/Weather/Weather';
 @import '../components/Widgets/Clocks/Clocks';
 @import '../components/Widgets/Privacy/Privacy';
@@ -246,5 +241,10 @@ panel-list:not(:defined) {
 @import './nova/TopSites';
 @import './nova/CardSections';
 @import './nova/DSCard';
+
+// @experiment(remove) { bug 2069496 }
+// After nova/CardSections: reuses its nova-section-card-medium mixin, and the
+// cell overrides have to win over the story card rules.
+@import '../components/Widgets/WidgetsRowAd';
 
 // stylelint-enable no-invalid-position-at-import-rule

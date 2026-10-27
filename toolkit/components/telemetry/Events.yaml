@@ -2,32 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-partner_link:
-  click:
-    objects: ["newtab", "urlbar"]
-    release_channel_collection: opt-out
-    products:
-      - "firefox"
-    record_in_processes: ["main"]
-    description: >
-      This is recorded when clicking a partner link. The value is the partner.
-    bug_numbers: [1637217, 1644442, 1643426]
-    notification_emails:
-      - "dao@mozilla.com"
-    expiry_version: never
-  attribution:
-    objects: ["success", "failure", "abort"]
-    release_channel_collection: opt-out
-    products:
-      - "firefox"
-    record_in_processes: ["main"]
-    description: >
-      This is recorded when sending an attribution request for a partner link. The value is the partner.
-    bug_numbers: [1637217, 1644442, 1643426]
-    notification_emails:
-      - "dao@mozilla.com"
-    expiry_version: never
-
 readermode:
   view:
     objects: ["on", "off"]
@@ -1218,47 +1192,6 @@ security.ui.protections:
     extra_keys:
       category: The category of protections the user is in, standard, strict or custom.
 
-security.ui.protectionspopup:
-  click:
-    objects: [
-      "etp_toggle_on",
-      "etp_toggle_off",
-      "social",
-      "cookies",
-      "trackers",
-      "fingerprinters",
-      "cryptominers",
-      "subview_settings",
-      "settings",
-      "full_report",
-      "milestone_message",
-      "protectionspopup_cfr",
-    ]
-    extra_keys:
-      message: >
-        For protectionspopup_cfr, the message ID.
-    bug_numbers:
-      - 1560327
-      - 1602015
-      - 1607488
-      - 1643428
-      - 1678201
-      - 1739287
-      - 1787249
-      - 1798669
-    description: >
-      User interaction by click events in the protections panel.
-    expiry_version: never
-    notification_emails:
-      - emz@mozilla.com
-      - tihuang@mozilla.com
-      - seceng-telemetry@mozilla.com
-    release_channel_collection: opt-out
-    record_in_processes:
-      - main
-    products:
-      - firefox
-
 intl.ui.browserLanguage:
   action:
     description: >
@@ -1413,37 +1346,6 @@ ysod:
       last_line_len: The length of the last line that led to the error.
       hidden: The document is hidden.
       destroyed: The container of this document is destroyed.
-
-dom.quota.try:
-  error:
-    objects: [
-      "step",
-    ]
-    bug_numbers:
-      - 1665088
-    description: >
-      An event recorded on an error of the quota manager or its clients. Since errors are usually
-      propagated up the call chain, all such propagation steps are recorded for an error. This
-      is only active during specific contexts, in particular during storage initialization.
-      No dynamic data is included in the event beyond the error code which will be added through
-      Bug 1670555.
-    notification_emails:
-      - jan.varga@gmail.com
-      - storage-telemetry@mozilla.com
-    products:
-      - firefox
-    expiry_version: "never"
-    record_in_processes: ["main", "content"]
-    extra_keys:
-      context: The context in which the error occurred, e.g. during a storage initialization. Telemetry events are only emitted for selected contexts.
-      frame_id: Optionally, the frame within stack_id.
-      process_id: Optionally, the process in which the error occured.
-      result: Optionally, the name of the error that occurred.
-      seq: Sequence number.
-      severity: One of WARNING or ERROR.
-      source_file: The name of the source code file where the error occurred.
-      source_line: The line within source_file where the error occurred.
-      stack_id: Optionally, the stack within process_id.
 
 avif:
   dav1d_get_picture:

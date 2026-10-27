@@ -52,6 +52,33 @@ option(
 )
 set_config("MOZ_STUB_INSTALLER", True, when="MOZ_STUB_INSTALLER")
 
+
+@depends(when=target_is_windows)
+@imports(_from="mozbuild.nsis", _import="NSIS_TOOLKIT_FILES")
+def nsis_toolkit_files():
+    return list(NSIS_TOOLKIT_FILES)
+
+
+set_config("NSIS_TOOLKIT_FILES", nsis_toolkit_files)
+
+
+@depends(when=target_is_windows)
+@imports(_from="mozbuild.nsis", _import="NSIS_CUSTOM_PLUGINS")
+def nsis_custom_plugins():
+    return list(NSIS_CUSTOM_PLUGINS)
+
+
+set_config("NSIS_CUSTOM_PLUGINS", nsis_custom_plugins)
+
+
+@depends(when=target_is_windows)
+@imports(_from="mozbuild.nsis", _import="NSIS_CUSTOM_UI")
+def nsis_custom_ui():
+    return list(NSIS_CUSTOM_UI)
+
+
+set_config("NSIS_CUSTOM_UI", nsis_custom_ui)
+
 project_flag(
     env="MOZ_PROFILE_MIGRATOR",
     help="Enable profile migrator",
@@ -75,6 +102,14 @@ option(env="MOZ_SOURCE_REPO", nargs=1, help="Project source repository")
 set_config("MOZ_SOURCE_REPO", depends_if("MOZ_SOURCE_REPO")(lambda src: src[0]))
 option(env="MOZ_SOURCE_CHANGESET", nargs=1, help="Source changeset")
 set_config("MOZ_SOURCE_CHANGESET", depends_if("MOZ_SOURCE_CHANGESET")(lambda v: v[0]))
+option(env="MOZ_SOURCE_GIT_REPO", nargs=1, help="Git mirror of the source repository")
+set_config("MOZ_SOURCE_GIT_REPO", depends_if("MOZ_SOURCE_GIT_REPO")(lambda v: v[0]))
+option(
+    env="MOZ_SOURCE_GIT_CHANGESET", nargs=1, help="Source changeset in the git mirror"
+)
+set_config(
+    "MOZ_SOURCE_GIT_CHANGESET", depends_if("MOZ_SOURCE_GIT_CHANGESET")(lambda v: v[0])
+)
 
 option(
     env="MOZ_INCLUDE_SOURCE_INFO",
@@ -98,6 +133,90 @@ option(
 )
 set_config("BUILT_BY_MOZILLA", depends("--built-by-mozilla")(lambda v: bool(v) or None))
 set_define("BUILT_BY_MOZILLA", depends("--built-by-mozilla")(lambda v: bool(v) or None))
+
+
+# PKCS#11 modules named in the user profile's pkcs11.txt are loaded at startup,
+# before any policy engine runs, from a user-writable file. Disabling this makes
+# PKCS#11 modules load only through trusted configuration (e.g. the
+# SecurityDevices enterprise policy). Enabled by default; enterprise disables it
+# (see browser/moz.configure). Bug 2068739.
+option(
+    "--disable-profile-pkcs11-modules",
+    help="{Enable|Disable} loading PKCS#11 modules named in the user profile",
+)
+
+
+@depends("--disable-profile-pkcs11-modules")
+def disable_profile_pkcs11_modules(value):
+    if not value:
+        return True
+
+
+set_config("MOZ_DISABLE_PROFILE_PKCS11_MODULES", disable_profile_pkcs11_modules)
+set_define("MOZ_DISABLE_PROFILE_PKCS11_MODULES", disable_profile_pkcs11_modules)
+
+
+# Enterprise
+# ==========
+
+option(
+    "--enable-enterprise",
+    default=False,
+    help="Build with enterprise support",
+)
+
+
+@depends("--enable-enterprise")
+def enable_enterprise(value):
+    if value:
+        return True
+
+
+set_config("MOZ_ENTERPRISE", enable_enterprise)
+set_define("MOZ_ENTERPRISE", enable_enterprise)
+
+
+# The profile PKCS#11 module load (see toolkit/moz.configure) is turned off by
+# default for enterprise; module loading is driven by policy, not the
+# user-writable profile pkcs11.txt (bug 2068739).
+imply_option("--enable-profile-pkcs11-modules", False, when="--enable-enterprise")
+
+default_enterprise_console = dependable("FIREFOX_ENTERPRISE_GENERIC")
+
+option(
+    "--with-enterprise-console-url",
+    nargs=1,
+    default=default_enterprise_console,
+    help="Enterprise console address the built browser points at",
+    when=enable_enterprise,
+)
+
+
+@depends(
+    "--with-enterprise-console-url", default_enterprise_console, when=enable_enterprise
+)
+def enterprise_console_url(value, default_url):
+    # --disable-enterprise-console or an empty value falls back to the default.
+    url = value[0] if value and value[0] else default_url
+    if not any([
+        url.startswith("https://"),
+        url.startswith("http://"),
+        url == "FIREFOX_ENTERPRISE_GENERIC",
+    ]):
+        die(
+            "--with-enterprise-console-url must be a http(s):// URL, got %s",
+            url,
+        )
+    # The value is interpolated into a JS string literal in firefox.cfg.
+    if any(c in url for c in '"\\\n\r'):
+        die(
+            "--with-enterprise-console-url must not contain quotes, backslashes or "
+            "newlines"
+        )
+    return url
+
+
+set_config("MOZ_ENTERPRISE_CONSOLE_URL", enterprise_console_url)
 
 
 @depends("MOZ_APP_VENDOR", build_project)
@@ -1197,30 +1316,6 @@ def app_system_headers(value):
 set_config("MOZ_APP_SYSTEM_HEADERS", app_system_headers)
 
 
-# Printing
-# ==============================================================
-@depends(target)
-def printing_default(target):
-    return target.os != "iOS"
-
-
-option(
-    "--disable-printing",
-    default=printing_default,
-    help="{Enable|Disable} printing support",
-)
-
-
-@depends("--disable-printing")
-def printing(value):
-    if value:
-        return True
-
-
-set_config("NS_PRINTING", printing)
-set_define("NS_PRINTING", printing)
-
-
 # Speech-dispatcher support
 # ==============================================================
 @depends(toolkit)
@@ -1254,16 +1349,6 @@ set_define("MOZ_WEBSPEECH", webspeech)
 
 # Graphics
 # ==============================================================
-@depends(milestone)
-def skia_pdf_default(milestone):
-    return milestone.is_nightly
-
-
-option("--enable-skia-pdf", default=skia_pdf_default, help="{Enable|Disable} Skia PDF")
-
-set_config("MOZ_ENABLE_SKIA_PDF", True, when="--enable-skia-pdf")
-set_define("MOZ_ENABLE_SKIA_PDF", True, when="--enable-skia-pdf")
-
 set_config(
     "SKIA_INCLUDES",
     [
@@ -2112,43 +2197,6 @@ def launcher(value, target):
 set_config("MOZ_LAUNCHER_PROCESS", launcher)
 set_define("MOZ_LAUNCHER_PROCESS", launcher)
 
-# llvm-dlltool (Windows only)
-# ==============================================================
-
-
-@depends(build_project, target, "--enable-compile-environment")
-def check_for_llvm_dlltool(build_project, target, compile_environment):
-    if build_project != "browser":
-        return
-
-    if target.os != "WINNT":
-        return
-
-    return compile_environment
-
-
-llvm_dlltool = check_prog(
-    "LLVM_DLLTOOL",
-    ("llvm-dlltool",),
-    what="llvm-dlltool",
-    when=check_for_llvm_dlltool,
-    paths=clang_search_path,
-)
-
-
-@depends(target, when=llvm_dlltool)
-def llvm_dlltool_flags(target):
-    arch = {
-        "x86": "i386",
-        "x86_64": "i386:x86-64",
-        "aarch64": "arm64",
-    }[target.cpu]
-
-    return ["-m", arch]
-
-
-set_config("LLVM_DLLTOOL_FLAGS", llvm_dlltool_flags)
-
 # BITS download (Windows only)
 # ==============================================================
 
@@ -2943,9 +2991,10 @@ with only_when(requires_wasm_sandboxing & compile_environment):
     option(env="WASM_CFLAGS", nargs=1, help="Options to pass to WASM_CC")
 
     @depends("WASM_CFLAGS", wasm_compile_flags)
+    @imports(_from="mozshellutil", _import="split")
     def wasm_cflags(value, wasm_compile_flags):
         if value:
-            return wasm_compile_flags + value
+            return wasm_compile_flags + split(value[0])
         else:
             return wasm_compile_flags
 
@@ -2954,9 +3003,10 @@ with only_when(requires_wasm_sandboxing & compile_environment):
     option(env="WASM_CXXFLAGS", nargs=1, help="Options to pass to WASM_CXX")
 
     @depends("WASM_CXXFLAGS", wasm_compile_flags)
+    @imports(_from="mozshellutil", _import="split")
     def wasm_cxxflags(value, wasm_compile_flags):
         if value:
-            return wasm_compile_flags + value
+            return wasm_compile_flags + split(value[0])
         else:
             return wasm_compile_flags
 
@@ -3386,17 +3436,21 @@ with only_when(target_is_osx):
 # ==============================================================
 
 # Alternative Crashreporter setting
+# On Enterprise, clear the default value to avoid mozilla.com url compiled into
+# product: correct URL will be derived at runtime when console address is known
 option(
     "--with-crashreporter-url",
     env="MOZ_CRASHREPORTER_URL",
-    default="https://crash-reports.mozilla.com/",
+    default=depends("--enable-enterprise")(
+        lambda enterprise: None if enterprise else "https://crash-reports.mozilla.com/"
+    ),
     nargs=1,
     help="Set an alternative crashreporter url",
 )
 
 set_config(
     "MOZ_CRASHREPORTER_URL",
-    depends("--with-crashreporter-url")(lambda x: x[0].rstrip("/")),
+    depends("--with-crashreporter-url")(lambda x: x[0].rstrip("/") if x else ""),
 )
 
 
@@ -3740,11 +3794,14 @@ option(
 )
 
 
-@depends("MOZ_PKG_FORMAT", target, toolkit)
-def moz_pkg_format(override, target, toolkit):
+@depends("MOZ_PKG_FORMAT", target, toolkit, moz_automation, developer_options)
+def moz_pkg_format(override, target, toolkit, automation, developer_options):
     if override:
         return override[0]
     if toolkit == "cocoa":
+        # On macOS DMG packaging is slow to work with.
+        if developer_options and not automation:
+            return "TAR"
         return "DMG"
     if target.kernel == "WINNT":
         return "ZIP"
@@ -3854,6 +3911,81 @@ def disable_smart_cards(target):
 
 set_config("MOZ_NO_SMART_CARDS", True, when=disable_smart_cards)
 set_define("MOZ_NO_SMART_CARDS", True, when=disable_smart_cards)
+
+
+# Test package archives
+# ==============================================================
+
+
+@depends("--help")
+@imports(_from="gen_test_packages_manifest", _import="PACKAGE_SPECIFIED_HARNESSES")
+def test_package_archive_choices(_):
+    return tuple(PACKAGE_SPECIFIED_HARNESSES)
+
+
+option(
+    env="MOZ_TEST_PACKAGE_ARCHIVES_SKIP",
+    nargs="*",
+    choices=test_package_archive_choices,
+    possible_origins=("implied",),
+    help="Test package archives not generated for this application",
+)
+
+
+@depends(
+    test_package_archive_choices,
+    "MOZ_TEST_PACKAGE_ARCHIVES_SKIP",
+    compile_environment,
+    gtest_in_build,
+    build_project,
+)
+def test_package_configuration(
+    available_archives,
+    skipped_archives,
+    compile_environment,
+    gtest_in_build,
+    build_project,
+):
+    archives = set(available_archives) - set(skipped_archives)
+
+    stage_targets = [
+        "stage-config",
+        "stage-mach",
+        "stage-extensions",
+        "stage-mochitest",
+    ]
+
+    # jittest is packaged directly from topsrcdir. Only jsreftest
+    # consumes the files produced by stage-jstests.
+    if "jsreftest" in archives:
+        stage_targets.append("stage-jstests")
+
+    if compile_environment and "cppunittest" in archives:
+        stage_targets.append("stage-cppunittests")
+
+    if gtest_in_build:
+        archives.add("gtest")
+        stage_targets.append("stage-gtest")
+
+    if build_project == "mobile/android":
+        stage_targets.append("stage-android")
+
+    stage_targets.append("test-packages-manifest")
+
+    return namespace(
+        archives=["common"] + sorted(archives),
+        stage_targets=stage_targets,
+    )
+
+
+set_config(
+    "TEST_PKGS_TARZST",
+    test_package_configuration.archives,
+)
+set_config(
+    "TEST_PKG_STAGE_TARGETS",
+    test_package_configuration.stage_targets,
+)
 
 
 # OSX Packaging
@@ -4589,6 +4721,7 @@ with only_when(target_is_windows):
 
 option(
     "--enable-appservices-in-tree",
+    env="MOZ_APPSERVICES_IN_TREE",
     help="Enables building from an in-tree app-services",
 )
 

@@ -1,9 +1,41 @@
 (urlbar-preferences)=
 
-# Address Bar Preferences
+# Preferences
 
-This document describes Preferences affecting the Firefox's address bar.
-Preferences that are generated and updated by code won't be described here.
+This document describes preferences affecting the address bar and the search
+bars. Preferences that are generated and updated by code won't be described
+here.
+
+## Search Bars
+
+A search bar reads an address bar preference wherever it runs the same code.
+Which preferences apply depends on the results each bar shows. The toolbar
+search bar shows search suggestions, search history and a few built-in results
+such as the calculator. The New Tab search bar adds URL navigation,
+autofill and Firefox Suggest, and the smartbar shows most address bar results.
+
+These preferences affect only the address bar:
+
+- `browser.urlbar.shortcuts.bookmarks`, `browser.urlbar.shortcuts.tabs` and
+  `browser.urlbar.shortcuts.history`
+- `browser.urlbar.showSearchTerms.enabled`
+- `browser.urlbar.accessibility.tabToSearch.announceResults`
+- `browser.urlbar.dnsResolveSingleWordsAfterSearch`
+- `browser.urlbar.formatting.enabled`
+- `browser.urlbar.searchTips.test.ignoreShowLimits`
+- `browser.urlbar.sponsoredTopSites`
+
+Some search bars read a different preference, or ignore one:
+
+- The toolbar search bar reads `browser.search.openintab` instead of
+  `browser.urlbar.openintab`.
+- The smartbar reads `browser.urlbar.smartbar.maxResults` and
+  `browser.urlbar.smartbar.showSearchSuggestionsFirst` instead of
+  `browser.urlbar.maxRichResults` and
+  `browser.urlbar.showSearchSuggestionsFirst`.
+- The toolbar and New Tab search bars ignore `keyword.enabled` and
+  `browser.urlbar.unifiedSearchButton.always`, and show recent searches
+  regardless of `browser.urlbar.suggest.recentsearches`.
 
 ## User Exposed
 
@@ -117,6 +149,31 @@ browser.urlbar.autoFill.adaptiveHistory.useCountThreshold (float, default: 1.0)
 : Threshold for use count of input history that we handle as adaptive history
   autofill. If the use count is this value or more, it will be a candidate.
 
+browser.urlbar.autoFill.adaptiveHistory.urlMinPicks (integer, default: 3)
+
+: Approximate number of times the user must have picked a URL with a path for a
+  given input string before it can be adaptive history autofilled.
+
+  This is not an exact pick count. It is converted into a
+  `moz_inputhistory.use_count` threshold, and use_count decays twice over: once
+  per pick, as `addToInputHistory` applies a factor to the previous value, and
+  again once per `idle-daily`, as `PlacesFrecencyRecalculator` decays every row
+  by `places.frecency.decayRate`. Whether a URL clears the threshold therefore
+  depends on how its picks were spread over time, not just how many there were.
+  Raising this value always makes page autofill rarer, but the number of picks
+  a given user needs depends on their cadence.
+
+browser.urlbar.autoFill.adaptiveHistory.urlPicksAgeDays (integer, default: 14)
+
+: Days of idle decay assumed to have elapsed since the last pick when
+  converting `urlMinPicks` into a use_count threshold.
+
+  The threshold is the use_count left behind by `urlMinPicks` picks made in one
+  sitting and then aged this many days, which is a pessimistic estimate: a user
+  who really did pick the URL that many times clears it even if their picks
+  were spread out. Raising this lowers the threshold and so admits users who
+  pick a URL less often; lowering it raises the threshold.
+
 browser.urlbar.ctrlCanonizesURLs (boolean, default: true)
 
 : Whether using `ctrl` or `command` when hitting return/enter in the URL bar
@@ -141,11 +198,6 @@ browser.urlbar.dnsResolveSingleWordsAfterSearch (number, default: 0)
   searched for. If the string is resolved as a valid host, show a
   "Did you mean to go to 'host'" prompt.
   Set to 0. 0: Never resolve, 1: Use heuristics, 2. Always resolve.
-
-browser.urlbar.extension.timeout (integer, default: 400)
-
-: When sending events to extensions, they have this amount of time in
-  milliseconds to respond before timing out. This affects the omnibox API.
 
 browser.urlbar.filter.javascript (boolean, default: true)
 

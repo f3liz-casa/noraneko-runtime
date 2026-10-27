@@ -87,6 +87,69 @@ Provides users with set of mutually exclusive options.
 
 ![About Welcome Multiselect](./aboutwelcome-single-select-picker.png)
 
+Individual items can opt in to conditional rendering with a `targeting`
+property containing a JEXL expression, the same way screen-level `targeting`
+works. An item is rendered only when its expression evaluates to a truthy
+value; items without a `targeting` property are always shown.
+```js
+tiles: {
+  type: "single-select",
+  data: [
+    {
+      id: "split-view",
+      targeting: "firefoxVersion >= 150",
+      type: "carousel-card",
+      label: { raw: "Split View" },
+      body: {
+        raw: "Two tabs side by side, right where you need them. Finally.",
+      },
+    },
+    {
+      id: "tab-groups",
+      type: "carousel-card",
+      label: { raw: "Tab Groups" },
+      body: { raw: "Keep related tabs together in named groups." },
+    },
+  ],
+}
+```
+
+##### Carousel Card
+
+The `carousel-card` type displays a single select tile inside a card with a full bleed image, label, body, and an optional button. These cards, along with navigation pills, are consumed by the `carousel` layout and supported with horizontal scrolling navigation.
+
+![Carousel Card](./carousel-card.png)
+
+##### Carousel Navigation Pills
+
+A `carousel-card` item may define a `pill`, which renders it into a
+`moz-segmented-control` row above the cards. `pill.icon` must be a `chrome://`
+SVG authored with `context-fill` so it can recolour on the selected pill and in
+High Contrast Mode. Selecting a pill scrolls its card
+to the centre and marks it selected. The pill row only renders when at least two
+items define a `pill`, and it respects per-item `targeting` because the pills and
+the cards come from the same `data` array. Set `tiles.pill_nav_label` to override
+the group's accessible name.
+
+```js
+tiles: {
+  type: "single-select",
+  pill_nav_label: { raw: "Feature highlights" },
+  data: [
+    {
+      id: "tab-groups",
+      type: "carousel-card",
+      pill: {
+        label: { raw: "Tab Groups" },
+        icon: "chrome://browser/skin/tabs.svg",
+      },
+      label: { raw: "Tab Groups" },
+      body: { raw: "Keep related tabs together in named groups." },
+    },
+  ],
+}
+```
+
 #### Theme Picker
 Allows users to select from a set of themes to personalize the browser’s appearance.
 

@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.PreviewLightDark
+import java.util.Locale
 import mozilla.components.compose.base.menu.DropdownMenu
 import mozilla.components.compose.base.menu.MenuItem
 import mozilla.components.compose.base.menu.MenuItem.CheckableItem
@@ -52,13 +53,16 @@ private fun List<Voice>.toMenuItems(
     onClick: (Voice) -> Unit,
 ): List<MenuItem> = map { voice ->
     CheckableItem(
-        text = Text.String(voice.id),
+        text = Text.String(voice.displayName),
         isChecked = voice == selectedVoice,
         onClick = { onClick(voice) },
     )
 }
 
-private val previewVoices = listOf("Darth Vader", "Smeagol", "Hulk").map { Voice(it) }
+private val previewVoices =
+    listOf(Locale.UK, Locale.US, Locale.CANADA, Locale.forLanguageTag("en-AU")).map {
+        Voice(id = "en-${it.country.lowercase()}-local", locale = it)
+    }
 
 // Dropdown menus are currently only previewable in interactive mode - give it a shot if you don't see anything
 @PreviewLightDark
@@ -73,6 +77,22 @@ private fun PreviewVoiceSelection() {
                 availableVoices = previewVoices,
                 selectedVoice = selectedVoice,
                 onVoiceClick = { selectedVoice = it },
+                onDismissRequest = {},
+            )
+        }
+    }
+}
+
+@PreviewLightDark
+@Composable
+private fun PreviewNoOfflineVoicesAvailableError() {
+    AcornTheme {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            VoiceSelection(
+                expanded = true,
+                availableVoices = emptyList(),
+                selectedVoice = null,
+                onVoiceClick = { _ -> },
                 onDismissRequest = {},
             )
         }

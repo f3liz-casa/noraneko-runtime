@@ -142,8 +142,7 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
     return mOptions->ItemAsOption(aIdx);
   }
   HTMLOptionElement* NamedItem(const nsAString& aName) const {
-    return static_cast<HTMLOptionElement*>(
-        mOptions->NamedItem(aName, /* aDoFlush = */ true));
+    return static_cast<HTMLOptionElement*>(mOptions->NamedItem(aName));
   }
   void Add(const HTMLOptionElementOrHTMLOptGroupElement& aElement,
            const Nullable<HTMLElementOrLong>& aBefore, ErrorResult& aRv);
@@ -193,6 +192,16 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
    * plus one per optgroup with a label.
    */
   uint32_t CountRenderedRows();
+
+  /**
+   * This is a superset of
+   * https://html.spec.whatwg.org/#concept-select-option-list, which holds only
+   * option elements.
+   * Chrome-only: the UA select popups use it so that they need not reimplement
+   * the traversal.
+   */
+  void GetListItems(HTMLOptGroupElement* aGroup,
+                    nsTArray<RefPtr<Element>>& aResult);
 
   int32_t SelectedIndex() const;
   // During removal handling we might need to ignore some options that are

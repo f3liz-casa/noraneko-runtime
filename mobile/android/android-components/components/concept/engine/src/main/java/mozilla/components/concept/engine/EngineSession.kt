@@ -554,7 +554,7 @@ abstract class EngineSession(private val delegate: Observable<Observer> = Observ
                     cookiePolicy = ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS,
                     strictSocialTrackingProtection = false,
                     cookiePurging = true,
-                    bounceTrackingProtectionMode = BounceTrackingProtectionMode.ENABLED_STANDBY,
+                    bounceTrackingProtectionMode = BounceTrackingProtectionMode.ENABLED_DRY_RUN,
                     allowListBaselineTrackingProtection = true,
                     allowListConvenienceTrackingProtection = true,
                     fingerprintingProtection = false,
@@ -586,7 +586,7 @@ abstract class EngineSession(private val delegate: Observable<Observer> = Observ
                 strictSocialTrackingProtection: Boolean? = null,
                 cookiePurging: Boolean = false,
                 bounceTrackingProtectionMode: BounceTrackingProtectionMode =
-                    BounceTrackingProtectionMode.ENABLED_STANDBY,
+                    BounceTrackingProtectionMode.ENABLED_DRY_RUN,
                 allowListBaselineTrackingProtection: Boolean = true,
                 allowListConvenienceTrackingProtection: Boolean = false,
                 fingerprintingProtection: Boolean? = null,
@@ -828,6 +828,20 @@ abstract class EngineSession(private val delegate: Observable<Observer> = Observ
      * A typical implementation would have the same flow that feeds into [EngineSession.Observer.onExternalResource].
      */
     abstract fun requestPdfToDownload()
+
+    /**
+     * When the current tab is a PDF, this will return the [Response] of the currently displayed PDF.
+     *
+     * When the current tab is a regular page, this will generate a PDF of the page and that will be the [Response].
+     *
+     * @param onResult Callback invoked with a [Response] carrying the PDF bytes.
+     * @param onException Callback invoked when the engine cannot supply the bytes, so that the caller can fall back to
+     *   downloading them from the URL.
+     */
+    open fun requestPdfToShare(
+        onResult: (Response) -> Unit,
+        onException: (Throwable) -> Unit,
+    ) = onException(UnsupportedOperationException("Sharing PDF bytes is not supported by this engine"))
 
     /**
      * Requests the [EngineSession] to print the current session's contents.

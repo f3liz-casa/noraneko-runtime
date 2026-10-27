@@ -9,6 +9,7 @@
 #include "irregexp/imported/regexp-macro-assembler-arch.h"
 #include "irregexp/imported/regexp-stack.h"
 #include "irregexp/imported/special-case.h"
+#include "jit/JitZone.h"
 #include "jit/Linker.h"
 #include "jit/PerfSpewer.h"
 #include "vm/MatchPairs.h"
@@ -25,12 +26,14 @@ namespace internal {
 namespace regexp {
 
 using js::MatchPairs;
+using js::jit::ABIType;
 using js::jit::AbsoluteAddress;
 using js::jit::Address;
 using js::jit::AllocatableFloatRegisterSet;
 using js::jit::AllocatableGeneralRegisterSet;
 using js::jit::Assembler;
 using js::jit::BaseIndex;
+using js::jit::CheckUnsafeCallWithABI;
 using js::jit::CodeLocationLabel;
 using js::jit::FloatRegister;
 using js::jit::FloatRegisterSet;
@@ -96,35 +99,7 @@ void SMRegExpMacroAssembler::AdvanceRegister(int reg, int by) {
   }
 }
 
-void SMRegExpMacroAssembler::Backtrack() {
-#ifdef DEBUG
-  js::jit::Label bailOut;
-  // Check for simulating interrupt
-  masm_.branch32(Assembler::NotEqual,
-                 AbsoluteAddress(&cx_->isolate->shouldSimulateInterrupt_),
-                 Imm32(0), &bailOut);
-#endif
-  // Check for an interrupt. We have to restart from the beginning if we
-  // are interrupted, so we only check for urgent interrupts.
-  js::jit::Label noInterrupt;
-  masm_.branchTest32(
-      Assembler::Zero, AbsoluteAddress(cx_->addressOfInterruptBits()),
-      Imm32(uint32_t(js::InterruptReason::CallbackUrgent)), &noInterrupt);
-#ifdef DEBUG
-  // bailing out if we have simulating interrupt flag set
-  masm_.bind(&bailOut);
-#endif
-  masm_.movePtr(ImmWord(int32_t(js::RegExpRunStatus::Error)), temp0_);
-  masm_.jump(&exit_label_);
-  masm_.bind(&noInterrupt);
-
-  // Pop code offset from backtrack stack, add to code base address, and jump to
-  // location.
-  Pop(temp0_);
-  PushBacktrackCodeOffsetPatch(masm_.movWithPatch(ImmPtr(nullptr), temp1_));
-  masm_.addPtr(temp1_, temp0_);
-  masm_.jump(temp0_);
-}
+void SMRegExpMacroAssembler::Backtrack() { masm_.jump(&backtrack_label_); }
 
 void SMRegExpMacroAssembler::Bind(Label* label) {
   masm_.bind(label->inner());
@@ -492,20 +467,26 @@ void SMRegExpMacroAssembler::EmitSkipUntilBitInTableSimd(
   masm_.bitwiseAndSimd128(bitmask, row, result);
   masm_.compareInt8x16(Assembler::Equal, result, bitmask, result);
 
-  // Extract high bit of each byte into temp1
+  // Compress the matching bytes into a scalar mask in temp1. If no byte
+  // matched, advance to the next chunk. Otherwise, store the index of the
+  // lowest matching byte in temp0. On arm64 the mask has four bits per byte,
+  // so the trailing zero count is divided by four.
 #  if defined(JS_CODEGEN_ARM64)
-  masm_.bitmaskInt8x16(result, temp1_, /*temp=*/bitmask);
-#  elif defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+  masm_.nibbleMaskInt8x16(result, temp1_, /*temp=*/bitmask);
+  masm_.branchTestPtr(Assembler::Zero, temp1_, temp1_, &advanceVector);
+  masm_.ctz64(js::jit::Register64(temp1_), js::jit::Register64(temp0_));
+  masm_.rshiftPtr(Imm32(2), temp0_);
+#  elif defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64) || \
+      defined(JS_CODEGEN_LOONG64)
   masm_.bitmaskInt8x16(result, temp1_);
+  masm_.branchTest32(Assembler::Zero, temp1_, temp1_, &advanceVector);
+  masm_.ctz32(temp1_, temp0_, /*knownNotZero=*/true);
 #  else
 #    error Unsupported SIMD architecture
 #  endif
 
-  masm_.branchTest32(Assembler::Zero, temp1_, temp1_, &advanceVector);
-
-  // Found a match in this 16-byte chunk. Locate the lowest set bit and
-  // advance current_position_ by that index, then jump to on_match.
-  masm_.ctz32(temp1_, temp0_, /*knownNotZero=*/true);
+  // Found a match in this 16-byte chunk. Advance current_position_ by the
+  // index of the lowest matching byte, then jump to on_match.
   masm_.addPtr(temp0_, current_position_);
   masm_.jump(LabelOrBacktrack(on_match));
 
@@ -526,6 +507,10 @@ bool SMRegExpMacroAssembler::SkipUntilBitInTableUseSimd(int advance_by) {
 #  if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
   // SSSE3 is required for pshufb (used to implement swizzleInt8x16).
   if (!js::jit::Assembler::HasSSSE3()) {
+    return false;
+  }
+#  elif defined(JS_CODEGEN_LOONG64)
+  if (!js::jit::Assembler::HasLSX()) {
     return false;
   }
 #  endif
@@ -1058,23 +1043,32 @@ void SMRegExpMacroAssembler::ClearRegisters(int reg_from, int reg_to) {
 void SMRegExpMacroAssembler::Push(Register source) {
   MOZ_ASSERT(source != backtrack_stack_pointer_);
 
+#ifdef JS_CODEGEN_ARM64
+  masm_.Str(js::jit::ARMRegister(source, 32),
+            vixl::MemOperand(js::jit::ARMRegister(backtrack_stack_pointer_, 64),
+                             -int32_t(sizeof(int32_t)), vixl::PreIndex));
+#else
   masm_.subPtr(Imm32(sizeof(int32_t)), backtrack_stack_pointer_);
   masm_.store32(source, Address(backtrack_stack_pointer_, 0));
+#endif
 }
 
 void SMRegExpMacroAssembler::Pop(Register target) {
   MOZ_ASSERT(target != backtrack_stack_pointer_);
 
+#ifdef JS_CODEGEN_ARM64
+  masm_.Ldrsw(
+      js::jit::ARMRegister(target, 64),
+      vixl::MemOperand(js::jit::ARMRegister(backtrack_stack_pointer_, 64),
+                       int32_t(sizeof(int32_t)), vixl::PostIndex));
+#else
   masm_.load32SignExtendToPtr(Address(backtrack_stack_pointer_, 0), target);
   masm_.addPtr(Imm32(sizeof(int32_t)), backtrack_stack_pointer_);
+#endif
 }
 
 void SMRegExpMacroAssembler::JumpOrBacktrack(Label* to) {
-  if (to) {
-    masm_.jump(to->inner());
-  } else {
-    Backtrack();
-  }
+  masm_.jump(to ? to->inner() : &backtrack_label_);
 }
 
 // Generate a quick inline test for backtrack stack overflow.
@@ -1115,10 +1109,10 @@ Handle<HeapObject> SMRegExpMacroAssembler::GetCode(Handle<RegExpData> data,
 
   masm_.jump(&start_label_);
 
-  successHandler();
-  exitHandler();
   backtrackHandler();
   stackOverflowHandler();
+  successHandler();
+  exitHandler();
 
   Linker linker(masm_);
   JitCode* code = linker.newCode(cx_, js::jit::CodeKind::RegExp);
@@ -1211,9 +1205,16 @@ void SMRegExpMacroAssembler::createStackFrame() {
   AbsoluteAddress limit_addr(cx_->addressOfJitStackLimitNoInterrupt());
   masm_.branchStackPtrRhs(Assembler::Below, limit_addr, &stack_ok);
 
+  masm_.loadJSContext(temp0_);
+  masm_.store8(Imm32(1),
+               Address(temp0_, JSContext::offsetOfHasDelayedOverRecursed()));
+
   // There is not enough space on the stack. Exit with an exception.
-  masm_.movePtr(ImmWord(int32_t(js::RegExpRunStatus::Error)), temp0_);
-  masm_.jump(&exit_label_);
+  // We haven't initialized our stack frame yet, so we must jump to
+  // a special label that won't try to update the RegExp::Stack.
+  masm_.movePtr(ImmWord(int32_t(js::RegExpRunStatus::Error)),
+                js::jit::ReturnReg);
+  masm_.jump(&exit_overrecursed_label_);
 
   masm_.bind(&stack_ok);
 }
@@ -1224,7 +1225,7 @@ void SMRegExpMacroAssembler::initFrameAndRegs() {
   Register ioDataReg = temp0_;
 
   Register matchesReg = temp1_;
-  masm_.loadPtr(Address(ioDataReg, offsetof(InputOutputData, matches)),
+  masm_.loadPtr(Address(ioDataReg, InputOutputData::offsetOfMatches()),
                 matchesReg);
 
   // Initialize output registers
@@ -1248,13 +1249,18 @@ void SMRegExpMacroAssembler::initFrameAndRegs() {
   masm_.bind(&enoughRegisters);
 #endif
 
-  // Load input start pointer.
-  masm_.loadPtr(Address(ioDataReg, offsetof(InputOutputData, inputStart)),
-                current_position_);
+  // Load input and store a copy in the FrameData.
+  Register inputReg = temp1_;
+  masm_.loadPtr(Address(ioDataReg, InputOutputData::offsetOfInput()), inputReg);
+  masm_.storePtr(inputReg, inputString());
 
-  // Load input end pointer
-  masm_.loadPtr(Address(ioDataReg, offsetof(InputOutputData, inputEnd)),
-                input_end_pointer_);
+  // Load length and chars
+  masm_.loadStringLength(inputReg, input_end_pointer_);
+  masm_.loadStringChars(inputReg, current_position_, encoding());
+
+  // Compute the input end pointer.
+  BaseIndex endAddr(current_position_, input_end_pointer_, factor());
+  masm_.computeEffectiveAddress(endAddr, input_end_pointer_);
 
   // Set up input position to be negative offset from string end.
   masm_.subPtr(input_end_pointer_, current_position_);
@@ -1264,10 +1270,15 @@ void SMRegExpMacroAssembler::initFrameAndRegs() {
 
   // Load start index
   Register startIndexReg = temp1_;
-  masm_.loadPtr(Address(ioDataReg, offsetof(InputOutputData, startIndex)),
+  masm_.loadPtr(Address(ioDataReg, InputOutputData::offsetOfStartIndex()),
                 startIndexReg);
   masm_.computeEffectiveAddress(
       BaseIndex(current_position_, startIndexReg, factor()), current_position_);
+
+  // Store canResume in the FrameData
+  masm_.load32(Address(ioDataReg, InputOutputData::offsetOfCanResume()),
+               temp0_);
+  masm_.store32(temp0_, canResume());
 
   // Initialize current_character_.
   // Load newline if index is at start, or previous character otherwise.
@@ -1304,10 +1315,21 @@ void SMRegExpMacroAssembler::initFrameAndRegs() {
     }
   }
 
-  // Initialize backtrack stack pointer
+  // Initialize backtrack stack data.
+  // Load the base of the stack and store it in the stack frame.
   masm_.loadPtr(AbsoluteAddress(ExternalReference::TopOfRegexpStack(isolate())),
-                backtrack_stack_pointer_);
-  masm_.storePtr(backtrack_stack_pointer_, backtrackStackBase());
+                temp1_);
+  masm_.storePtr(temp1_, backtrackStackBase());
+  // Load the current top of the stack. This will usually be the same as the
+  // base, but may be different if we are executing one regexp while another is
+  // interrupted.
+  masm_.loadPtr(
+      AbsoluteAddress(ExternalReference::RegexpStackPointer(isolate())),
+      backtrack_stack_pointer_);
+  // Compute the difference between the two, and store it in the stack frame.
+  // This is usually 0.
+  masm_.subPtr(backtrack_stack_pointer_, temp1_);
+  masm_.storePtr(temp1_, initialBacktrackStackPointer());
 }
 
 // Called when we find a match. May not be generated if we can
@@ -1379,6 +1401,16 @@ void SMRegExpMacroAssembler::exitHandler() {
     masm_.movePtr(temp0_, js::jit::ReturnReg);
   }
 
+  // Restore the RegExpStack's stack pointer in case we were interrupted
+  // and modified it.
+  masm_.loadPtr(backtrackStackBase(), backtrack_stack_pointer_);
+  masm_.subPtr(initialBacktrackStackPointer(), backtrack_stack_pointer_);
+  masm_.storePtr(
+      backtrack_stack_pointer_,
+      AbsoluteAddress(ExternalReference::RegexpStackPointer(isolate())));
+
+  masm_.bind(&exit_overrecursed_label_);
+
   masm_.freeStack(frameSize_);
 
   // Restore registers which were saved on entry
@@ -1421,7 +1453,72 @@ void SMRegExpMacroAssembler::backtrackHandler() {
     return;
   }
   masm_.bind(&backtrack_label_);
-  Backtrack();
+  js::jit::Label interrupt, backtrack;
+#ifdef DEBUG
+  // Check for simulating interrupt
+  masm_.branch32(Assembler::NotEqual,
+                 AbsoluteAddress(&cx_->isolate->shouldSimulateInterrupt_),
+                 Imm32(0), &interrupt);
+#endif
+  // Check for an interrupt. We may have to restart from the beginning if we
+  // are interrupted, so we only check for urgent interrupts.
+  masm_.branchTest32(
+      Assembler::NonZero, AbsoluteAddress(cx_->addressOfInterruptBits()),
+      Imm32(uint32_t(js::InterruptReason::CallbackUrgent)), &interrupt);
+
+  // Pop code offset from backtrack stack, add to code base address, and jump to
+  // location.
+  masm_.bind(&backtrack);
+  Pop(temp0_);
+  PushBacktrackCodeOffsetPatch(masm_.movWithPatch(ImmPtr(nullptr), temp1_));
+  masm_.addPtr(temp1_, temp0_);
+  masm_.jump(temp0_);
+
+  // We are being interrupted. First, check if we support resumption,
+  // and return an error if we don't.
+  masm_.bind(&interrupt);
+  masm_.branch32(Assembler::Equal, canResume(), Imm32(0),
+                 &exit_with_exception_label_);
+
+  StoreBacktrackStackToMemory();
+
+  // Load FrameData* into temp1.
+  masm_.moveStackPtrTo(temp1_);
+
+  // Save registers before calling C function
+  LiveGeneralRegisterSet volatileRegs(GeneralRegisterSet::Volatile());
+  volatileRegs.takeUnchecked(temp0_);
+  volatileRegs.takeUnchecked(temp1_);
+  volatileRegs.takeUnchecked(backtrack_stack_pointer_);
+  masm_.PushRegsInMask(volatileRegs);
+
+  using Fn = bool (*)(JSContext*, FrameData*);
+  masm_.setupUnalignedABICall(temp0_);
+  masm_.loadJSContext(temp0_);
+  masm_.passABIArg(temp0_);
+  masm_.passABIArg(temp1_);
+  masm_.callWithABI<Fn, ::js::irregexp::HandleRegExpInterrupt>(
+      ABIType::General, CheckUnsafeCallWithABI::DontCheckOther);
+  masm_.storeCallBoolResult(temp0_);
+
+  masm_.PopRegsInMask(volatileRegs);
+
+  // If the call threw an exception, return it.  We update the
+  // backtrack stack first so that it's correct when we read it in the
+  // epilogue.
+  LoadBacktrackStackFromMemory(backtrackStackBase());
+  masm_.branchTest32(Assembler::Zero, temp0_, temp0_,
+                     &exit_with_exception_label_);
+
+  // Reload input_end_pointer_ in case the string moved.
+  masm_.loadPtr(inputString(), temp0_);
+  masm_.loadStringLength(temp0_, input_end_pointer_);
+  masm_.loadStringChars(temp0_, temp1_, encoding());
+  masm_.computeEffectiveAddress(BaseIndex(temp1_, input_end_pointer_, factor()),
+                                input_end_pointer_);
+
+  // Now jump back up to the actual backtrack code.
+  masm_.jump(&backtrack);
 }
 
 void SMRegExpMacroAssembler::stackOverflowHandler() {
@@ -1445,8 +1542,7 @@ void SMRegExpMacroAssembler::stackOverflowHandler() {
   masm_.pushReturnAddress();
 #endif
 
-  // Adjust for the return address on the stack.
-  size_t frameOffset = sizeof(void*);
+  StoreBacktrackStackToMemory();
 
   volatileRegs.takeUnchecked(temp0_);
   volatileRegs.takeUnchecked(temp1_);
@@ -1466,20 +1562,31 @@ void SMRegExpMacroAssembler::stackOverflowHandler() {
   js::jit::Label overflow_return;
   masm_.branchTest32(Assembler::Zero, temp0_, temp0_, &overflow_return);
 
-  // Otherwise, store the new backtrack stack base and recompute the new
-  // top of the stack.
+  // Adjust for the return address on the stack.
+  size_t frameOffset = sizeof(void*);
   Address bsbAddress(masm_.getStackPointer(),
                      offsetof(FrameData, backtrackStackBase) + frameOffset);
-  masm_.subPtr(bsbAddress, backtrack_stack_pointer_);
-
-  masm_.loadPtr(AbsoluteAddress(ExternalReference::TopOfRegexpStack(isolate())),
-                temp1_);
-  masm_.storePtr(temp1_, bsbAddress);
-  masm_.addPtr(temp1_, backtrack_stack_pointer_);
+  LoadBacktrackStackFromMemory(bsbAddress);
 
   // Resume execution in calling code.
   masm_.bind(&overflow_return);
   masm_.ret();
+}
+
+void SMRegExpMacroAssembler::StoreBacktrackStackToMemory() {
+  masm_.storePtr(
+      backtrack_stack_pointer_,
+      AbsoluteAddress(ExternalReference::RegexpStackPointer(isolate())));
+}
+
+void SMRegExpMacroAssembler::LoadBacktrackStackFromMemory(
+    Address backtrackStackBaseAddr) {
+  masm_.loadPtr(AbsoluteAddress(ExternalReference::TopOfRegexpStack(isolate())),
+                backtrack_stack_pointer_);
+  masm_.storePtr(backtrack_stack_pointer_, backtrackStackBaseAddr);
+  masm_.loadPtr(
+      AbsoluteAddress(ExternalReference::RegexpStackPointer(isolate())),
+      backtrack_stack_pointer_);
 }
 
 // This is only used by tracing code.
@@ -1551,7 +1658,11 @@ uint32_t SMRegExpMacroAssembler::CaseInsensitiveCompareUnicode(
 bool SMRegExpMacroAssembler::GrowBacktrackStack(Stack* regexp_stack) {
   js::AutoUnsafeCallWithABI unsafe;
   size_t size = regexp_stack->memory_size();
-  return !!regexp_stack->EnsureCapacity(size * 2);
+  bool result = !!regexp_stack->EnsureCapacity(size * 2);
+  if (!result) {
+    js::TlsContext.get()->noteDelayedOverRecursed();
+  }
+  return result;
 }
 
 bool SMRegExpMacroAssembler::CanReadUnaligned() const {
@@ -1567,3 +1678,68 @@ bool SMRegExpMacroAssembler::CanReadUnaligned() const {
 }  // namespace regexp
 }  // namespace internal
 }  // namespace v8
+
+namespace js {
+namespace irregexp {
+
+bool HandleRegExpInterrupt(JSContext* cx,
+                           v8::internal::regexp::FrameData* frameData) {
+  // Poorly written RegExps may require exponential backtracking to match. If
+  // the time taken to execute a RegExp exceeds the time between watchdog
+  // interrupts in the browser (which are used to implement the slow script
+  // dialog), then the only way for the execution to terminate successfully is
+  // if we can resume jitcode after being interrupted. This code is carefully
+  // designed to make that possible.
+  //
+  // The main challenge is GC: our RegExp jitcode, and the RegExp stubs that
+  // call it, are all written with the assumption that we won't trigger a GC.
+  // To keep the RegExp stubs simple and efficient, we don't support interrupts
+  // when invoked from jitcode. (This is determined based on the `canResume`
+  // flag in the InputOutputData / FrameData.) Instead, if an interrupt is
+  // triggered while a regexp called from jitcode is executing, we exit with an
+  // error and resume in C++. The C++ handler will restart execution with the
+  // `canResume` flag enabled, preventing future restarts. It is simple to
+  // support GC in the C++ caller.
+  //
+  // The remaining GC-related problem is the regexp code itself. Fortunately,
+  // compiled regexps only touch two GC things: the input string, and the
+  // JitCode itself. AutoInterruptingRegExp prevents RegExp code from being
+  // discarded in Zone::discardJitCode. We read the string from the FrameData
+  // here, root it, and update the frame before returning. The interrupt
+  // handling code will reload fresh pointers to the string's characters
+  // before resuming.
+  //
+  // In addition to the above, we also have to ensure that our RegExps support
+  // reentrancy. In particular, the backtracking stack is shared across
+  // executions. See `[SMDOC] RegExp backtrack stack` for more details.
+  //
+  // Note that unlike other cases where we invoke jitcode, this approach
+  // does *not* create a JitActivation. JitFrameIter will not see the
+  // regexp frame.
+  MOZ_RELEASE_ASSERT(frameData->canResume);
+
+  // Prevent discarding RegExp jitcode.
+  js::jit::AutoInterruptingRegExp interrupting(cx->zone()->jitZone());
+
+  // Root the string input for the regexp
+  RootedString inputString(cx, frameData->inputString);
+
+#ifdef DEBUG
+  // If this is a simulated interrupt, trigger a real one.
+  if (IsolateShouldSimulateInterrupt(cx->isolate)) {
+    IsolateClearShouldSimulateInterrupt(cx->isolate);
+    cx->requestInterrupt(InterruptReason::CallbackUrgent);
+  }
+#endif
+
+  // Handle the interrupt.
+  bool result = cx->handleInterrupt();
+
+  // Copy the string back to the frame data in case it was moved by GC.
+  frameData->inputString = inputString;
+
+  return result;
+}
+
+}  // namespace irregexp
+}  // namespace js

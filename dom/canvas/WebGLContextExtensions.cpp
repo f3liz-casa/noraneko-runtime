@@ -23,17 +23,20 @@ const char* GetExtensionName(const WebGLExtensionID ext) {
 
     WEBGL_EXTENSION_IDENTIFIER(ANGLE_instanced_arrays)
     WEBGL_EXTENSION_IDENTIFIER(EXT_blend_minmax)
+    WEBGL_EXTENSION_IDENTIFIER(EXT_clip_control)
     WEBGL_EXTENSION_IDENTIFIER(EXT_color_buffer_float)
     WEBGL_EXTENSION_IDENTIFIER(EXT_color_buffer_half_float)
     WEBGL_EXTENSION_IDENTIFIER(EXT_depth_clamp)
     WEBGL_EXTENSION_IDENTIFIER(EXT_disjoint_timer_query)
     WEBGL_EXTENSION_IDENTIFIER(EXT_float_blend)
     WEBGL_EXTENSION_IDENTIFIER(EXT_frag_depth)
+    WEBGL_EXTENSION_IDENTIFIER(EXT_polygon_offset_clamp)
     WEBGL_EXTENSION_IDENTIFIER(EXT_shader_texture_lod)
     WEBGL_EXTENSION_IDENTIFIER(EXT_sRGB)
     WEBGL_EXTENSION_IDENTIFIER(EXT_texture_compression_bptc)
     WEBGL_EXTENSION_IDENTIFIER(EXT_texture_compression_rgtc)
     WEBGL_EXTENSION_IDENTIFIER(EXT_texture_filter_anisotropic)
+    WEBGL_EXTENSION_IDENTIFIER(EXT_texture_mirror_clamp_to_edge)
     WEBGL_EXTENSION_IDENTIFIER(EXT_texture_norm16)
     WEBGL_EXTENSION_IDENTIFIER(MOZ_debug)
     WEBGL_EXTENSION_IDENTIFIER(OES_draw_buffers_indexed)
@@ -133,6 +136,8 @@ RefPtr<ClientWebGLExtensionBase> ClientWebGLContext::GetExtension(
         // EXT_
         case WebGLExtensionID::EXT_blend_minmax:
           return MakeRefPtr<ClientWebGLExtensionBlendMinMax>(*this);
+        case WebGLExtensionID::EXT_clip_control:
+          return MakeRefPtr<ClientWebGLExtensionClipControl>(*this);
         case WebGLExtensionID::EXT_color_buffer_float:
           return MakeRefPtr<ClientWebGLExtensionEXTColorBufferFloat>(*this);
         case WebGLExtensionID::EXT_color_buffer_half_float:
@@ -145,6 +150,8 @@ RefPtr<ClientWebGLExtensionBase> ClientWebGLContext::GetExtension(
           return MakeRefPtr<ClientWebGLExtensionFloatBlend>(*this);
         case WebGLExtensionID::EXT_frag_depth:
           return MakeRefPtr<ClientWebGLExtensionFragDepth>(*this);
+        case WebGLExtensionID::EXT_polygon_offset_clamp:
+          return MakeRefPtr<ClientWebGLExtensionPolygonOffsetClamp>(*this);
         case WebGLExtensionID::EXT_shader_texture_lod:
           return MakeRefPtr<ClientWebGLExtensionShaderTextureLod>(*this);
         case WebGLExtensionID::EXT_sRGB:
@@ -155,6 +162,9 @@ RefPtr<ClientWebGLExtensionBase> ClientWebGLContext::GetExtension(
           return MakeRefPtr<ClientWebGLExtensionCompressedTextureRGTC>(*this);
         case WebGLExtensionID::EXT_texture_filter_anisotropic:
           return MakeRefPtr<ClientWebGLExtensionTextureFilterAnisotropic>(
+              *this);
+        case WebGLExtensionID::EXT_texture_mirror_clamp_to_edge:
+          return MakeRefPtr<ClientWebGLExtensionTextureMirrorClampToEdge>(
               *this);
         case WebGLExtensionID::EXT_texture_norm16:
           return MakeRefPtr<ClientWebGLExtensionTextureNorm16>(*this);
@@ -256,6 +266,9 @@ bool WebGLContext::IsExtensionSupported(WebGLExtensionID ext) const {
     case WebGLExtensionID::EXT_blend_minmax:
       return WebGLExtensionBlendMinMax::IsSupported(this);
 
+    case WebGLExtensionID::EXT_clip_control:
+      return WebGLExtensionClipControl::IsSupported(this);
+
     case WebGLExtensionID::EXT_color_buffer_float:
       return WebGLExtensionEXTColorBufferFloat::IsSupported(this);
 
@@ -274,6 +287,9 @@ bool WebGLContext::IsExtensionSupported(WebGLExtensionID ext) const {
     case WebGLExtensionID::EXT_frag_depth:
       return WebGLExtensionFragDepth::IsSupported(this);
 
+    case WebGLExtensionID::EXT_polygon_offset_clamp:
+      return WebGLExtensionPolygonOffsetClamp::IsSupported(this);
+
     case WebGLExtensionID::EXT_shader_texture_lod:
       return WebGLExtensionShaderTextureLod::IsSupported(this);
 
@@ -289,6 +305,9 @@ bool WebGLContext::IsExtensionSupported(WebGLExtensionID ext) const {
     case WebGLExtensionID::EXT_texture_filter_anisotropic:
       return gl->IsExtensionSupported(
           gl::GLContext::EXT_texture_filter_anisotropic);
+
+    case WebGLExtensionID::EXT_texture_mirror_clamp_to_edge:
+      return gl->IsSupported(gl::GLFeature::texture_mirror_clamp_to_edge);
 
     case WebGLExtensionID::EXT_texture_norm16:
       return WebGLExtensionTextureNorm16::IsSupported(this);
@@ -414,6 +433,9 @@ void WebGLContext::RequestExtension(const WebGLExtensionID ext,
     case WebGLExtensionID::EXT_blend_minmax:
       slot = std::make_unique<WebGLExtensionBlendMinMax>(this);
       break;
+    case WebGLExtensionID::EXT_clip_control:
+      slot = std::make_unique<WebGLExtensionClipControl>(this);
+      break;
     case WebGLExtensionID::EXT_color_buffer_float:
       slot = std::make_unique<WebGLExtensionEXTColorBufferFloat>(this);
       break;
@@ -432,6 +454,9 @@ void WebGLContext::RequestExtension(const WebGLExtensionID ext,
     case WebGLExtensionID::EXT_frag_depth:
       slot = std::make_unique<WebGLExtensionFragDepth>(this);
       break;
+    case WebGLExtensionID::EXT_polygon_offset_clamp:
+      slot = std::make_unique<WebGLExtensionPolygonOffsetClamp>(this);
+      break;
     case WebGLExtensionID::EXT_shader_texture_lod:
       slot = std::make_unique<WebGLExtensionShaderTextureLod>(this);
       break;
@@ -446,6 +471,9 @@ void WebGLContext::RequestExtension(const WebGLExtensionID ext,
       break;
     case WebGLExtensionID::EXT_texture_filter_anisotropic:
       slot = std::make_unique<WebGLExtensionTextureFilterAnisotropic>(this);
+      break;
+    case WebGLExtensionID::EXT_texture_mirror_clamp_to_edge:
+      slot = std::make_unique<WebGLExtensionTextureMirrorClampToEdge>(this);
       break;
     case WebGLExtensionID::EXT_texture_norm16:
       slot = std::make_unique<WebGLExtensionTextureNorm16>(this);

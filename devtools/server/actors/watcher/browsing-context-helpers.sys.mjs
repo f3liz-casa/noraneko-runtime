@@ -149,6 +149,14 @@ export function isBrowsingContextPartOfContext(
   if (sessionContext.type == "all") {
     return true;
   }
+
+  // Tab and WebExtension sessions must not debug system principal documents
+  // while devtools.chrome.enabled is locked to false. "all" sessions (Browser
+  // Toolbox and Browser Console) are already gated by that pref.
+  if (isBlockedSystemPrincipalDocument(windowGlobal)) {
+    return false;
+  }
+
   if (sessionContext.type == "browser-element") {
     // Check if the document is:
     // - part of the Browser element, or,
@@ -280,6 +288,28 @@ function _validateWindowGlobal(
 }
 
 /**
+ * Return true if the WindowGlobal holds a system principal document and
+ * devtools.chrome.enabled is locked to false, in which case it must not be
+ * debugged.
+ *
+ * @param {WindowGlobalParent|WindowGlobalChild|null} windowGlobal
+ * @returns {boolean}
+ */
+export function isBlockedSystemPrincipalDocument(windowGlobal) {
+  if (
+    !windowGlobal ||
+    !Services.prefs.prefIsLocked("devtools.chrome.enabled") ||
+    Services.prefs.getBoolPref("devtools.chrome.enabled", false)
+  ) {
+    return false;
+  }
+  const principal =
+    windowGlobal.documentPrincipal ??
+    windowGlobal.browsingContext.window?.document.nodePrincipal;
+  return !!principal?.isSystemPrincipal;
+}
+
+/**
  * Helper function to know if a given WindowGlobal should be debugged by scope
  * described by the given session context. This method could be called from any process
  * as so accept either WindowGlobalParent or WindowGlobalChild instances.
@@ -320,8 +350,17 @@ export function isWindowGlobalPartOfContext(
  * @param {object} sessionContext
  *        The Session Context to help know what is debugged.
  *        See devtools/server/actors/watcher/session-context.js
+ * @param {object} options
+ * @param {object} options.onlyTopLevelBrowsingContext
+ *                 If true, return only the top level browsing context.
+ *                 i.e. the ones with no parent.
+ *                 For BrowserElement, it will only be the immediate BrowsingContext of the BrowserElement.
+ *                 For "all" session type, it will be all top level windows and tabs BrowsingContexts.
  */
-export function getAllBrowsingContextsForContext(sessionContext) {
+export function getAllBrowsingContextsForContext(
+  sessionContext,
+  { onlyTopLevelBrowsingContext = false } = {}
+) {
   const browsingContexts = [];
 
   // For a given BrowsingContext, add the `browsingContext`
@@ -330,10 +369,15 @@ export function getAllBrowsingContextsForContext(sessionContext) {
     if (browsingContexts.includes(browsingContext)) {
       return;
     }
+    if (onlyTopLevelBrowsingContext && browsingContext.parent) {
+      return;
+    }
     browsingContexts.push(browsingContext);
 
-    for (const child of browsingContext.children) {
-      walk(child);
+    if (!onlyTopLevelBrowsingContext) {
+      for (const child of browsingContext.children) {
+        walk(child);
+      }
     }
 
     if (
@@ -365,7 +409,11 @@ export function getAllBrowsingContextsForContext(sessionContext) {
       // devtools/client/responsive/test/browser/browser_navigation.js covers this with fission enabled.
       const realTopBrowsingContext =
         topBrowsingContext.embedderElement.browsingContext;
-      walk(realTopBrowsingContext);
+      if (onlyTopLevelBrowsingContext) {
+        browsingContexts.push(realTopBrowsingContext);
+      } else {
+        walk(realTopBrowsingContext);
+      }
     }
   } else if (
     sessionContext.type == "all" ||

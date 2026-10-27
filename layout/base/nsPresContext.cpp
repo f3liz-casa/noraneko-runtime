@@ -2829,13 +2829,13 @@ uint64_t nsPresContext::GetUndisplayedRestyleGeneration() const {
   return mRestyleManager->GetUndisplayedRestyleGeneration();
 }
 
-mozilla::intl::Bidi& nsPresContext::BidiEngine() {
+UniquePtr<intl::Bidi> nsPresContext::GetBidiEngine() {
   MOZ_ASSERT(NS_IsMainThread());
 
-  if (!mBidiEngine) {
-    mBidiEngine = MakeUnique<mozilla::intl::Bidi>();
+  if (mBidiEngine) {
+    return std::move(mBidiEngine);
   }
-  return *mBidiEngine;
+  return MakeUnique<mozilla::intl::Bidi>();
 }
 
 void nsPresContext::FlushFontFeatureValues() {
@@ -2865,20 +2865,9 @@ void nsPresContext::FlushFontPaletteValues() {
   mFontPaletteValueSet = styleSet->BuildFontPaletteValueSet();
   mFontPaletteValuesDirty = false;
 
-  if (mFontPaletteCache) {
-    mFontPaletteCache->SetPaletteValueSet(mFontPaletteValueSet);
-  }
-
   // Even if we're not reflowing anything, a change to the palette means we
   // need to repaint in order to show the new colors.
   InvalidatePaintedLayers();
-}
-
-gfx::PaletteCache& nsPresContext::FontPaletteCache() {
-  if (!mFontPaletteCache) {
-    mFontPaletteCache = MakeUnique<gfx::PaletteCache>(mFontPaletteValueSet);
-  }
-  return *mFontPaletteCache.get();
 }
 
 void nsPresContext::SetVisibleArea(const nsRect& aRect) {
@@ -2969,9 +2958,7 @@ void nsPresContext::UpdateDynamicToolbarOffset(ScreenIntCoord aOffset) {
     return;
   }
 
-  dom::InteractiveWidget interactiveWidget = mDocument->InteractiveWidget();
-  if (interactiveWidget == InteractiveWidget::OverlaysContent &&
-      GetKeyboardHeight() > 0) {
+  if (IsKeyboardVisibleOnOverlaysContent()) {
     // On overlays-content mode, the toolbar offset change should NOT affect
     // the visual viewport while the software keyboard is being shown since
     // the toolbar will be positioned somewhere in the middle of the visual
@@ -3021,9 +3008,9 @@ ScreenIntCoord nsPresContext::GetKeyboardHeight() const {
   return mvm ? mvm->GetKeyboardHeight() : ScreenIntCoord(0);
 }
 
-bool nsPresContext::IsKeyboardHiddenOrResizesContentMode() const {
-  return GetKeyboardHeight() == 0 ||
-         mDocument->InteractiveWidget() == InteractiveWidget::ResizesContent;
+bool nsPresContext::IsKeyboardVisibleOnOverlaysContent() const {
+  return GetKeyboardHeight() > 0 &&
+         mDocument->InteractiveWidget() == InteractiveWidget::OverlaysContent;
 }
 
 DynamicToolbarState nsPresContext::GetDynamicToolbarState() const {

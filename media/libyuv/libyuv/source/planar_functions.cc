@@ -192,19 +192,29 @@ void Convert16To8Plane(const uint16_t* src_y,
 
 // Convert a plane of 8 bit data to 16 bit
 LIBYUV_API
-void Convert8To16Plane(const uint8_t* src_y,
-                       int src_stride_y,
-                       uint16_t* dst_y,
-                       int dst_stride_y,
-                       int scale,  // 1024 for 10 bits
-                       int width,
-                       int height) {
+void Convert8To16Plane(
+    const uint8_t* src_y,
+    int src_stride_y,
+    uint16_t* dst_y,
+    int dst_stride_y,
+    int bits,  // 10, 12, 16 bits (or 1024, 4096, 65536 scale)
+    int width,
+    int height) {
   int y;
-  void (*Convert8To16Row)(const uint8_t* src_y, uint16_t* dst_y, int scale,
+  void (*Convert8To16Row)(const uint8_t* src_y, uint16_t* dst_y, int bits,
                           int width) = Convert8To16Row_C;
 
   if (width <= 0 || height == 0 || height == INT_MIN) {
     return;
+  }
+  // Convert legacy scale to bits if needed.
+  if (bits > 16) {
+    int b = 0;
+    while (bits > 1) {
+      bits >>= 1;
+      ++b;
+    }
+    bits = b;
   }
   // Negative height means invert the image.
   if (height < 0) {
@@ -235,6 +245,14 @@ void Convert8To16Plane(const uint8_t* src_y,
     }
   }
 #endif
+#if defined(HAS_CONVERT8TO16ROW_AVX512BW)
+  if (TestCpuFlag(kCpuHasAVX512BW)) {
+    Convert8To16Row = Convert8To16Row_Any_AVX512BW;
+    if (IS_ALIGNED(width, 64)) {
+      Convert8To16Row = Convert8To16Row_AVX512BW;
+    }
+  }
+#endif
 #if defined(HAS_CONVERT8TO16ROW_NEON)
   if (TestCpuFlag(kCpuHasNEON)) {
     Convert8To16Row = Convert8To16Row_Any_NEON;
@@ -248,10 +266,15 @@ void Convert8To16Plane(const uint8_t* src_y,
     Convert8To16Row = Convert8To16Row_SME;
   }
 #endif
+#if defined(HAS_CONVERT8TO16ROW_RVV)
+  if (TestCpuFlag(kCpuHasRVV)) {
+    Convert8To16Row = Convert8To16Row_RVV;
+  }
+#endif
 
   // Convert plane
   for (y = 0; y < height; ++y) {
-    Convert8To16Row(src_y, dst_y, scale, width);
+    Convert8To16Row(src_y, dst_y, bits, width);
     src_y += src_stride_y;
     dst_y += dst_stride_y;
   }
@@ -933,6 +956,14 @@ void ConvertToMSBPlane_16(const uint16_t* src_y,
     }
   }
 #endif
+#if defined(HAS_MULTIPLYROW_16_AVX512BW)
+  if (TestCpuFlag(kCpuHasAVX512BW)) {
+    MultiplyRow_16 = MultiplyRow_16_Any_AVX512BW;
+    if (IS_ALIGNED(width, 64)) {
+      MultiplyRow_16 = MultiplyRow_16_AVX512BW;
+    }
+  }
+#endif
 #if defined(HAS_MULTIPLYROW_16_NEON)
   if (TestCpuFlag(kCpuHasNEON)) {
     MultiplyRow_16 = MultiplyRow_16_Any_NEON;
@@ -944,6 +975,11 @@ void ConvertToMSBPlane_16(const uint16_t* src_y,
 #if defined(HAS_MULTIPLYROW_16_SME)
   if (TestCpuFlag(kCpuHasSME)) {
     MultiplyRow_16 = MultiplyRow_16_SME;
+  }
+#endif
+#if defined(HAS_MULTIPLYROW_16_RVV)
+  if (TestCpuFlag(kCpuHasRVV)) {
+    MultiplyRow_16 = MultiplyRow_16_RVV;
   }
 #endif
 
@@ -1065,6 +1101,11 @@ void SwapUVPlane(const uint8_t* src_uv,
     }
   }
 #endif
+#if defined(HAS_SWAPUVROW_RVV)
+  if (TestCpuFlag(kCpuHasRVV)) {
+    SwapUVRow = SwapUVRow_RVV;
+  }
+#endif
 
   for (y = 0; y < height; ++y) {
     SwapUVRow(src_uv, dst_vu, width);
@@ -1073,22 +1114,22 @@ void SwapUVPlane(const uint8_t* src_uv,
   }
 }
 
-// Convert NV21 to NV12.
+// Convert NV12 to NV21.
 LIBYUV_API
-int NV21ToNV12(const uint8_t* src_y,
+int NV12ToNV21(const uint8_t* src_y,
                int src_stride_y,
-               const uint8_t* src_vu,
-               int src_stride_vu,
+               const uint8_t* src_uv,
+               int src_stride_uv,
                uint8_t* dst_y,
                int dst_stride_y,
-               uint8_t* dst_uv,
-               int dst_stride_uv,
+               uint8_t* dst_vu,
+               int dst_stride_vu,
                int width,
                int height) {
   int halfwidth = (width + 1) >> 1;
   int halfheight = (height + 1) >> 1;
 
-  if (!src_vu || !dst_uv || width <= 0 || height == 0 || height == INT_MIN) {
+  if (!src_uv || !dst_vu || width <= 0 || height == 0 || height == INT_MIN) {
     return -1;
   }
 
@@ -1100,11 +1141,11 @@ int NV21ToNV12(const uint8_t* src_y,
   if (height < 0) {
     height = -height;
     halfheight = (height + 1) >> 1;
-    src_vu = src_vu + (ptrdiff_t)(halfheight - 1) * src_stride_vu;
-    src_stride_vu = -src_stride_vu;
+    src_uv = src_uv + (ptrdiff_t)(halfheight - 1) * src_stride_uv;
+    src_stride_uv = -src_stride_uv;
   }
 
-  SwapUVPlane(src_vu, src_stride_vu, dst_uv, dst_stride_uv, halfwidth,
+  SwapUVPlane(src_uv, src_stride_uv, dst_vu, dst_stride_vu, halfwidth,
               halfheight);
   return 0;
 }
@@ -3224,6 +3265,14 @@ int I420Blend(const uint8_t* src_y0,
     }
   }
 #endif
+#if defined(HAS_SCALEROWDOWN2_AVX512BW)
+  if (TestCpuFlag(kCpuHasAVX512BW)) {
+    ScaleRowDown2 = ScaleRowDown2Box_Odd_AVX512BW;
+    if (IS_ALIGNED(width, 2)) {
+      ScaleRowDown2 = ScaleRowDown2Box_AVX512BW;
+    }
+  }
+#endif
 #if defined(HAS_SCALEROWDOWN2_RVV)
   if (TestCpuFlag(kCpuHasRVV)) {
     ScaleRowDown2 = ScaleRowDown2Box_RVV;
@@ -3328,6 +3377,11 @@ int ARGBMultiply(const uint8_t* src_argb0,
     if (IS_ALIGNED(width, 8)) {
       ARGBMultiplyRow = ARGBMultiplyRow_LASX;
     }
+  }
+#endif
+#if defined(HAS_ARGBMULTIPLYROW_RVV)
+  if (TestCpuFlag(kCpuHasRVV)) {
+    ARGBMultiplyRow = ARGBMultiplyRow_RVV;
   }
 #endif
 
@@ -3571,7 +3625,7 @@ int RAWToRGB24(const uint8_t* src_raw,
 #if defined(HAS_RAWTORGB24ROW_NEON)
   if (TestCpuFlag(kCpuHasNEON)) {
     RAWToRGB24Row = RAWToRGB24Row_Any_NEON;
-    if (IS_ALIGNED(width, 8)) {
+    if (IS_ALIGNED(width, 16)) {
       RAWToRGB24Row = RAWToRGB24Row_NEON;
     }
   }
@@ -3589,9 +3643,25 @@ int RAWToRGB24(const uint8_t* src_raw,
     }
   }
 #endif
+#if defined(HAS_RAWTORGB24ROW_LASX)
+  if (TestCpuFlag(kCpuHasLASX)) {
+    RAWToRGB24Row = RAWToRGB24Row_Any_LASX;
+    if (IS_ALIGNED(width, 32)) {
+      RAWToRGB24Row = RAWToRGB24Row_LASX;
+    }
+  }
+#endif
 #if defined(HAS_RAWTORGB24ROW_RVV)
   if (TestCpuFlag(kCpuHasRVV)) {
     RAWToRGB24Row = RAWToRGB24Row_RVV;
+  }
+#endif
+#if defined(HAS_RAWTORGB24ROW_WASMSIMD)
+  if (TestCpuFlag(kCpuHasWASMSIMD)) {
+    RAWToRGB24Row = RAWToRGB24Row_Any_WASMSIMD;
+    if (IS_ALIGNED(width, 16)) {
+      RAWToRGB24Row = RAWToRGB24Row_WASMSIMD;
+    }
   }
 #endif
 
@@ -4309,9 +4379,19 @@ int ARGBComputeCumulativeSum(const uint8_t* src_argb,
   if (!dst_cumsum || !src_argb || width <= 0 || height <= 0) {
     return -1;
   }
-#if defined(HAS_CUMULATIVESUMTOAVERAGEROW_SSE2)
+#if defined(HAS_COMPUTECUMULATIVESUMROW_SSE2)
   if (TestCpuFlag(kCpuHasSSE2)) {
     ComputeCumulativeSumRow = ComputeCumulativeSumRow_SSE2;
+  }
+#endif
+#if defined(HAS_COMPUTECUMULATIVESUMROW_AVX2)
+  if (TestCpuFlag(kCpuHasAVX2)) {
+    ComputeCumulativeSumRow = ComputeCumulativeSumRow_AVX2;
+  }
+#endif
+#if defined(HAS_COMPUTECUMULATIVESUMROW_NEON)
+  if (TestCpuFlag(kCpuHasNEON)) {
+    ComputeCumulativeSumRow = ComputeCumulativeSumRow_NEON;
   }
 #endif
 
@@ -4372,6 +4452,18 @@ int ARGBBlur(const uint8_t* src_argb,
   if (TestCpuFlag(kCpuHasSSE2)) {
     ComputeCumulativeSumRow = ComputeCumulativeSumRow_SSE2;
     CumulativeSumToAverageRow = CumulativeSumToAverageRow_SSE2;
+  }
+#endif
+#if defined(HAS_CUMULATIVESUMTOAVERAGEROW_AVX2)
+  if (TestCpuFlag(kCpuHasAVX2)) {
+    ComputeCumulativeSumRow = ComputeCumulativeSumRow_AVX2;
+    CumulativeSumToAverageRow = CumulativeSumToAverageRow_AVX2;
+  }
+#endif
+#if defined(HAS_CUMULATIVESUMTOAVERAGEROW_NEON)
+  if (TestCpuFlag(kCpuHasNEON)) {
+    ComputeCumulativeSumRow = ComputeCumulativeSumRow_NEON;
+    CumulativeSumToAverageRow = CumulativeSumToAverageRow_NEON;
   }
 #endif
   // Compute enough CumulativeSum for first row to be blurred. After this
@@ -4534,6 +4626,11 @@ int InterpolatePlane(const uint8_t* src0,
     if (IS_ALIGNED(width, 32)) {
       InterpolateRow = InterpolateRow_AVX2;
     }
+  }
+#endif
+#if defined(HAS_INTERPOLATEROW_AVX512BW)
+  if (TestCpuFlag(kCpuHasAVX512BW)) {
+    InterpolateRow = InterpolateRow_AVX512BW;
   }
 #endif
 #if defined(HAS_INTERPOLATEROW_NEON)
@@ -5794,6 +5891,11 @@ int UYVYToNV12(const uint8_t* src_uyvy,
     }
   }
 #endif
+#if defined(HAS_INTERPOLATEROW_AVX512BW)
+  if (TestCpuFlag(kCpuHasAVX512BW)) {
+    InterpolateRow = InterpolateRow_AVX512BW;
+  }
+#endif
 #if defined(HAS_INTERPOLATEROW_NEON)
   if (TestCpuFlag(kCpuHasNEON)) {
     InterpolateRow = InterpolateRow_Any_NEON;
@@ -5886,7 +5988,10 @@ void HalfMergeUVPlane(const uint8_t* src_u,
   }
 #endif
 #if defined(HAS_HALFMERGEUVROW_SVE2)
-  if (TestCpuFlag(kCpuHasSVE2)) {
+  // The average of two values must be retained for the final odd element if
+  // present. Existing code just handles this by falling back to the C
+  // implementation, so mirror that for SVE2 as well.
+  if (TestCpuFlag(kCpuHasSVE2) && IS_ALIGNED(width, 2)) {
     HalfMergeUVRow = HalfMergeUVRow_SVE2;
   }
 #endif

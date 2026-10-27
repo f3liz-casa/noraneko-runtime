@@ -56,6 +56,9 @@ perf:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1954216
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1949038
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2063750
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2064052
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2064064
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2064072
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1759744#c5
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1799727#c4
@@ -69,7 +72,8 @@ perf:
     extra_keys:
       load_time:
         description: |
-          Time between loadEventStart and navigationStart, in ms.
+          Time between loadEventStart and navigationStart, in ms. Absent when
+          the document was replaced before its load event fired.
         type: quantity
         unit: ms
       dns_lookup_time:
@@ -94,7 +98,11 @@ perf:
         unit: ms
       lcp_time:
         description: |
-          Time between largestContentfulPaint and navigationStart, at the point of onLoad firing, in ms. This may differ from the final LCP value as reported through the LCP histogram.
+          Time between largestContentfulPaint and navigationStart, in ms.
+          Recorded when the document is hidden, at which point the largest
+          contentful paint is final, so it matches the value reported through
+          the LCP histogram. Absent when the document was replaced before its
+          load event fired.
         type: quantity
         unit: ms
       js_exec_time:
@@ -129,6 +137,14 @@ perf:
       same_origin_nav:
         description: |
           If true, a normal navigation was performed on the same origin.
+        type: boolean
+      loaded_in_foreground:
+        description: |
+          Whether the tab was in the foreground when the load event started. A
+          background tab throttles the load and holds back its paints, inflating
+          the timings, so such a load is left out of the performance.pageload
+          histograms. Absent when the document was replaced before its load
+          event fired.
         type: boolean
       using_webdriver:
         description: |
@@ -277,6 +293,9 @@ perf:
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1967780
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2063750
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2064052
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2064064
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2064072
     data_reviews:
       - https://phabricator.services.mozilla.com/D250521
     notification_emails:
@@ -286,7 +305,10 @@ perf:
     extra_keys:
       lcp_time:
         description: |
-          Time between largestContentfulPaint and navigationStart, at the point of onLoad firing, in ms. This may differ from the final LCP value as reported through the LCP histogram.
+          Time between largestContentfulPaint and navigationStart, in ms.
+          Recorded when the document is hidden, at which point the largest
+          contentful paint is final. Absent when the document was replaced
+          before its load event fired.
         type: quantity
         unit: ms
       load_type:
@@ -296,6 +318,14 @@ perf:
       same_origin_nav:
         description: |
           If true, a normal navigation was performed on the same origin.
+        type: boolean
+      loaded_in_foreground:
+        description: |
+          Whether the tab was in the foreground when the load event started. A
+          background tab throttles the load and holds back its paints, inflating
+          the timings, so such a load is left out of the performance.pageload
+          histograms. Absent when the document was replaced before its load
+          event fired.
         type: boolean
       http_ver:
         description: |
@@ -692,25 +722,6 @@ security:
           If the principal is a ContentPrincipal, we also collect the scheme
         type: string
 
-  shadowed_html_document_property_access:
-    type: event
-    description: >
-      When accessing a property on the HTMLDocument like (document.currentScript),
-      if that property was shadowed/"clobbered" (e.g. using <img name=currentScript>), the
-      name of the shadowed built-in property is collected.
-    bugs:
-      - https://bugzil.la/1955578
-    data_reviews:
-      - https://bugzil.la/1955578
-    notification_emails:
-      - tschuster@mozilla.com
-    expires: 160
-    extra_keys:
-      name:
-        description: >
-          Name of the shadowed HTML property that was accessed.
-        type: string
-
 dom.contentprocess:
   build_id_mismatch:
     type: counter
@@ -820,7 +831,6 @@ dom.contentprocess:
       - jimm@mozilla.com
       - mconley@mozilla.com
     expires: never
-    telemetry_mirror: CONTENT_PROCESS_LAUNCH_MAINTHREAD_MS
 
   launch_total:
     type: timing_distribution
@@ -840,7 +850,6 @@ dom.contentprocess:
       - jimm@mozilla.com
       - mconley@mozilla.com
     expires: never
-    telemetry_mirror: CONTENT_PROCESS_LAUNCH_TOTAL_MS
 
   sync_launch:
     type: timing_distribution
@@ -860,7 +869,6 @@ dom.contentprocess:
       - jimm@mozilla.com
       - mconley@mozilla.com
     expires: never
-    telemetry_mirror: CONTENT_PROCESS_SYNC_LAUNCH_MS
 
   launch_is_sync:
     type: labeled_counter
@@ -882,7 +890,6 @@ dom.contentprocess:
       - jimm@mozilla.com
       - mconley@mozilla.com
     expires: never
-    telemetry_mirror: h#CONTENT_PROCESS_LAUNCH_IS_SYNC
 
 dom.parentprocess:
   private_window_used:

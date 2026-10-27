@@ -84,7 +84,7 @@ export class ImpressionStats extends React.PureComponent {
                 type: "impression",
                 tile_id: card.id,
                 source: "newtab",
-                advertiser: card.advertiser,
+                advertiser_name: card.advertiser_name,
                 // Keep the 0-based position, can be adjusted by the telemetry
                 // sender if necessary.
                 position: card.pos,
@@ -112,6 +112,8 @@ export class ImpressionStats extends React.PureComponent {
           scheduled_corpus_item_id: link.scheduled_corpus_item_id,
           recommended_at: link.recommended_at,
           received_rank: link.received_rank,
+          variant_id: link.variant_id,
+          source_section_id: link.source_section_id,
           topic: link.topic,
           features: link.features,
           attribution: link.attribution,
@@ -133,7 +135,7 @@ export class ImpressionStats extends React.PureComponent {
                 section: link.section,
                 section_position: link.section_position,
                 is_section_followed: link.is_section_followed,
-                layout_name: link.sectionLayoutName,
+                layout_name: link.layout_name,
               }
             : {}),
         })),

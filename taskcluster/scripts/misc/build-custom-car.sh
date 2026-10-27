@@ -65,6 +65,14 @@ fi
 DEPOT_TOOLS_REV=$(cd depot_tools && git rev-parse HEAD && cd ..)
 echo "Current depot_tools revision: $DEPOT_TOOLS_REV"
 
+# Bug 2070172 - upstream `fetch` now runs through depot_tools' hermetic
+# python-bin wrapper, which refuses to run on a checkout that has never been
+# bootstrapped, and nothing bootstraps it before the `fetch` below. Windows
+# is already covered by the `gclient` call it runs first.
+if [[ $(uname -o) != "Msys" ]]; then
+  ensure_bootstrap
+fi
+
 
 # Set up some env variables depending on the target OS
 # Linux is the default case, with minor adjustments for
@@ -93,7 +101,8 @@ fi
 
 # Logic for macosx64
 if [[ $(uname -s) == "Darwin" ]]; then
-  export MACOS_SYSROOT="$MOZ_FETCHES_DIR/MacOSX26.5.sdk"
+  MACOS_SYSROOT=$(ls -d "$MOZ_FETCHES_DIR"/MacOSX*.sdk)
+  export MACOS_SYSROOT
   CONFIG=$(echo $CONFIG mac_sdk_path='"//out/Default/MacOSX.sdk"')
 
   PGO_SUBSTR="chrome-mac-arm-main"

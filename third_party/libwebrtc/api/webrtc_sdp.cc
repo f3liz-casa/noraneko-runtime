@@ -487,11 +487,6 @@ bool GetSingleTokenValue(absl::string_view message,
   return true;
 }
 
-bool CaseInsensitiveFind(std::string str1, std::string str2) {
-  absl::c_transform(str1, str1.begin(), ::tolower);
-  absl::c_transform(str2, str2.begin(), ::tolower);
-  return str1.find(str2) != std::string::npos;
-}
 
 template <class T>
 bool GetValueFromString(absl::string_view line,
@@ -814,7 +809,8 @@ bool ParseExtmap(absl::string_view line,
   if (!GetValueFromString(line, sub_fields[0], &value, error)) {
     return false;
   }
-  if (!RtpHeaderExtensionId(value).Valid()) {
+  std::optional<RtpHeaderExtensionId> id = RtpHeaderExtensionId::Create(value);
+  if (!id.has_value()) {
     return ParseFailed(line, "Extension ID is not in valid range.", error);
   }
 
@@ -840,7 +836,7 @@ bool ParseExtmap(absl::string_view line,
     return ParseFailed(line, "URI contains invalid characters.", error);
   }
 
-  *extmap = RtpExtension(uri, RtpHeaderExtensionId(value), encrypted);
+  *extmap = RtpExtension(uri, *id, encrypted);
   return true;
 }
 
@@ -1858,7 +1854,7 @@ bool ParseSessionDescription(absl::string_view message,
       if (!GetValue(*aline, kAttributeMsidSemantics, &semantics, error)) {
         return false;
       }
-      if (CaseInsensitiveFind(semantics, kMediaStreamSemantic)) {
+      if (absl::StrContainsIgnoreCase(semantics, kMediaStreamSemantic)) {
         desc->set_msid_signaling(kMsidSignalingSemantic);
       }
     } else if (HasAttribute(*aline, kAttributeExtmapAllowMixed)) {

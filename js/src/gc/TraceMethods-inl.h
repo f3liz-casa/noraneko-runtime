@@ -249,7 +249,20 @@ void js::gc::MarkingTracerT<opts>::eagerlyMarkChildren(JSRope* rope) {
 }
 
 inline void JS::Symbol::traceChildren(JSTracer* trc) {
-  js::TraceCellHeaderEdge(trc, this, "symbol description");
+  // The cell header points to either an atom or another symbol.
+  TenuredCell* cell = headerPtrForTracing();
+  if (isLocal()) {
+    JS::Symbol* shared = cell->as<JS::Symbol>();
+    js::TraceManuallyBarrieredEdge(trc, &shared, "shared symbol");
+    MOZ_ASSERT(shared == headerPtrForTracing());
+    return;
+  }
+
+  if (cell) {
+    JSAtom* description = &cell->as<JSString>()->asAtom();
+    js::TraceManuallyBarrieredEdge(trc, &description, "symbol description");
+    MOZ_ASSERT(description == &cell->as<JSString>()->asAtom());
+  }
 }
 
 template <typename SlotInfo>
@@ -422,8 +435,8 @@ template <uint32_t opts>
 void js::gc::MarkingTracerT<opts>::eagerlyMarkChildren(PropMap* map) {
   MOZ_ASSERT(map->isMarkedAny());
   do {
-    for (uint32_t i = 0; i < PropMap::Capacity; i++) {
-      PropertyKey key = map->keys_[i].getForTracing();
+    for (auto& mkey : map->keys_) {
+      PropertyKey key = mkey.getForTracing();
       if (!key.isVoid()) {
         markAndTraverseEdge(map, key);
       }

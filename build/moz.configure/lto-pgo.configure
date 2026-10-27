@@ -98,9 +98,6 @@ def pgo_profile_path(path, pgo_use, profdata, build_env):
     return path[0]
 
 
-set_config("PGO_PROFILE_PATH", pgo_profile_path)
-
-
 @depends(
     "--enable-profile-use",
     pgo_profile_path,
@@ -245,8 +242,6 @@ def moz_pgo_rust(pgo, profile_use, profile_generate, c_compiler):
 
     return True
 
-
-set_config("MOZ_PGO_RUST", moz_pgo_rust)
 
 # LTO
 # ==============================================================
@@ -478,6 +473,7 @@ def remove_dead_symbols(dso_flags):
 
 set_config("MOZ_LTO", lto.enabled)
 set_define("MOZ_LTO", lto.enabled)
+set_config("MOZ_LTO_OBJECT_PATH", True, when=lto.enabled & target_is_darwin)
 set_config("MOZ_LTO_CFLAGS", lto.cflags)
 set_config("MOZ_LTO_LDFLAGS", lto.ldflags)
 set_config("MOZ_LTO_RUST_CROSS", lto.rust_lto)

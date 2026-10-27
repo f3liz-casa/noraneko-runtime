@@ -4,44 +4,7 @@
 
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { MultiStageAboutWelcome } from "./components/MultiStageAboutWelcome";
-import { MultiStageUtils } from "./lib/multistage-utils.mjs";
-
-function MultistageWithDismiss({ config, handleDismiss, handleBlock }) {
-  function onDismiss() {
-    handleBlock?.();
-    handleDismiss?.();
-  }
-
-  return (
-    <div
-      className="multistage-newtab-wrapper"
-      style={
-        config.wrapper_content_style
-          ? MultiStageUtils.getValidStyle(config.wrapper_content_style, [
-              "height",
-            ])
-          : { height: "500px" }
-      }
-    >
-      <moz-button
-        type="icon ghost"
-        size="small"
-        iconsrc="chrome://global/skin/icons/close.svg"
-        data-l10n-id="newtab-activation-window-message-dismiss-button"
-        onClick={onDismiss}
-      />
-      <MultiStageAboutWelcome
-        defaultScreens={config.screens}
-        message_id={config.id}
-        transitions={config.transitions ?? false}
-        backdrop={config.backdrop}
-        startScreen={0}
-        updateHistory={false}
-      />
-    </div>
-  );
-}
+import { MultistageWithDismiss } from "./components/MultistageWithDismiss";
 
 window.mountMultistageMessage = function mountMultistageMessage(
   container,
@@ -75,6 +38,15 @@ window.mountMultistageMessage = function mountMultistageMessage(
       }
     },
     AWGetSelectedTheme: () => Promise.resolve(),
+    AWGetActiveThemeId: async () => {
+      try {
+        return await window.ASRouterMessage({
+          type: "AW_GET_ACTIVE_THEME_ID",
+        });
+      } catch {
+        return "";
+      }
+    },
     AWGetInstalledAddons: () => Promise.resolve(),
   };
 

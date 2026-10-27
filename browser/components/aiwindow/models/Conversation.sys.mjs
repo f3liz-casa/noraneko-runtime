@@ -13,6 +13,12 @@ import {
   flushTokenRemainder,
 } from "moz-src:///browser/components/aiwindow/models/TokenStreamParser.sys.mjs";
 
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  ConversationStore:
+    "moz-src:///browser/components/aiwindow/ui/modules/ConversationStore.sys.mjs",
+});
+
 /**
  * @typedef {import("moz-src:///browser/components/aiwindow/models/Utils.sys.mjs").InferenceParams} InferenceParams
  */
@@ -147,6 +153,24 @@ export class Conversation {
 
   get messageCount() {
     return this.#messages.length;
+  }
+
+  /**
+   * Persists this conversation and its messages to the ConversationStore.
+   * Only the base `Conversation` persists here; subclasses with their own
+   * persistence (e.g. ChatConversation, which uses ChatStore) must not use
+   * this, or their subclass-specific data would be silently dropped.
+   *
+   * @returns {Promise<void>}
+   */
+  async save() {
+    if (this.constructor !== Conversation) {
+      throw new Error(
+        `${this.constructor.name} must not call Conversation.save(): it would ` +
+          `persist only the base conversation slice. Use its own store instead.`
+      );
+    }
+    await lazy.ConversationStore.updateConversation(this);
   }
 
   /** True when the underlying engineInstance is initialized and ready to serve requests. */
@@ -402,11 +426,18 @@ export class Conversation {
   /**
    * Execute one LLM call against this conversation's messages + parameters.
    *
+   * This and `runWithGenerator()` are the only ways a turn reaches the engine,
+   * so they are where staged security flags are committed. Committing here
+   * rather than at each call site covers turns driven from anywhere, including
+   * a tool that re-enters the chat loop, and keeps flags staged for the whole
+   * of a tool-call batch, which runs no LLM call of its own.
+   *
    * @param {object} opts - { fxAccountToken, signal?, ... }
    * @param {InferenceParams} [opts.inferenceParams]
    * @returns {Promise<object>}
    */
   async run(opts = {}) {
+    this.securityProperties.commit();
     return this.engine.run({
       args: this.getMessagesInChatCompletionsFormat(),
       ...opts,
@@ -415,13 +446,15 @@ export class Conversation {
   }
 
   /**
-   * Streaming variant — returns an AsyncGenerator.
+   * Streaming variant — returns an AsyncGenerator. Commits security flags for
+   * the same reason `run()` does, eagerly, before the generator is returned.
    *
    * @param {object} opts - { fxAccountToken, signal?, chatId?, tools?, tool_choice?, streamOptions?, args? }
    * @param {InferenceParams} [opts.inferenceParams]
    * @returns {AsyncGenerator}
    */
   runWithGenerator(opts = {}) {
+    this.securityProperties.commit();
     return this.engine.runWithGenerator({
       ...opts,
       // Lazy so the projection is skipped when the caller supplies its own
@@ -466,6 +499,8 @@ export class Conversation {
   /**
    * Gets any URL mentioned in the conversation. These URLs have heightened security
    * permissions as they have been explicitly added to the conversation by the user.
+   * Tabs mentioned as part of a tab group were not picked individually, so they
+   * are left out.
    *
    * @returns {Set<string>}
    */
@@ -475,8 +510,10 @@ export class Conversation {
     for (const message of this.messages) {
       const { contextMentions } = message.content;
       if (contextMentions) {
-        for (const { url } of contextMentions) {
-          mentionUrls.add(url);
+        for (const { url, groupId } of contextMentions) {
+          if (url && !groupId) {
+            mentionUrls.add(url);
+          }
         }
       }
     }

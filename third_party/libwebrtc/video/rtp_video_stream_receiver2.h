@@ -12,7 +12,6 @@
 #define VIDEO_RTP_VIDEO_STREAM_RECEIVER2_H_
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -22,6 +21,7 @@
 #include <vector>
 
 #include "absl/base/nullability.h"
+#include "absl/functional/any_invocable.h"
 #include "api/crypto/frame_decryptor_interface.h"
 #include "api/environment/environment.h"
 #include "api/frame_transformer_interface.h"
@@ -109,6 +109,7 @@ class RtpVideoStreamReceiver2 : public LossNotificationSender,
       // feedback.
       PacketRouter* packet_router,
       const VideoReceiveStreamInterface::Config* config,
+      TimeDelta max_wait_for_keyframe,
       ReceiveStatistics* rtp_receive_statistics,
       RtcpPacketTypeCounterObserver* rtcp_packet_type_counter_observer,
       RtcpCnameCallback* rtcp_cname_callback,
@@ -118,13 +119,27 @@ class RtpVideoStreamReceiver2 : public LossNotificationSender,
       // requests are sent via the internal RtpRtcp module.
       OnCompleteFrameCallback* complete_frame_callback,
       scoped_refptr<FrameDecryptorInterface> frame_decryptor,
-      scoped_refptr<FrameTransformerInterface> frame_transformer);
+      scoped_refptr<FrameTransformerInterface> frame_transformer,
+      absl::AnyInvocable<void(uint32_t ssrc) &&> on_first_packet);
   ~RtpVideoStreamReceiver2() override;
+
+  struct ReceiveCodec {
+    uint8_t payload_type = 0;
+    VideoCodecType video_codec = kVideoCodecGeneric;
+    CodecParameterMap codec_params;
+    bool raw_payload = false;
+  };
 
   void AddReceiveCodec(uint8_t payload_type,
                        VideoCodecType video_codec,
                        const CodecParameterMap& codec_params,
                        bool raw_payload);
+
+  // Configures receive codecs in-place by updating registered payload types.
+  // Payload types no longer present in `codecs` are removed. Retained payload
+  // types and packet buffers are preserved without clearing state or dropping
+  // in-flight packets.
+  void SetReceiveCodecs(const std::vector<ReceiveCodec>& codecs);
 
   // Clears state for all receive codecs added via `AddReceiveCodec`.
   void RemoveReceiveCodecs();
@@ -225,6 +240,7 @@ class RtpVideoStreamReceiver2 : public LossNotificationSender,
   void SetLossNotificationEnabled(bool enabled);
 
   void SetNackHistory(TimeDelta history);
+  void SetMaxWaitForKeyframe(TimeDelta max_wait_for_keyframe);
 
   int ulpfec_payload_type() const;
   int red_payload_type() const;
@@ -341,6 +357,13 @@ class RtpVideoStreamReceiver2 : public LossNotificationSender,
       const RtpPacketReceived& rtp_packet,
       absl_nonnull std::unique_ptr<video_coding::PacketBuffer::Packet>& packet);
 
+  // Returns nullopt for packets dropped during sequence number recovery.
+  // `video_header` is null for padding and FEC packets.
+  std::optional<int64_t> UnwrapSequenceNumberOrRecover(
+      const RtpPacketReceived& rtp_packet,
+      const RTPVideoHeader* absl_nullable video_header)
+      RTC_RUN_ON(worker_queue_);
+
   // Entry point doing non-stats work for a received packet. Called
   // for the same packet both before and after RED decapsulation.
   void ReceivePacket(const RtpPacketReceived& rtp_packet)
@@ -450,8 +473,15 @@ class RtpVideoStreamReceiver2 : public LossNotificationSender,
   std::map<uint8_t, CodecParameterMap> pt_codec_params_
       RTC_GUARDED_BY(worker_queue_);
 
-  // Maps payload type to the VideoCodecType.
-  std::map<uint8_t, VideoCodecType> pt_codec_ RTC_GUARDED_BY(worker_queue_);
+  struct CodecTypeAndRaw {
+    VideoCodecType video_codec = kVideoCodecGeneric;
+    bool raw_payload = false;
+
+    bool operator==(const CodecTypeAndRaw& other) const = default;
+  };
+
+  // Maps payload type to the VideoCodecType and raw state.
+  std::map<uint8_t, CodecTypeAndRaw> pt_codec_ RTC_GUARDED_BY(worker_queue_);
 
   int16_t last_payload_type_ RTC_GUARDED_BY(worker_queue_) = -1;
 
@@ -486,6 +516,14 @@ class RtpVideoStreamReceiver2 : public LossNotificationSender,
 
   SeqNumUnwrapper<uint16_t> rtp_seq_num_unwrapper_
       RTC_GUARDED_BY(worker_queue_);
+  std::optional<int64_t> newest_media_seq_num_ RTC_GUARDED_BY(worker_queue_);
+  std::optional<uint32_t> newest_media_rtp_timestamp_
+      RTC_GUARDED_BY(worker_queue_);
+  bool waiting_for_keyframe_after_seq_num_discontinuity_
+      RTC_GUARDED_BY(worker_queue_) = false;
+  TimeDelta max_wait_for_keyframe_ RTC_GUARDED_BY(worker_queue_);
+  Timestamp next_keyframe_request_for_seq_num_discontinuity_
+      RTC_GUARDED_BY(worker_queue_) = Timestamp::MinusInfinity();
 
   struct StashedPacket {
     RtpPacketReceived rtp_packet;
@@ -500,6 +538,9 @@ class RtpVideoStreamReceiver2 : public LossNotificationSender,
   // TODO: bugs.webrtc.org/358039777 - Move this to after the frame assembler.
   std::array<FrameInstrumentationDataReader, kMaxSpatialLayers>
       last_corruption_detection_state_by_layer_;
+
+  absl::AnyInvocable<void(uint32_t ssrc) &&> on_first_packet_
+      RTC_GUARDED_BY(worker_queue_);
 };
 
 }  // namespace webrtc

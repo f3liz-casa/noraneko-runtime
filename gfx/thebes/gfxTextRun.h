@@ -260,11 +260,15 @@ class gfxTextRun : public gfxShapedText {
   };
 
   struct MOZ_STACK_CLASS DrawParams {
+    DrawParams(gfxContext* aContext,
+               mozilla::gfx::FontPaletteValueSet* aPaletteValueSet)
+        : context(aContext), paletteValueSet(aPaletteValueSet) {}
+
     gfxContext* context;
-    mozilla::gfx::PaletteCache& paletteCache;
     DrawMode drawMode = DrawMode::GLYPH_FILL;
     nscolor textStrokeColor = 0;
     nsAtom* fontPalette = nullptr;
+    mozilla::gfx::FontPaletteValueSet* paletteValueSet = nullptr;
     gfxPattern* textStrokePattern = nullptr;
     const mozilla::gfx::StrokeOptions* strokeOpts = nullptr;
     const mozilla::gfx::DrawOptions* drawOpts = nullptr;
@@ -275,8 +279,6 @@ class gfxTextRun : public gfxShapedText {
     gfxTextRunDrawCallbacks* callbacks = nullptr;
     bool allowGDI = true;
     bool hasTextShadow = false;
-    DrawParams(gfxContext* aContext, mozilla::gfx::PaletteCache& aPaletteCache)
-        : context(aContext), paletteCache(aPaletteCache) {}
   };
 
   /**
@@ -310,7 +312,7 @@ class gfxTextRun : public gfxShapedText {
   void DrawEmphasisMarks(gfxContext* aContext, gfxTextRun* aMark,
                          gfxFloat aMarkAdvance, mozilla::gfx::Point aPt,
                          Range aRange, const PropertyProvider* aProvider,
-                         mozilla::gfx::PaletteCache& aPaletteCache,
+                         mozilla::gfx::FontPaletteValueSet* aPaletteValueSet,
                          imgDrawingParams& aImgParams) const;
 
   /**
@@ -930,7 +932,7 @@ class gfxFontGroup final : public gfxTextRunFactory {
                const gfxFontStyle* aStyle, nsAtom* aLanguage,
                bool aExplicitLanguage, gfxTextPerfMetrics* aTextPerf,
                gfxUserFontSet* aUserFontSet, gfxFloat aDevToCssSize,
-               StyleFontVariantEmoji aVariantEmoji);
+               mozilla::StyleFontVariantEmoji aVariantEmoji);
 
   virtual ~gfxFontGroup();
 
@@ -1424,7 +1426,8 @@ class gfxFontGroup final : public gfxTextRunFactory {
 
   bool mResolvedFonts = false;  // Whether the mFonts array has been set up.
 
-  StyleFontVariantEmoji mFontVariantEmoji = StyleFontVariantEmoji::Normal;
+  mozilla::StyleFontVariantEmoji mFontVariantEmoji =
+      mozilla::StyleFontVariantEmoji::Normal;
 
   // Generic font family used to select among font prefs during fallback.
   mozilla::StyleGenericFontFamily mFallbackGeneric =

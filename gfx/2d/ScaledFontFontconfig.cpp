@@ -372,7 +372,7 @@ void ScaledFontFontconfig::InstanceData::SetupFontOptions(
 
 bool ScaledFontFontconfig::GetFontInstanceData(FontInstanceDataOutput aCb,
                                                void* aBaton) {
-  std::vector<FontVariation> variations;
+  std::vector<wr::FontVariation> variations;
   if (HasVariationSettings()) {
     UnscaledFontFreeType::GetVariationSettingsFromFace(&variations,
                                                        mFace->GetFace());
@@ -386,7 +386,7 @@ bool ScaledFontFontconfig::GetFontInstanceData(FontInstanceDataOutput aCb,
 bool ScaledFontFontconfig::GetWRFontInstanceOptions(
     Maybe<wr::FontInstanceOptions>* aOutOptions,
     Maybe<wr::FontInstancePlatformOptions>* aOutPlatformOptions,
-    std::vector<FontVariation>* aOutVariations) {
+    std::vector<wr::FontVariation>* aOutVariations) {
   wr::FontInstanceOptions options = {};
   options.render_mode = wr::FontRenderMode::Alpha;
   options.flags = wr::FontInstanceFlags{0};
@@ -480,7 +480,7 @@ bool ScaledFontFontconfig::GetWRFontInstanceOptions(
 
 already_AddRefed<ScaledFont> UnscaledFontFontconfig::CreateScaledFont(
     Float aSize, const uint8_t* aInstanceData, uint32_t aInstanceDataLength,
-    const FontVariation* aVariations, uint32_t aNumVariations) {
+    const wr::FontVariation* aVariations, uint32_t aNumVariations) {
   if (aInstanceDataLength < sizeof(ScaledFontFontconfig::InstanceData)) {
     gfxWarning() << "Fontconfig scaled font instance data is truncated.";
     return nullptr;
@@ -496,15 +496,14 @@ already_AddRefed<ScaledFont> UnscaledFontFontconfig::CreateScaledFont(
     return nullptr;
   }
 
-  if (aNumVariations > 0 && face->GetData()) {
-    if (RefPtr<SharedFTFace> varFace = face->GetData()->CloneFace()) {
+  if (aNumVariations > 0) {
+    if (RefPtr<SharedFTFace> varFace = face->CloneFace()) {
       face = varFace;
     }
-  }
-
-  // Only apply variations if we have an explicitly cloned face.
-  if (aNumVariations > 0 && face != GetFace()) {
-    ApplyVariationsToFace(aVariations, aNumVariations, face->GetFace());
+    // Only apply variations if we have an explicitly cloned face.
+    if (face != GetFace()) {
+      ApplyVariationsToFace(aVariations, aNumVariations, face->GetFace());
+    }
   }
 
   RefPtr<ScaledFontFontconfig> scaledFont =
@@ -516,7 +515,7 @@ already_AddRefed<ScaledFont> UnscaledFontFontconfig::CreateScaledFont(
 already_AddRefed<ScaledFont> UnscaledFontFontconfig::CreateScaledFontFromWRFont(
     Float aGlyphSize, const wr::FontInstanceOptions* aOptions,
     const wr::FontInstancePlatformOptions* aPlatformOptions,
-    const FontVariation* aVariations, uint32_t aNumVariations) {
+    const wr::FontVariation* aVariations, uint32_t aNumVariations) {
   ScaledFontFontconfig::InstanceData instanceData(aOptions, aPlatformOptions);
   return CreateScaledFont(aGlyphSize, reinterpret_cast<uint8_t*>(&instanceData),
                           sizeof(instanceData), aVariations, aNumVariations);

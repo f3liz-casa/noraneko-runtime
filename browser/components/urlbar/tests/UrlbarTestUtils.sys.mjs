@@ -211,26 +211,46 @@ export class UrlbarInputBaseTestUtils {
    * Waits to a search to be complete.
    *
    * @param {ChromeWindow} win The window containing the urlbar
+   * @returns {Promise<UrlbarQueryContext>}
    */
   async promiseSearchComplete(win) {
-    let waitForQuery = async () => {
-      await this.promisePopupOpen(win, () => {});
+    let waitForQuery = async awaitedPromise => {
+      let urlbar = this.#urlbar(win);
+      // A query without results leaves the view closed, so also settle on the
+      // query finishing. A pass that finds no newer query than the one already
+      // awaited has nothing to wait for.
+      if (
+        !urlbar.view.isOpen &&
+        urlbar.lastQueryContextPromise !== awaitedPromise
+      ) {
+        await new Promise(resolve => {
+          let done = () => {
+            urlbar.controller.removeListener(listener);
+            resolve();
+          };
+          let listener = {
+            onViewOpen: done,
+            onQueryFinished: done,
+            onQueryCancelled: done,
+          };
+          this.addControllerListener(urlbar.controller, listener);
+        });
+      }
       // Re-read `lastQueryContextPromise` after each await in case the query
       // was restarted (e.g., by the `reopenOnBlur` mechanism in
       // `promiseAutocompleteResultPopup`), and wait for the latest query.
       let promise;
       let context;
       do {
-        promise = this.#urlbar(win).lastQueryContextPromise;
+        promise = urlbar.lastQueryContextPromise;
         context = await promise;
-      } while (this.#urlbar(win).lastQueryContextPromise !== promise);
-      return context;
+      } while (urlbar.lastQueryContextPromise !== promise);
+      return { context, promise };
     };
-    /** @type {UrlbarQueryContext} */
-    let context = await waitForQuery();
+    let { context, promise } = await waitForQuery();
     if (this.#urlbar(win).searchMode) {
       // Search mode may start a second query.
-      context = await waitForQuery();
+      ({ context } = await waitForQuery(promise));
     }
     if (this.#urlbar(win).view.oneOffSearchButtons?._rebuilding) {
       await new Promise(resolve =>
@@ -1251,6 +1271,7 @@ export class UrlbarInputBaseTestUtils {
     // urlbar's actual search mode object.
     let ignoreProperties = [
       "icon",
+      "keyId",
       "pref",
       "restrict",
       "telemetryLabel",
@@ -1677,21 +1698,33 @@ export class UrlbarInputBaseTestUtils {
   }
 
   /**
-   * Enrolls in a mock Nimbus feature.
+   * Enrolls in a mock Nimbus experiment or rollout.
    *
-   * @param {object} value
+   * @param {?object} value
    *   Define any desired Nimbus variables in this object.
-   * @param {string} [feature]
-   *   The feature to init.
-   * @param {string} [enrollmentType]
-   *   The enrollment type, either "rollout" (default) or "config".
-   * @returns {Promise<() => Promise<void>>}
-   *   A cleanup function that will unenroll the feature, returns a promise.
+   * @param {?object} options
+   * @param {?string} options.featureId
+   *   The name of the Nimbus feature.
+   * @param {?boolean} options.isRollout
+   *   True to use a rollout, false to use an experiment.
+   * @param {?string} options.slug
+   *   The experiment/rollout name. `NimbusTestUtils` will generate a name if
+   *   this isn't specified.
+   * @param {?string} options.branch
+   *   The experiment/rollout branch to enroll in. `NimbusTestUtils` will
+   *   generate a branch if this isn't specified.
+   * @returns {Function}
+   *   A cleanup function that should be called to unenroll and remove the
+   *   experiment/rollout.
    */
   async initNimbusFeature(
     value = {},
-    feature = "urlbar",
-    enrollmentType = "rollout"
+    {
+      featureId = "urlbar",
+      isRollout = true,
+      slug = undefined,
+      branchSlug = undefined,
+    } = {}
   ) {
     this.info("initNimbusFeature awaiting ExperimentAPI.init");
     const initializedExperimentAPI = await lazy.ExperimentAPI.init();
@@ -1705,11 +1738,13 @@ export class UrlbarInputBaseTestUtils {
     const doExperimentCleanup =
       await lazy.NimbusTestUtils.enrollWithFeatureConfig(
         {
-          featureId: lazy.NimbusFeatures[feature].featureId,
           value,
+          featureId: lazy.NimbusFeatures[featureId].featureId,
         },
         {
-          isRollout: enrollmentType === "rollout",
+          branchSlug,
+          isRollout,
+          slug,
         }
       );
 
@@ -2214,6 +2249,79 @@ export class UrlbarInputBaseTestUtils {
       );
     }
     this.#firstDayOfWeekStub.returns(firstDay);
+  }
+
+  /**
+   * Returns a `moz-remote-image` URL for the given http(s) URL. In the returned
+   * URL, only the `url` search param will be set. Designed to be used with
+   * `checkImageUrl()`.
+   *
+   * @param {?string} httpUrl
+   *   A bare http(s) (or other remote) URL.
+   * @returns {string}
+   *   A `moz-remote-image` URL with the `url` search param set, or `httpUrl`
+   *   itself if it's falsey.
+   */
+  makeMozRemoteImageUrl(httpUrl) {
+    if (!httpUrl) {
+      return httpUrl;
+    }
+    let url = new URL("moz-remote-image://");
+    url.searchParams.set("url", httpUrl);
+    return url.toString();
+  }
+
+  /**
+   * Asserts that two image/icon URLs are equivalent, taking into account
+   * `moz-remote-image` URLs. This function considers two `moz-remote-image`
+   * URLs equivalent if their `url` search params are equal.
+   *
+   * This function also asserts that the given actual URL is not an http(s) URL
+   * since remote images should never be decoded in the main process.
+   *
+   * @param {string} actualUrl
+   *   The actual URL being checked. Can be `moz-remote-image`, `chrome`,
+   *   `data`, etc. This function will assert that this is not an http(s) URL.
+   * @param {string} expectedUrl
+   *   The expected URL. If the actual URL is expected to be a
+   *   `moz-remote-image` URL, the expected URL must also be a
+   *   `moz-remote-image`, but only their `url` search params are compared.
+   * @param {string} message
+   *   An optional message that will be logged at the start.
+   */
+  checkImageUrl(actualUrl, expectedUrl, message = "") {
+    this.info("Checking image URLs");
+    if (message) {
+      this.info(message);
+    }
+
+    this.info("Actual:   " + JSON.stringify(actualUrl));
+    this.info("Expected: " + JSON.stringify(expectedUrl));
+
+    this.Assert.ok(
+      !actualUrl.startsWith("http"),
+      "Image URLs should never use http(s) (use moz-remote-image instead)"
+    );
+
+    if (
+      !actualUrl.startsWith("moz-remote-image") ||
+      !expectedUrl.startsWith("moz-remote-image")
+    ) {
+      this.Assert.equal(
+        actualUrl,
+        expectedUrl,
+        "One or both of the image URLs are not moz-remote-image, so they should simply be equal"
+      );
+      return;
+    }
+
+    let actualMozRemoteUrl = new URL(actualUrl);
+    let expectedMozRemoteUrl = new URL(expectedUrl);
+    this.Assert.equal(
+      actualMozRemoteUrl.searchParams.get("url"),
+      expectedMozRemoteUrl.searchParams.get("url"),
+      "The inner URLs of the moz-remote-image URLs should match"
+    );
   }
 
   #firstDayOfWeekStub;

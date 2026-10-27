@@ -115,6 +115,11 @@ class H265NALU final {
            mNalUnitType == NAL_TYPES::IDR_N_LP;
   }
 
+  bool IsIRAP() const {
+    return mNalUnitType >= NAL_TYPES::BLA_W_LP &&
+           mNalUnitType <= NAL_TYPES::CRA_NUT;
+  }
+
   bool IsSPS() const { return mNalUnitType == NAL_TYPES::SPS_NUT; }
   bool IsVPS() const { return mNalUnitType == NAL_TYPES::VPS_NUT; }
   bool IsPPS() const { return mNalUnitType == NAL_TYPES::PPS_NUT; }
@@ -397,6 +402,12 @@ class H265 final {
   static uint32_t ComputeMaxRefFrames(
       const mozilla::MediaByteBuffer* aExtraData);
 
+  // Return sps_max_num_reorder_pics at the highest sub-layer from a valid
+  // SPS in the extradata, otherwise return 0. A non-zero value means
+  // decode order can differ from presentation order (B-frames).
+  static uint32_t ComputeMaxReorderPics(
+      const mozilla::MediaByteBuffer* aExtraData);
+
   // Create a dummy extradata, useful to create a decoder and test the
   // capabilities of the decoder.
   static already_AddRefed<mozilla::MediaByteBuffer> CreateFakeExtraData();
@@ -410,6 +421,11 @@ class H265 final {
   // Return true if the given sample is a keyframe. Return error if we can't
   // determine the result.
   static Result<bool, nsresult> IsKeyFrame(
+      const mozilla::MediaRawData* aSample);
+
+  // Return true if the given sample is a random access point (IDR, CRA or
+  // BLA). Return error if we can't determine the result.
+  static Result<bool, nsresult> IsRandomAccessPoint(
       const mozilla::MediaRawData* aSample);
 
   // Parse SMPTE ST 2086 mastering display and CTA-861.3 content light level

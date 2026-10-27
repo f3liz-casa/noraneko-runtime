@@ -7,6 +7,10 @@ const { AboutWelcomeTelemetry } = ChromeUtils.importESModule(
   "resource:///modules/aboutwelcome/AboutWelcomeTelemetry.sys.mjs"
 );
 
+const { ASRouterTargeting } = ChromeUtils.importESModule(
+  "resource:///modules/asrouter/ASRouterTargeting.sys.mjs"
+);
+
 const { PanelTestProvider } = ChromeUtils.importESModule(
   "resource:///modules/asrouter/PanelTestProvider.sys.mjs"
 );
@@ -41,108 +45,37 @@ add_setup(async function () {
   );
   Assert.ok(gTestNewTabMessage, "Found a test fxa_cta message to use.");
 
-  /**
-   * @backward-compat { version 155 }
-   *
-   * This test message was added to PanelTestProvider in version 155. This test,
-   * however, runs in the newtab train-hop CI jobs, which means that we have
-   * to shim the test message until the PanelTestProvider change reaches 155.
-   */
-  if (Services.vc.compare(AppConstants.MOZ_APP_VERSION, "155.0a1") < 0) {
-    gTestPollingNewTabMessage = {
-      id: "TEST_ASROUTER_NEWTAB_MESSAGE_POLL_DEFAULT",
-      template: "newtab_message",
-      content: {
-        messageType: "ASRouterNewTabMessage",
-        imageSrc:
-          // eslint-disable-next-line mozilla/no-newtab-refs-outside-newtab
-          "chrome://newtab/content/data/content/assets/kit-in-circle.svg",
-        heading: "Make Firefox your own",
-        body: "Set Firefox as your default browser and pin it so it's always a click away.",
-        hideDismissButton: false,
-        // Declarative variants: each entry's `targeting` is re-evaluated against
-        // the live ASRouter environment (the "uncached" attributes read live
-        // shell state), and the first match's content overlays the base content.
-        // A `final` entry stops the re-evaluation poll once reached. Here, each
-        // state drops whichever step is already satisfied, so only the still-
-        // relevant button(s) show: both when neither is done (base content), only
-        // "Pin to taskbar" once we're the default, only "Set as default" once
-        // we're pinned, and the completed state once both are true.
-        states: [
-          {
-            // Already the default but not pinned: drop the "Set as default" step
-            // and only ask to pin.
-            targeting: "isDefaultBrowserUncached && doesAppNeedPinUncached",
-            content: {
-              primaryButton: null,
-            },
-          },
-          {
-            // Already pinned but not the default: drop the "Pin to taskbar" step
-            // and only ask to set as default.
-            targeting: "!isDefaultBrowserUncached && !doesAppNeedPinUncached",
-            content: {
-              secondaryButton: null,
-            },
-          },
-          {
-            // Default and pinned: everything's done. Show the completed state
-            // and stop polling.
-            targeting: "isDefaultBrowserUncached && !doesAppNeedPinUncached",
-            final: true,
-            content: {
-              heading: "You're all set",
-              body: "Firefox is now your default browser and pinned. Thanks!",
-              // No `type`, so this renders in the primary style.
-              primaryButton: {
-                label: "Go to settings to try it out!",
-                action: {
-                  type: "OPEN_ABOUT_PAGE",
-                  data: { args: "settings#browserIcon", where: "tab" },
-                },
-              },
-              secondaryButton: null,
-            },
-          },
-        ],
-        // The base content (neither step done) shows both steps, rendered non-
-        // primary (`type: "default"`) since neither is the single call-to-action.
-        // The states above swap in narrower content as each step is satisfied.
-        primaryButton: {
-          label: "Set as default",
-          type: "default",
-          action: {
-            type: "SET_DEFAULT_BROWSER",
-          },
-        },
-        secondaryButton: {
-          label: "Pin to taskbar",
-          type: "default",
-          action: {
-            type: "PIN_FIREFOX_TO_TASKBAR",
-          },
-        },
-        position: "ABOVE_TOPSITES",
-      },
-      frequency: {
-        lifetime: 3,
-      },
-      trigger: {
-        id: "newtabMessageCheck",
-      },
-      targeting: "true",
-      groups: ["cfr"],
-    };
-  } else {
-    gTestPollingNewTabMessage = await PanelTestProvider.getMessages().then(
-      msgs => msgs.find(msg => msg.id === TEST_POLLING_MESSAGE_ID)
-    );
-  }
+  gTestPollingNewTabMessage = await PanelTestProvider.getMessages().then(msgs =>
+    msgs.find(msg => msg.id === TEST_POLLING_MESSAGE_ID)
+  );
+
   Assert.ok(
     gTestPollingNewTabMessage,
     "Found a test polling newtab message to use."
   );
 });
+
+/**
+ * Waits for the activeNotifications targeting attribute to reach the expected
+ * value, failing the test if it doesn't.
+ *
+ * @param {boolean} expected
+ * @param {string} message
+ */
+async function assertActiveNotifications(expected, message) {
+  await TestUtils.waitForCondition(
+    () => ASRouterTargeting.Environment.activeNotifications === expected,
+    message
+  );
+}
+
+async function waitForNewTabMessage(browser) {
+  await SpecialPowers.spawn(browser, [], async () => {
+    await ContentTaskUtils.waitForCondition(() => {
+      return content.document.querySelector("asrouter-newtab-message");
+    }, "Waiting for asrouter-newtab-message");
+  });
+}
 
 /**
  * Tests that registering our test message results it in appearing on newtab,
@@ -180,6 +113,123 @@ add_task(async function test_show_newtab_message() {
   );
   BrowserTestUtils.removeTab(gBrowser.selectedTab);
   sandbox.restore();
+});
+
+/**
+ * Tests that a message rendered below the fold does not make
+ * activeNotifications true for its tab, or record an impression, until it is
+ * scrolled into view.
+ */
+add_task(async function test_newtab_message_below_fold_not_active() {
+  let sandbox = sinon.createSandbox();
+  sandbox.spy(ASRouter, "addImpression");
+
+  await BrowserTestUtils.openNewForegroundTab(gBrowser, "about:newtab");
+  let browser = gBrowser.selectedBrowser;
+  await SpecialPowers.spawn(browser, [], () => {
+    let spacer = content.document.createElement("div");
+    spacer.style.height = "300vh";
+    content.document.body.prepend(spacer);
+  });
+
+  await withTestMessage(sandbox, gTestNewTabMessage, async () => {
+    await ASRouter.sendTriggerMessage({ browser, id: "newtabMessageCheck" });
+    await waitForNewTabMessage(browser);
+
+    await SpecialPowers.spawn(browser, [], async () => {
+      // Give the intersection observer a chance to run.
+      await new Promise(resolve =>
+        content.requestAnimationFrame(() =>
+          content.requestAnimationFrame(resolve)
+        )
+      );
+    });
+
+    Assert.ok(
+      !(await ASRouterTargeting.Environment.activeNotifications),
+      "activeNotifications is false while the message is below the fold"
+    );
+    Assert.ok(
+      !ASRouter.addImpression.calledWith(gTestNewTabMessage),
+      "No impression is recorded while the message is below the fold"
+    );
+
+    await SpecialPowers.spawn(browser, [], () => {
+      content.document
+        .querySelector("asrouter-newtab-message")
+        .scrollIntoView({ block: "center" });
+    });
+
+    await assertActiveNotifications(
+      true,
+      "activeNotifications is true once the message is in view"
+    );
+    await TestUtils.waitForCondition(
+      () => ASRouter.addImpression.calledWith(gTestNewTabMessage),
+      "An impression is recorded once the message is in view"
+    );
+  });
+
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  sandbox.restore();
+});
+
+/**
+ * Tests that a message shown in a background tab records an impression and
+ * makes activeNotifications true once that tab is selected.
+ */
+add_task(async function test_newtab_message_in_background_tab() {
+  let sandbox = sinon.createSandbox();
+  sandbox.spy(ASRouter, "addImpression");
+
+  let originalTab = gBrowser.selectedTab;
+  let tab;
+
+  try {
+    tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, "about:newtab");
+    await BrowserTestUtils.switchTab(gBrowser, originalTab);
+    await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
+      await ContentTaskUtils.waitForCondition(
+        () => content.document.visibilityState === "hidden",
+        "Waiting for the newtab page to be hidden"
+      );
+    });
+
+    await withTestMessage(sandbox, gTestNewTabMessage, async stub => {
+      // Other triggers fire for the selected tab, which isn't a newtab page.
+      stub.callsFake(async ({ triggerId, returnAll } = {}) => {
+        let messages =
+          triggerId === "newtabMessageCheck" ? [gTestNewTabMessage] : [];
+        return returnAll ? messages : (messages[0] ?? null);
+      });
+      await ASRouter.sendTriggerMessage({
+        browser: tab.linkedBrowser,
+        id: "newtabMessageCheck",
+      });
+      await waitForNewTabMessage(tab.linkedBrowser);
+
+      Assert.ok(
+        !ASRouter.addImpression.calledWith(gTestNewTabMessage),
+        "No impression is recorded while the tab is in the background"
+      );
+
+      await BrowserTestUtils.switchTab(gBrowser, tab);
+
+      await assertActiveNotifications(
+        true,
+        "activeNotifications is true once the tab is selected"
+      );
+      await TestUtils.waitForCondition(
+        () => ASRouter.addImpression.calledWith(gTestNewTabMessage),
+        "An impression is recorded once the tab is selected"
+      );
+    });
+  } finally {
+    if (tab) {
+      BrowserTestUtils.removeTab(tab);
+    }
+    sandbox.restore();
+  }
 });
 
 /**
@@ -1074,4 +1124,81 @@ add_task(async function test_states_targeting_fails_closed() {
 
   BrowserTestUtils.removeTab(gBrowser.selectedTab);
   sandbox.restore();
+});
+
+/**
+ * Tests that navigating a tab away from newtab stops its message from counting
+ * toward activeNotifications.
+ */
+add_task(async function test_navigate_away_clears_active_notifications() {
+  let sandbox = sinon.createSandbox();
+  let tab;
+
+  try {
+    await withTestMessage(sandbox, gTestNewTabMessage, async () => {
+      tab = await BrowserTestUtils.openNewForegroundTab(
+        gBrowser,
+        "about:newtab"
+      );
+      await waitForNewTabMessage(tab.linkedBrowser);
+      await assertActiveNotifications(
+        true,
+        "The newtab message counts as an active notification"
+      );
+
+      const url = "https://example.com/";
+      BrowserTestUtils.startLoadingURIString(tab.linkedBrowser, url);
+      await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, url);
+      await assertActiveNotifications(
+        false,
+        "The newtab message no longer counts after navigating away"
+      );
+    });
+  } finally {
+    if (tab) {
+      BrowserTestUtils.removeTab(tab);
+    }
+    sandbox.restore();
+  }
+});
+
+/**
+ * Tests that loading about:home in a tab that was showing a newtab message
+ * counts the message shown on the new page. Both pages share the same browser,
+ * so this guards against the old page's unload clearing the new page's message.
+ */
+add_task(async function test_navigate_to_home_keeps_active_notifications() {
+  let sandbox = sinon.createSandbox();
+  let tab;
+
+  try {
+    await withTestMessage(sandbox, gTestNewTabMessage, async () => {
+      tab = await BrowserTestUtils.openNewForegroundTab(
+        gBrowser,
+        "about:newtab"
+      );
+      await waitForNewTabMessage(tab.linkedBrowser);
+      await assertActiveNotifications(
+        true,
+        "The newtab message counts as an active notification"
+      );
+
+      BrowserTestUtils.startLoadingURIString(tab.linkedBrowser, "about:home");
+      await BrowserTestUtils.browserLoaded(
+        tab.linkedBrowser,
+        false,
+        "about:home"
+      );
+      await waitForNewTabMessage(tab.linkedBrowser);
+      await assertActiveNotifications(
+        true,
+        "The message on about:home counts as an active notification"
+      );
+    });
+  } finally {
+    if (tab) {
+      BrowserTestUtils.removeTab(tab);
+    }
+    sandbox.restore();
+  }
 });

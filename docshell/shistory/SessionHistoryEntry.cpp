@@ -6,6 +6,7 @@
 #include "ipc/IPCMessageUtilsSpecializations.h"
 #include "mozilla/dom/SessionHistoryEntry.h"
 #include "nsCOMPtr.h"
+#include "nsContentUtils.h"
 #include "nsDocShell.h"
 #include "nsDocShellLoadState.h"
 #include "nsFrameLoader.h"
@@ -187,6 +188,22 @@ void SessionHistoryInfo::SetPostData(nsIInputStream* aPostData) {
 
 uint64_t SessionHistoryInfo::SharedId() const {
   return mSharedState.Get()->mId;
+}
+
+Maybe<NewSessionHistorySharedState> SessionHistoryInfo::NewSharedStateRequest()
+    const {
+  MOZ_ASSERT(XRE_IsContentProcess());
+  SHEntrySharedState* state = mSharedState.Get();
+  if (!nsContentUtils::IsProcessSpecificIdFrom(state->mId, XRE_GetChildID())) {
+    return Nothing();
+  }
+  return Some(NewSessionHistorySharedState{state->mId, state->mPolicyContainer,
+                                           state->mContentType});
+}
+
+void SessionHistoryInfo::SetSharedState(SHEntrySharedParentState* aState) {
+  MOZ_ASSERT(XRE_IsParentProcess());
+  mSharedState.Set(aState);
 }
 
 nsILayoutHistoryState* SessionHistoryInfo::GetLayoutHistoryState() {
@@ -1301,47 +1318,6 @@ void SessionHistoryEntry::GetChildAt(int32_t aIndex,
   child.forget(aChild);
 }
 
-SessionHistoryEntry*
-SessionHistoryEntry::GetChildSHEntryIfHasNoDynamicallyAddedChild(
-    int32_t aChildOffset) {
-  bool dynamicallyAddedChild = false;
-  HasDynamicallyAddedChild(&dynamicallyAddedChild);
-  if (dynamicallyAddedChild) {
-    return nullptr;
-  }
-
-  // If the user did a shift-reload on this frameset page,
-  // we don't want to load the subframes from history.
-  if (IsForceReloadType(mInfo->mLoadType) || mInfo->mLoadType == LOAD_REFRESH) {
-    return nullptr;
-  }
-
-  /* Before looking for the subframe's url, check
-   * the expiration status of the parent. If the parent
-   * has expired from cache, then subframes will not be
-   * loaded from history in certain situations.
-   * If the user pressed reload and the parent frame has expired
-   *  from cache, we do not want to load the child frame from history.
-   */
-  if (SharedInfo()->mExpired && (mInfo->mLoadType == LOAD_RELOAD_NORMAL)) {
-    // The parent has expired. Return null.
-    return nullptr;
-  }
-  // Get the child subframe from session history.
-  auto* child = mChildren.SafeElementAt(aChildOffset);
-  if (child) {
-    // Set the parent's Load Type on the child
-    child->SetLoadType(mInfo->mLoadType);
-  }
-  return child;
-}
-
-NS_IMETHODIMP_(void)
-SessionHistoryEntry::GetChildSHEntryIfHasNoDynamicallyAddedChild(
-    int32_t aChildOffset, nsISHEntry** aChild) {
-  *aChild = GetChildSHEntryIfHasNoDynamicallyAddedChild(aChildOffset);
-}
-
 NS_IMETHODIMP
 SessionHistoryEntry::ReplaceChild(nsISHEntry* aNewChild) {
   NS_ENSURE_STATE(aNewChild);
@@ -1664,23 +1640,8 @@ bool ParamTraits<mozilla::dom::SessionHistoryInfo>::Read(
   if (sharedState) {
     aResult->mSharedState.Set(sharedState);
 
-    MOZ_ASSERT(triggeringPrincipal
-                   ? triggeringPrincipal->Equals(
-                         aResult->mSharedState.Get()->mTriggeringPrincipal)
-                   : !aResult->mSharedState.Get()->mTriggeringPrincipal,
-               "We don't expect this to change!");
-    MOZ_ASSERT(principalToInherit
-                   ? principalToInherit->Equals(
-                         aResult->mSharedState.Get()->mPrincipalToInherit)
-                   : !aResult->mSharedState.Get()->mPrincipalToInherit,
-               "We don't expect this to change!");
-    MOZ_ASSERT(
-        partitionedPrincipalToInherit
-            ? partitionedPrincipalToInherit->Equals(
-                  aResult->mSharedState.Get()->mPartitionedPrincipalToInherit)
-            : !aResult->mSharedState.Get()->mPartitionedPrincipalToInherit,
-        "We don't expect this to change!");
-
+    // The principals content sent are ignored. They can differ for state that
+    // content created, as the parent took those from the document instead.
     MOZ_ASSERT(policyContainer
                    ? PolicyContainer::Equals(
                          PolicyContainer::Cast(policyContainer),
@@ -1690,7 +1651,7 @@ bool ParamTraits<mozilla::dom::SessionHistoryInfo>::Read(
                "We don't expect this to change!");
     MOZ_ASSERT(contentType.Equals(aResult->mSharedState.Get()->mContentType),
                "We don't expect this to change!");
-  } else {
+  } else if (!XRE_IsParentProcess()) {
     aResult->mSharedState.ChangeId(sharedId);
     aResult->mSharedState.Get()->mTriggeringPrincipal =
         triggeringPrincipal.forget();
@@ -1701,6 +1662,10 @@ bool ParamTraits<mozilla::dom::SessionHistoryInfo>::Read(
     aResult->mSharedState.Get()->mPolicyContainer = policyContainer.forget();
     aResult->mSharedState.Get()->mContentType = contentType;
   }
+  // Otherwise the parent doesn't know sharedId. It never adopts an id from
+  // content: aResult keeps the fresh state it was constructed with, which no
+  // document is bound to. Content asks for new state explicitly, see
+  // CanonicalBrowsingContext::CreateSharedState.
 
   if (!ReadParam(aReader, &aResult->mSharedState.Get()->mLayoutHistoryState) ||
       !ReadParam(aReader, &aResult->mSharedState.Get()->mCacheKey) ||
@@ -1716,6 +1681,9 @@ bool ParamTraits<mozilla::dom::SessionHistoryInfo>::Read(
 
 IMPLEMENT_IPC_SERIALIZER_WITH_FIELDS(mozilla::dom::PreviousSessionHistoryInfo,
                                      mSameOriginSessionHistoryInfo);
+
+IMPLEMENT_IPC_SERIALIZER_WITH_FIELDS(mozilla::dom::NewSessionHistorySharedState,
+                                     mId, mPolicyContainer, mContentType);
 
 IMPLEMENT_IPC_SERIALIZER_WITH_FIELDS(mozilla::dom::LoadingSessionHistoryInfo,
                                      mInfo, mContiguousEntries, mPreviousEntry,

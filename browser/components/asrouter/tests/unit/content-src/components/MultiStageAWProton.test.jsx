@@ -108,6 +108,90 @@ describe("MultiStageAboutWelcomeProton module", () => {
       assert.ok(wrapper.exists());
     });
 
+    describe("corner_image", () => {
+      const IMAGE_URL = "chrome://branding/content/icon16.png";
+      const RTL_IMAGE_URL = "chrome://branding/content/icon64.png";
+      const mountCornerImage = (cornerImage, content = {}) =>
+        mount(
+          <MultiStageProtonScreen
+            content={{
+              title: "test title",
+              corner_image: { imageURL: IMAGE_URL, ...cornerImage },
+              ...content,
+            }}
+          />
+        );
+
+      it("should anchor to the window for the fullscreen center-large layout", () => {
+        const wrapper = mountCornerImage(
+          { position: "top-left" },
+          { position: "center-large", fullscreen: true }
+        );
+        assert.ok(wrapper.find("main > .corner-image-container").exists());
+        assert.ok(wrapper.find("picture.corner-image.top-left").exists());
+      });
+
+      it("should anchor to the card for every other layout", () => {
+        const wrapper = mountCornerImage({ position: "bottom-left" });
+        assert.ok(
+          wrapper.find(".section-main > .corner-image-container").exists()
+        );
+        assert.ok(!wrapper.find("main > .corner-image-container").exists());
+      });
+
+      it("should not render without a corner_image", () => {
+        const wrapper = mount(
+          <MultiStageProtonScreen content={{ title: "test title" }} />
+        );
+        assert.ok(!wrapper.find(".corner-image-container").exists());
+      });
+
+      it("should fall back to bottom-right for an unsupported position", () => {
+        const wrapper = mountCornerImage({ position: "somewhere-else" });
+        assert.ok(wrapper.find("picture.corner-image.bottom-right").exists());
+      });
+
+      it("should resolve direction-relative positions against LTR", () => {
+        for (const [position, expected] of [
+          ["bottom-start", "bottom-left"],
+          ["bottom-end", "bottom-right"],
+          ["top-start", "top-left"],
+          ["top-end", "top-right"],
+        ]) {
+          const wrapper = mountCornerImage({ position });
+          assert.ok(
+            wrapper.find(`picture.corner-image.${expected}`).exists(),
+            `${position} resolves to ${expected}`
+          );
+        }
+      });
+
+      it("should only apply the entrance animation class where it is styled", () => {
+        const styled = mountCornerImage(
+          { entrance_animation: { type: "fade" } },
+          { position: "center-large", fullscreen: true }
+        );
+        assert.ok(styled.find("picture.corner-image.entrance-fade").exists());
+
+        const unstyled = mountCornerImage({
+          entrance_animation: { type: "fade" },
+        });
+        assert.ok(
+          !unstyled.find("picture.corner-image.entrance-fade").exists()
+        );
+      });
+
+      it("should keep the base image URL in LTR even with rtl overrides", () => {
+        const wrapper = mountCornerImage({
+          rtl: { imageURL: RTL_IMAGE_URL },
+        });
+        assert.equal(
+          wrapper.find("picture.corner-image img").prop("src"),
+          IMAGE_URL
+        );
+      });
+    });
+
     it("should render secondary section for split positioned screens", () => {
       const SCREEN_PROPS = {
         content: {
@@ -124,6 +208,103 @@ describe("MultiStageAboutWelcomeProton module", () => {
         "test subtitle"
       );
       assert.equal(wrapper.find("main").prop("pos"), "split");
+    });
+
+    it("should render secondary section for card-stack positioned screens", () => {
+      const SCREEN_PROPS = {
+        content: {
+          position: "card-stack",
+          title: "test title",
+          background: "url(test.svg)",
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      assert.ok(wrapper.exists());
+      assert.equal(wrapper.find("main").prop("pos"), "card-stack");
+      assert.ok(wrapper.find(".section-secondary").exists());
+    });
+
+    it("should set data-theme from activeThemeId for card-stack screens", () => {
+      const wrapper = mount(
+        <MultiStageProtonScreen
+          content={{ position: "card-stack", title: "test title" }}
+          activeThemeId="nova-flare@mozilla.org"
+        />
+      );
+      assert.equal(
+        wrapper.find("main").prop("data-theme"),
+        "nova-flare@mozilla.org"
+      );
+    });
+
+    it("should not set data-theme for non-card-stack screens", () => {
+      const wrapper = mount(
+        <MultiStageProtonScreen
+          content={{ position: "split", title: "test title" }}
+          activeThemeId="nova-flare@mozilla.org"
+        />
+      );
+      assert.equal(wrapper.find("main").prop("data-theme"), null);
+    });
+
+    it("should render an image slot between title and subtitle for last-card screens", () => {
+      const SCREEN_PROPS = {
+        content: {
+          position: "card-stack",
+          layout: "last-card",
+          title: "test title",
+          subtitle: "test subtitle",
+          center_image: {
+            imageURL: "test.svg",
+            alt: "",
+          },
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      assert.ok(wrapper.exists());
+      assert.equal(wrapper.find("main").prop("layout"), "last-card");
+      const welcomeText = wrapper.find(".welcome-text").getDOMNode();
+      assert.equal(welcomeText.children[0].tagName, "H1");
+      assert.equal(welcomeText.children[1].className, "last-card-image");
+      assert.equal(welcomeText.children[2].tagName, "H2");
+      const img = wrapper.find(".last-card-image .center-image img");
+      assert.equal(img.prop("src"), "test.svg");
+    });
+
+    it("should size the last-card image slot from center_image width and height", () => {
+      const SCREEN_PROPS = {
+        content: {
+          position: "card-stack",
+          layout: "last-card",
+          title: "test title",
+          subtitle: "test subtitle",
+          center_image: {
+            imageURL: "test.svg",
+            alt: "",
+            width: "150px",
+            height: "90px",
+            marginBlock: "40px 0",
+          },
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      const slot = wrapper.find(".last-card-image").getDOMNode();
+      assert.equal(
+        slot.style.getPropertyValue("--last-card-image-width"),
+        "150px"
+      );
+      assert.equal(
+        slot.style.getPropertyValue("--last-card-image-height"),
+        "90px"
+      );
+      assert.equal(
+        slot.style.getPropertyValue("--last-card-picture-margin-block"),
+        "40px 0"
+      );
+      const picture = wrapper.find(".last-card-image .center-image");
+      assert.isUndefined(picture.prop("style")?.marginBlock);
+      const img = wrapper.find(".last-card-image .center-image img");
+      assert.isUndefined(img.prop("style")?.width);
     });
 
     it("should render secondary section with content background for split positioned screens", () => {

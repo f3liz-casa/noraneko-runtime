@@ -55,6 +55,12 @@ const lazy = XPCOMUtils.declareLazy({
  */
 const gEngineIconDataUrls = new Map();
 
+/*
+ * Factor applied to the previous `moz_inputhistory.use_count` each time a
+ * (url, input) tuple is picked.
+ */
+export const INPUT_HISTORY_USE_DECAY = 0.9;
+
 /**
  * Parses a URL and returns the origin parts needed for moz_origins lookups.
  * Returns null if the URL is unparseable.
@@ -291,47 +297,55 @@ export var UrlbarUtils = {
   },
 
   /**
-   * Converts a given icon URL to a remote icon URL if it's not a trusted
+   * Converts a given image URL to a remote image URL if it's not a trusted
    * protocol, which keeps the decode out of the parent process (bug 2012436).
    *
-   * @param {string} iconUrl The URL of the icon.
-   * @param {number} size The desired size of the icon.
-   * @param {UrlbarParentController} [controller]
-   *   The controller the query runs on. It supplies the window the icon renders
-   *   in, and whether that window is in a content process, which decodes what
-   *   it displays itself and can't load the wrapper's scheme. Omitted in unit
-   *   tests.
-   * @returns {string|null} The URL of the remote icon or null if not available.
+   * @param {object} options
+   * @param {string} options.url
+   *   The URL of the image.
+   * @param {UrlbarParentController} options.controller
+   *   The controller the query runs on. It supplies the window the image
+   *   renders in, and whether that window is in a content process, which
+   *   decodes what it displays itself and can't load the wrapper's scheme.
+   *   Tests may omit this but otherwise it should always be passed in.
+   * @param {number} [options.size]
+   *   This param is relevant only if `url` is remote; it's unused otherwise. It
+   *   specifies the desired maximum width and height of the decoded image.
+   *   Leave undefined to decode the image at its intrinsic size no matter how
+   *   big it is. Note that SVGs without a `width` and `height` on their `<svg>`
+   *   have no intrinsic size, and not specifying a size will cause those image
+   *   loads to fail. See `getMozRemoteImageURL`.
+   * @returns {string|null}
+   *   A remote image URL or `url` itself if it uses a trusted protocol. Returns
+   *   null if `url` isn't a valid URL.
    */
-  getRemoteIconUrl(iconUrl, size, controller) {
-    let url = URL.parse(iconUrl);
-    if (!url) {
+  getRemoteImageUrl({ url, controller, size = undefined }) {
+    let parsedUrl = URL.parse(url);
+    if (!parsedUrl) {
       return null;
     }
-    let scheme = url.protocol.slice(0, -1);
+    let scheme = parsedUrl.protocol.slice(0, -1);
     if (
       !controller?.rendersInContentProcess &&
       !lazy.FaviconUtils.TRUSTED_FAVICON_SCHEMES.includes(scheme)
     ) {
-      if (Services.env.exists("XPCSHELL_TEST_PROFILE_DIR")) {
-        // XPCShell tests don't have a real window, just use fallback values.
-        return lazy.FaviconUtils.getMozRemoteImageURL(iconUrl, {
-          size,
-          stretch: false,
-          colorScheme: "light",
-        });
-      }
-      return lazy.FaviconUtils.getMozRemoteImageURL(iconUrl, {
-        size: Math.floor(size * controller.browserWindow.devicePixelRatio),
+      // XPCShell tests don't have a real window, just use fallback values.
+      let opts = {
         stretch: false,
-        colorScheme: controller.browserWindow.matchMedia(
+        colorScheme: controller?.browserWindow?.matchMedia?.(
           "(prefers-color-scheme: dark)"
         ).matches
           ? "dark"
           : "light",
-      });
+      };
+      if (size) {
+        opts.size = Math.floor(
+          size * (controller?.browserWindow?.devicePixelRatio ?? 1)
+        );
+      }
+      return lazy.FaviconUtils.getMozRemoteImageURL(url, opts);
     }
-    return iconUrl;
+    return url;
   },
 
   /**
@@ -535,13 +549,18 @@ export var UrlbarUtils = {
         return db.executeCached(
           `
           INSERT OR REPLACE INTO moz_inputhistory
-          SELECT h.id, IFNULL(i.input, :input), IFNULL(i.use_count, 0) * .9 + 1
+          SELECT h.id, IFNULL(i.input, :input),
+                 IFNULL(i.use_count, 0) * :useDecay + 1
           FROM moz_places h
           LEFT JOIN moz_inputhistory i ON i.place_id = h.id AND i.input = :input
           WHERE url_hash = hash(:url) AND url = :url
           RETURNING place_id
           `,
-          { url, input: input.toLowerCase() }
+          {
+            url,
+            input: input.toLowerCase(),
+            useDecay: INPUT_HISTORY_USE_DECAY,
+          }
         );
       }
     );
@@ -936,8 +955,8 @@ export var UrlbarUtils = {
    *
    * @param {string} url
    *   The URL whose block is being cleared.
-   * @returns {?{blockedAt: number, level: "origin" | "url"}}
-   *   The matching timestamp and level if a fresh block existed,
+   * @returns {?{blockedAt: number}}
+   *   The matching timestamp if a fresh block existed,
    *   null otherwise.
    */
   getBackspaceBlock(url) {
@@ -959,9 +978,7 @@ export var UrlbarUtils = {
     if (ageHours > this._BACKSPACE_BLOCK_MAX_AGE_HOURS) {
       return null;
     }
-    /** @type {"origin" | "url"} */
-    let level = UrlbarShared.isOriginUrl(url) ? "origin" : "url";
-    return { blockedAt: entry.blockedAt, level };
+    return { blockedAt: entry.blockedAt };
   },
 
   /**
@@ -1011,7 +1028,7 @@ export var UrlbarUtils = {
    *
    * @param {string} url
    *   The URL being re-integrated.
-   * @returns {Promise<{wasBlocked: boolean, level: "origin" | "url", backspaceBlock: ?{blockedAt: number, level: "origin" | "url"}}>}
+   * @returns {Promise<{wasBlocked: boolean, level: "origin" | "url", backspaceBlock: ?{blockedAt: number}}>}
    *   `wasBlocked` is whether a database block was actually cleared, `level`
    *   the scope it was cleared at, and `backspaceBlock` the consumed backspace
    *   block, if the URL had one.
@@ -1587,9 +1604,6 @@ UrlbarUtils.RESULT_PAYLOAD_SCHEMA = {
       requestId: {
         type: "string",
       },
-      sendAttributionRequest: {
-        type: "boolean",
-      },
       shouldShowUrl: {
         type: "boolean",
       },
@@ -2070,7 +2084,9 @@ export class UrlbarProvider {
    *
    *   For "abandonment", only `searchString` is defined.
    *
-   * onEngagement(_queryContext, _controller, _details) {}
+   * @function onEngagement
+   * @memberof UrlbarProvider
+   * @instance
    */
 
   /**
@@ -2085,7 +2101,9 @@ export class UrlbarProvider {
    * @param {UrlbarParentController} _controller
    * The associated controller.
    *
-   * onAbandonment(_queryContext, _controller) {}
+   * @function onAbandonment
+   * @memberof UrlbarProvider
+   * @instance
    */
 
   /**
@@ -2104,7 +2122,7 @@ export class UrlbarProvider {
    *    The current query context.
    * @param {UrlbarParentController} _controller
    *    The associated controller.
-   * @param {{index: number, result: UrlbarResult}[]} _providerVisibleResults
+   * @param {Array<{index: number, result: UrlbarResult}>} _providerVisibleResults
    *    Array of visible results at the time of either an engagement or
    *    abandonment event relevant to the provider. Each object in the array
    *    contains:
@@ -2116,8 +2134,9 @@ export class UrlbarProvider {
    *    object that's also passed to `onEngagement()`. Otherwise it will be
    *    null. See `onEngagement()` documentation for info.
    *
-   * onImpression(_state, _queryContext, _controller, _providerVisibleResults, _details)
-   * {}
+   * @function onImpression
+   * @memberof UrlbarProvider
+   * @instance
    */
 
   /**
@@ -2130,7 +2149,9 @@ export class UrlbarProvider {
    * @param {UrlbarParentController} _controller
    *    The associated controller.
    *
-   * onSearchSessionEnd(_queryContext, _controller) {}
+   * @function onSearchSessionEnd
+   * @memberof UrlbarProvider
+   * @instance
    */
 
   /**
@@ -2241,7 +2262,7 @@ export class UrlbarProvider {
 
   /**
    * This is called only for dynamic result types by the providers manager. It
-   * should return an object describing the view update that looks like this:
+   * should return an object describing the view update that looks like this::
    *
    *   {
    *     nodeNameFoo: {
@@ -2278,6 +2299,8 @@ export class UrlbarProvider {
    *
    * @param {UrlbarResult} _result
    *   The result whose view will be updated.
+   * @param {UrlbarParentController} _controller
+   *   The controller.
    * @returns {object}
    *   A view update object as described above.  The names of properties are the
    *   the names of elements declared in the view template.  The values of
@@ -2306,7 +2329,7 @@ export class UrlbarProvider {
    *   {string} [textContent]
    *     A string that will be set as `element.textContent`.
    */
-  getViewUpdate(_result) {
+  getViewUpdate(_result, _controller) {
     return null;
   }
 
@@ -2335,7 +2358,6 @@ export class UrlbarProvider {
    *
    * @returns {boolean} Whether the provider wants to defer user selection
    *          events.
-   * @see {@link UrlbarEventBufferer}
    */
   get deferUserSelection() {
     return false;

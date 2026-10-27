@@ -17,7 +17,7 @@
 #include "ds/IdValuePair.h"
 #include "gc/Barrier.h"
 #include "gc/WeakMap.h"
-#include "jit/BaselineCompileQueue.h"
+#include "jit/JitRealm.h"
 #include "js/GCVariant.h"
 #include "js/RealmOptions.h"
 #include "js/TelemetryTimers.h"
@@ -36,10 +36,6 @@ namespace js {
 namespace coverage {
 class LCovRealm;
 }  // namespace coverage
-
-namespace jit {
-class BaselineCompileQueue;
-}  // namespace jit
 
 class AutoRestoreRealmDebugMode;
 class DateTimeInfo;
@@ -347,7 +343,7 @@ class JS::Realm : public JS::shadow::Realm {
 
   JSPrincipals* principals_ = nullptr;
 
-  js::jit::BaselineCompileQueue baselineCompileQueue_;
+  js::jit::JitRealm jitRealm_;
 
   // Bookkeeping information for debug scope objects.
   js::UniquePtr<js::DebugEnvironments> debugEnvs_;
@@ -433,6 +429,9 @@ class JS::Realm : public JS::shadow::Realm {
   // happens.
   bool isTracingExecution_ = false;
 
+  // Set when the embedder hinted that this realm is dying.
+  bool isDyingHint_ = false;
+
   js::UniquePtr<js::coverage::LCovRealm> lcovRealm_ = nullptr;
 
  public:
@@ -514,7 +513,8 @@ class JS::Realm : public JS::shadow::Realm {
                               size_t* innerViewsArg,
                               size_t* objectMetadataTablesArg,
                               size_t* savedStacksSet,
-                              size_t* nonSyntacticLexicalEnvironmentsArg);
+                              size_t* nonSyntacticLexicalEnvironmentsArg,
+                              size_t* cacheIRStubs);
 
   JS::Zone* zone() { return zone_; }
   const JS::Zone* zone() const { return zone_; }
@@ -855,18 +855,20 @@ class JS::Realm : public JS::shadow::Realm {
 
   mozilla::HashCodeScrambler randomHashCodeScrambler();
 
-  js::jit::BaselineCompileQueue& baselineCompileQueue() {
-    return baselineCompileQueue_;
-  }
+  js::jit::JitRealm& jitRealm() { return jitRealm_; }
+
   static constexpr size_t offsetOfBaselineCompileQueue() {
-    return offsetof(Realm, baselineCompileQueue_);
+    return offsetof(Realm, jitRealm_) +
+           js::jit::JitRealm::offsetOfBaselineCompileQueue();
   }
-  void removeFromCompileQueue(JSScript* script);
 
   js::DebugEnvironments* debugEnvs() { return debugEnvs_.get(); }
   js::UniquePtr<js::DebugEnvironments>& debugEnvsRef() { return debugEnvs_; }
 
   js::SavedStacks& savedStacks() { return savedStacks_; }
+
+  void setIsDyingHint() { isDyingHint_ = true; }
+  bool isDyingHint() const { return isDyingHint_; }
 
   // Recompute the probability with which this realm should record
   // profiling data (stack traces, allocations log, etc.) about each

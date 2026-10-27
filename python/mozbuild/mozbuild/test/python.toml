@@ -15,9 +15,17 @@ subsuite = "mozbuild"
 
 ["action/test_langpack_manifest.py"]
 
+["action/test_l10n_repackage.py"]
+
+["action/test_nsis_build.py"]
+
+["action/test_nsis_stage.py"]
+
 ["action/test_node.py"]
 
 ["action/test_process_install_manifest.py"]
+
+["action/test_run_cargo.py"]
 
 ["action/test_zip.py"]
 
@@ -113,13 +121,19 @@ subsuite = "mozbuild"
 
 ["test_expression.py"]
 
+["test_generate_sbom.py"]
+
 ["test_jarmaker.py"]
 
 ["test_legacy_test.py"]
 
+["test_license_collection.py"]
+
 ["test_licenses.py"]
 
 ["test_line_endings.py"]
+
+["test_mach_cargo.py"]
 
 ["test_makeutil.py"]
 
@@ -131,6 +145,8 @@ subsuite = "mozbuild"
 
 ["test_mozinfo.py"]
 
+["test_nsis.py"]
+
 ["test_packaging.py"]
 
 ["test_path_performance.py"]
@@ -140,6 +156,8 @@ subsuite = "mozbuild"
 ["test_pythonutil.py"]
 
 ["test_rewrite_mozbuild.py"]
+
+["test_rust_commands.py"]
 
 ["test_site_dependency_extractor.py"]
 
@@ -154,6 +172,18 @@ subsuite = "mozbuild"
 ["test_util_fileavoidwrite.py"]
 
 ["test_vendor.py"]
+
+["test_vendor_sbom.py"]
+
+["test_vendor_sbom_cargo.py"]
+
+["test_vendor_sbom_cyclonedx.py"]
+
+["test_vendor_sbom_gradle.py"]
+
+["test_vendor_sbom_npm.py"]
+
+["test_vendor_sbom_python.py"]
 
 ["test_vendor_tools.py"]
 skip-if = ["os == 'win'"] # Windows doesn't have the same path seperator as linux, and we just don't need to run it there

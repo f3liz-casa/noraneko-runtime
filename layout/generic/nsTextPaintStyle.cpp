@@ -236,11 +236,11 @@ bool nsTextPaintStyle::GetTargetTextColor(nscolor* aForeColor) {
   NS_ASSERTION(aForeColor, "aForeColor is null");
   InitTargetTextPseudoStyle();
   if (mTargetTextPseudoStyle &&
-      (mTargetTextPseudoStyle->HasAuthorSpecifiedTextColor() ||
-       mTargetTextPseudoStyle->HasAuthorSpecifiedBorderOrBackground())) {
+      (mTargetTextPseudoStyle->HasAuthorOrUserSpecifiedTextColor() ||
+       mTargetTextPseudoStyle->HasAuthorOrUserSpecifiedBorderOrBackground())) {
     *aForeColor = mTargetTextPseudoStyle->GetVisitedDependentColor(
         &nsStyleText::mWebkitTextFillColor);
-    return mTargetTextPseudoStyle->HasAuthorSpecifiedTextColor();
+    return mTargetTextPseudoStyle->HasAuthorOrUserSpecifiedTextColor();
   }
   *aForeColor = LookAndFeel::Color(
       LookAndFeel::ColorID::TargetTextForeground,
@@ -253,8 +253,8 @@ bool nsTextPaintStyle::GetTargetTextBackgroundColor(nscolor* aBackColor) {
   NS_ASSERTION(aBackColor, "aBackColor is null");
   InitTargetTextPseudoStyle();
   if (mTargetTextPseudoStyle &&
-      (mTargetTextPseudoStyle->HasAuthorSpecifiedTextColor() ||
-       mTargetTextPseudoStyle->HasAuthorSpecifiedBorderOrBackground())) {
+      (mTargetTextPseudoStyle->HasAuthorOrUserSpecifiedTextColor() ||
+       mTargetTextPseudoStyle->HasAuthorOrUserSpecifiedBorderOrBackground())) {
     *aBackColor = mTargetTextPseudoStyle->GetVisitedDependentColor(
         &nsStyleBackground::mBackgroundColor);
     return NS_GET_A(*aBackColor) != 0;
@@ -270,7 +270,7 @@ mozilla::Span<const StyleSimpleShadow> nsTextPaintStyle::GetTargetTextShadow() {
   InitTargetTextPseudoStyle();
 
   if (mTargetTextPseudoStyle &&
-      mTargetTextPseudoStyle->HasAuthorSpecifiedTextShadow()) {
+      mTargetTextPseudoStyle->HasAuthorOrUserSpecifiedTextShadow()) {
     return mTargetTextPseudoStyle->StyleText()->mTextShadow.AsSpan();
   }
 
@@ -296,7 +296,7 @@ bool nsTextPaintStyle::GetCustomHighlightTextColor(nsAtom* aHighlightName,
 
   *aForeColor = highlightStyle->GetVisitedDependentColor(&nsStyleText::mColor);
 
-  return highlightStyle->HasAuthorSpecifiedTextColor();
+  return highlightStyle->HasAuthorOrUserSpecifiedTextColor();
 }
 
 bool nsTextPaintStyle::GetCustomHighlightBackgroundColor(nsAtom* aHighlightName,
@@ -327,7 +327,8 @@ nsTextPaintStyle::GetCustomHighlightTextShadow(nsAtom* aHighlightName) {
           aHighlightName, [this, &aHighlightName] {
             return mFrame->ComputeHighlightSelectionStyle(aHighlightName);
           });
-  if (!highlightStyle || !highlightStyle->HasAuthorSpecifiedTextShadow()) {
+  if (!highlightStyle ||
+      !highlightStyle->HasAuthorOrUserSpecifiedTextShadow()) {
     return {};
   }
 
@@ -459,8 +460,8 @@ bool nsTextPaintStyle::InitSelectionColorsAndShadow() {
   if (RefPtr<ComputedStyle> style =
           mFrame->ComputeSelectionStyle(selectionStatus)) {
     mSelectionPseudoStyle = std::move(style);
-    if (mSelectionPseudoStyle->HasAuthorSpecifiedTextColor() ||
-        mSelectionPseudoStyle->HasAuthorSpecifiedBorderOrBackground()) {
+    if (mSelectionPseudoStyle->HasAuthorOrUserSpecifiedTextColor() ||
+        mSelectionPseudoStyle->HasAuthorOrUserSpecifiedBorderOrBackground()) {
       mSelectionBGColor = mSelectionPseudoStyle->GetVisitedDependentColor(
           &nsStyleBackground::mBackgroundColor);
       mSelectionTextColor =
@@ -612,12 +613,12 @@ bool nsTextPaintStyle::GetSelectionUnderline(nsIFrame* aFrame,
   const StyleIDs& styleIDs = SelectionStyleIDs[aIndex];
 
   nscolor color = LookAndFeel::Color(styleIDs.mLine, aFrame);
-  const int32_t lineStyle = LookAndFeel::GetInt(styleIDs.mLineStyle);
-  auto style = static_cast<StyleTextDecorationStyle>(lineStyle);
-  if (lineStyle > static_cast<int32_t>(StyleTextDecorationStyle::Sentinel)) {
+  int32_t lineStyle = LookAndFeel::GetInt(styleIDs.mLineStyle);
+  if (lineStyle < 0 || lineStyle > StyleMAX_LINE_STYLE) {
     NS_ERROR("Invalid underline style value is specified");
-    style = StyleTextDecorationStyle::Solid;
+    lineStyle = int32_t(StyleTextDecorationStyle::Solid);
   }
+  const auto style = static_cast<StyleTextDecorationStyle>(lineStyle);
   float size = LookAndFeel::GetFloat(styleIDs.mLineRelativeSize);
 
   NS_ASSERTION(size, "selection underline relative size must be larger than 0");
@@ -638,7 +639,7 @@ mozilla::Span<const StyleSimpleShadow> nsTextPaintStyle::GetSelectionShadow() {
   }
 
   if (mSelectionPseudoStyle &&
-      mSelectionPseudoStyle->HasAuthorSpecifiedTextShadow()) {
+      mSelectionPseudoStyle->HasAuthorOrUserSpecifiedTextShadow()) {
     return mSelectionPseudoStyle->StyleText()->mTextShadow.AsSpan();
   }
 

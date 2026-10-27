@@ -2,6 +2,8 @@ import com.android.build.api.variant.FilterConfiguration
 
 import java.time.format.DateTimeFormatter
 
+import org.mozilla.conventions.WriteRuntimeDependencies
+
 import static org.mozilla.conventions.BuildConfigKt.getBuildId
 
 plugins {
@@ -208,6 +210,19 @@ android {
             resources.srcDirs += ['src/androidTest/resources']
             assets.srcDirs += files("$projectDir/schemas".toString())
         }
+        // Web extensions that only the UI tests install.
+        // WebExtensionController.ensureBuiltIn resolves resource://android/assets
+        // against the app's asset manager, so these have to be packaged in the app under test
+        // rather than the test apk.
+        // Added to the debug and other test builds, so they never reach a shipping build.
+        debug {
+            assets.srcDirs += ['src/androidTest/appAssets']
+        }
+        if (project.hasProperty("testBuildType")) {
+            named(project.property("testBuildType")) {
+                assets.srcDirs += ['src/androidTest/appAssets']
+            }
+        }
         if (project.hasProperty('baselineProfilePath')) {
             main {
                 baselineProfiles.srcDirs(project.property('baselineProfilePath'))
@@ -305,6 +320,16 @@ androidComponents {
             variant.outputs.each { output ->
                 output.versionName.set(versionName)
             }
+        }
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        tasks.register("writeRuntimeDependencies${variant.name.capitalize()}", WriteRuntimeDependencies) {
+            classpath(configurations.named("${variant.name}RuntimeClasspath"))
+            versionName = variant.outputs.first().versionName
+            outputFile = layout.buildDirectory.file("sbom/${variant.name}-runtime-dependencies.json")
         }
     }
 }
@@ -460,6 +485,7 @@ dependencies {
     implementation project(':components:concept-tabstray')
     implementation project(':components:concept-toolbar')
     implementation project(':components:browser-domains')
+    implementation project(':components:browser-errorpages')
     implementation project(':components:browser-icons')
     implementation project(':components:browser-menu')
     implementation project(':components:browser-session-storage')
@@ -503,6 +529,8 @@ dependencies {
     implementation project(':components:feature-syncedtabs')
     implementation project(':components:feature-toolbar')
     implementation project(':components:feature-tab-collections')
+    implementation project(':components:feature-tabdata-coordinator')
+    implementation project(':components:feature-tabgroups-storage')
     implementation project(':components:feature-tabs')
     implementation project(':components:feature-top-sites')
     implementation project(':components:feature-webauthn')
@@ -550,7 +578,6 @@ dependencies {
     implementation project(':components:lib-ai-controls')
 
     implementation ComponentsDependencies.mozilla_appservices_syncmanager
-    implementation ComponentsDependencies.mozilla_appservices_merino
 
     implementation libs.accompanist.drawablepainter
     implementation libs.adjust
@@ -625,6 +652,7 @@ dependencies {
     testImplementation project(':components:support-test-fakes')
     testImplementation project(':components:support-test-libstate')
     testImplementation testFixtures(project(':components:support-utils'))
+    testImplementation testFixtures(project(':components:feature-tabgroups-storage'))
 
     testImplementation ComponentsDependencies.mozilla_appservices_full_megazord_libsForTests
 
@@ -667,7 +695,6 @@ dependencies {
     androidTestImplementation libs.kotlin.test
     androidTestImplementation libs.androidx.room.testing
     androidTestImplementation libs.leakcanary.instrumentation
-    androidTestImplementation libs.mockk.android
     androidTestImplementation libs.mockwebserver
     androidTestImplementation libs.okhttp
     androidTestRuntimeOnly libs.okio

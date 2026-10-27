@@ -16,9 +16,6 @@ support-files = [
 ["test_subprocess_child.js"]
 
 ["test_subprocess_connectRunning.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1936343
-]
 
 ["test_subprocess_getEnvironment.js"]
 
@@ -26,5 +23,8 @@ skip-if = [
 
 ["test_subprocess_perf.js"]
 requesttimeoutfactor = 2  # Slow on Windows
+
+["test_subprocess_pipe_flags.js"]
+skip-if = ["os == 'win'"]
 
 ["test_subprocess_polling.js"]

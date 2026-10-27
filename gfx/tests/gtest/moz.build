@@ -14,11 +14,13 @@ UNIFIED_SOURCES += [
     "TestConvolutionFilter.cpp",
     "TestCoord.cpp",
     "TestCopyPlane.cpp",
+    "TestFilterNodeSoftware.cpp",
     "TestFontFallback.cpp",
     "TestFontOverlapPrevention.cpp",
     "TestGfxWidgets.cpp",
     "TestMatrix.cpp",
     "TestMoz2D.cpp",
+    "TestPlanarYCbCrImage.cpp",
     "TestPoint.cpp",
     "TestPolygon.cpp",
     "TestQcms.cpp",
@@ -45,6 +47,7 @@ if CONFIG["OS_TARGET"] == "Darwin":
     # which would make Rect/Point/Size ambiguous in all subsequent unified files.
     SOURCES += [
         "TestMacIOSurfaceHelpers.cpp",
+        "TestNativeLayerCA.mm",
     ]
 
 UNIFIED_SOURCES += [

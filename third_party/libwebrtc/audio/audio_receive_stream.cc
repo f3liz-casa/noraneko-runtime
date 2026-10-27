@@ -18,9 +18,9 @@
 #include <span>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "absl/base/nullability.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "api/audio/audio_frame.h"
 #include "api/audio/audio_mixer.h"
@@ -33,7 +33,6 @@
 #include "api/rtp_headers.h"
 #include "api/scoped_refptr.h"
 #include "api/sequence_checker.h"
-#include "api/transport/rtp/rtp_source.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
 #include "audio/audio_send_stream.h"
@@ -95,7 +94,9 @@ std::unique_ptr<voe::ChannelReceiveInterface> CreateChannelReceive(
       config.jitter_buffer_min_delay_ms, config.enable_non_sender_rtt,
       config.decoder_factory, std::move(config.frame_decryptor),
       config.crypto_options, std::move(config.frame_transformer),
-      config.rtp.rtcp_event_observer, packet_router, config.rtp.local_ssrc);
+      std::move(config.on_first_packet), config.rtp.rtcp_event_observer,
+      packet_router, config.rtp.local_ssrc,
+      std::move(config.on_frame_delivered_callback));
 }
 }  // namespace
 
@@ -374,10 +375,6 @@ bool AudioReceiveStreamImpl::SetBaseMinimumPlayoutDelayMs(int delay_ms) {
 int AudioReceiveStreamImpl::GetBaseMinimumPlayoutDelayMs() const {
   RTC_DCHECK_RUN_ON(&worker_thread_checker_);
   return channel_receive_->GetBaseMinimumPlayoutDelayMs();
-}
-
-std::vector<RtpSource> AudioReceiveStreamImpl::GetSources() const {
-  return channel_receive_->GetSources();
 }
 
 AudioMixer::Source::AudioFrameInfo

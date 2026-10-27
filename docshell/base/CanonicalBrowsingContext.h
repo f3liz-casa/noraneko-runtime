@@ -8,7 +8,7 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/MediaControlKeySource.h"
 #include "mozilla/dom/BrowsingContextWebProgress.h"
-#include "mozilla/dom/FeaturePolicy.h"
+#include "mozilla/dom/PermissionsPolicy.h"
 #include "mozilla/dom/ProcessIsolation.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/SessionHistoryEntry.h"
@@ -52,7 +52,7 @@ namespace dom {
 
 class BrowserParent;
 class BrowserBridgeParent;
-class FeaturePolicy;
+class PermissionsPolicy;
 struct LoadURIOptions;
 class MediaController;
 enum class AudioFocusInterruptAction : uint8_t;
@@ -121,7 +121,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   // Same as `GetParentWindowContext`, but will also cross <browser> and
   // content/chrome boundaries.
-  already_AddRefed<WindowGlobalParent> GetEmbedderWindowGlobal() const;
+  already_AddRefed<WindowGlobalParent> GetEmbedderWindowGlobal();
 
   CanonicalBrowsingContext* GetParentCrossChromeBoundary();
   CanonicalBrowsingContext* TopCrossChromeBoundary();
@@ -179,18 +179,54 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // is true and aLoadState and aReloadActiveEntry are not set then we should
   // attempt to reload based on the current document in the docshell.
   void NotifyOnHistoryReload(
-      bool aForceReload, bool& aCanReload,
+      uint32_t aReloadFlags, bool& aCanReload,
       Maybe<NotNull<RefPtr<nsDocShellLoadState>>>& aLoadState,
       Maybe<bool>& aReloadActiveEntry);
 
-  // See BrowsingContext::SetActiveSessionHistoryEntry.
+  // See BrowsingContext::SetActiveSessionHistoryEntry. If
+  // aKeepSharedState is true, aInfo's shared state is used even if the
+  // previous active entry belongs to the same document.
   void SetActiveSessionHistoryEntry(const Maybe<nsPoint>& aPreviousScrollPos,
                                     SessionHistoryInfo* aInfo,
                                     uint32_t aLoadType,
                                     uint32_t aUpdatedCacheKey,
-                                    const nsID& aChangeID);
+                                    const nsID& aChangeID,
+                                    bool aKeepSharedState = false);
 
   void ReplaceActiveSessionHistoryEntry(SessionHistoryInfo* aInfo);
+
+  // Gives `aInfo`, sent over IPC by the current document's process, the new
+  // shared state that process asked for in `aNewState`. The principals come
+  // from the document, and the state is bound to it. Returns false if the
+  // request is refused. `aWasCreated` gets set to true if not null and it was
+  // created.
+  bool CreateSharedState(SessionHistoryInfo* aInfo,
+                         const NewSessionHistorySharedState& aNewState,
+                         bool* aWasCreated = nullptr);
+
+  // Validates `aInfo` that has been sent over IPC: its shared state must be
+  // bound to the current document, and its URI one the current document's
+  // process could itself have loaded.
+  bool ValidateSessionHistoryInfo(SessionHistoryInfo* aInfo) const;
+
+  // The active entry's shared state keeps the principals of the load that
+  // created it, e.g. a system triggering principal for a URL typed into the URL
+  // bar, or the linking document's principal to inherit for a link click. If
+  // content changed the entry's URI to one that inherits its principal, such as
+  // document.open() from an about:srcdoc frame, and the principal the entry
+  // would inherit isn't the current document's, makes it inherit the current
+  // document's, so that loading the entry again still produces that document's
+  // origin. Call once content's update has been validated and applied, as
+  // applying it can replace the validated shared state with the one the
+  // previous active entry of the same document had.
+  void InheritDocumentPrincipalIfNeeded();
+
+  // Moves the active entry's shared state binding from aPrevious to aCurrent if
+  // both documents were produced by the same load and have the same principal,
+  // as with the parts of a multipart response, which don't commit to session
+  // history.
+  void MaybeRebindActiveEntry(WindowGlobalParent* aPrevious,
+                              WindowGlobalParent* aCurrent);
 
   void RemoveDynEntriesFromActiveSessionHistoryEntry();
 
@@ -238,9 +274,11 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   // Triggers a load in the process
   using BrowsingContext::LoadURI;
+  MOZ_CAN_RUN_SCRIPT
   void FixupAndLoadURIString(const nsAString& aURI,
                              const LoadURIOptions& aOptions,
                              ErrorResult& aError);
+  MOZ_CAN_RUN_SCRIPT
   void LoadURI(nsIURI* aURI, const LoadURIOptions& aOptions,
                ErrorResult& aError);
 
@@ -326,8 +364,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void AddLoadingSessionHistoryEntry(uint64_t aLoadId,
                                      SessionHistoryEntry* aEntry);
 
-  void GetLoadingSessionHistoryInfoFromParent(
-      Maybe<LoadingSessionHistoryInfo>& aLoadingInfo);
+  void AdoptChildSHEntry(Maybe<LoadingSessionHistoryInfo>& aLoadingInfo);
 
   MOZ_CAN_RUN_SCRIPT
   void HistoryCommitIndexAndLength();
@@ -344,10 +381,10 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   void ResetScalingZoom();
 
-  void SetContainerFeaturePolicy(
-      Maybe<FeaturePolicyInfo>&& aContainerFeaturePolicyInfo);
-  const Maybe<FeaturePolicyInfo>& GetContainerFeaturePolicy() const {
-    return mContainerFeaturePolicyInfo;
+  void SetContainerPermissionsPolicy(
+      Maybe<PermissionsPolicyInfo>&& aContainerPermissionsPolicyInfo);
+  const Maybe<PermissionsPolicyInfo>& GetContainerPermissionsPolicy() const {
+    return mContainerPermissionsPolicyInfo;
   }
 
   void SetRestoreData(SessionStoreRestoreData* aData, ErrorResult& aError);
@@ -434,7 +471,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   const JS::Heap<JS::Value>& PermanentKey() { return mPermanentKey; }
   void ClearPermanentKey() { mPermanentKey.setNull(); }
-  void MaybeSetPermanentKey(Element* aEmbedder);
+
+  void SetCrossGroupEmbedderElement(Element* aEmbedder);
 
   // When request for page awake, it would increase a count that is used to
   // prevent whole browsing context tree from being suspended. The request can
@@ -642,6 +680,17 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   uint64_t mCrossGroupOpenerId = 0;
 
+  // Window ID of the cross-group WindowGlobalParent which most recently
+  // embedded this toplevel content BrowsingContext.
+  //
+  // This member is 0 for subframes, toplevel chrome documents, and windows
+  // which have not yet been embedded within a cross-group context.
+  //
+  // Unlike the embedder element, this will not be cleared when the document is
+  // removed from the DOM, and can be used on a CanonicalBrowsingContext which
+  // is actively being torn down.
+  uint64_t mCrossGroupEmbedderWindowId = 0;
+
   // This function will make the top window context reset its
   // "SHEntryHasUserInteraction" cache that prevents documents from repeatedly
   // setting user interaction on SH entries. Should be called anytime SH
@@ -685,7 +734,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   nsCOMPtr<nsIWebProgressListener> mDocShellProgressBridge;
   RefPtr<nsBrowserStatusFilter> mStatusFilter;
 
-  Maybe<FeaturePolicyInfo> mContainerFeaturePolicyInfo;
+  Maybe<PermissionsPolicyInfo> mContainerPermissionsPolicyInfo;
 
   friend class BrowserSessionStore;
   WeakPtr<SessionStoreFormData>& GetSessionStoreFormDataRef() {

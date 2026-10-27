@@ -38,6 +38,7 @@ import {
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { ShortcutUtils } from "resource://gre/modules/ShortcutUtils.sys.mjs";
+import { SELECTION_MODES } from "moz-src:///browser/components/screenshots/ScreenshotsSelectionModes.sys.mjs";
 
 const STATES = {
   CROSSHAIRS: "crosshairs",
@@ -50,7 +51,10 @@ const STATES = {
 const lazy = {};
 
 ChromeUtils.defineLazyGetter(lazy, "overlayLocalization", () => {
-  return new Localization(["browser/screenshots.ftl"], true);
+  return new Localization(
+    ["browser/screenshots.ftl", "preview/miniWindow.ftl"],
+    true
+  );
 });
 
 const SCREENSHOTS_LAST_SAVED_METHOD_PREF =
@@ -66,11 +70,36 @@ XPCOMUtils.defineLazyPreferenceGetter(
 const REGION_CHANGE_THRESHOLD = 5;
 const SCROLL_BY_EDGE = 20;
 
+// Minimum size of a mini-window crop selection, in content CSS px. An
+// undersized selection is grown to this on selection.
+const MIN_MINI_WINDOW_REGION_WIDTH = 300;
+const MIN_MINI_WINDOW_REGION_HEIGHT = 150;
+
 export class ScreenshotsOverlay {
   #content;
   #initialized = false;
   #state = "";
+  #mode = SELECTION_MODES.SCREENSHOTS;
   #moverId;
+
+  get mode() {
+    return this.#mode;
+  }
+
+  // The built overlay is cached and depends on the mode, so
+  // invalidate it when the mode changes.
+  set mode(value) {
+    if (this.#mode !== value) {
+      this.#mode = value;
+      this.overlayTemplate = null;
+      if (this.selectionRegion) {
+        // Mini-window crops are confined to the visible viewport.
+        this.selectionRegion.confineToViewport =
+          value === SELECTION_MODES.MINI_WINDOW;
+      }
+    }
+  }
+
   #cachedEle;
   #lastPageX;
   #lastPageY;
@@ -91,6 +120,11 @@ export class ScreenshotsOverlay {
       downloadAttributes,
       copyAttributes,
       previewFaceAriaLabel,
+      popAttributes,
+      reselectAttributes,
+      miniWindowCancelAttributes,
+      miniWindowOverlayHeader,
+      miniWindowOverlayInstructions,
     ] = lazy.overlayLocalization.formatMessagesSync([
       { id: "screenshots-cancel-button" },
       { id: "screenshots-component-cancel-button" },
@@ -104,7 +138,29 @@ export class ScreenshotsOverlay {
         args: { shortcut: copyShorcut },
       },
       { id: "screenshots-overlay-preview-face-label" },
+      { id: "screenshots-component-mini-window-button" },
+      { id: "screenshots-component-reselect-button" },
+      { id: "screenshots-component-mini-window-cancel-button" },
+      { id: "mini-window-overlay-header" },
+      { id: "mini-window-overlay-instructions" },
     ]);
+
+    let instructionsMarkup =
+      this.mode === SELECTION_MODES.MINI_WINDOW
+        ? `<h1 class="preview-header">${miniWindowOverlayHeader.value}</h1>
+            <div class="preview-instructions">${miniWindowOverlayInstructions.value}</div>`
+        : `<div class="preview-instructions">${instructions.value}</div>`;
+
+    let buttonsContainerMarkup =
+      this.mode === SELECTION_MODES.MINI_WINDOW
+        ? `
+              <button id="mini-window-cancel-button" class="screenshots-button" title="${miniWindowCancelAttributes.attributes[0].value}" aria-label="${miniWindowCancelAttributes.attributes[1].value}"><label>${miniWindowCancelAttributes.value}</label></button>
+              <button id="reselect-button" class="screenshots-button" title="${reselectAttributes.attributes[0].value}" aria-label="${reselectAttributes.attributes[1].value}"><label>${reselectAttributes.value}</label></button>
+              <button id="pop" class="screenshots-button primary" title="${popAttributes.attributes[0].value}" aria-label="${popAttributes.attributes[1].value}"><img/><label>${popAttributes.value}</label></button>`
+        : `
+              <button id="cancel" class="screenshots-button" title="${cancelAttributes.attributes[0].value}" aria-label="${cancelAttributes.attributes[1].value}"><img/></button>
+              <button id="copy" class="screenshots-button" title="${copyAttributes.attributes[0].value}" aria-label="${copyAttributes.attributes[1].value}"><img/><label>${copyAttributes.value}</label></button>
+              <button id="download" class="screenshots-button primary" title="${downloadAttributes.attributes[0].value}" aria-label="${downloadAttributes.attributes[1].value}"><img/><label>${downloadAttributes.value}</label></button>`;
 
     return `
       <template>
@@ -112,7 +168,10 @@ export class ScreenshotsOverlay {
         <div id="screenshots-component">
           <div id="preview-container" hidden>
             <div id="face-container" tabindex="0" role="button" aria-label="${previewFaceAriaLabel.attributes[0].value}">
-              <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+              ${
+                this.mode === SELECTION_MODES.MINI_WINDOW
+                  ? `<img id="mini-window-preview-logo" src="chrome://browser/content/miniwindow/assets/mini-window.svg" alt=""/>`
+                  : `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
                 <g>
                   <path d="M11.4.9v2.9h-6c-.9 0-1.5.8-1.5 1.5v6H.8V3.8C.8 2.1 2.2.7 3.9.7h7.6v.2z" class="face-line-color"/>
                   <path d="M63.2 11.4h-3.1v-6c0-.8-.6-1.5-1.5-1.5h-6v-3h7.6c1.7 0 3.1 1.4 3.1 3.1z" class="face-line-color"/>
@@ -124,10 +183,10 @@ export class ScreenshotsOverlay {
                   <ellipse id="leftPupil" cx="25" cy="30" class="face-pupil-color" rx="3" ry="3"/>
                   <ellipse id="rightPupil" cx="45" cy="30" class="face-pupil-color" rx="3" ry="3"/>
                 </g>
-              </svg>
-
+              </svg>`
+              }
             </div>
-            <div class="preview-instructions">${instructions.value}</div>
+            ${instructionsMarkup}
             <button class="screenshots-button ghost-button" id="screenshots-cancel-button" title="${cancelAttributes.attributes[0].value}" aria-label="${cancelAttributes.attributes[1].value}">${cancelLabel.value}</button>
           </div>
           <div id="hover-highlight" hidden></div>
@@ -167,11 +226,7 @@ export class ScreenshotsOverlay {
             </div>
           </div>
           <div id="buttons-container" hidden>
-            <div class="buttons-wrapper">
-              <button id="cancel" class="screenshots-button" title="${cancelAttributes.attributes[0].value}" aria-label="${cancelAttributes.attributes[1].value}"><img/></button>
-              <button id="copy" class="screenshots-button" title="${copyAttributes.attributes[0].value}" aria-label="${copyAttributes.attributes[1].value}"><img/><label>${copyAttributes.value}</label></button>
-              <button id="download" class="screenshots-button primary" title="${downloadAttributes.attributes[0].value}" aria-label="${downloadAttributes.attributes[1].value}"><img/><label>${downloadAttributes.value}</label></button>
-            </div>
+            <div class="buttons-wrapper">${buttonsContainerMarkup}</div>
           </div>
         </div>
       </template>`;
@@ -202,12 +257,15 @@ export class ScreenshotsOverlay {
     return this.#methodsUsed;
   }
 
-  constructor(contentDocument) {
+  constructor(contentDocument, mode = SELECTION_MODES.SCREENSHOTS) {
     this.document = contentDocument;
     this.window = contentDocument.documentGlobal;
+    this.mode = mode;
 
     this.windowDimensions = new WindowDimensions();
     this.selectionRegion = new Region(this.windowDimensions);
+    this.selectionRegion.confineToViewport =
+      this.mode === SELECTION_MODES.MINI_WINDOW;
     this.hoverElementRegion = new Region(this.windowDimensions);
     this.resetMethodsUsed();
 
@@ -231,7 +289,13 @@ export class ScreenshotsOverlay {
     return this.content.root.getElementById(id);
   }
 
-  async initialize() {
+  async initialize(mode = SELECTION_MODES.SCREENSHOTS) {
+    // If we're already using the overlay for something else,
+    // we must tear it down and reinitialize it for the new mode.
+    if (this.initialized && this.mode !== mode) {
+      this.tearDown();
+    }
+    this.mode = mode;
     if (this.initialized) {
       return;
     }
@@ -266,6 +330,11 @@ export class ScreenshotsOverlay {
     this.cancelButton = this.getElementById("cancel");
     this.copyButton = this.getElementById("copy");
     this.downloadButton = this.getElementById("download");
+    this.popButton = this.getElementById("pop");
+    this.miniWindowCancelButton = this.getElementById(
+      "mini-window-cancel-button"
+    );
+    this.reselectButton = this.getElementById("reselect-button");
 
     this.previewContainer = this.getElementById("preview-container");
     this.previewFace = this.getElementById("face-container");
@@ -416,7 +485,28 @@ export class ScreenshotsOverlay {
       case "download":
         this.downloadSelectedRegion();
         break;
+      case "pop":
+        this.popSelectedRegion();
+        break;
+      case "mini-window-cancel-button":
+        this.cancelOverlay();
+        break;
+      case "reselect-button":
+        this.reselectRegion();
+        break;
     }
+  }
+
+  /** Close the overlay outright, regardless of state. */
+  cancelOverlay() {
+    this.#dispatchEvent("Screenshots:Close", {
+      reason: "OverlayCancel",
+    });
+  }
+
+  /** Drop the current selection and go back to selecting a region. */
+  reselectRegion() {
+    this.#setState(STATES.CROSSHAIRS);
   }
 
   maybeCancelScreenshots() {
@@ -747,12 +837,20 @@ export class ScreenshotsOverlay {
         this.handleKeyDownOnButton(event);
         break;
       case this.copyKey.toLowerCase():
-        if (this.state === "selected" && this.getAccelKey(event)) {
+        if (
+          this.mode !== SELECTION_MODES.MINI_WINDOW &&
+          this.state === "selected" &&
+          this.getAccelKey(event)
+        ) {
           this.copySelectedRegion();
         }
         break;
       case this.downloadKey.toLowerCase():
-        if (this.state === "selected" && this.getAccelKey(event)) {
+        if (
+          this.mode !== SELECTION_MODES.MINI_WINDOW &&
+          this.state === "selected" &&
+          this.getAccelKey(event)
+        ) {
           this.downloadSelectedRegion();
         }
         break;
@@ -1100,10 +1198,16 @@ export class ScreenshotsOverlay {
           }
         }
         break;
-      case STATES.SELECTED:
+      case STATES.SELECTED: {
+        // The last action button in tab order: #pop in mini-window mode,
+        // otherwise #download.
+        let lastActionButton = this.popButton ?? this.downloadButton;
         if (event.originalTarget.id === "highlight" && event.shiftKey) {
-          this.downloadButton.focus({ focusVisible: true });
-        } else if (event.originalTarget.id === "download" && !event.shiftKey) {
+          lastActionButton.focus({ focusVisible: true });
+        } else if (
+          event.originalTarget === lastActionButton &&
+          !event.shiftKey
+        ) {
           this.highlightEl.focus({ focusVisible: true });
         } else {
           // The content document can listen for keydown events and prevent moving
@@ -1119,6 +1223,7 @@ export class ScreenshotsOverlay {
           );
         }
         break;
+      }
     }
   }
 
@@ -1127,7 +1232,9 @@ export class ScreenshotsOverlay {
    * This will default to the download button.
    */
   setFocusToActionButton() {
-    if (lazy.SCREENSHOTS_LAST_SAVED_METHOD === "copy") {
+    if (this.popButton) {
+      this.popButton.focus({ focusVisible: true, preventScroll: true });
+    } else if (lazy.SCREENSHOTS_LAST_SAVED_METHOD === "copy") {
       this.copyButton.focus({ focusVisible: true, preventScroll: true });
     } else {
       this.downloadButton.focus({ focusVisible: true, preventScroll: true });
@@ -1153,6 +1260,15 @@ export class ScreenshotsOverlay {
         break;
       case this.downloadButton:
         this.downloadSelectedRegion();
+        break;
+      case this.popButton:
+        this.popSelectedRegion();
+        break;
+      case this.miniWindowCancelButton:
+        this.cancelOverlay();
+        break;
+      case this.reselectButton:
+        this.reselectRegion();
         break;
       default:
         return false;
@@ -1196,7 +1312,11 @@ export class ScreenshotsOverlay {
    * @param {object} options (optional) Options for calling start of state method
    */
   #setState(newState, options = {}) {
-    if (this.#state === STATES.SELECTED && newState === STATES.CROSSHAIRS) {
+    if (
+      this.#state === STATES.SELECTED &&
+      newState === STATES.CROSSHAIRS &&
+      this.#mode == SELECTION_MODES.SCREENSHOTS
+    ) {
       this.#dispatchEvent("Screenshots:RecordEvent", {
         eventName: "startedOverlayRetry",
       });
@@ -1250,6 +1370,14 @@ export class ScreenshotsOverlay {
     });
   }
 
+  popSelectedRegion() {
+    this.#dispatchEvent("Screenshots:MiniWindow", {
+      region: this.selectionRegion.dimensions,
+      viewportWidth: this.windowDimensions.clientWidth,
+      viewportHeight: this.windowDimensions.clientHeight,
+    });
+  }
+
   /**
    * Hide hover element, selection and buttons containers.
    * Show the preview container and the panel.
@@ -1293,6 +1421,7 @@ export class ScreenshotsOverlay {
    */
   selectedStart(options = {}) {
     this.selectionRegion.sortCoords();
+    this.#ensureMiniWindowRegionSize();
     this.hidePreviewContainer();
     this.hideHoverElementContainer();
     this.drawSelectionContainer();
@@ -1300,6 +1429,28 @@ export class ScreenshotsOverlay {
 
     if (!options.doNotMoveFocus) {
       this.setFocusToActionButton();
+    }
+  }
+
+  /**
+   * Clamp the selection region to a minimum size if in mini-window mode.
+   */
+  #ensureMiniWindowRegionSize() {
+    if (this.mode !== SELECTION_MODES.MINI_WINDOW) {
+      return;
+    }
+    let region = this.selectionRegion;
+    if (region.width < MIN_MINI_WINDOW_REGION_WIDTH) {
+      region.right = region.left + MIN_MINI_WINDOW_REGION_WIDTH;
+      if (region.width < MIN_MINI_WINDOW_REGION_WIDTH) {
+        region.left = region.right - MIN_MINI_WINDOW_REGION_WIDTH;
+      }
+    }
+    if (region.height < MIN_MINI_WINDOW_REGION_HEIGHT) {
+      region.bottom = region.top + MIN_MINI_WINDOW_REGION_HEIGHT;
+      if (region.height < MIN_MINI_WINDOW_REGION_HEIGHT) {
+        region.top = region.bottom - MIN_MINI_WINDOW_REGION_HEIGHT;
+      }
     }
   }
 
@@ -1602,6 +1753,10 @@ export class ScreenshotsOverlay {
    * @param {number} clientY The y position relative to the viewport
    */
   drawPreviewEyes(clientX, clientY) {
+    // Mini-window mode shows a static logo instead.
+    if (!this.leftEye) {
+      return;
+    }
     let { clientWidth, clientHeight } = this.windowDimensions.dimensions;
     const xpos = Math.floor((10 * (clientX - clientWidth / 2)) / clientWidth);
     const ypos = Math.floor((10 * (clientY - clientHeight / 2)) / clientHeight);

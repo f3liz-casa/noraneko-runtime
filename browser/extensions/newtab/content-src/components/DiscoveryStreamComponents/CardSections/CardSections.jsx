@@ -2,7 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { DSEmptyState } from "../DSEmptyState/DSEmptyState";
 import { DSCard, PlaceholderDSCard } from "../DSCard/DSCard";
 import { useSelector } from "react-redux";
@@ -24,6 +30,8 @@ import { TopicNavigation } from "../TopicNavigation/TopicNavigation";
 import { PersonalizedCard } from "../PersonalizedCard/PersonalizedCard";
 import { FollowSectionButtonHighlight } from "../FeatureHighlight/FollowSectionButtonHighlight";
 import { MessageWrapper } from "content-src/components/MessageWrapper/MessageWrapper";
+import { ErrorBoundary } from "content-src/components/ErrorBoundary/ErrorBoundary";
+import { WIDGET_ROW_COMPONENTS } from "content-src/components/Widgets/WidgetsComponentRegistry.jsx";
 
 // Prefs
 const PREF_SECTIONS_CARDS_ENABLED = "discoverystream.sections.cards.enabled";
@@ -104,18 +112,21 @@ function getLayoutData(responsiveLayouts, index) {
     imageSizes: {},
     cardPositions: {},
     isCarousel: false,
+    hiddenColumnCounts: new Set(),
   };
 
   responsiveLayouts.forEach(layout => {
     const orphanTiles = getOrphanTileIndexes(layout.tiles, layout.columnCount);
+    let hasTile = false;
     layout.tiles.forEach((tile, tileIndex) => {
       if (tile.position === index) {
+        hasTile = true;
         if (tile.carousel) {
           layoutData.isCarousel = true;
         }
 
         if (orphanTiles.has(tileIndex)) {
-          layoutData.classNames.push(`col-${layout.columnCount}-hidden`);
+          layoutData.hiddenColumnCounts.add(layout.columnCount);
         }
         layoutData.classNames.push(`col-${layout.columnCount}-${tile.size}`);
         layoutData.classNames.push(
@@ -141,6 +152,17 @@ function getLayoutData(responsiveLayouts, index) {
         }
       }
     });
+
+    // Bug 2069430: Different breakpoints can contain a different number of
+    // cards. The render is sized to the breakpoint with the most tiles, so
+    // a breakpoint with no tile at this position hides the extra card.
+    if (!hasTile) {
+      layoutData.hiddenColumnCounts.add(layout.columnCount);
+    }
+  });
+
+  layoutData.hiddenColumnCounts.forEach(columnCount => {
+    layoutData.classNames.push(`col-${columnCount}-hidden`);
   });
 
   return layoutData;
@@ -268,6 +290,14 @@ function CardSection({
           link.focus();
         }
       }
+    }
+  };
+
+  // @experiment(remove) { bug 2078816 }
+  const handleWidgetInteraction = widgetName => {
+    const prefName = `widgets.${widgetName}.interaction`;
+    if (prefs[prefName] === false) {
+      dispatch(ac.SetPref(prefName, true));
     }
   };
 
@@ -446,6 +476,8 @@ function CardSection({
         scheduled_corpus_item_id={rec.scheduled_corpus_item_id}
         recommended_at={rec.recommended_at}
         received_rank={rec.received_rank}
+        variant_id={rec.variant_id}
+        source_section_id={rec.source_section_id}
         format={rec.format}
         is_ad_eligible_position={rec.is_ad_eligible_position}
         alt_text={rec.alt_text}
@@ -544,6 +576,27 @@ function CardSection({
       }
 
       const rec = displaySections[dataIndex];
+
+      // @experiment(remove) { bug 2078816 }
+      if (rec?.type === "widget") {
+        const Widget = WIDGET_ROW_COMPONENTS[rec.widgetId];
+        cards.push(
+          <div
+            key={`section-widget-${rec.widgetId}`}
+            className={`section-widget ${classNames.join(" ")}`}
+          >
+            <ErrorBoundary className="widget-error-fallback">
+              <Widget
+                dispatch={dispatch}
+                handleUserInteraction={handleWidgetInteraction}
+              />
+            </ErrorBoundary>
+          </div>
+        );
+        dataIndex++;
+        continue;
+      }
+
       const currentIndex = dataIndex;
       const mappedFocusPosition = cardPositions[activeColumnCount];
       // Fall back to card order when this layout does not define a mapped position.
@@ -551,12 +604,17 @@ function CardSection({
         ? mappedFocusPosition
         : currentIndex;
 
+      // If the card is an orphan or the breakpoint has no tile for it, CSS hides it.
+      // A hidden card must stay out of the roving tabindex for keyboard navigation.
+      const isHidden = layoutData.hiddenColumnCounts.has(activeColumnCount);
       const isPlaceholder = needsPlaceholder(rec);
 
       if (isPlaceholder) {
         cards.push(<PlaceholderDSCard key={`dscard-${currentIndex}`} />);
       } else {
-        activeFocusPositions.push(activeFocusPosition);
+        if (!isHidden) {
+          activeFocusPositions.push(activeFocusPosition);
+        }
         cards.push({
           isDSCard: true,
           key: `dscard-${rec.id}`,
@@ -564,6 +622,7 @@ function CardSection({
           classNames,
           imageSizes,
           activeFocusPosition,
+          isHidden,
         });
       }
       dataIndex++;
@@ -581,14 +640,16 @@ function CardSection({
         return card;
       }
 
-      const { rec, classNames, imageSizes, activeFocusPosition } = card;
+      const { rec, classNames, imageSizes, activeFocusPosition, isHidden } =
+        card;
 
       return renderDSCard({
         rec,
         key: card.key,
         classNames,
         imageSizes,
-        tabIndex: activeFocusPosition === activeRovingIndex ? 0 : -1,
+        tabIndex:
+          !isHidden && activeFocusPosition === activeRovingIndex ? 0 : -1,
         onFocus: () => onCardFocus(activeFocusPosition),
       });
     });
@@ -720,6 +781,25 @@ function CardSection({
   );
 }
 
+/**
+ * Sends the rendered section order to the parent so telemetry that goes
+ * through randomizeOrganicContentEvent can report a real section_position.
+ *
+ * @param {object} props
+ * @param {string} props.sectionKeys Comma-joined sectionKeys in render order.
+ */
+function SectionsOrderReporter({ sectionKeys, dispatch }) {
+  useEffect(() => {
+    dispatch(
+      ac.OnlyToMain({
+        type: at.CARD_SECTIONS_ORDER,
+        data: { sections: sectionKeys.split(",") },
+      })
+    );
+  }, [dispatch, sectionKeys]);
+  return null;
+}
+
 function CardSections({
   data,
   feed,
@@ -745,29 +825,49 @@ function CardSections({
       prefs[PREF_TOPIC_NAVIGATION_ENABLED]) &&
     novaEnabled;
   const gridRef = useRef(null);
+  const layoutObserverRef = useRef(null);
   const [activeColumnLayout, setActiveColumnLayout] = useState(() =>
     getActiveColumnLayout(window.innerWidth)
   );
 
   useLayoutEffect(() => {
     if (!novaEnabled || !gridRef.current) {
-      return;
+      return undefined;
     }
     const columnLayout = getNovaColumnLayout(gridRef.current);
     if (columnLayout) {
       setActiveColumnLayout(columnLayout);
     }
+    return () => layoutObserverRef.current?.disconnect();
   }, [novaEnabled]);
 
   const syncLayoutOnFocus = useCallback(
     e => {
-      let nextLayout = getActiveColumnLayout(window.innerWidth);
-      if (novaEnabled) {
-        nextLayout = getNovaColumnLayout(e.currentTarget);
+      const grid = gridRef.current ?? e.currentTarget;
+      const syncLayout = () => {
+        let nextLayout = getActiveColumnLayout(window.innerWidth);
+        if (novaEnabled) {
+          nextLayout = getNovaColumnLayout(grid);
+        }
+        if (!nextLayout) {
+          return;
+        }
+        setActiveColumnLayout(currLayout =>
+          currLayout === nextLayout ? currLayout : nextLayout
+        );
+      };
+
+      syncLayout();
+
+      // A stale activeColumnLayout can leave the roving tabindex on a card the
+      // breakpoint hides. Observing the grid keeps it current. Observation
+      // starts on first focus and continues once focus leaves, because a
+      // resize then would otherwise go unnoticed.
+      if (novaEnabled && !layoutObserverRef.current) {
+        const observer = new ResizeObserver(syncLayout);
+        observer.observe(grid);
+        layoutObserverRef.current = observer;
       }
-      setActiveColumnLayout(currLayout =>
-        currLayout === nextLayout ? currLayout : nextLayout
-      );
     },
     [novaEnabled]
   );
@@ -931,6 +1031,10 @@ function CardSections({
     </div>
   ) : (
     <div className="ds-section-wrapper">
+      <SectionsOrderReporter
+        sectionKeys={filteredSections.map(s => s.sectionKey).join(",")}
+        dispatch={dispatch}
+      />
       {topicNavigationEnabled && !spocsLoading && (
         <TopicNavigation sections={filteredSections} dispatch={dispatch} />
       )}

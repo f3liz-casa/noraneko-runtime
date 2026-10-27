@@ -709,6 +709,14 @@
   <string name="search_widget_text_long">Leita á vefnum</string>
   <!-- Content description (not visible, for screen readers etc.): Voice search -->
   <string name="search_widget_voice">Raddleit</string>
+  <!-- Content description (not visible, for screen readers etc.): Button in the search widget that starts a search in a private tab -->
+  <string name="search_widget_private_search">Huliðsleit</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for private search and for voice search -->
+  <string name="search_bar_widget_description">Leitarstika með huliðsleit og leit með tali</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for image search, private search and voice search -->
+  <string name="search_bar_with_lens_widget_description">Leitarstika með leit að myndum, huliðsleit og leit með tali</string>
+  <!-- Widget description in the widget picker screen for the compact search bar widget -->
+  <string name="compact_search_bar_widget_description">Þjöppuð leitarstika</string>
   <!--
     Preferences
 
@@ -806,6 +814,8 @@
   <string name="preferences_override_sync_tokenserver">Sérsniðinn samstillingarþjónn</string>
   <!-- Preference category for account information -->
   <string name="preferences_category_account">Reikningur</string>
+  <!-- Preference category for sync controls. Sync can be translated, it's just short for ”Synchronization” in English. -->
+  <string name="preferences_category_sync_controls">Samstiling</string>
   <!-- Preference for changing where the AddressBar is positioned -->
   <string name="preferences_toolbar_2">Staðsetning veffangastiku</string>
   <!-- Preference for changing toolbar layout -->
@@ -862,6 +872,8 @@
   <string name="preferences_search_synced_tabs">Leita í samstilltum flipum</string>
   <!-- Preference for account settings -->
   <string name="preferences_account_settings">Stillingar reiknings</string>
+  <!-- Preference for account and sync settings -->
+  <string name="preferences_account_and_sync_settings">Reikningur og samstilling</string>
   <!-- Preference for enabling url autocomplete -->
   <string name="preferences_enable_autocomplete_urls">Sjálfvirk útfylling vefslóða</string>
   <!-- Preference title for switch preference to show sponsored Firefox Suggest search suggestions -->
@@ -1141,6 +1153,12 @@
   <string name="preferences_sync_now">Samstilla núna</string>
   <!-- Preference category for sync -->
   <string name="preferences_sync_category">Velja hvað á að samstilla</string>
+  <!-- Preference category for sync controls -->
+  <string name="preferences_category_sync">Samstillt gögn</string>
+  <!-- Summary for the sync preference category. -->
+  <string name="preferences_sync_category_summary">Stjórnaðu því sem samstillist á öllum tengdum tækjum þínum</string>
+  <!-- Summary for the sync preference category, when user has disabled all synchronisation items. -->
+  <string name="preferences_sync_category_no_engine_selected_summary">Þú ert ekki að samstilla neitt. Veldu hverju á að halda samstilltu á milli tækjanna þinna.</string>
   <!-- Preference for syncing history -->
   <string name="preferences_sync_history">Feril</string>
   <!-- Preference for syncing bookmarks -->
@@ -1153,6 +1171,10 @@
   <string name="preferences_sign_out">Útskráning</string>
   <!-- Preference displays and allows changing current FxA device name -->
   <string name="preferences_sync_device_name">Heiti á tæki</string>
+  <!-- Preference category for Device name -->
+  <string name="preferences_device_name_category">Heiti á tæki</string>
+  <!-- Label for the Preference that displays and allows changing current device name on Mozilla Account -->
+  <string name="preferences_sync_change_device_name">Breyta heiti tækis</string>
   <!-- Text shown when user enters empty device name -->
   <string name="empty_device_name_error">Heiti tækis má ekki vera autt.</string>
   <!-- Label indicating that sync is in progress -->
@@ -1272,8 +1294,6 @@
   <string name="preference_simple_toolbar">Einfalt</string>
   <!-- Preference for using expanded toolbar -->
   <string name="preference_expanded_toolbar">Dregið sundur</string>
-  <!-- Preference description indicating the toolbar location preference is disabled when the tab strip is enabled -->
-  <string name="preference_toolbar_pref_disabled_explanation">Vistfangastikan verður að vera efst þegar flipastikan er birt.</string>
   <!-- New tab shortcut in toolbar customization -->
   <string name="toolbar_customize_shortcut_new_tab">Opna nýjan flipa</string>
   <!-- Share shortcut in toolbar customization -->
@@ -1355,6 +1375,8 @@
   <string name="library_desktop_bookmarks_unfiled">Önnur bókamerki</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">Ferill</string>
+  <!-- Content description (not visible, for screen readers etc.) for the check mark that replaces a site's icon in History and Recently closed tabs when the item is selected -->
+  <string name="library_item_selected_content_description">Valið</string>
   <!-- Settings Page Title -->
   <string name="settings_title">Stillingar</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -1405,8 +1427,8 @@
     Title of preference for tabs management
   -->
   <string name="preferences_tabs">Flipar</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">Flipasýn</string>
+  <!-- Title of preference that allows a user to specify the tab layout -->
+  <string name="preferences_tab_layout">Framsetning flipa</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">Listi</string>
   <!-- Option for a grid tab view -->
@@ -1454,15 +1476,19 @@
   <!-- Summary for homepage preference indicating opening the homepage when re-opening the app after four hours of inactivity -->
   <string name="opening_screen_after_four_hours_of_inactivity_summary">Opna á upphafssíðu eftir fjórar klukkustundir</string>
   <!--
-    Inactive tabs
+    Tab organization
 
-    Category header of a preference that allows a user to enable or disable the inactive tabs feature
+    Category header for the preferences that control how tabs are organized
   -->
-  <string name="preferences_inactive_tabs">Færa gamla flipa í óvirka</string>
+  <string name="preferences_tab_organization">Skipulag flipa</string>
+  <!-- Title of the preference that allows a user to enable or disable the inactive tabs feature -->
+  <string name="preferences_inactive_tabs_toggle_title">Óvirkir flipar</string>
   <!-- Summary of the preference that allows a user to enable or disable the inactive tabs feature. -->
   <string name="preferences_inactive_tabs_title">Flipar sem þú hefur ekki skoðað í tvær vikur verða færðir í óvirka hlutann.</string>
-  <!-- Title for the preference to enable or disable the tab groups feature -->
-  <string name="preferences_tab_groups_feature">Virkja flipahópa</string>
+  <!-- Title of the preference that allows a user to enable or disable the tab groups feature -->
+  <string name="preferences_tab_groups_title">Flipahópar</string>
+  <!-- Summary of the preference that allows a user to enable or disable the tab groups feature -->
+  <string name="preferences_tab_groups_description">Settu flipana þína í hópa sem þú getur nefnt og vistað.</string>
   <!--
     Privacy report
 
@@ -1678,6 +1704,11 @@
   <string name="close_tab_and_delete_group_confirmation_dialog_cancel">Hætta við</string>
   <!-- Content description for the three dot button next to a tab group" -->
   <string name="tab_group_three_dot_button_content_description">Fleiri valkostir</string>
+  <!--
+    Content description for the Expand button on the contracted menu for a tab group:
+    when tapped, tabs are displayed in an expanded grid or list view, taking up the full screen.
+  -->
+  <string name="tab_groups_strip_expand_group_content_description">Stækka til að birta flipa í fullri skjástærð</string>
   <!-- Text shown on the edit button for a tab group on the three dot menu -->
   <string name="tab_group_three_dot_menu_edit">Breyta</string>
   <!-- Text shown on the ungroup button for a tab group on the three dot menu -->
@@ -2375,6 +2406,10 @@
   <string name="sync_send_to_all">Senda í öll tæki</string>
   <!-- An option from the share dialog to reconnect to sync -->
   <string name="sync_reconnect">Tengdu aftur til að samstilla</string>
+  <!-- Label for the button in the share dialog that sends the tab to the selected sync devices -->
+  <string name="sync_send_to_selected_devices">Senda</string>
+  <!-- Content description announced when a device is selected in the share dialog -->
+  <string name="send_to_devices_device_selected_content_description">Valið</string>
   <!-- Text displayed when sync is offline and cannot be accessed -->
   <string name="sync_offline">Ótengt</string>
   <!-- An option to connect additional devices -->
@@ -2407,10 +2442,14 @@
   <string name="sync_send_tab_empty_state_title">Engin tæki tengd</string>
   <!-- Send tab to synced devices: Empty state message - Displayed when the user has no synced devices -->
   <string name="sync_send_tab_empty_state_description" tools:ignore="BrandUsage">Skráðu þig inn á Firefox í að minnsta kosti einu öðru tæki til að senda flipa.</string>
+  <!-- Send tab to synced devices: Empty state link - Displayed when the user has no synced devices -->
+  <string name="sync_send_tab_empty_state_link">Lærðu hvernig á að tengja tæki</string>
   <!-- Send tab to synced devices: Connectivity Error title -->
   <string name="sync_send_tab_error_connection_title">Athugaðu internettenginguna þína</string>
   <!-- Send tab to synced devices: Connectivity Error message - Suggested user action after internet connection has been established -->
   <string name="sync_send_tab_error_connection_text">Reyndu þá að senda flipann aftur.</string>
+  <!-- Send tab to synced devices: Connectivity Error button - When tapped, refreshes the list of connected devices. -->
+  <string name="sync_send_tab_error_connection_button">Reyna aftur</string>
   <!--
     Notifications
 
@@ -2593,6 +2632,12 @@
   <string name="sign_in_create_account_text" tools:ignore="BrandUsage"><![CDATA[Enginn reikningur? <u>Búðu til einn slíkan</u> til að samstilla Firefox á milli tækja.]]></string>
   <!-- Text shown in confirmation dialog to sign out of account. %s is the name of the app (for example "Firefox"). -->
   <string name="sign_out_confirmation_message_2">%s mun hætta að samstilla reikninginn þinn en mun ekki eyða neinum vafragögnum á þessu tæki.</string>
+  <!-- Title of the confirmation dialog shown when the user signs out of their account -->
+  <string name="sign_out_dialog_title">Skrá þig út af reikningnum þínum?</string>
+  <!-- Body of the confirmation dialog shown when the user signs out of their account -->
+  <string name="sign_out_dialog_message">Samstillt gögn eru geymd á reikningnum þínum.</string>
+  <!-- Text for the primary action button of the confirmation dialog shown when the user signs out of their account -->
+  <string name="sign_out_dialog_confirm_button">Skrá út</string>
   <!-- Option to continue signing out of account shown in confirmation dialog to sign out of account -->
   <string name="sign_out_disconnect">Aftengja</string>
   <!-- Option to cancel signing out shown in confirmation dialog to sign out of account -->
@@ -3437,7 +3482,7 @@
   <!-- Label for the "Add website" button in the "Add to homepage" bottom sheet. -->
   <string name="homepage_shortcuts_add_website">Bæta við vefsvæði</string>
   <!-- Title text for the "Enter a Website URL" dialog for adding a shortcut. -->
-  <string name="homepage_shortcuts_add_website_title">Sláðu inn slóð á vef</string>
+  <string name="homepage_shortcuts_add_website_title">Settu inn slóð á vef</string>
   <!-- Title for the "Popular sites" section in the "Add to homepage" bottom sheet. -->
   <string name="homepage_shortcuts_popular_sites">Vinsæl vefsvæði</string>
   <!-- Title text displayed in the dialog when shortcuts limit is reached. -->
@@ -3469,7 +3514,7 @@
   <!-- Button caption to confirm the edit of the top site. -->
   <string name="top_sites_edit_dialog_save">Vista</string>
   <!-- Error message when the user entered an invalid URL -->
-  <string name="top_sites_edit_dialog_url_error">Sláðu inn gilda vefslóð</string>
+  <string name="top_sites_edit_dialog_url_error">Settu inn gilda vefslóð</string>
   <!-- Label for the URL edit field in the edit top site dialog. -->
   <string name="top_sites_edit_dialog_url_title">Vefslóð</string>
   <!--
@@ -4480,6 +4525,16 @@
   <string name="lens_camera_mode_qr">QR-skanni</string>
   <!-- Toast shown when the user picks an image from the gallery in QR mode but no QR code is found in it -->
   <string name="lens_camera_qr_no_code_found">Enginn QR-kóði fannst í myndinni</string>
+  <!-- Status shown under an image picked from the gallery while it is being sent to Google Lens for a visual search -->
+  <string name="lens_camera_loading_status">Er að skoða þetta</string>
+  <!-- Button shown under an image picked from the gallery while it is being sent to Google Lens. Tapping it stops the search and returns to the camera. -->
+  <string name="lens_camera_loading_cancel_button">Hætta við</string>
+  <!-- Snackbar message shown when an image picked from the gallery could not be opened or read, so it was never sent to Google Lens. Shown after returning to the camera. -->
+  <string name="lens_camera_image_load_failed">Gat ekki hlaðið inn þessari mynd. Prófaðu aðra.</string>
+  <!-- Snackbar message shown when an image picked from the gallery could not be searched because of a network problem or an error from Google Lens. Shown after returning to the camera, next to the lens_camera_upload_failed_retry_button action. -->
+  <string name="lens_camera_upload_failed">Tókst ekki að fá niðurstöður úr Google Lens</string>
+  <!-- Action in the snackbar shown when an image picked from the gallery could not be searched with Google Lens. Tapping it searches the same image again. -->
+  <string name="lens_camera_upload_failed_retry_button">Reyna aftur</string>
   <!-- Title of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
   <string name="lens_opt_out_title">Finndu það með Google Lens</string>
   <!-- Description of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
@@ -4568,4 +4623,6 @@
   <string name="reader_mode_panel_content_description">Valkostir leshams</string>
   <!-- Content description for the button in reader mode panel that turns on the read aloud feature (playback of content begins when button is pressed) -->
   <string name="reader_mode_panel_listen_content_description">Lesa upphátt</string>
+  <!-- Content description for media player displayed in Reader Mode when the Listen to Page (Read Aloud) feature is selected -->
+  <string name="reader_mode_panel_media_player_content_description">Margmiðlunarspilari</string>
 </resources>

@@ -1,12 +1,8 @@
 .category-list {
-  border: none;
   display: grid;
   // Bug 1967304 - Large number (48px)
-  gap: calc(var(--space-xlarge) * 2) var(--space-large);
-  grid-auto-rows: 86px;
-  grid-template-columns: 1fr 1fr 1fr;
+  row-gap: calc(var(--space-xlarge) * 2);
   margin-block-end: var(--space-large);
-  padding: 0;
 
   label {
     display: inline-block;
@@ -15,10 +11,20 @@
     width: 100%;
   }
 
-  // @nova-cleanup (remove .nova-enabled class and move this rule to the style above)
-  .nova-enabled & {
-    gap: calc(var(--space-xlarge) * 2) var(--space-medium);
+  .wallpaper-grid-row {
+    column-gap: var(--space-large);
+
+    // @nova-cleanup (remove .nova-enabled class and move this rule to the style above)
+    .nova-enabled & {
+      column-gap: var(--space-medium);
+    }
   }
+}
+
+.wallpaper-grid-row {
+  display: grid;
+  grid-auto-rows: 86px;
+  grid-template-columns: 1fr 1fr 1fr;
 }
 
 .category-header {
@@ -96,7 +102,7 @@ button.arrow-button {
       transform: translate(-50%, -50%);
     }
 
-    &:focus {
+    &:focus-visible {
       outline-color: var(--focus-outline-color);
       outline-offset: var(--focus-outline-offset);
     }
@@ -145,10 +151,16 @@ button.arrow-button {
   .wallpaper-input {
     box-shadow: none;
 
-    &:focus {
+    &:focus-visible {
       outline-color: var(--focus-outline-color);
       outline-offset: 6px;
     }
+  }
+
+  // Focus ring for the color picker
+  &.default-color-set:has(.wallpaper-input:focus-visible) {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
   }
 
   // The color picker has a default state where the user has not picked a custom color
@@ -250,27 +262,52 @@ button.arrow-button {
     // not reflow as images are added.
     scrollbar-gutter: stable;
 
-    fieldset {
-      border: none;
+    .wallpaper-grid {
       display: grid;
-      gap: var(--space-large);
-      grid-auto-rows: 86px;
-      grid-template-columns: 1fr 1fr 1fr;
-      padding: 0;
+      row-gap: var(--space-large);
+
+      .wallpaper-grid-row {
+        column-gap: var(--space-large);
+      }
     }
 
     // "Your images" rows are taller than the shipped ones: the last tile adds
     // an image and carries a label under it.
     fieldset.your-images {
+      border: none;
+      display: grid;
+      gap: var(--space-large);
+      padding: 0;
       grid-auto-rows: auto;
       // Set inline by WallpaperCategories.jsx, which also uses it for the
       // arrow keys, so the two cannot drift apart.
       grid-template-columns: repeat(var(--your-images-columns, 3), 1fr);
 
-      // Thumbnails arrive after the picker opens, so a saved image has nothing
-      // to show for a moment. Without this the tile is an empty hole.
-      .wallpaper-input {
+      // A CSS background keeps the full resolution decoded surface alive. An
+      // img is decoded at the size it is drawn. The input stays on top so its
+      // ring, hover and focus styles are unchanged.
+      .your-images-preview {
         background-color: var(--newtab-background-color-secondary);
+        block-size: 86px;
+        border-radius: var(--border-radius-medium);
+        inline-size: 100%;
+        inset-block-start: 0;
+        inset-inline: 0;
+        object-fit: cover;
+        pointer-events: none;
+        position: absolute;
+      }
+
+      // Transparent so the picture behind it shows through. The color is on
+      // the img, which is what the tile shows before the picture loads.
+      .wallpaper-input {
+        background-color: transparent;
+        position: relative;
+      }
+
+      // Dimming the input alone would do nothing now that it is transparent.
+      .your-images-item:hover .your-images-preview {
+        filter: brightness(55%);
       }
 
       .your-images-item {
@@ -350,7 +387,8 @@ button.arrow-button {
     }
   }
 
-  // visually hide label, but still read by screen readers
+  // Visually hidden label text. The control it belongs to is named from it
+  // through aria-labelledby; the label itself is aria-hidden.
   .sr-only {
     opacity: 0;
     overflow: hidden;
@@ -393,13 +431,52 @@ button.arrow-button {
   }
 }
 
+// The folder tile draws its picture the same way the tiles inside it do, so
+// one saved photo does not hold a full resolution decoded surface.
+.category-list .wallpaper-input.your-images-folder {
+  position: relative;
+
+  // An img is a replaced element, so inset alone leaves it at its intrinsic
+  // size. The sizes are what keep the decode down to the tile.
+  .your-images-preview {
+    background-color: var(--newtab-background-color-secondary);
+    block-size: 100%;
+    border-radius: var(--border-radius-medium);
+    inline-size: 100%;
+    inset: 0;
+    object-fit: cover;
+    pointer-events: none;
+    position: absolute;
+  }
+}
+
 // A saved image can be any color, so a band of the panel color sits between
-// the picture and the accent ring. The folder tile shows one of those images.
-.wallpaper-list.category fieldset.your-images .wallpaper-input:checked,
-.category-list .wallpaper-input.your-images-folder.selected {
+// the picture and the accent ring.
+.wallpaper-list.category fieldset.your-images .wallpaper-input:checked {
   box-shadow:
     inset 0 0 0 2px var(--newtab-background-color-secondary),
     inset 0 0 0 5px var(--color-accent-primary);
+}
+
+// On the folder the picture is a child of the button, and an inset shadow
+// paints under child content, so the ring goes on an overlay above it. The
+// tiles inside keep theirs: there the input is a sibling over the picture.
+.category-list .wallpaper-input.your-images-folder.selected {
+  // Without this the ring every .wallpaper-input gets when it is selected
+  // stays behind the picture, showing only where the rounded corners of the
+  // two boxes part company.
+  box-shadow: none;
+
+  &::after {
+    border-radius: var(--border-radius-medium);
+    box-shadow:
+      inset 0 0 0 2px var(--newtab-background-color-secondary),
+      inset 0 0 0 5px var(--color-accent-primary);
+    content: '';
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+  }
 }
 
 // Touch and other pointers with no hover cannot reveal the remove button, so
@@ -427,6 +504,7 @@ button.arrow-button {
   }
 
   .wallpaper-list.category fieldset.your-images .wallpaper-input:hover,
+  .wallpaper-list.category fieldset.your-images .your-images-item:hover .your-images-preview,
   .category-list .wallpaper-input.your-images-folder:hover {
     filter: none;
   }
@@ -438,6 +516,11 @@ button.arrow-button {
     border-color: var(--border-color-selected);
     border-width: calc(var(--border-width) * 3);
     box-shadow: none;
+  }
+
+  // The border above is what marks the folder here, so the ring overlay goes.
+  .category-list .wallpaper-input.your-images-folder.selected::after {
+    content: none;
   }
 
   // Keep the ghost family rather than the static background, which is a raw

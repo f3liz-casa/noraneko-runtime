@@ -36,6 +36,7 @@ from .data import (
     FinalTargetFiles,
     FinalTargetPreprocessedFiles,
     GeneratedFile,
+    Headers,
     HostDefines,
     HostLibrary,
     HostProgram,
@@ -50,6 +51,7 @@ from .data import (
     JsShellArchive,
     LegacyRunTests,
     Library,
+    LicenseError,
     Linkable,
     LocalInclude,
     LocalizedFiles,
@@ -622,7 +624,15 @@ class TreeMetadataEmitter(LoggingMixin):
                 )
 
     def _rust_library(
-        self, context, libname, static_args, is_gkrust=False, cls=RustLibrary
+        self,
+        context,
+        libname,
+        static_args,
+        is_gkrust=False,
+        cargo_profile_suffix="",
+        cargo_crate_type="",
+        no_lto=False,
+        cls=RustLibrary,
     ):
         # We need to note any Rust library for linking purposes.
         config, cargo_file = self._parse_and_check_cargo_file(context)
@@ -654,6 +664,13 @@ class TreeMetadataEmitter(LoggingMixin):
                 context,
             )
 
+        if cargo_crate_type and cargo_crate_type != "staticlib":
+            raise SandboxValidationError(
+                f"cargo_crate_type {cargo_crate_type} for {libname} must be "
+                "'staticlib'",
+                context,
+            )
+
         crate_type = "staticlib"
 
         dependencies = set(config.get("dependencies", {}).keys())
@@ -675,6 +692,9 @@ class TreeMetadataEmitter(LoggingMixin):
             dependencies,
             features,
             is_gkrust,
+            cargo_profile_suffix=cargo_profile_suffix,
+            cargo_crate_type=cargo_crate_type,
+            no_lto=no_lto,
             **static_args,
         )
 
@@ -990,6 +1010,13 @@ class TreeMetadataEmitter(LoggingMixin):
                         libname,
                         static_args,
                         is_gkrust=bool(context.get("IS_GKRUST")),
+                        cargo_profile_suffix=context.get(
+                            "RUST_LIBRARY_CARGO_PROFILE_SUFFIX", ""
+                        ),
+                        cargo_crate_type=context.get(
+                            "RUST_LIBRARY_CARGO_CRATE_TYPE", ""
+                        ),
+                        no_lto=bool(context.get("RUST_LIBRARY_NO_LTO")),
                     )
                 else:
                     lib = StaticLibrary(context, libname, **static_args)
@@ -1074,7 +1101,6 @@ class TreeMetadataEmitter(LoggingMixin):
             deps = list(extra_link_deps)
             for linkable in link_targets:
                 linkable.extra_link_deps = deps
-
         # Only emit sources if we have linkables defined in the same context.
         # Note the linkables are not emitted in this function, but much later,
         # after aggregation (because of e.g. USE_LIBS processing).
@@ -1095,7 +1121,13 @@ class TreeMetadataEmitter(LoggingMixin):
         sources = defaultdict(list)
         gen_sources = defaultdict(list)
         all_flags = {}
-        for symbol in ("SOURCES", "HOST_SOURCES", "UNIFIED_SOURCES", "WASM_SOURCES"):
+        for symbol in (
+            "SOURCES",
+            "HOST_SOURCES",
+            "UNIFIED_SOURCES",
+            "WASM_SOURCES",
+            "SOURCE_HEADERS",
+        ):
             srcs = sources[symbol]
             gen_srcs = gen_sources[symbol]
             context_srcs = context.get(symbol, [])
@@ -1168,6 +1200,7 @@ class TreeMetadataEmitter(LoggingMixin):
             ".c": set(),
             ".m": set(),
             ".mm": set(),
+            ".h": set([".h", ".H", ".hh", ".hpp"]),
             ".cpp": set([".cc", ".cxx"]),
             ".S": set(),
         }
@@ -1181,9 +1214,10 @@ class TreeMetadataEmitter(LoggingMixin):
 
         # A map from moz.build variables to the canonical suffixes of file
         # kinds that can be listed therein.
-        all_suffixes = list(suffix_map.keys())
+        source_suffixes = [s for s in suffix_map.keys() if s != ".h"]
         varmap = dict(
-            SOURCES=(Sources, all_suffixes),
+            SOURCES=(Sources, source_suffixes),
+            SOURCE_HEADERS=(Headers, [".h"]),
             HOST_SOURCES=(HostSources, [".c", ".cpp"]),
             UNIFIED_SOURCES=(UnifiedSources, [".c", ".mm", ".m", ".cpp"]),
         )
@@ -1413,6 +1447,8 @@ class TreeMetadataEmitter(LoggingMixin):
 
         generated_files = set()
         localized_generated_files = set()
+        yield from self._process_licenses(context)
+
         for obj in self._process_generated_files(context):
             for f in obj.outputs:
                 generated_files.add(f)
@@ -1802,7 +1838,18 @@ class TreeMetadataEmitter(LoggingMixin):
                     context,
                 )
 
+        if not context.config.substs.get("COMPILE_ENVIRONMENT"):
+            return
+
         yield XPIDLModule(context, xpidl_module, context["XPIDL_SOURCES"])
+
+    def _process_licenses(self, context):
+        from mozbuild.licenses import from_context as licenses_from_context
+
+        try:
+            yield from licenses_from_context(context)
+        except LicenseError as error:
+            raise SandboxValidationError(str(error), context)
 
     def _process_generated_files(self, context):
         # The link reads whatever EXTRA_LINK_DEPS names, so a generated file
@@ -2009,9 +2056,9 @@ class TreeMetadataEmitter(LoggingMixin):
             # We also copy manifests into the output directory,
             # including manifests from [include:foo] directives.
             for mpath in mpmanifest.manifests():
-                mpath = mozpath.normpath(mpath)
-                out_path = mozpath.join(out_dir, mozpath.basename(mpath))
-                obj.installs[mpath] = (out_path, False)
+                norm_path = mozpath.normpath(mpath)
+                out_path = mozpath.join(out_dir, mozpath.basename(norm_path))
+                obj.installs[norm_path] = (out_path, False)
 
             # Some manifests reference files that are auto generated as
             # part of the build or shouldn't be installed for some

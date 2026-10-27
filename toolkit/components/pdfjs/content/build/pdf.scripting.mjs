@@ -20,8 +20,8 @@
  */
 
 /**
- * pdfjsVersion = 6.3.335
- * pdfjsBuild = 74515c623
+ * pdfjsVersion = 6.5.10
+ * pdfjsBuild = 17bb2442f
  */
 
 ;// ./src/scripting_api/constants.js
@@ -175,10 +175,7 @@ function getFieldType(actions) {
   if (format.startsWith("AFDate_")) {
     return FieldType.date;
   }
-  if (format.startsWith("AFTime_")) {
-    return FieldType.time;
-  }
-  return FieldType.none;
+  return format.startsWith("AFTime_") ? FieldType.time : FieldType.none;
 }
 
 ;// ./src/scripting_api/app_utils.js
@@ -981,10 +978,7 @@ class AForm {
       str = `0${str}`;
     }
     const numbers = str.match(/(\d+)/g);
-    if (numbers.length === 0) {
-      return null;
-    }
-    return numbers;
+    return numbers.length === 0 ? null : numbers;
   }
   AFMakeNumber(str) {
     if (typeof str === "number") {
@@ -995,10 +989,7 @@ class AForm {
     }
     str = str.trim().replace(",", ".");
     const number = parseFloat(str);
-    if (isNaN(number) || !isFinite(number)) {
-      return null;
-    }
-    return number;
+    return isNaN(number) || !isFinite(number) ? null : number;
   }
   AFMakeArrayFromList(string) {
     return typeof string === "string" ? string.split(/, ?/g) : string;
@@ -1065,10 +1056,7 @@ class AForm {
     }
   }
   AFPercent_Format(nDec, sepStyle, percentPrepend = false) {
-    if (typeof nDec !== "number") {
-      return;
-    }
-    if (typeof sepStyle !== "number") {
+    if (typeof nDec !== "number" || typeof sepStyle !== "number") {
       return;
     }
     if (nDec < 0) {
@@ -3024,10 +3012,7 @@ class Doc extends PDFObject {
   }
   getField(cName) {
     const field = this._getField(cName);
-    if (!field) {
-      return null;
-    }
-    return field.wrapped;
+    return !field ? null : field.wrapped;
   }
   _getChildren(fieldName) {
     const len = fieldName.length;
@@ -3066,10 +3051,7 @@ class Doc extends PDFObject {
     if (typeof nIndex !== "number") {
       throw new TypeError("Invalid field index: must be a number");
     }
-    if (0 <= nIndex && nIndex < this.numFields) {
-      return this._fieldNames[Math.trunc(nIndex)];
-    }
-    return null;
+    return nIndex >= 0 && nIndex < this.numFields ? this._fieldNames[Math.trunc(nIndex)] : null;
   }
   getNthTemplate() {
     return null;
@@ -3153,7 +3135,7 @@ class Doc extends PDFObject {
     let mustCalculate = false;
     let fieldsToReset;
     if (aFields) {
-      fieldsToReset = [];
+      fieldsToReset = new Set();
       for (const fieldName of aFields) {
         if (!fieldName) {
           continue;
@@ -3166,11 +3148,22 @@ class Doc extends PDFObject {
         if (!field) {
           continue;
         }
-        fieldsToReset.push(field);
+        fieldsToReset.add(field);
         mustCalculate = true;
       }
     }
-    if (!fieldsToReset) {
+    if (fieldsToReset) {
+      for (const {
+        obj
+      } of fieldsToReset) {
+        for (const id of obj._kidIds || []) {
+          const kid = obj._appObjects[id];
+          if (kid) {
+            fieldsToReset.add(kid);
+          }
+        }
+      }
+    } else {
       fieldsToReset = this._fields.values();
       mustCalculate = this._fields.size !== 0;
     }
@@ -3211,17 +3204,11 @@ class ProxyHandler {
   get(obj, prop) {
     if (prop in obj._expandos) {
       const val = obj._expandos[prop];
-      if (typeof val === "function") {
-        return val.bind(obj);
-      }
-      return val;
+      return typeof val === "function" ? val.bind(obj) : val;
     }
     if (typeof prop === "string" && !prop.startsWith("_") && prop in obj) {
       const val = obj[prop];
-      if (typeof val === "function") {
-        return val.bind(obj);
-      }
-      return val;
+      return typeof val === "function" ? val.bind(obj) : val;
     }
     return undefined;
   }
@@ -3272,14 +3259,11 @@ class ProxyHandler {
         value: obj._expandos[prop]
       };
     }
-    if (typeof prop === "string" && !prop.startsWith("_") && prop in obj) {
-      return {
-        configurable: true,
-        enumerable: true,
-        value: obj[prop]
-      };
-    }
-    return undefined;
+    return typeof prop === "string" && !prop.startsWith("_") && prop in obj ? {
+      configurable: true,
+      enumerable: true,
+      value: obj[prop]
+    } : undefined;
   }
   defineProperty(obj, key, descriptor) {
     Object.defineProperty(obj._expandos, key, descriptor);
@@ -3403,7 +3387,7 @@ class Util extends PDFObject {
         }
       }
       let sign = "";
-      if (intPart < 0) {
+      if (intPart < 0 || cConvChar === "f" && arg < 0) {
         sign = "-";
         intPart = -intPart;
       } else if (cFlags & PLUS) {
@@ -3474,9 +3458,7 @@ class Util extends PDFObject {
       seconds: oDate.getSeconds()
     };
     const patterns = /(mmmm|mmm|mm|m|dddd|ddd|dd|d|yyyy|yy|HH|H|hh|h|MM|M|ss|s|tt|t|\\.)/g;
-    return cFormat.replaceAll(patterns, function (_, pattern) {
-      return pattern in handlers ? handlers[pattern](data) : pattern.charCodeAt(1);
-    });
+    return cFormat.replaceAll(patterns, (_, pattern) => pattern in handlers ? handlers[pattern](data) : pattern.charAt(1));
   }
   printx(cFormat, cSource) {
     cSource = (cSource ?? "").toString();

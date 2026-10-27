@@ -707,8 +707,8 @@ already_AddRefed<ScriptLoadRequest> WorkerScriptLoader::CreateScriptLoadRequest(
   if (mWorkerRef->Private()->WorkerType() == WorkerType::Classic ||
       IsDebuggerScript()) {
     request = new ScriptLoadRequest(ScriptKind::eClassic, SRIMetadata(),
-                                    nullptr,  // mReferrer
-                                    loadContext);
+                                    /* aReferrer = */ nullptr, loadContext,
+                                    /* aClassicScriptHintEncoding = */ nullptr);
   } else {
     // Implements part of "To fetch a worklet/module worker script graph"
     // including, setting up the request with a credentials mode,
@@ -962,12 +962,9 @@ nsresult WorkerScriptLoader::LoadScript(
   // window has a docshell, the caching behavior of this worker should match
   // that of that docshell.
   if (topWorkerPrivate->IsDedicatedWorker()) {
-    nsCOMPtr<nsPIDOMWindowInner> window = topWorkerPrivate->GetWindow();
-    if (window) {
-      nsCOMPtr<nsIDocShell> docShell = window->GetDocShell();
-      if (docShell) {
-        nsresult rv = docShell->GetDefaultLoadFlags(&loadFlags);
-        NS_ENSURE_SUCCESS(rv, rv);
+    if (nsCOMPtr<nsPIDOMWindowInner> window = topWorkerPrivate->GetWindow()) {
+      if (nsCOMPtr<nsIDocShell> docShell = window->GetDocShell()) {
+        loadFlags = docShell->GetDefaultLoadFlags();
       }
     }
   }
@@ -1582,7 +1579,9 @@ void ScriptLoaderRunnable::CancelMainThread(nsresult aCancelResult) {
     mCancelMainThread = Some(aCancelResult);
 
     for (ThreadSafeRequestHandle* handle : mLoadingRequests) {
-      if (handle->IsEmpty()) {
+      // Finishing an earlier request can have scheduled execution of this one,
+      // handing it over to the worker thread.
+      if (handle->ExecutionScheduled()) {
         continue;
       }
 
@@ -1626,7 +1625,7 @@ void ScriptLoaderRunnable::DispatchProcessPendingRequests() {
     // unset.
     auto firstItToExecute = std::find_if(
         begin, end, [](const RefPtr<ThreadSafeRequestHandle>& requestHandle) {
-          return !requestHandle->mExecutionScheduled;
+          return !requestHandle->ExecutionScheduled();
         });
 
     if (firstItToExecute == end) {
@@ -1639,13 +1638,13 @@ void ScriptLoaderRunnable::DispatchProcessPendingRequests() {
     const auto firstItUnexecutable =
         std::find_if(firstItToExecute, end,
                      [](RefPtr<ThreadSafeRequestHandle>& requestHandle) {
-                       MOZ_ASSERT(!requestHandle->IsEmpty());
+                       MOZ_ASSERT(!requestHandle->ExecutionScheduled());
                        if (!requestHandle->Finished()) {
                          return true;
                        }
 
                        // We can execute this one.
-                       requestHandle->mExecutionScheduled = true;
+                       requestHandle->SetExecutionScheduled();
 
                        return false;
                      });

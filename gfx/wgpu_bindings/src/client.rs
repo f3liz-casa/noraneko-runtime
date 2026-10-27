@@ -6,7 +6,8 @@ use crate::error::GPUError;
 use crate::{
     cow_label, raw_string_to_string, wgpu_string, AdapterInformation, ByteBuf, DeviceAction,
     FfiDeviceLostReason, FfiErrorFilter, FfiPopErrorScopeResultType, FfiSlice,
-    FfiTexelCopyBufferLayout, FfiTextureDescriptor, QueueWriteAction, RawString, TextureAction,
+    FfiTexelCopyBufferLayout, FfiTextureDescriptor, QueueWriteAction, RawString,
+    ShaderModuleCompilationMessage, TextureAction,
 };
 
 use crate::{BufferMapResult, Message, QueueWriteDataSource, ServerMessage, SwapChainId};
@@ -555,6 +556,7 @@ pub struct FfiShaderModuleCompilationMessage {
     pub utf16_offset: u64,
     pub utf16_length: u64,
     pub message: nsString,
+    pub message_type: wgt::CompilationMessageType,
 }
 
 extern "C" {
@@ -572,6 +574,7 @@ extern "C" {
         child: WebGPUChildPtr,
         device_id: id::DeviceId,
         queue_id: id::QueueId,
+        limits: Option<&wgt::Limits>,
         error: Option<&nsCString>,
     );
     fn wgpu_child_resolve_pop_error_scope_promise(
@@ -673,31 +676,32 @@ pub extern "C" fn wgpu_client_receive_server_message(client: &Client, byte_buf: 
                 client.identities.lock().adapters.free(adapter_id)
             }
         }
-        ServerMessage::RequestDeviceResponse(device_id, queue_id, error) => {
-            if let Some(error) = error {
+        ServerMessage::RequestDeviceResponse(device_id, queue_id, res) => match res {
+            Err(error) => {
                 let error = nsCString::from(error);
                 unsafe {
                     wgpu_child_resolve_request_device_promise(
                         client.owner,
                         device_id,
                         queue_id,
+                        None,
                         Some(&error),
                     );
                 }
                 let identities = client.identities.lock();
                 identities.devices.free(device_id);
                 identities.queues.free(queue_id);
-            } else {
-                unsafe {
-                    wgpu_child_resolve_request_device_promise(
-                        client.owner,
-                        device_id,
-                        queue_id,
-                        None,
-                    );
-                }
             }
-        }
+            Ok(limits) => unsafe {
+                wgpu_child_resolve_request_device_promise(
+                    client.owner,
+                    device_id,
+                    queue_id,
+                    Some(&limits),
+                    None,
+                );
+            },
+        },
         ServerMessage::PopErrorScopeResponse(device_id, ty, message) => {
             let message = nsCString::from(message.as_ref());
             unsafe {
@@ -717,7 +721,7 @@ pub extern "C" fn wgpu_client_receive_server_message(client: &Client, byte_buf: 
                         Some(&ns_error),
                     );
                 }
-                drop::wgpu_client_drop_render_pipeline(client, pipeline_id);
+                client.identities.lock().render_pipelines.free(pipeline_id);
             } else {
                 unsafe {
                     wgpu_child_resolve_create_pipeline_promise(
@@ -759,12 +763,26 @@ pub extern "C" fn wgpu_client_receive_server_message(client: &Client, byte_buf: 
         ServerMessage::CreateShaderModuleResponse(shader_module_id, compilation_messages) => {
             let ffi_compilation_messages: Vec<_> = compilation_messages
                 .iter()
-                .map(|m| FfiShaderModuleCompilationMessage {
-                    line_number: m.line_number,
-                    line_pos: m.line_pos,
-                    utf16_offset: m.utf16_offset,
-                    utf16_length: m.utf16_length,
-                    message: nsString::from(&m.message),
+                .map(|m| {
+                    let ShaderModuleCompilationMessage {
+                        line_number,
+                        line_pos,
+                        utf16_offset,
+                        utf16_length,
+                        message,
+                        message_type,
+                    } = m;
+
+                    let message = nsString::from(message);
+
+                    FfiShaderModuleCompilationMessage {
+                        line_number: *line_number,
+                        line_pos: *line_pos,
+                        utf16_offset: *utf16_offset,
+                        utf16_length: *utf16_length,
+                        message,
+                        message_type: *message_type,
+                    }
                 })
                 .collect();
 
@@ -947,14 +965,12 @@ pub extern "C" fn wgpu_client_swap_chain_drop(
 #[no_mangle]
 pub extern "C" fn wgpu_client_queue_submit(
     client: &Client,
-    device_id: id::DeviceId,
     queue_id: id::QueueId,
     command_buffers: FfiSlice<'_, id::CommandBufferId>,
     swap_chain_textures: FfiSlice<'_, id::TextureId>,
     external_texture_sources: FfiSlice<'_, crate::ExternalTextureSourceId>,
 ) {
     let message = Message::QueueSubmit(
-        device_id,
         queue_id,
         Cow::Borrowed(unsafe { command_buffers.as_slice() }),
         Cow::Borrowed(unsafe { swap_chain_textures.as_slice() }),
@@ -1066,7 +1082,6 @@ pub extern "C" fn wgpu_client_free_texture_id(client: &Client, id: id::TextureId
 #[no_mangle]
 pub extern "C" fn wgpu_client_create_texture_view(
     client: &Client,
-    device_id: id::DeviceId,
     texture_id: id::TextureId,
     desc: &crate::FfiTextureViewDescriptor,
 ) -> id::TextureViewId {
@@ -1086,10 +1101,11 @@ pub extern "C" fn wgpu_client_create_texture_view(
             array_layer_count: desc.array_layer_count.map(|ptr| *ptr),
         },
         usage: Some(desc.usage),
+        swizzle: Default::default(),
     };
 
     let action = TextureAction::CreateView(id, wgpu_desc);
-    let message = Message::Texture(device_id, texture_id, action);
+    let message = Message::Texture(texture_id, action);
     client.queue_message(&message);
     id
 }

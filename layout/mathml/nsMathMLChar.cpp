@@ -656,7 +656,7 @@ bool nsMathMLChar::SetFontFamily(nsPresContext* aPresContext,
     font.family.families = familyList;
     const nsStyleFont* styleFont = mComputedStyle->StyleFont();
     nsFontMetrics::Params params;
-    params.language = styleFont->mLanguage;
+    params.language = styleFont->GetLangAtom();
     params.explicitLanguage = styleFont->mExplicitLanguage;
     params.userFontSet = aPresContext->GetUserFontSet();
     params.textPerf = aPresContext->GetTextPerfMetrics();
@@ -1188,7 +1188,7 @@ nsresult nsMathMLChar::StretchInternal(
 
   const nsStyleFont* styleFont = mComputedStyle->StyleFont();
   nsFontMetrics::Params params;
-  params.language = styleFont->mLanguage;
+  params.language = styleFont->GetLangAtom();
   params.explicitLanguage = styleFont->mExplicitLanguage;
   params.userFontSet = presContext->GetUserFontSet();
   params.textPerf = presContext->GetTextPerfMetrics();
@@ -1708,12 +1708,11 @@ void nsMathMLChar::PaintForeground(nsIFrame* aForFrame,
       // draw a single glyph (base size or size variant)
       // XXXfredw verify if mGlyphs[0] is non-null to workaround bug 973322.
       if (mGlyphs[0]) {
-        mGlyphs[0]->Draw(Range(mGlyphs[0].get()),
-                         gfx::Point(0.0, mUnscaledAscent),
-                         gfxTextRun::DrawParams(
-                             &aRenderingContext,
-                             aForFrame->PresContext()->FontPaletteCache()),
-                         aImgParams);
+        mGlyphs[0]->Draw(
+            Range(mGlyphs[0].get()), gfx::Point(0.0, mUnscaledAscent),
+            gfxTextRun::DrawParams(&aRenderingContext,
+                                   presContext->GetFontPaletteValueSet()),
+            aImgParams);
       }
       break;
     case DrawingMethod::Parts: {
@@ -1838,7 +1837,7 @@ nsresult nsMathMLChar::PaintVertically(nsPresContext* aPresContext,
   unionRect.Inflate(oneDevPixel);
 
   gfxTextRun::DrawParams params(aThebesContext,
-                                aPresContext->FontPaletteCache());
+                                aPresContext->GetFontPaletteValueSet());
 
   /////////////////////////////////////
   // draw top, middle, bottom
@@ -2006,7 +2005,7 @@ nsresult nsMathMLChar::PaintHorizontally(nsPresContext* aPresContext,
   unionRect.Inflate(oneDevPixel);
 
   gfxTextRun::DrawParams params(aThebesContext,
-                                aPresContext->FontPaletteCache());
+                                aPresContext->GetFontPaletteValueSet());
 
   ///////////////////////////
   // draw left, middle, right

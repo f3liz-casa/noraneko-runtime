@@ -4,8 +4,44 @@
 
 import {
   isSpaceOverridden,
+  selectFirstSlotWidget,
+  selectWidgetsRowAd,
   SPACE_IDS,
 } from "resource://newtab/common/PageLayoutVariants.mjs";
+
+/**
+ * A copy of the layout rows holding only the named sections. Components with no
+ * sections left, and rows left with no components, are dropped so the caller can
+ * tell an empty feed from a full one by the row count alone.
+ *
+ * @param {Array} layoutRender - rows from selectLayoutRender
+ * @param {string[]} sectionKeys - sectionKeys to keep
+ * @returns {Array}
+ */
+export function keepOnlySections(layoutRender, sectionKeys) {
+  const keep = new Set(sectionKeys);
+  return layoutRender.reduce((rows, row) => {
+    const components = (row.components ?? []).reduce((kept, component) => {
+      const sections = component?.data?.sections;
+      if (!sections) {
+        kept.push(component);
+        return kept;
+      }
+      const filtered = sections.filter(section => keep.has(section.sectionKey));
+      if (filtered.length) {
+        kept.push({
+          ...component,
+          data: { ...component.data, sections: filtered },
+        });
+      }
+      return kept;
+    }, []);
+    if (components.length) {
+      rows.push({ ...row, components });
+    }
+    return rows;
+  }, []);
+}
 
 export const selectLayoutRender = ({ state = {}, prefs = {} }) => {
   const { layout, feeds, spocs } = state;
@@ -162,8 +198,13 @@ export const selectLayoutRender = ({ state = {}, prefs = {} }) => {
         // Since banner-type ads are placed by row and don't use the normal spoc position,
         // dont combine with content
         const excludedSpocs = ["billboard", "leaderboard"];
+        // @experiment(remove) { bug 2069496 }
+        // The widgets row takes one ad off the top, so every story ad shifts
+        // up a position. It is the same object the row renders, so drop that
+        // one item and leave any other ad sharing its url in place.
+        const rowAd = selectWidgetsRowAd(prefs, spocs);
         const filteredSpocs = spocsData?.items?.filter(
-          item => !excludedSpocs.includes(item.format)
+          item => !excludedSpocs.includes(item.format) && item !== rowAd
         );
         result = fillSpocPositionsForPlacement(
           result,
@@ -264,7 +305,18 @@ export const selectLayoutRender = ({ state = {}, prefs = {} }) => {
       ...(sectionsEnabled
         ? {
             sections: handleSections(data.sections, data.recommendations).map(
-              section => {
+              (section, sectionIndex) => {
+                // @experiment(remove) { bug 2078816 }
+                // Before the ads, so their indexes count the widget and they
+                // still land on their tiles.
+                const firstSlotWidget =
+                  sectionIndex === 0 && selectFirstSlotWidget(prefs);
+                const sectionData = firstSlotWidget
+                  ? [
+                      { type: "widget", widgetId: firstSlotWidget },
+                      ...section.data,
+                    ]
+                  : section.data;
                 const sectionsSpocsPositions = [];
                 const smallestBreakpointLayout =
                   section.layout.responsiveLayouts
@@ -296,7 +348,7 @@ export const selectLayoutRender = ({ state = {}, prefs = {} }) => {
                 return {
                   ...section,
                   data: handleSpocs(
-                    section.data,
+                    sectionData,
                     sectionsSpocsPositions,
                     spocsPlacement
                   ),

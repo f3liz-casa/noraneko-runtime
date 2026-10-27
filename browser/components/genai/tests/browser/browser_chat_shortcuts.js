@@ -2,13 +2,16 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 const { GenAI } = ChromeUtils.importESModule(
-  "resource:///modules/GenAI.sys.mjs"
+  "moz-src:///browser/components/genai/GenAI.sys.mjs"
 );
 const { sinon } = ChromeUtils.importESModule(
   "resource://testing-common/Sinon.sys.mjs"
 );
 const { AIWindowUI } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/ui/modules/AIWindowUI.sys.mjs"
+);
+const { SearchService } = ChromeUtils.importESModule(
+  "moz-src:///toolkit/components/search/SearchService.sys.mjs"
 );
 
 /**
@@ -31,6 +34,193 @@ add_task(async function test_no_shortcuts() {
       "No shortcuts found"
     );
   });
+});
+
+async function selectAllAndMouseUp(browser) {
+  await SimpleTest.promiseFocus(browser);
+  const selectPromise = SpecialPowers.spawn(browser, [], () =>
+    ContentTaskUtils.waitForCondition(() => content.getSelection().toString())
+  );
+  goDoCommand("cmd_selectAll");
+  await selectPromise;
+  await BrowserTestUtils.synthesizeMouseAtCenter(
+    browser,
+    { type: "mouseup" },
+    browser
+  );
+}
+
+async function showSelectionMenu(browser) {
+  const panel = document.getElementById("selection-shortcut-action-panel");
+  Assert.ok(!panel.hasAttribute("panelopen"), "Menu starts closed");
+
+  await selectAllAndMouseUp(browser);
+  await TestUtils.waitForCondition(
+    () => panel.getAttribute("panelopen") === "true",
+    "Selection menu opened"
+  );
+  return panel;
+}
+
+/**
+ * Check that the menu opens with no chatbot provider configured, so that
+ * clicking the AI action can start onboarding.
+ */
+add_task(async function test_show_menu_without_provider() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.highlightToSearch.featureGate", true],
+      ["browser.ml.chat.provider", ""],
+    ],
+  });
+
+  const panel = document.getElementById("selection-shortcut-action-panel");
+
+  try {
+    await BrowserTestUtils.withNewTab("data:text/plain,hi", async browser => {
+      await showSelectionMenu(browser);
+
+      Assert.ok(
+        panel.hasAttribute("panelopen"),
+        "Menu opens without a chat provider"
+      );
+    });
+  } finally {
+    if (panel.state != "closed") {
+      const hidden = BrowserTestUtils.waitForEvent(panel, "popuphidden");
+      panel.hidePopup();
+      await hidden;
+    }
+    await SpecialPowers.popPrefEnv();
+  }
+});
+
+add_task(async function test_selection_menu_position_with_rtl_app_locale() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.highlightToSearch.featureGate", true],
+      ["intl.l10n.pseudo", "bidi"],
+    ],
+  });
+  Assert.ok(Services.locale.isAppLocaleRTL, "app locale is RTL for this task");
+
+  const panel = document.getElementById("selection-shortcut-action-panel");
+
+  await BrowserTestUtils.withNewTab("data:text/plain,hi", async browser => {
+    await TestUtils.waitForCondition(
+      () => getComputedStyle(browser).direction == "rtl",
+      "Anchor resolved to RTL"
+    );
+
+    await SimpleTest.promiseFocus(browser);
+    const selectPromise = SpecialPowers.spawn(browser, [], () =>
+      ContentTaskUtils.waitForCondition(() => content.getSelection().toString())
+    );
+    goDoCommand("cmd_selectAll");
+    await selectPromise;
+
+    const clickX = 150;
+    await BrowserTestUtils.synthesizeMouse(
+      browser,
+      clickX,
+      20,
+      { type: "mouseup" },
+      browser
+    );
+    await TestUtils.waitForCondition(
+      () => panel.getAttribute("panelopen") === "true",
+      "Selection menu opened"
+    );
+
+    const browserRect = browser.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const clickViewportX = browserRect.left + clickX;
+    const margin = 10;
+    Assert.ok(
+      clickViewportX >= panelRect.left - margin &&
+        clickViewportX <= panelRect.right + margin,
+      `Popup (left=${panelRect.left}, right=${panelRect.right}) spans the click position (${clickViewportX}) even with an RTL app locale`
+    );
+
+    const hidden = BrowserTestUtils.waitForEvent(panel, "popuphidden");
+    panel.hidePopup();
+    await hidden;
+  });
+
+  await SpecialPowers.popPrefEnv();
+  await TestUtils.waitForCondition(
+    () => getComputedStyle(document.documentElement).direction == "ltr",
+    "UI reverted to LTR"
+  );
+});
+
+/**
+ * Check that a blocked chatbot leaves no menu to show, as the AI action is
+ * currently the only action. This inverts once Search and Copy exist.
+ */
+add_task(async function test_no_menu_when_chatbot_blocked() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.highlightToSearch.featureGate", true],
+      ["browser.ml.chat.enabled", false],
+    ],
+  });
+  const spy = sinon.spy(GenAI, "handleShortcutsMessage");
+
+  try {
+    await BrowserTestUtils.withNewTab("data:text/plain,hi", async browser => {
+      const panel = document.getElementById("selection-shortcut-action-panel");
+      await selectAllAndMouseUp(browser);
+      await TestUtils.waitForCondition(
+        () => spy.called,
+        "Actor offered shortcuts to the parent"
+      );
+
+      // openPopup() sets state synchronously, while the panelopen attribute
+      // only lands on popupshown, too late for this assertion.
+      Assert.equal(
+        panel.state,
+        "closed",
+        "Menu stays closed with no action to offer"
+      );
+    });
+  } finally {
+    spy.restore();
+    await SpecialPowers.popPrefEnv();
+  }
+});
+
+/**
+ * Check that the menu refuses the contexts that refuse chat entrypoints, such
+ * as extension pages, Document Picture-in-Picture and popup windows.
+ */
+add_task(async function test_no_menu_in_unsupported_context() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.highlightToSearch.featureGate", true]],
+  });
+  const sandbox = sinon.createSandbox();
+  const spy = sandbox.spy(GenAI, "handleShortcutsMessage");
+  sandbox.stub(GenAI, "isSupportedContext").returns(false);
+
+  try {
+    await BrowserTestUtils.withNewTab("data:text/plain,hi", async browser => {
+      const panel = document.getElementById("selection-shortcut-action-panel");
+      await selectAllAndMouseUp(browser);
+      await TestUtils.waitForCondition(
+        () => spy.called,
+        "Actor offered shortcuts to the parent"
+      );
+
+      Assert.equal(
+        panel.state,
+        "closed",
+        "Menu stays closed in an unsupported context"
+      );
+    });
+  } finally {
+    sandbox.restore();
+    await SpecialPowers.popPrefEnv();
+  }
 });
 
 /**
@@ -109,6 +299,21 @@ add_task(async function test_smart_window_ask_chat() {
     const events = Glean.genaiChatbot.promptClick.testGetValue();
     Assert.equal(events.length, 1, "One prompt click");
     Assert.equal(events[0].extra.smart_window, "true", "Is smart window");
+
+    // The selection menu is one shared panel, so its probes have to mark the
+    // Smart Window flow to keep it out of Highlight to Search analysis.
+    const displayed = Glean.selectionMenu.displayed.testGetValue();
+    Assert.equal(
+      displayed.at(-1).extra.smart_window,
+      "true",
+      "Menu displayed in Smart Window"
+    );
+    const clicks = Glean.selectionMenu.actionClick.testGetValue();
+    Assert.equal(
+      clicks.at(-1).extra.smart_window,
+      "true",
+      "AI action clicked in Smart Window"
+    );
   } finally {
     isSidebarOpenStub.restore();
     getSidebarAiWindowStub.restore();
@@ -166,6 +371,191 @@ add_task(async function test_smart_window_ask_chat_ignores_classic_toggle() {
   } finally {
     await BrowserTestUtils.closeWindow(win);
   }
+
+  await SpecialPowers.popPrefEnv();
+});
+
+/**
+ * Check the AI action reads as a dropdown: one button carrying a caret, with
+ * the popup state on the button itself, opening the prompts submenu on click.
+ */
+add_task(async function test_ai_action_dropdown() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.ml.chat.shortcuts", true],
+      ["browser.ml.chat.shortcut.onboardingMouseoverCount", 2],
+      ["browser.ml.chat.provider", "http://localhost:8080"],
+    ],
+  });
+
+  await BrowserTestUtils.withNewTab("data:text/plain,hi", async browser => {
+    await SimpleTest.promiseFocus(browser);
+    const selectPromise = SpecialPowers.spawn(browser, [], () =>
+      ContentTaskUtils.waitForCondition(() => content.getSelection().toString())
+    );
+    goDoCommand("cmd_selectAll");
+    await selectPromise;
+    await BrowserTestUtils.synthesizeMouseAtCenter(
+      browser,
+      { type: "mouseup" },
+      browser
+    );
+
+    const panel = document.getElementById("selection-shortcut-action-panel");
+    await TestUtils.waitForCondition(
+      () => panel.getAttribute("panelopen") === "true"
+    );
+
+    const aiActionButton = document.getElementById("ai-action-button");
+    await aiActionButton.updateComplete;
+
+    Assert.ok(
+      !aiActionButton.isSplitButton,
+      "AI action is a single target, not a split button"
+    );
+    Assert.ok(
+      !aiActionButton.chevronButtonEl,
+      "No separate chevron half renders"
+    );
+
+    const background = aiActionButton.shadowRoot.querySelector(
+      "#main-button .button-background"
+    );
+    Assert.notEqual(
+      getComputedStyle(background, "::after").backgroundImage,
+      "none",
+      "A caret is drawn on the AI action"
+    );
+
+    const mainButton = aiActionButton.shadowRoot.querySelector("#main-button");
+    Assert.equal(
+      mainButton.getAttribute("aria-haspopup"),
+      "menu",
+      "The AI action reports it has a popup"
+    );
+    Assert.equal(
+      mainButton.getAttribute("aria-expanded"),
+      "false",
+      "Submenu starts collapsed"
+    );
+
+    const popup = document.getElementById("chat-shortcuts-options-panel");
+    const shown = BrowserTestUtils.waitForEvent(popup, "popupshown");
+    aiActionButton.click();
+    await shown;
+
+    await TestUtils.waitForCondition(
+      () => mainButton.getAttribute("aria-expanded") === "true"
+    );
+    Assert.equal(
+      mainButton.getAttribute("aria-expanded"),
+      "true",
+      "The AI action reports the submenu is open"
+    );
+
+    const hidden = BrowserTestUtils.waitForEvent(popup, "popuphidden");
+    popup.hidePopup();
+    await hidden;
+
+    await TestUtils.waitForCondition(
+      () => mainButton.getAttribute("aria-expanded") === "false"
+    );
+    Assert.equal(
+      mainButton.getAttribute("aria-expanded"),
+      "false",
+      "The AI action reports the submenu is closed again"
+    );
+
+    await aiActionButton.updateComplete;
+    Assert.notEqual(
+      getComputedStyle(background, "::after").backgroundImage,
+      "none",
+      "The caret survives the active-state flip"
+    );
+
+    // browser.nova.enabled's default varies by test configuration, so flip
+    // whatever the current value is to force an actual state change. A
+    // -moz-pref() media query re-evaluates asynchronously after the pref
+    // changes, so wait for the style to catch up rather than reading it
+    // right away.
+    const novaEnabled = Services.prefs.getBoolPref("browser.nova.enabled");
+    const borderRadiusBefore = getComputedStyle(background).borderRadius;
+    await SpecialPowers.pushPrefEnv({
+      set: [["browser.nova.enabled", !novaEnabled]],
+    });
+    await TestUtils.waitForCondition(
+      () => getComputedStyle(background).borderRadius !== borderRadiusBefore,
+      "Toggling the nova pref changes the button border radius"
+    );
+    Assert.notEqual(
+      getComputedStyle(background, "::after").backgroundImage,
+      "none",
+      "The caret is still drawn with the nova pref toggled"
+    );
+    await SpecialPowers.popPrefEnv();
+    await TestUtils.waitForCondition(
+      () => getComputedStyle(background).borderRadius === borderRadiusBefore,
+      "The border radius returns to its original value"
+    );
+    const panelHidden = BrowserTestUtils.waitForEvent(panel, "popuphidden");
+    panel.hide();
+    await panelHidden;
+  });
+
+  await SpecialPowers.popPrefEnv();
+});
+
+/**
+ * Check the selection menu records its own display and action click events,
+ * separately from the chatbot-scoped shortcuts probes.
+ */
+add_task(async function test_selection_menu_events() {
+  Services.fog.testResetFOG();
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.ml.chat.shortcuts", true],
+      ["browser.ml.chat.shortcut.onboardingMouseoverCount", 2],
+      ["browser.ml.chat.provider", "http://localhost:8080"],
+    ],
+  });
+
+  await BrowserTestUtils.withNewTab("data:text/plain,hi", async browser => {
+    const panel = await showSelectionMenu(browser);
+
+    const displayed = Glean.selectionMenu.displayed.testGetValue();
+    Assert.equal(displayed.length, 1, "Menu displayed once");
+    Assert.ok(displayed[0].extra.delay, "Waited some time");
+    Assert.equal(displayed[0].extra.selection, 2, "Selected hi");
+    Assert.equal(
+      displayed[0].extra.smart_window,
+      "false",
+      "Not a Smart Window menu"
+    );
+
+    Assert.equal(
+      Glean.selectionMenu.actionClick.testGetValue(),
+      null,
+      "No action clicked yet"
+    );
+
+    const popup = document.getElementById("chat-shortcuts-options-panel");
+    document.getElementById("ai-action-button").click();
+    await BrowserTestUtils.waitForEvent(popup, "popupshown");
+
+    const clicks = Glean.selectionMenu.actionClick.testGetValue();
+    Assert.equal(clicks.length, 1, "One action clicked");
+    Assert.equal(clicks[0].extra.action, "ai", "Clicked the AI action");
+    Assert.equal(clicks[0].extra.selection, 2, "Selected hi");
+    Assert.equal(
+      clicks[0].extra.smart_window,
+      "false",
+      "Not a Smart Window click"
+    );
+
+    const panelHidden = BrowserTestUtils.waitForEvent(panel, "popuphidden");
+    panel.hide();
+    await panelHidden;
+  });
 
   await SpecialPowers.popPrefEnv();
 });
@@ -514,14 +904,17 @@ add_task(async function test_plain_clicks() {
  * Check that input selection can show shortcuts
  */
 add_task(async function test_input_selection() {
-  Assert.equal(GenAI.ignoredInputs.size, 1, "Default ignore 1 type of field");
+  Assert.equal(GenAI.ignoredInputs.size, 2, "Default ignore 2 types of fields");
   Assert.ok(GenAI.ignoredInputs.has("input"), "Default ignore inputs");
   await SpecialPowers.pushPrefEnv({
     set: [
-      ["browser.ml.chat.shortcuts.ignoreFields", "contenteditable,textarea"],
+      [
+        "browser.ml.chat.shortcuts.ignoreFields",
+        "contenteditable,textarea,moz-multiline-editor",
+      ],
     ],
   });
-  Assert.equal(GenAI.ignoredInputs.size, 2, "Ignoring other fields not input");
+  Assert.equal(GenAI.ignoredInputs.size, 3, "Ignoring other fields not input");
   Assert.ok(GenAI.ignoredInputs.has("textarea"), "Now ignore textarea");
   Assert.ok(!GenAI.ignoredInputs.has("input"), "Not ignoring input for test");
 
@@ -560,6 +953,158 @@ add_task(async function test_input_selection() {
   );
 
   sandbox.restore();
+});
+
+add_task(async function test_panel_actions_layout() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.ml.chat.shortcuts", true],
+      ["browser.ml.chat.provider", "http://localhost:8080"],
+    ],
+  });
+
+  await BrowserTestUtils.withNewTab("data:text/plain,hi", async browser => {
+    await SimpleTest.promiseFocus(browser);
+
+    const selectPromise = SpecialPowers.spawn(browser, [], () => {
+      ContentTaskUtils.waitForCondition(() => content.getSelection());
+    });
+    goDoCommand("cmd_selectAll");
+    await selectPromise;
+    BrowserTestUtils.synthesizeMouseAtCenter(
+      browser,
+      { type: "mouseup" },
+      browser
+    );
+
+    const panel = document.getElementById("selection-shortcut-action-panel");
+    await TestUtils.waitForCondition(
+      () => panel.getAttribute("panelopen") === "true",
+      "Panel should open after text selection"
+    );
+
+    const buttons = [...panel.querySelectorAll("moz-button")];
+    Assert.deepEqual(
+      buttons.map(button => button.id),
+      [
+        "ai-action-button",
+        "search-action-button",
+        "copy-action-button",
+        "more-actions-button",
+      ],
+      "Panel holds the four controls in the correct order"
+    );
+
+    Assert.ok(!buttons[0].hidden, "AI action is visible");
+    for (const button of buttons.slice(1)) {
+      Assert.ok(button.hidden, `${button.id} is hidden`);
+      Assert.equal(
+        button.getBoundingClientRect().width,
+        0,
+        `${button.id} takes up no space while hidden`
+      );
+    }
+
+    // panel-subview-body stacks its children, so check the actions really do
+    // sit in a row.
+    for (const button of buttons) {
+      button.hidden = false;
+      await button.updateComplete;
+    }
+    const rects = buttons.map(button => button.getBoundingClientRect());
+    for (let i = 1; i < rects.length; i++) {
+      Assert.equal(
+        rects[i].top,
+        rects[i - 1].top,
+        `${buttons[i].id} shares a row with ${buttons[i - 1].id}`
+      );
+      Assert.greater(
+        rects[i].left,
+        rects[i - 1].left,
+        `${buttons[i].id} follows ${buttons[i - 1].id} along the row`
+      );
+    }
+    for (const button of buttons.slice(1)) {
+      button.hidden = true;
+    }
+
+    // moz-button maps the host aria-label and title onto the inner button, so
+    // check the element that actually takes focus rather than the custom
+    // element.
+    await document.l10n.translateFragment(panel);
+    for (const button of buttons) {
+      await button.updateComplete;
+      const ariaLabel = button.buttonEl.getAttribute("aria-label") ?? "";
+      Assert.stringMatches(
+        ariaLabel,
+        /\S/,
+        `${button.id} has an accessible name`
+      );
+      Assert.equal(
+        button.buttonEl.getAttribute("title"),
+        ariaLabel,
+        `${button.id} shows the same text as a tooltip`
+      );
+      Assert.ok(button.iconSrc, `${button.id} has an icon`);
+    }
+
+    Assert.equal(
+      buttons[0].buttonEl.getAttribute("aria-label"),
+      "Ask about this text",
+      "AI action uses the provider-agnostic label"
+    );
+    Assert.stringMatches(
+      buttons[1].buttonEl.getAttribute("aria-label"),
+      /^Search .+ for “hi”$/,
+      "Search action names the engine and the selection"
+    );
+  });
+
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_panel_opens_without_search_service() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.ml.chat.shortcuts", true],
+      ["browser.ml.chat.provider", "http://localhost:8080"],
+    ],
+  });
+
+  const panel = document.getElementById("selection-shortcut-action-panel");
+  panel.hidePopup();
+  await TestUtils.waitForCondition(
+    () => !panel.hasAttribute("panelopen"),
+    "Panel left over from an earlier task should be closed"
+  );
+
+  await BrowserTestUtils.withNewTab("data:text/plain,hi", async browser => {
+    await SimpleTest.promiseFocus(browser);
+
+    // "failed" rather than the other statuses because it is the one that makes
+    // the default engine getters throw.
+    SearchService.forceInitializationStatusForTests("failed");
+    try {
+      goDoCommand("cmd_selectAll");
+      BrowserTestUtils.synthesizeMouseAtCenter(
+        browser,
+        { type: "mouseup" },
+        browser
+      );
+
+      await TestUtils.waitForCondition(
+        () => panel.getAttribute("panelopen") === "true"
+      );
+      Assert.ok(
+        panel.hasAttribute("panelopen"),
+        "Panel still opens when the search service failed to initialize"
+      );
+    } finally {
+      SearchService.forceInitializationStatusForTests("success");
+    }
+  });
+
+  await SpecialPowers.popPrefEnv();
 });
 
 /**

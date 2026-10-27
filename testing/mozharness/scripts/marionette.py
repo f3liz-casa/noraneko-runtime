@@ -14,7 +14,6 @@ sys.path.insert(1, os.path.dirname(sys.path[0]))
 from mozharness.base.errors import BaseErrorList, TarErrorList
 from mozharness.base.log import INFO
 from mozharness.base.script import PreScriptAction
-from mozharness.base.transfer import TransferMixin
 from mozharness.base.vcs.vcsbase import MercurialScript
 from mozharness.mozilla.structuredlog import StructuredOutputParser
 from mozharness.mozilla.testing.codecoverage import (
@@ -27,7 +26,7 @@ from mozharness.mozilla.testing.unittest import TestSummaryOutputParserHelper
 from mozharness.mozilla.testing.video_test_recorder import VideoTestRecorder
 
 
-class MarionetteTest(TestingMixin, MercurialScript, TransferMixin, CodeCoverageMixin):
+class MarionetteTest(TestingMixin, MercurialScript, CodeCoverageMixin):
     config_options = (
         [
             [
@@ -82,10 +81,11 @@ class MarionetteTest(TestingMixin, MercurialScript, TransferMixin, CodeCoverageM
             [
                 ["--tag"],
                 {
-                    "action": "store",
-                    "dest": "test_tag",
-                    "default": "",
-                    "help": "Tag that identifies how to filter which tests to run.",
+                    "action": "append",
+                    "default": [],
+                    "dest": "test_tags",
+                    "help": "Filter out tests that don't have the given tag. Can be used multiple "
+                    "times in which case the test must contain at least one of the given tags.",
                 },
             ],
             [
@@ -345,8 +345,8 @@ class MarionetteTest(TestingMixin, MercurialScript, TransferMixin, CodeCoverageM
 
         cmd = [python, "-u", os.path.join(dirs["abs_marionette_dir"], "runtests.py")]
 
-        if self.config.get("test_tag", ""):
-            cmd.extend(["--tag", self.config["test_tag"]])
+        if self.config.get("test_tags"):
+            cmd.extend([f"--tag={t}" for t in self.config["test_tags"]])
 
         manifest = os.path.join(
             dirs["abs_marionette_tests_dir"], self.config["test_manifest"]

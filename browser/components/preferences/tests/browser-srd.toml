@@ -12,8 +12,6 @@ support-files = [
   "head.js",
   "head-common.js",
   "addons/pl-dictionary.xpi",
-  "addons/set_homepage.xpi",
-  "addons/set_newtab.xpi",
 ]
 tags = "os_integration"
 
@@ -24,6 +22,8 @@ tags = "os_integration"
 ["browser_accessibility_pane.js"]
 
 ["browser_accessibility_zoom.js"]
+
+["browser_addressBarNavigation.js"]
 
 ["browser_appearance_pane.js"]
 
@@ -79,6 +79,8 @@ skip-if = [
 
 ["browser_subdialogs.js"]
 support-files = ["subdialog.xhtml", "subdialog2.xhtml"]
+
+["browser_tabs_browsing_highlightToSearch.js"]
 
 ["browser_tabs_browsing_pane.js"]
 

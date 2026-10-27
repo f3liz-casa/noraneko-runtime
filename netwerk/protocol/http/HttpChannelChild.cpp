@@ -2049,7 +2049,6 @@ NS_IMETHODIMP
 HttpChannelChild::OnRedirectVerifyCallback(nsresult aResult) {
   LOG(("HttpChannelChild::OnRedirectVerifyCallback [this=%p]\n", this));
   MOZ_ASSERT(NS_IsMainThread());
-  nsCOMPtr<nsIURI> redirectURI;
 
   DebugOnly<nsresult> rv = NS_OK;
 
@@ -2097,13 +2096,6 @@ HttpChannelChild::OnRedirectVerifyCallback(nsresult aResult) {
     // "http-on-modify-request" observers the chance to cancel before that.
     // base->CallOnModifyRequestObservers();
 
-    nsCOMPtr<nsIHttpChannelInternal> newHttpChannelInternal =
-        do_QueryInterface(mRedirectChannelChild);
-    if (newHttpChannelInternal) {
-      (void)newHttpChannelInternal->GetApiRedirectToURI(
-          getter_AddRefs(redirectURI));
-    }
-
     nsCOMPtr<nsIRequest> request = do_QueryInterface(mRedirectChannelChild);
     if (request) {
       request->GetLoadFlags(&loadFlags);
@@ -2125,7 +2117,7 @@ HttpChannelChild::OnRedirectVerifyCallback(nsresult aResult) {
   if (CanSend()) {
     SendRedirect2Verify(aResult, *headerTuples, sourceRequestBlockingReason,
                         targetLoadInfoForwarder, loadFlags, referrerInfo,
-                        redirectURI, corsPreflightArgs);
+                        corsPreflightArgs);
   }
 
   return NS_OK;
@@ -2512,9 +2504,6 @@ nsresult HttpChannelChild::ContinueAsyncOpen() {
   openArgs.uri() = mURI;
   openArgs.original() = mOriginalURI;
   openArgs.doc() = mDocumentURI;
-  if (mAPIRedirectTo) {
-    openArgs.apiRedirectTo() = mAPIRedirectTo->first();
-  }
   openArgs.loadFlags() = mLoadFlags;
   openArgs.requestHeaders() = mClientSetRequestHeaders;
   mRequestHead.Method(openArgs.requestMethod());
@@ -2538,10 +2527,10 @@ nsresult HttpChannelChild::ContinueAsyncOpen() {
 
   openArgs.preflightArgs() = optionalCorsPreflightArgs;
 
+  openArgs.uploadStreamIsStreaming() = LoadUploadStreamIsStreaming();
   openArgs.priority() = mPriority;
   openArgs.classOfService() = mClassOfService;
   openArgs.redirectionLimit() = mRedirectionLimit;
-  openArgs.allowSTS() = LoadAllowSTS();
   openArgs.thirdPartyFlags() = LoadThirdPartyFlags();
   openArgs.resumeAt() = mSendResumeAt;
   openArgs.startPos() = mStartPos;

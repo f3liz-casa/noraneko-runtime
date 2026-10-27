@@ -36,6 +36,7 @@
 #include "mozilla/TextUtils.h"
 #include "mozilla/dom/CharacterDataBuffer.h"
 #include "mozilla/dom/PerformanceMainThread.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/intl/Bidi.h"
 #include "mozilla/intl/Segmenter.h"
@@ -63,7 +64,6 @@
 #include "nsLineLayout.h"
 #include "nsPlaceholderFrame.h"
 #include "nsPresContext.h"
-#include "nsRange.h"
 #include "nsRubyFrame.h"
 #include "nsSplittableFrame.h"
 #include "nsString.h"
@@ -357,8 +357,11 @@ struct nsTextFrame::PaintTextSelectionParams : nsTextFrame::PaintTextParams {
 };
 
 struct nsTextFrame::DrawTextRunParams {
+  DrawTextRunParams(gfxContext* aContext,
+                    gfx::FontPaletteValueSet* aPaletteValueSet)
+      : context(aContext), paletteValueSet(aPaletteValueSet) {}
+
   gfxContext* context;
-  mozilla::gfx::PaletteCache& paletteCache;
   PropertyProvider* provider = nullptr;
   gfxFloat* advanceWidth = nullptr;
   mozilla::SVGContextPaint* contextPaint = nullptr;
@@ -366,13 +369,11 @@ struct nsTextFrame::DrawTextRunParams {
   nscolor textColor = NS_RGBA(0, 0, 0, 0);
   nscolor textStrokeColor = NS_RGBA(0, 0, 0, 0);
   nsAtom* fontPalette = nullptr;
+  gfx::FontPaletteValueSet* paletteValueSet = nullptr;
   float textStrokeWidth = 0.0f;
   bool drawSoftHyphen = false;
   bool hasTextShadow = false;
   bool paintingShadows = false;
-  DrawTextRunParams(gfxContext* aContext,
-                    mozilla::gfx::PaletteCache& aPaletteCache)
-      : context(aContext), paletteCache(aPaletteCache) {}
 };
 
 struct nsTextFrame::ClipEdges {
@@ -403,15 +404,16 @@ struct nsTextFrame::ClipEdges {
 };
 
 struct nsTextFrame::DrawTextParams : nsTextFrame::DrawTextRunParams {
+  DrawTextParams(gfxContext* aContext,
+                 gfx::FontPaletteValueSet* aPaletteValueSet)
+      : DrawTextRunParams(aContext, aPaletteValueSet) {}
+
   Point framePt;
   LayoutDeviceRect dirtyRect;
   const nsTextPaintStyle* textStyle = nullptr;
   const ClipEdges* clipEdges = nullptr;
   const nscolor* decorationOverrideColor = nullptr;
   Range glyphRange;
-  DrawTextParams(gfxContext* aContext,
-                 mozilla::gfx::PaletteCache& aPaletteCache)
-      : DrawTextRunParams(aContext, aPaletteCache) {}
 };
 
 struct nsTextFrame::PaintShadowParams {
@@ -1467,10 +1469,18 @@ BuildTextRunsScanner::FindBoundaryResult BuildTextRunsScanner::FindBoundaries(
     }
     const CharacterDataBuffer& characterDataBuffer =
         textFrame->CharacterDataBuffer();
-    uint32_t start = textFrame->GetContentOffset();
-    uint32_t length = textFrame->GetContentLength();
+    const int32_t start = textFrame->GetContentOffset();
+    const int32_t end = textFrame->GetContentEnd();
+    const int32_t bufferLength = characterDataBuffer.GetLength();
+
+    if (MOZ_UNLIKELY(start < 0 || end < start || end > bufferLength)) {
+      MOZ_ASSERT_UNREACHABLE("Invalid text-frame content range");
+      return FB_CONTINUE;
+    }
+
+    int32_t length = end - start;
     const void* text;
-    const nsAtom* language = textFrame->StyleFont()->mLanguage;
+    const nsAtom* language = textFrame->StyleFont()->GetLangAtom();
     if (characterDataBuffer.Is2b()) {
       // It is possible that we may end up removing all whitespace in
       // a piece of text because of The White Space Processing Rules,
@@ -2492,7 +2502,7 @@ already_AddRefed<gfxTextRun> BuildTextRunsScanner::BuildTextRunForFrames(
     int32_t contentStart = mappedFlow->mStartFrame->GetContentOffset();
     int32_t contentEnd = mappedFlow->GetContentEnd();
     int32_t contentLength = contentEnd - contentStart;
-    const nsAtom* language = f->StyleFont()->mLanguage;
+    const nsAtom* language = f->StyleFont()->GetLangAtom();
 
     TextRunMappedFlow* newFlow = &userMappedFlows[i];
     newFlow->mStartFrame = mappedFlow->mStartFrame;
@@ -2802,7 +2812,8 @@ bool BuildTextRunsScanner::SetupLineBreakerContext(gfxTextRun* aTextRun) {
   }
 
   gfxSkipChars skipChars;
-  const nsAtom* language = mMappedFlows[0].mStartFrame->StyleFont()->mLanguage;
+  const nsAtom* language =
+      mMappedFlows[0].mStartFrame->StyleFont()->GetLangAtom();
 
   for (uint32_t i = 0; i < mMappedFlows.Length(); ++i) {
     MappedFlow* mappedFlow = &mMappedFlows[i];
@@ -2896,7 +2907,7 @@ void BuildTextRunsScanner::SetupBreakSinksForTextRun(gfxTextRun* aTextRun,
   // We should only use a language for hyphenation if it was specified
   // explicitly.
   nsAtom* hyphenationLanguage =
-      styleFont->mExplicitLanguage ? styleFont->mLanguage.get() : nullptr;
+      styleFont->mExplicitLanguage ? styleFont->GetLangAtom() : nullptr;
   // We keep this pointed at the skip-chars data for the current mappedFlow.
   // This lets us cheaply check whether the flow has compressed initial
   // whitespace...
@@ -3445,7 +3456,7 @@ static bool IsChineseOrJapanese(const nsTextFrame* aFrame) {
     return true;
   }
 
-  nsAtom* language = aFrame->StyleFont()->mLanguage;
+  nsAtom* language = aFrame->StyleFont()->GetLangAtom();
   if (!language) {
     return false;
   }
@@ -5331,7 +5342,7 @@ static bool IsUnderlineRight(const ComputedStyle& aStyle) {
     return true;
   }
   // If neither 'left' nor 'right' was specified, check the language.
-  nsAtom* langAtom = aStyle.StyleFont()->mLanguage;
+  nsAtom* langAtom = aStyle.StyleFont()->GetLangAtom();
   if (!langAtom) {
     return false;
   }
@@ -5645,7 +5656,8 @@ nsRect nsTextFrame::UpdateTextEmphasis(WritingMode aWM,
       normalizeRubyMetrics ? PresContext()->RubyPositioningFactor() : 0.0f;
 
   // Calculate the baseline offset
-  LogicalSide side = styleText->TextEmphasisSide(aWM, StyleFont()->mLanguage);
+  LogicalSide side =
+      styleText->TextEmphasisSide(aWM, StyleFont()->GetLangAtom());
   LogicalSize frameSize = GetLogicalSize(aWM);
   // The overflow rect is inflated in the inline direction by half
   // advance of the emphasis mark on each side, so that even if a mark
@@ -6916,7 +6928,7 @@ void nsTextFrame::PaintOneShadow(const PaintShadowParams& aParams,
   // need to translate any coordinates to fit on the surface.
   gfxFloat advanceWidth;
   nsTextPaintStyle textPaintStyle(this);
-  DrawTextParams params(shadowContext, PresContext()->FontPaletteCache());
+  DrawTextParams params(shadowContext, PresContext()->GetFontPaletteValueSet());
   params.paintingShadows = true;
   params.advanceWidth = &advanceWidth;
   params.dirtyRect = aParams.dirtyRect;
@@ -7222,7 +7234,8 @@ bool nsTextFrame::PaintTextWithSelectionColors(
   }
 
   gfxFloat advance;
-  DrawTextParams params(aParams.context, PresContext()->FontPaletteCache());
+  DrawTextParams params(aParams.context,
+                        PresContext()->GetFontPaletteValueSet());
   params.dirtyRect = aParams.dirtyRect;
   params.framePt = aParams.framePt;
   params.provider = aParams.provider;
@@ -7287,7 +7300,8 @@ bool nsTextFrame::PaintTextWithSelectionColors(
       RefPtr<ComputedStyle> selectionStyle =
           aParams.textPaintStyle->GetComputedStyleForSelectionPseudo(
               selectionTypes[index], highlightName);
-      if (selectionStyle && selectionStyle->HasAuthorSpecifiedTextShadow()) {
+      if (selectionStyle &&
+          selectionStyle->HasAuthorOrUserSpecifiedTextShadow()) {
         // text-shadow was explicitly specified (including "none")
         hasSelectionShadow = true;
         Span<const StyleSimpleShadow> shadowSpan =
@@ -7508,13 +7522,14 @@ void nsTextFrame::DrawEmphasisMarks(gfxContext* aContext, WritingMode aWM,
       pt.x += info->baselineOffset;
     }
   }
+  auto* paletteValueSet = PresContext()->GetFontPaletteValueSet();
   if (!isTextCombined) {
     mTextRun->DrawEmphasisMarks(aContext, info->textRun.get(), info->advance,
-                                pt, aRange, aProvider,
-                                PresContext()->FontPaletteCache(), aImgParams);
+                                pt, aRange, aProvider, paletteValueSet,
+                                aImgParams);
   } else {
     pt.y += (GetSize().height - info->advance) / 2;
-    gfxTextRun::DrawParams params(aContext, PresContext()->FontPaletteCache());
+    gfxTextRun::DrawParams params(aContext, paletteValueSet);
     info->textRun->Draw(Range(info->textRun.get()), pt, params, aImgParams);
   }
 }
@@ -7862,7 +7877,8 @@ void nsTextFrame::PaintText(const PaintTextParams& aParams,
   }
 
   gfxFloat advanceWidth;
-  DrawTextParams params(aParams.context, PresContext()->FontPaletteCache());
+  DrawTextParams params(aParams.context,
+                        PresContext()->GetFontPaletteValueSet());
   params.dirtyRect = aParams.dirtyRect;
   params.framePt = aParams.framePt;
   params.provider = &provider;
@@ -7888,7 +7904,7 @@ static void DrawTextRun(const gfxTextRun* aTextRun,
                         const nsTextFrame::DrawTextRunParams& aParams,
                         mozilla::image::imgDrawingParams& aImgParams,
                         nsTextFrame* aFrame) {
-  gfxTextRun::DrawParams params(aParams.context, aParams.paletteCache);
+  gfxTextRun::DrawParams params(aParams.context, aParams.paletteValueSet);
   params.provider = aParams.provider;
   params.advanceWidth = aParams.advanceWidth;
   params.contextPaint = aParams.contextPaint;
@@ -10162,7 +10178,7 @@ void nsTextFrame::MaybeSplitFramesForFirstLetter() {
     // explicit in the content.
     const nsStyleFont* styleFont = StyleFont();
     const nsAtom* lang =
-        styleFont->mExplicitLanguage ? styleFont->mLanguage.get() : nullptr;
+        styleFont->mExplicitLanguage ? styleFont->GetLangAtom() : nullptr;
     FindFirstLetterRange(characterDataBuffer, lang, textRun, offset, iter,
                          &firstLetterLength);
     if (newLineOffset >= 0) {
@@ -10753,7 +10769,7 @@ void nsTextFrame::SetFirstLetterLength(int32_t aLength) {
     next = letterFrame->CreateContinuationForFramesAfter(this);
   }
 
-  next->mContentOffset = GetContentOffset() + aLength;
+  SetLength(aLength, nullptr, 0);
 
   ClearTextRuns();
 }
@@ -10980,9 +10996,8 @@ void nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
           // We only pass a language code to FindFirstLetterRange if it was
           // explicit in the content.
           const nsStyleFont* styleFont = StyleFont();
-          const nsAtom* lang = styleFont->mExplicitLanguage
-                                   ? styleFont->mLanguage.get()
-                                   : nullptr;
+          const nsAtom* lang =
+              styleFont->mExplicitLanguage ? styleFont->GetLangAtom() : nullptr;
           completedFirstLetter =
               FindFirstLetterRange(characterDataBuffer, lang, mTextRun, offset,
                                    iter, &firstLetterLength);

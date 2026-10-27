@@ -324,9 +324,6 @@ enum class StackingContextBits : uint8_t {
   ContainsMixBlendMode = 1 << 0,
   // Similar, but for backdrop-filter.
   ContainsBackdropFilter = 1 << 1,
-  // Whether we can contain a non-isolated 3d or perspective transform that
-  // might need explicit flattening.
-  MayContainNonIsolated3DTransform = 1 << 2,
 };
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(StackingContextBits);
 
@@ -548,6 +545,9 @@ class nsDisplayListBuilder {
    */
   void SetIncludeAllOutOfFlows() { mIncludeAllOutOfFlows = true; }
   bool GetIncludeAllOutOfFlows() const { return mIncludeAllOutOfFlows; }
+  bool IsInLineClampAbsPosTraversal() const {
+    return mInLineClampAbsPosTraversal;
+  }
   /**
    * Calling this setter makes us exclude all leaf frames that aren't
    * selected.
@@ -1099,6 +1099,23 @@ class nsDisplayListBuilder {
     bool mPrevInInvalidSubtree;
   };
 
+  class AutoInLineClampAbsPosTraversal {
+   public:
+    explicit AutoInLineClampAbsPosTraversal(nsDisplayListBuilder* aBuilder,
+                                            bool aInTraversal = true)
+        : mBuilder(aBuilder), mOldValue(aBuilder->mInLineClampAbsPosTraversal) {
+      aBuilder->mInLineClampAbsPosTraversal = aInTraversal;
+    }
+
+    ~AutoInLineClampAbsPosTraversal() {
+      mBuilder->mInLineClampAbsPosTraversal = mOldValue;
+    }
+
+   private:
+    nsDisplayListBuilder* mBuilder;
+    bool mOldValue;
+  };
+
   /**
    * A helper class to temporarily set the value of mInTransform.
    */
@@ -1574,10 +1591,6 @@ class nsDisplayListBuilder {
     return bool(mStackingContextBits &
                 StackingContextBits::ContainsMixBlendMode);
   }
-  bool MayContainNonIsolated3DTransform() const {
-    return bool(mStackingContextBits &
-                StackingContextBits::MayContainNonIsolated3DTransform);
-  }
   bool ContainsBackdropFilter() const {
     return bool(mStackingContextBits &
                 StackingContextBits::ContainsBackdropFilter);
@@ -1680,21 +1693,10 @@ class nsDisplayListBuilder {
    * Modified frames and rects are removed and re-added to the region if needed.
    */
   struct WeakFrameRegion {
-    /**
-     * A wrapper to store WeakFrame and the pointer to the underlying frame.
-     * This is needed because WeakFrame does not store the frame pointer after
-     * the frame has been deleted.
-     */
-    struct WeakFrameWrapper {
-      explicit WeakFrameWrapper(nsIFrame* aFrame)
-          : mWeakFrame(new WeakFrame(aFrame)), mFrame(aFrame) {}
-
-      UniquePtr<WeakFrame> mWeakFrame;
-      void* mFrame;
-    };
-
     nsTHashSet<void*> mFrameSet;
-    nsTArray<WeakFrameWrapper> mFrames;
+    // WeakFrame does not store the frame pointer after the frame has been
+    // deleted, so keep the raw pointer around to remove it from mFrameSet.
+    nsTArray<std::pair<WeakFrame, void*>> mFrames;
     nsTArray<pixman_box32_t> mRects;
 
     template <typename RectType>
@@ -1704,7 +1706,7 @@ class nsDisplayListBuilder {
       }
 
       mFrameSet.Insert(aFrame);
-      mFrames.AppendElement(WeakFrameWrapper(aFrame));
+      mFrames.EmplaceBack(aFrame, aFrame);
       mRects.AppendElement(nsRegion::RectToBox(aRect));
     }
 
@@ -1954,6 +1956,8 @@ class nsDisplayListBuilder {
   // under an nsDisplayTransform
   bool mInTransform;
   bool mInEventsOnly;
+  // True while traversing clamped content to reach marked abspos frames.
+  bool mInLineClampAbsPosTraversal = false;
   bool mInFilter;
   bool mInViewTransitionCapture;
   bool mIsInChromePresContext;
@@ -2062,6 +2066,12 @@ MOZ_ALWAYS_INLINE T* MakeDisplayItemWithIndex(nsDisplayListBuilder* aBuilder,
                 "Frame type should be derived from nsIFrame");
 
   const DisplayItemType type = T::ItemType();
+  // Preserve container items so ancestor effects (eg. opacity) can still be
+  // applied to abspos frames.
+  if (aBuilder->IsInLineClampAbsPosTraversal() &&
+      !(GetDisplayItemFlagsForType(type) & TYPE_IS_CONTAINER)) {
+    return nullptr;
+  }
   if (aBuilder->InEventsOnly() && !ShouldBuildItemForEvents(type)) {
     // This item is not needed for events.
     return nullptr;
@@ -5976,7 +5986,7 @@ class nsDisplayEffectsBase : public nsDisplayWrapList {
   }
 
   gfxRect BBoxInUserSpace() const;
-  gfxPoint UserSpaceOffset() const;
+  CSSPoint UserSpaceOffset() const;
 
   void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
                                  const nsDisplayItemGeometry* aGeometry,
@@ -6714,7 +6724,8 @@ class nsDisplayText final : public nsPaintedDisplayItem {
       // On OS X, web authors can turn off subpixel text rendering using the
       // CSS property -moz-osx-font-smoothing. If they do that, we don't need
       // to use component alpha layers for the affected text.
-      if (mFrame->StyleFont()->mFont.smoothing == NS_FONT_SMOOTHING_GRAYSCALE) {
+      if (mFrame->StyleFont()->mFont.smoothing ==
+          mozilla::StyleFontSmoothing::Grayscale) {
         return nsRect();
       }
     }

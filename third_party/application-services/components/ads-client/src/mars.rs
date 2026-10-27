@@ -14,6 +14,8 @@ mod transport;
 pub use environment::Environment;
 pub use report_reason::ReportReason;
 
+#[cfg(feature = "stateful")]
+use self::ad_response::Ads;
 use self::{
     ad_request::{AdPlacementRequest, AdRequest, AdRequestFlags},
     ad_response::{AdResponse, AdResponseValue},
@@ -28,6 +30,8 @@ use crate::{
     telemetry::Telemetry,
     CachePolicy,
 };
+#[cfg(feature = "stateful")]
+use std::collections::HashMap;
 use url::Url;
 use viaduct::{Headers, Request};
 
@@ -62,6 +66,90 @@ where
         self.transport.shutdown_db()
     }
 
+    #[cfg(feature = "stateful")]
+    pub fn fetch_ads_mixed(
+        &self,
+        context_id: String,
+        flags: AdRequestFlags,
+        placements: Vec<AdPlacementRequest>,
+        ohttp: bool,
+        blocks: Vec<String>,
+    ) -> Result<HashMap<String, Ads>, FetchAdsError> {
+        let mut ad_request = AdRequest::try_new(
+            blocks,
+            context_id,
+            self.environment.clone(),
+            flags,
+            ohttp,
+            placements,
+        )?;
+
+        if ohttp {
+            ad_request
+                .headers
+                .extend(Headers::try_from(self.fetch_preflight()?)?);
+        }
+
+        let response =
+            self.transport
+                .send(ad_request, &CachePolicy::NetworkFirst { ttl: None }, ohttp)?;
+        let raw: HashMap<String, Vec<serde_json::Value>> = response.json()?;
+
+        let mut result = HashMap::new();
+        for (placement_id, items) in raw {
+            if items.is_empty() {
+                continue;
+            }
+            let format = items
+                .first()
+                .and_then(|v| v.get("format"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ads = match format.as_str() {
+                "spoc" => Ads::Spocs(
+                    items
+                        .into_iter()
+                        .filter_map(|v| match serde_json::from_value(v) {
+                            Ok(ad) => Some(ad),
+                            Err(e) => {
+                                self.telemetry.record(&e);
+                                None
+                            }
+                        })
+                        .collect(),
+                ),
+                "tile" => Ads::Tiles(
+                    items
+                        .into_iter()
+                        .filter_map(|v| match serde_json::from_value(v) {
+                            Ok(ad) => Some(ad),
+                            Err(e) => {
+                                self.telemetry.record(&e);
+                                None
+                            }
+                        })
+                        .collect(),
+                ),
+                _ => Ads::Images(
+                    items
+                        .into_iter()
+                        .filter_map(|v| match serde_json::from_value(v) {
+                            Ok(ad) => Some(ad),
+                            Err(e) => {
+                                self.telemetry.record(&e);
+                                None
+                            }
+                        })
+                        .collect(),
+                ),
+            };
+            result.insert(placement_id, ads);
+        }
+
+        Ok(result)
+    }
+
     pub fn fetch_ads<A>(
         &self,
         context_id: String,
@@ -77,7 +165,7 @@ where
         let mut ad_request = AdRequest::try_new(
             blocks,
             context_id,
-            self.environment,
+            self.environment.clone(),
             flags,
             ohttp,
             placements,
@@ -87,7 +175,7 @@ where
         if ohttp {
             ad_request
                 .headers
-                .extend(Headers::from(self.fetch_preflight()?));
+                .extend(Headers::try_from(self.fetch_preflight()?)?);
         }
 
         let response = self.transport.send(ad_request, &cache_policy, ohttp)?;
@@ -130,7 +218,7 @@ where
 
     fn fetch_preflight(&self) -> Result<preflight::PreflightResponse, CallbackRequestError> {
         let response = self.transport.send(
-            PreflightRequest(self.environment.into_url("ads-preflight")),
+            PreflightRequest(self.environment.clone().into_url("ads-preflight")),
             &CachePolicy::CacheFirst { ttl: None },
             false,
         )?;
@@ -146,7 +234,7 @@ where
         if ohttp {
             request
                 .headers
-                .extend(Headers::from(self.fetch_preflight()?));
+                .extend(Headers::try_from(self.fetch_preflight()?)?);
         }
         self.transport.fire(request, ohttp).map_err(Into::into)
     }
@@ -268,7 +356,7 @@ mod tests {
 
         let cache = HttpCache::builder("test_fetch_ads_cache_hit_skips_network.db")
             .default_ttl(std::time::Duration::from_secs(300))
-            .max_size(crate::http_cache::ByteSize::mib(1))
+            .max_size(crate::common::bytesize::ByteSize::mib(1))
             .build()
             .unwrap();
         let client = make_test_client(Some(cache));
@@ -306,7 +394,7 @@ mod tests {
         viaduct_dev::init_backend_dev();
         let cache = HttpCache::builder("test_record_click.db")
             .default_ttl(std::time::Duration::from_secs(300))
-            .max_size(crate::http_cache::ByteSize::mib(1))
+            .max_size(crate::common::bytesize::ByteSize::mib(1))
             .build()
             .unwrap();
 
@@ -325,7 +413,7 @@ mod tests {
         viaduct_dev::init_backend_dev();
         let cache = HttpCache::builder("test_record_impression.db")
             .default_ttl(std::time::Duration::from_secs(300))
-            .max_size(crate::http_cache::ByteSize::mib(1))
+            .max_size(crate::common::bytesize::ByteSize::mib(1))
             .build()
             .unwrap();
 

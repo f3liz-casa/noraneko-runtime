@@ -61,8 +61,12 @@ const {
   "moz-src:///browser/components/aiwindow/models/ConversationSuggestions.sys.mjs"
 );
 
-const { _clearDismissedResumeMemoriesForTesting } = ChromeUtils.importESModule(
-  "moz-src:///browser/components/aiwindow/ui/modules/ResumeActivityDismissals.sys.mjs"
+const {
+  ResumeActivity,
+  _clearDismissedResumeMemoriesForTesting,
+  _resetResumeSectionHiddenForTesting,
+} = ChromeUtils.importESModule(
+  "moz-src:///browser/components/aiwindow/ui/modules/ResumeActivity.sys.mjs"
 );
 
 async function modelFor(choiceId) {
@@ -106,7 +110,7 @@ let gIntentEngineStub;
 // Minimal RS records returned by the global getRemoteClient stub.
 // Version numbers must match FEATURE_MAJOR_VERSIONS in models/Utils.sys.mjs.
 const MOCK_RS_RECORDS = [
-  ["chat", 11],
+  ["chat", 12],
   ["title-generation", 1],
   ["tab-group-naming", 1],
   ["conversation-starters-sidebar-system", 1],
@@ -207,7 +211,7 @@ const MOCK_RS_RECORDS = [
       version: "v10.0",
     },
     // TODO 2053495
-    // v11 records for mistral release (browser.smartwindow.mistralRelease pref)
+    // v12 records for mistral release (browser.smartwindow.mistralRelease pref)
     {
       kind: "params",
       feature: "chat",
@@ -217,7 +221,7 @@ const MOCK_RS_RECORDS = [
       purpose: "chat",
       parameters: {},
       prompts: "Test system prompt.",
-      version: "v11.0",
+      version: "v12.0",
       is_default: true,
     },
     {
@@ -235,7 +239,7 @@ const MOCK_RS_RECORDS = [
       service_type: "ai",
       purpose: "chat",
       parameters: {},
-      version: "v11.0",
+      version: "v12.0",
     },
     {
       kind: "params",
@@ -253,7 +257,7 @@ const MOCK_RS_RECORDS = [
       purpose: "chat",
       parameters: {},
       prompts: "Test system prompt.",
-      version: "v11.0",
+      version: "v12.0",
     },
     {
       kind: "params",
@@ -270,7 +274,7 @@ const MOCK_RS_RECORDS = [
       service_type: "ai",
       purpose: "chat",
       parameters: {},
-      version: "v11.0",
+      version: "v12.0",
     },
     // The relevant-memories module is loaded for the chat model, so it resolves
     // via the "generic" fallback rather than is_default like the v1 records.
@@ -326,6 +330,22 @@ const MOCK_RS_RECORDS = [
       model: "test-model",
       prompts: "Tabs:\n{titles}",
       version: "v1.0",
+    },
+    {
+      kind: "module",
+      feature: "browser-context",
+      module: "tab",
+      model: "generic",
+      prompts: "Active tab:\n{url}\n{title}\n{description}",
+      version: "1.0",
+    },
+    {
+      kind: "module",
+      feature: "browser-context",
+      module: "mentions",
+      model: "generic",
+      prompts: "Mentioned tabs:\n{contextUrls}",
+      version: "1.0",
     },
   ]);
 
@@ -604,6 +624,8 @@ async function stubResumeActivityGeneration(sb, { fxAccountToken } = {}) {
     {
       id: "memory-1",
       memory_summary: "Research project",
+      lifetime_accessed_count: 0,
+      recent_accessed_counts: {},
       source_ids: {
         history_source_ids: urls
           .slice(0, 4)
@@ -613,6 +635,8 @@ async function stubResumeActivityGeneration(sb, { fxAccountToken } = {}) {
     {
       id: "memory-2",
       memory_summary: "Trip planning",
+      lifetime_accessed_count: 0,
+      recent_accessed_counts: {},
       source_ids: {
         history_source_ids: [PlacesUtils.history.hashURL(urls[4].url)],
       },
@@ -665,15 +689,20 @@ async function stubResumeActivityGenerationPool(sb, memoryCount) {
  * @param {object} sb - Sinon sandbox, owned and restored by the caller
  * @param {Function} run - Async callback invoked with
  *   {win, browser, aiWindow, buttons}
+ * @param {object} [options]
+ * @param {?string} [options.fxAccountToken] - Token for mock-server-backed
+ *   chat completion.
  */
-async function testResumeActivityClick(sb, run) {
+async function testResumeActivityClick(sb, run, { fxAccountToken } = {}) {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.smartwindow.memories.generateFromConversation", true],
       ["browser.smartwindow.memories.generateFromHistory", true],
     ],
   });
-  const resumeActivityStubs = await stubResumeActivityGeneration(sb);
+  const resumeActivityStubs = await stubResumeActivityGeneration(sb, {
+    fxAccountToken,
+  });
   let win;
   try {
     win = await openAIWindow();
@@ -1371,8 +1400,58 @@ async function getSmartbarContextChips(browser) {
     const chipContainer = smartbar.querySelector(
       ".smartbar-context-chips-header"
     );
-    return chipContainer.websites.map(w => ({ url: w.url, label: w.label }));
+    return chipContainer.websites.map(
+      ({ type, url, groupId, label, color }) => ({
+        type,
+        url,
+        groupId,
+        label,
+        color,
+      })
+    );
   });
+}
+
+/**
+ * Remove a context chip in the smartbar header.
+ *
+ * @param {MozBrowser} browser - The browser element
+ * @param {string} label - Label of the chip to remove
+ */
+async function removeSmartbarContextChip(browser, label) {
+  await SpecialPowers.spawn(browser, [label], async chipLabel => {
+    const smartbar = content.document
+      .querySelector("ai-window")
+      .shadowRoot.querySelector("#ai-window-smartbar");
+    const container = smartbar.querySelector(".smartbar-context-chips-header");
+    const chip = () =>
+      [...container.shadowRoot.querySelectorAll("ai-website-chip")].find(
+        c => c.label === chipLabel
+      );
+    await ContentTaskUtils.waitForMutationCondition(
+      container.shadowRoot,
+      { childList: true, subtree: true },
+      chip,
+      `Wait for the "${chipLabel}" chip`
+    );
+    chip().shadowRoot.querySelector(".chip-remove").click();
+  });
+}
+
+/**
+ * Opens tabs with the passed URLs and groups them.
+ *
+ * @param {Window} win - The browser window
+ * @param {string[]} urls - URL per tab of the new group
+ * @param {object} group - Tab group options
+ * @returns {Promise<MozTabbrowserTabGroup>} The new tab group
+ */
+async function addTabsInNewGroup(win, urls, group) {
+  const tabs = urls.map(url => BrowserTestUtils.addTab(win.gBrowser, url));
+  await Promise.all(
+    tabs.map(tab => BrowserTestUtils.browserLoaded(tab.linkedBrowser))
+  );
+  return win.gBrowser.addTabGroup(tabs, group);
 }
 
 /**
@@ -1693,5 +1772,31 @@ async function getUserMessageChipLabels(sidebarBrowser, messageIndex = 0) {
     return Array.from(chips).map(
       chip => chip.shadowRoot?.querySelector(".chip-label")?.textContent ?? ""
     );
+  });
+}
+
+/**
+ * Get context mention types of a user message.
+ *
+ * @param {MozBrowser} browser - The browser element
+ * @param {number} messageIndex - Index of the user message
+ * @returns {Promise<string[]>} The chip types
+ */
+async function getUserMessageChipTypes(browser, messageIndex) {
+  const aichatBrowser = await getAichatBrowser(browser);
+  return SpecialPowers.spawn(aichatBrowser, [messageIndex], async msgIndex => {
+    const chatContent = content.document.querySelector("ai-chat-content");
+    const chipContainer = () =>
+      chatContent.shadowRoot.querySelectorAll(
+        ".chat-bubble-user website-chip-container"
+      )[msgIndex];
+    await ContentTaskUtils.waitForMutationCondition(
+      chatContent.shadowRoot,
+      { childList: true, subtree: true },
+      chipContainer,
+      `Wait for the chips in user message ${msgIndex}`
+    );
+    const { websites } = chipContainer().wrappedJSObject;
+    return websites.map(website => website.type);
   });
 }

@@ -5,6 +5,7 @@
 #include "jit/BaselineCodeGen.h"
 
 #include "mozilla/Casting.h"
+#include "mozilla/FloatingPoint.h"
 
 #include "gc/GC.h"
 #include "jit/BaselineCompileQueue.h"
@@ -787,9 +788,7 @@ bool BaselineInterpreterCodeGen::emitNextIC() {
     JSOp op = *handler.currentOp();
     MOZ_ASSERT(BytecodeOpHasIC(op));
     if (IsIonInlinableOp(op)) {
-      if (!handler.icReturnOffsets().emplaceBack(returnOffset, op)) {
-        return false;
-      }
+      handler.setICReturnOffset(returnOffset);
     }
   }
 
@@ -2493,8 +2492,12 @@ bool BaselineCodeGen<Handler>::emit_Coalesce() {
 
   Label undefinedOrNull;
 
-  masm.branchTestUndefined(Assembler::Equal, R0, &undefinedOrNull);
-  masm.branchTestNull(Assembler::Equal, R0, &undefinedOrNull);
+  {
+    ScratchTagScope tag(masm, R0);
+    masm.splitTagForTest(R0, tag);
+    masm.branchTestUndefined(Assembler::Equal, tag, &undefinedOrNull);
+    masm.branchTestNull(Assembler::Equal, tag, &undefinedOrNull);
+  }
   emitJump();
 
   masm.bind(&undefinedOrNull);
@@ -3130,10 +3133,13 @@ bool BaselineCompilerCodeGen::emitConstantStrictEq(JSOp op) {
         masm.branchTestValue(JSOpToCondition(op, false), value,
                              DoubleValue(constantVal), &pass);
       } else {
-        masm.branchTestValue(Assembler::Equal, value, DoubleValue(0.0),
-                             op == JSOp::StrictEq ? &pass : &fail);
-        masm.branchTestValue(JSOpToCondition(op, false), value,
-                             DoubleValue(-0.0), &pass);
+        // +0.0 and -0.0 are the only Values whose bits are zero outside the
+        // sign bit.
+        masm.branchTest64(
+            op == JSOp::StrictEq ? Assembler::Zero : Assembler::NonZero,
+            value.toRegister64(),
+            Imm64(~mozilla::SpecificFloatingPointBits<double, 1, 0, 0>::value),
+            &pass);
       }
       masm.bind(&fail);
       break;
@@ -4502,6 +4508,10 @@ bool BaselineCompilerCodeGen::emitFormalArgAccess(JSOp op) {
     Register temp = R1.scratchReg();
     emitGuardedCallPreBarrierAnyZone(argAddr, MIRType::Value, temp);
     masm.loadValue(frame.addressOfStackValue(-1), R0);
+    Label notMagic;
+    masm.branchTestMagic(Assembler::NotEqual, R0, &notMagic);
+    masm.assumeUnreachable("Unexpected magic value stored to ArgumentsObject");
+    masm.bind(&notMagic);
     masm.storeValue(R0, argAddr);
 
     MOZ_ASSERT(frame.numUnsyncedSlots() == 0);
@@ -4558,6 +4568,11 @@ bool BaselineInterpreterCodeGen::emitFormalArgAccess(JSOp op) {
       emitGuardedCallPreBarrierAnyZone(argAddr, MIRType::Value,
                                        R0.scratchReg());
       masm.loadValue(frame.addressOfStackValue(-1), R0);
+      Label notMagic;
+      masm.branchTestMagic(Assembler::NotEqual, R0, &notMagic);
+      masm.assumeUnreachable(
+          "Unexpected magic value stored to ArgumentsObject");
+      masm.bind(&notMagic);
       masm.storeValue(R0, argAddr);
 
       // Reload the arguments object.
@@ -5537,10 +5552,9 @@ bool BaselineCodeGen<Handler>::emitReturn() {
     }
   }
 
-  // Only emit the jump if this JSOp::RetRval is not the last instruction.
-  // Not needed for last instruction, because last instruction flows
-  // into return label.
-  if (!handler.isDefinitelyLastOp()) {
+  // Only emit the jump if this is not the last reachable instruction, which
+  // flows into the return label.
+  if (!handler.isLastReachableOp()) {
     masm.jump(&return_);
   }
 
@@ -5749,8 +5763,12 @@ bool BaselineCodeGen<Handler>::emit_CheckObjCoercible() {
 
   Label fail, done;
 
-  masm.branchTestUndefined(Assembler::Equal, R0, &fail);
-  masm.branchTestNull(Assembler::NotEqual, R0, &done);
+  {
+    ScratchTagScope tag(masm, R0);
+    masm.splitTagForTest(R0, tag);
+    masm.branchTestUndefined(Assembler::Equal, tag, &fail);
+    masm.branchTestNull(Assembler::NotEqual, tag, &done);
+  }
 
   masm.bind(&fail);
   prepareVMCall();
@@ -6955,10 +6973,11 @@ bool BaselineCodeGen<Handler>::emitPrologue() {
 
 #ifdef JS_USE_LINK_REGISTER
   // Push link register from generateEnterJIT()'s BLR.
-  masm.pushReturnAddress();
+  masm.pushRegs(LinkRegister, FramePointer);
+#else
+  masm.push(FramePointer);
 #endif
 
-  masm.push(FramePointer);
   masm.moveStackPtrTo(FramePointer);
 
   masm.checkStackAlignment();
@@ -7145,6 +7164,23 @@ bool BaselineCompiler::emitBody() {
   return true;
 }
 
+bool BaselineInterpreterGenerator::emitICBailoutStub() {
+  MOZ_ASSERT(handler.currentOp());
+  JSOp op = *handler.currentOp();
+  MOZ_ASSERT(BytecodeOpHasIC(op) && IsIonInlinableOp(op));
+
+  Label icReturn;
+  icReturn.bind(handler.takeICReturnOffset());
+  uint32_t offset = masm.currentOffset();
+  // The bailoutTail jumps here when performing bailout stack
+  // reconstruction. The Baseline frame has been rebuilt.
+  // Only the return address remains to be pushed.
+  masm.call(BailoutStubHandlerReg);
+  masm.jump(&icReturn);
+
+  return handler.icBailoutStubOffsets().emplaceBack(offset, op);
+}
+
 bool BaselineInterpreterGenerator::emitDebugTrap() {
   CodeOffset offset = masm.nopPatchableToCall();
   if (!debugTrapOffsets_.append(offset.offset())) {
@@ -7234,19 +7270,23 @@ bool BaselineInterpreterGenerator::emitInterpreterLoop() {
 
   // Emit code for each bytecode op.
   Label opLabels[JSOP_LIMIT];
-#define EMIT_OP(OP, ...)                          \
-  {                                               \
-    AutoCreatedBy acb(masm, "op=" #OP);           \
-    perfSpewer_.recordOffset(masm, JSOp::OP);     \
-    masm.bind(&opLabels[uint8_t(JSOp::OP)]);      \
-    handler.setCurrentOp(JSOp::OP);               \
-    if (!this->emit_##OP()) {                     \
-      return false;                               \
-    }                                             \
-    if (!opEpilogue(JSOp::OP, JSOpLength_##OP)) { \
-      return false;                               \
-    }                                             \
-    handler.resetCurrentOp();                     \
+#define EMIT_OP(OP, ...)                                           \
+  {                                                                \
+    AutoCreatedBy acb(masm, "op=" #OP);                            \
+    perfSpewer_.recordOffset(masm, JSOp::OP);                      \
+    masm.bind(&opLabels[uint8_t(JSOp::OP)]);                       \
+    handler.setCurrentOp(JSOp::OP);                                \
+    if (!this->emit_##OP()) {                                      \
+      return false;                                                \
+    }                                                              \
+    if (!opEpilogue(JSOp::OP, JSOpLength_##OP)) {                  \
+      return false;                                                \
+    }                                                              \
+    if (BytecodeOpHasIC(JSOp::OP) && IsIonInlinableOp(JSOp::OP) && \
+        !this->emitICBailoutStub()) {                              \
+      return false;                                                \
+    }                                                              \
+    handler.resetCurrentOp();                                      \
   }
   FOR_EACH_OPCODE(EMIT_OP)
 #undef EMIT_OP
@@ -7450,7 +7490,7 @@ bool BaselineInterpreterGenerator::generate(JSContext* cx,
         profilerExitFrameToggleOffset_.offset(), debugTrapHandlerOffset_,
         std::move(handler.debugInstrumentationOffsets()),
         std::move(debugTrapOffsets_), std::move(handler.codeCoverageOffsets()),
-        std::move(handler.icReturnOffsets()), handler.callVMOffsets());
+        std::move(handler.icBailoutStubOffsets()), handler.callVMOffsets());
   }
 
   if (cx->runtime()->geckoProfiler().enabled()) {
@@ -7523,8 +7563,7 @@ JitCode* JitRuntime::generateDebugTrapHandler(JSContext* cx,
   VMFunctionId id = VMFunctionToId<Fn, jit::HandleDebugTrap>::id;
   TrampolinePtr code = cx->runtime()->jitRuntime()->getVMWrapper(id);
 
-  masm.push(scratch1);
-  masm.push(scratch2);
+  masm.pushRegs(scratch1, scratch2);
   EmitBaselineCallVM(code, masm);
 
   EmitBaselineLeaveStubFrame(masm);

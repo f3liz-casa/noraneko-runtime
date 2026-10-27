@@ -7,8 +7,7 @@
 #include "gfxFeature.h"
 #include "gfxTypes.h"
 #include "nsCOMPtr.h"
-
-class nsIGfxInfo;
+#include "nsIGfxInfo.h"
 
 namespace mozilla {
 namespace gfx {
@@ -34,6 +33,7 @@ class gfxConfigManager {
         mWrForceEnabled(false),
         mWrSoftwareForceEnabled(false),
         mWrCompositorForceEnabled(false),
+        mWrLayerCompositorEnabled(false),
         mWrRequireAngle(false),
         mWrDCompWinEnabled(false),
         mWrCompositorDCompRequired(false),
@@ -85,6 +85,7 @@ class gfxConfigManager {
   bool mWrForceEnabled;
   bool mWrSoftwareForceEnabled;
   bool mWrCompositorForceEnabled;
+  bool mWrLayerCompositorEnabled;
   bool mWrRequireAngle;
   bool mWrDCompWinEnabled;
   bool mWrCompositorDCompRequired;

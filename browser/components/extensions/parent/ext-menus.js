@@ -5,6 +5,7 @@
 "use strict";
 
 ChromeUtils.defineESModuleGetters(this, {
+  assignAutoAccessKeys: "chrome://global/content/elements/auto-accesskey.mjs",
   ExtensionMenus: "resource://gre/modules/ExtensionMenus.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
@@ -330,7 +331,6 @@ var gMenuBuilder = {
         }
         return nextChar;
       });
-      element.setAttribute("accesskey", accessKey || "");
 
       if (contextData.isTextSelected && label.indexOf("%s") > -1) {
         let selection = contextData.selectionText.trim();
@@ -358,9 +358,16 @@ var gMenuBuilder = {
       }
 
       element.setAttribute("label", label);
+      if (accessKey) {
+        element.setAttribute("accesskey", accessKey);
+        element.toggleAttribute("intended-duplicate-accesskey", true);
+      } else {
+        element.toggleAttribute("auto-accesskey", true);
+      }
     }
 
     element.setAttribute("id", item.elementId);
+    element.classList.add("webextension-menuitem");
 
     if ("icons" in item) {
       if (item.icons) {
@@ -474,9 +481,9 @@ var gMenuBuilder = {
     let resolvedURL = extension.baseURI.resolve(icon);
 
     if (element.localName == "menu") {
-      element.setAttribute("class", "menu-iconic");
+      element.classList.add("menu-iconic");
     } else if (element.localName == "menuitem") {
-      element.setAttribute("class", "menuitem-iconic");
+      element.classList.add("menuitem-iconic");
     }
 
     element.setAttribute("image", ChromeUtils.encodeURIForSrcset(resolvedURL));
@@ -484,7 +491,7 @@ var gMenuBuilder = {
 
   // Undo changes from setMenuItemIcon.
   removeMenuItemIcon(element) {
-    element.removeAttribute("class");
+    element.classList.remove("menu-iconic", "menuitem-iconic");
     element.removeAttribute("image");
   },
 
@@ -512,6 +519,7 @@ var gMenuBuilder = {
       this.createAndInsertTopLevelElements(root, contextData, nextSibling);
     }
 
+    assignAutoAccessKeys(this.xulMenu);
     this.xulMenu.showHideSeparators?.();
   },
 

@@ -259,6 +259,7 @@ class FFmpegVideoDecoder<LIBAV_VER>
 #  ifdef MOZ_USE_HWDECODE_VULKAN
 #    include "FFmpegVulkanVideoDecoder.h"
   MediaResult InitVulkanDecoder();
+  bool VulkanDirectDecodeExportEnabled();
   bool CreateVulkanDeviceContext(const StaticMutexAutoLock& aProofOfLock);
   void PrepareVulkanDrmModifiersForSwFormat(int aSwFormat,
                                             VkImageUsageFlags aImageUsages);
@@ -404,7 +405,7 @@ class FFmpegVideoDecoder<LIBAV_VER>
   bool MaybeQueueDrain(const MediaDataDecoder::DecodedData& aData);
 #ifdef MOZ_WIDGET_ANDROID
   void QueueResumeDrain();
-  void ResumeDrain();
+  void ResumeDrain() override;
 
   Atomic<bool> mShouldResumeDrain{false};
 #endif

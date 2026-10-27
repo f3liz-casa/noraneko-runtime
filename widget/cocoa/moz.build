@@ -38,6 +38,7 @@ UNIFIED_SOURCES += [
     "MOZDynamicCursor.mm",
     "MOZIconHelper.mm",
     "MOZMenuOpeningCoordinator.mm",
+    "MOZShareURLPasteboardItem.mm",
     "NativeKeyBindings.mm",
     "NativeMenuMac.mm",
     "NativeMenuSupport.mm",
@@ -53,6 +54,7 @@ UNIFIED_SOURCES += [
     "nsMacDockSupport.mm",
     "nsMacFinderProgress.mm",
     "nsMacPermissionMonitor.mm",
+    "nsMacSharingCopyOverride.mm",
     "nsMacSharingService.mm",
     "nsMacUserActivityUpdater.mm",
     "nsMacWebAppUtils.mm",
@@ -118,10 +120,9 @@ LOCAL_INCLUDES += [
     "/widget/headless",
 ]
 
-if CONFIG["MOZ_ENABLE_SKIA_PDF"]:
-    # Skia includes because widget code includes PrintTargetSkPDF.h, and that
-    # includes skia headers.
-    LOCAL_INCLUDES += CONFIG["SKIA_INCLUDES"]
+# Skia includes because widget code includes PrintTargetSkPDF.h, and that
+# includes skia headers.
+LOCAL_INCLUDES += CONFIG["SKIA_INCLUDES"]
 
 RESOURCE_FILES.cursors += [
     "cursors/arrowN.png",
@@ -177,3 +178,12 @@ SPHINX_TREES["/widget/cocoa"] = "docs"
 
 if CONFIG["MOZ_BUILD_APP"] == "browser":
     DEFINES["MOZ_BUILD_APP_IS_BROWSER"] = True
+
+LICENSED_UNDER += [
+    "apple",
+]
+
+LICENSED_UNDER += ["chromium"]
+LICENSED_UNDER["chromium"].paths = [
+    "GfxInfo.mm",
+]

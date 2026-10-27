@@ -709,6 +709,14 @@
   <string name="search_widget_text_long">Bilatu webean</string>
   <!-- Content description (not visible, for screen readers etc.): Voice search -->
   <string name="search_widget_voice">Ahots bidezko bilaketa</string>
+  <!-- Content description (not visible, for screen readers etc.): Button in the search widget that starts a search in a private tab -->
+  <string name="search_widget_private_search">Bilatu modu pribatuan</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for private search and for voice search -->
+  <string name="search_bar_widget_description">Bilaketa pribatua eta ahots bidezko bilaketa duen bilaketa-barra</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for image search, private search and voice search -->
+  <string name="search_bar_with_lens_widget_description">Bilaketa pribatua eta irudi eta ahots bidezko bilaketa duen bilaketa-barra</string>
+  <!-- Widget description in the widget picker screen for the compact search bar widget -->
+  <string name="compact_search_bar_widget_description">Bilaketa-barra trinkoa</string>
   <!--
     Preferences
 
@@ -1286,8 +1294,6 @@
   <string name="preference_simple_toolbar">Sinplea</string>
   <!-- Preference for using expanded toolbar -->
   <string name="preference_expanded_toolbar">Zabaldua</string>
-  <!-- Preference description indicating the toolbar location preference is disabled when the tab strip is enabled -->
-  <string name="preference_toolbar_pref_disabled_explanation">Helbide-barrak goian egon behar du fitxa-barra erakustean.</string>
   <!-- New tab shortcut in toolbar customization -->
   <string name="toolbar_customize_shortcut_new_tab">Ireki fitxa berria</string>
   <!-- Share shortcut in toolbar customization -->
@@ -1369,6 +1375,8 @@
   <string name="library_desktop_bookmarks_unfiled">Beste laster-markak</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">Historia</string>
+  <!-- Content description (not visible, for screen readers etc.) for the check mark that replaces a site's icon in History and Recently closed tabs when the item is selected -->
+  <string name="library_item_selected_content_description">Hautatuta</string>
   <!-- Settings Page Title -->
   <string name="settings_title">Ezarpenak</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -1421,8 +1429,6 @@
   <string name="preferences_tabs">Fitxak</string>
   <!-- Title of preference that allows a user to specify the tab layout -->
   <string name="preferences_tab_layout">Fitxen diseinua</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">Fitxen ikuspegia</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">Zerrenda</string>
   <!-- Option for a grid tab view -->
@@ -1477,20 +1483,12 @@
   <string name="preferences_tab_organization">Fitxen antolaketa</string>
   <!-- Title of the preference that allows a user to enable or disable the inactive tabs feature -->
   <string name="preferences_inactive_tabs_toggle_title">Fitxa inaktiboak</string>
-  <!--
-    Inactive tabs
-
-    Category header of a preference that allows a user to enable or disable the inactive tabs feature
-  -->
-  <string name="preferences_inactive_tabs">Eraman fitxa zaharrak inaktiboetara</string>
   <!-- Summary of the preference that allows a user to enable or disable the inactive tabs feature. -->
   <string name="preferences_inactive_tabs_title">Azken bi asteetan ikusi ez dituzun fitxak inaktiboen atalera eramaten dira.</string>
   <!-- Title of the preference that allows a user to enable or disable the tab groups feature -->
   <string name="preferences_tab_groups_title">Fitxa-taldeak</string>
   <!-- Summary of the preference that allows a user to enable or disable the tab groups feature -->
   <string name="preferences_tab_groups_description">Antolatu fitxak izenda eta gorde ditzakezun taldeetan.</string>
-  <!-- Title for the preference to enable or disable the tab groups feature -->
-  <string name="preferences_tab_groups_feature">Gaitu fitxa-taldeak</string>
   <!--
     Privacy report
 
@@ -1706,6 +1704,11 @@
   <string name="close_tab_and_delete_group_confirmation_dialog_cancel">Utzi</string>
   <!-- Content description for the three dot button next to a tab group" -->
   <string name="tab_group_three_dot_button_content_description">Aukera gehiago</string>
+  <!--
+    Content description for the Expand button on the contracted menu for a tab group:
+    when tapped, tabs are displayed in an expanded grid or list view, taking up the full screen.
+  -->
+  <string name="tab_groups_strip_expand_group_content_description">Zabaldu fitxak pantaila osoan erakusteko</string>
   <!-- Text shown on the edit button for a tab group on the three dot menu -->
   <string name="tab_group_three_dot_menu_edit">Editatu</string>
   <!-- Text shown on the ungroup button for a tab group on the three dot menu -->
@@ -2439,6 +2442,8 @@
   <string name="sync_send_tab_empty_state_title">Konektatutako gailurik ez</string>
   <!-- Send tab to synced devices: Empty state message - Displayed when the user has no synced devices -->
   <string name="sync_send_tab_empty_state_description" tools:ignore="BrandUsage">Fitxa bat bidaltzeko, hasi saioa Firefoxen gutxienez beste gailu batean.</string>
+  <!-- Send tab to synced devices: Empty state link - Displayed when the user has no synced devices -->
+  <string name="sync_send_tab_empty_state_link">Ikasi nola konekta dezakezun gailu bat</string>
   <!-- Send tab to synced devices: Connectivity Error title -->
   <string name="sync_send_tab_error_connection_title">Egiaztatu zure Interneterako konexioa</string>
   <!-- Send tab to synced devices: Connectivity Error message - Suggested user action after internet connection has been established -->
@@ -4520,6 +4525,16 @@
   <string name="lens_camera_mode_qr">QR eskanerra</string>
   <!-- Toast shown when the user picks an image from the gallery in QR mode but no QR code is found in it -->
   <string name="lens_camera_qr_no_code_found">Ez da QR koderik aurkitu irudian</string>
+  <!-- Status shown under an image picked from the gallery while it is being sent to Google Lens for a visual search -->
+  <string name="lens_camera_loading_status">Bilatzen</string>
+  <!-- Button shown under an image picked from the gallery while it is being sent to Google Lens. Tapping it stops the search and returns to the camera. -->
+  <string name="lens_camera_loading_cancel_button">Utzi</string>
+  <!-- Snackbar message shown when an image picked from the gallery could not be opened or read, so it was never sent to Google Lens. Shown after returning to the camera. -->
+  <string name="lens_camera_image_load_failed">Ezin izan da irudi hau kargatu. Probatu beste batekin.</string>
+  <!-- Snackbar message shown when an image picked from the gallery could not be searched because of a network problem or an error from Google Lens. Shown after returning to the camera, next to the lens_camera_upload_failed_retry_button action. -->
+  <string name="lens_camera_upload_failed">Ezin izan dira Google Lens-eko emaitzak eskuratu</string>
+  <!-- Action in the snackbar shown when an image picked from the gallery could not be searched with Google Lens. Tapping it searches the same image again. -->
+  <string name="lens_camera_upload_failed_retry_button">Saiatu berriro</string>
   <!-- Title of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
   <string name="lens_opt_out_title">Bilatu Google Lens erabiliz</string>
   <!-- Description of the bottom sheet shown the first time the user opens the Google Lens camera screen -->

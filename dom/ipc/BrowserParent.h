@@ -12,6 +12,8 @@
 #include "mozilla/ContentCache.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/StaticPtr.h"
+#include "mozilla/WeakPtr.h"
 #include "mozilla/dom/BrowserBridgeParent.h"
 #include "mozilla/dom/PBrowserParent.h"
 #include "mozilla/dom/TabContext.h"
@@ -27,7 +29,6 @@
 #include "nsIRemoteTab.h"
 #include "nsIWidget.h"
 #include "nsTArray.h"
-#include "nsWeakReference.h"
 
 class imgIContainer;
 class nsCycleCollectionTraversalCallback;
@@ -78,9 +79,6 @@ namespace ipc {
 class StructuredCloneData;
 }  // namespace ipc
 
-#define DOM_BROWSERPARENT_IID \
-  {0x58b47b52, 0x77dc, 0x44cf, {0x8b, 0xe5, 0x8e, 0x78, 0x24, 0xd9, 0xae, 0xc5}}
-
 /**
  * BrowserParent implements the parent actor part of the PBrowser protocol. See
  * PBrowser for more information.
@@ -88,7 +86,7 @@ class StructuredCloneData;
 class BrowserParent final : public PBrowserParent,
                             public nsIDOMEventListener,
                             public nsIAuthPromptProvider,
-                            public nsSupportsWeakReference,
+                            public SupportsWeakPtr,
                             public TabContext,
                             public LiveResizeListener {
   using TapType = GeckoContentController_TapType;
@@ -101,7 +99,6 @@ class BrowserParent final : public PBrowserParent,
   // Helper class for ContentParent::RecvCreateWindow.
   struct AutoUseNewTab;
 
-  NS_INLINE_DECL_STATIC_IID(DOM_BROWSERPARENT_IID)
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_NSIAUTHPROMPTPROVIDER
   // nsIDOMEventListener interfaces
@@ -110,7 +107,7 @@ class BrowserParent final : public PBrowserParent,
   NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(BrowserParent, nsIDOMEventListener)
 
   BrowserParent(ContentParent* aManager, const TabId& aTabId,
-                const TabContext& aContext,
+                uint64_t aRootOuterWindowId, const TabContext& aContext,
                 CanonicalBrowsingContext* aBrowsingContext,
                 uint32_t aChromeFlags);
 
@@ -550,11 +547,6 @@ class BrowserParent final : public PBrowserParent,
       const double& aDeltaY, const int32_t& aModifierFlags,
       const Maybe<uint64_t>& aCallbackId);
 
-  mozilla::ipc::IPCResult RecvLockNativePointer(
-      const nsIWidget::NativePointerLockMode& aNativePointerLockMode);
-
-  mozilla::ipc::IPCResult RecvUnlockNativePointer();
-
   mozilla::ipc::IPCResult RecvSetNativePointerLockMode(
       const nsIWidget::NativePointerLockMode& aNativePointerLockMode);
 
@@ -713,6 +705,13 @@ class BrowserParent final : public PBrowserParent,
   bool GetPriorityHint();
   void SetPriorityHint(bool aPriorityHint);
   void PreserveLayers(bool aPreserveLayers);
+  bool IsPreservingLayers() const { return mIsPreservingLayers; }
+  // Applies the layer state of the BrowserParent this one replaces. Unlike
+  // SetRenderLayers, this stops rendering layers even while they are
+  // preserved, since the replaced BrowserParent's state already accounts for
+  // that.
+  void TransferLayerState(bool aRenderLayers, bool aPreserveLayers,
+                          bool aPriorityHint);
   void NotifyResolutionChanged();
   void NotifyTransparencyChanged();
 
@@ -808,13 +807,12 @@ class BrowserParent final : public PBrowserParent,
   // and have to ensure that the child did not modify links to be loaded.
   bool QueryDropLinksForVerification();
 
-  void UnlockNativePointer();
-
  private:
   // This is used when APZ needs to find the BrowserParent associated with a
   // layer to dispatch events.
-  typedef nsTHashMap<nsUint64HashKey, nsWeakPtr> LayerToBrowserParentTable;
-  static LayerToBrowserParentTable* sLayerToBrowserParentTable;
+  typedef nsTHashMap<nsUint64HashKey, WeakPtr<BrowserParent>>
+      LayerToBrowserParentTable;
+  static StaticAutoPtr<LayerToBrowserParentTable> sLayerToBrowserParentTable;
 
   static void AddBrowserParentToTable(layers::LayersId aLayersId,
                                       BrowserParent* aBrowserParent);
@@ -824,29 +822,29 @@ class BrowserParent final : public PBrowserParent,
   // Keeps track of which BrowserParent has keyboard focus.
   // If nullptr, the parent process has focus.
   // Use UpdateFocus() to manage.
-  static BrowserParent* sFocus;
+  static WeakPtr<BrowserParent>& FocusSlot();
 
   // Keeps track of which top-level BrowserParent the keyboard focus is under.
   // If nullptr, the parent process has focus.
   // Use SetTopLevelWebFocus and UnsetTopLevelWebFocus to manage.
-  static BrowserParent* sTopLevelWebFocus;
+  static WeakPtr<BrowserParent>& TopLevelWebFocusSlot();
 
-  // Setter for sTopLevelWebFocus
+  // Setter for TopLevelWebFocusSlot()
   static void SetTopLevelWebFocus(BrowserParent* aBrowserParent);
 
-  // Unsetter for sTopLevelWebFocus; only unsets if argument matches
-  // current sTopLevelWebFocus. Use UnsetTopLevelWebFocusAll() to
+  // Unsetter for TopLevelWebFocusSlot(); only unsets if argument matches
+  // current TopLevelWebFocusSlot(). Use UnsetTopLevelWebFocusAll() to
   // unset regardless of current value.
   static void UnsetTopLevelWebFocus(BrowserParent* aBrowserParent);
 
-  // Recomputes sFocus and returns it.
+  // Recomputes FocusSlot() and returns it.
   static BrowserParent* UpdateFocus();
 
   // Keeps track of which BrowserParent the real mouse event is sent to.
-  static BrowserParent* sLastMouseRemoteTarget;
+  static WeakPtr<BrowserParent>& LastMouseRemoteTargetSlot();
 
   // Unsetter for LastMouseRemoteTarget; only unsets if argument matches
-  // current sLastMouseRemoteTarget.
+  // current LastMouseRemoteTargetSlot().
   static void UnsetLastMouseRemoteTarget(BrowserParent* aBrowserParent);
 
   struct APZData {
@@ -867,11 +865,11 @@ class BrowserParent final : public PBrowserParent,
   void UpdateVsyncParentVsyncDispatcher();
 
  public:
-  // Unsets sTopLevelWebFocus regardless of its current value.
+  // Unsets TopLevelWebFocusSlot() regardless of its current value.
   static void UnsetTopLevelWebFocusAll();
 
   // Recomputes focus when the BrowsingContext tree changes in a
-  // way that potentially invalidates the sFocus.
+  // way that potentially invalidates FocusSlot().
   static void UpdateFocusFromBrowsingContext();
 
   mozilla::ipc::IPCResult RecvPerformHapticFeedback(
@@ -879,6 +877,7 @@ class BrowserParent final : public PBrowserParent,
 
  private:
   TabId mTabId;
+  uint64_t mRootOuterWindowId;
 
   // The root browsing context loaded in this BrowserParent.
   RefPtr<CanonicalBrowsingContext> mBrowsingContext;
@@ -926,6 +925,7 @@ class BrowserParent final : public PBrowserParent,
     CodeNameIndex mCodeNameIndex;
     Modifiers mModifiers;
     nsID mUUID;
+    CopyableTArray<AlternativeCharCode> mAlternativeCharCodes;
   };
   nsTArray<SentKeyEventData> mWaitingReplyKeyboardEvents;
 
@@ -1014,14 +1014,6 @@ class BrowserParent final : public PBrowserParent,
   // BrowserChild was not ready to handle it. We will resend it when the next
   // time we fire a mouse event and the BrowserChild is ready.
   bool mIsMouseEnterIntoWidgetEventSuppressed : 1;
-
-  // True after RecvLockNativePointer has been called and until
-  // UnlockNativePointer has been called.
-  bool mLockedNativePointer : 1;
-
-  // True after mLockedNativePointer is changed to `false` and reset to false
-  // once we receive a native mouse move request.
-  bool mWaitingForNativeMouseMoveAfterUnlock : 1;
 
   // True between ShowTooltip and HideTooltip messages.
   bool mShowingTooltip : 1;

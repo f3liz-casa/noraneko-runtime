@@ -266,7 +266,7 @@ class CssRuleView extends EventEmitter {
       this.onHighlighterHidden
     );
 
-    this.shortcuts = new KeyShortcuts({ window: this.styleWindow });
+    this.shortcuts = new KeyShortcuts(this.styleWindow);
     this.shortcuts.on("Escape", event => this.#onShortcut("Escape", event));
     this.shortcuts.on("Return", event => this.#onShortcut("Return", event));
     this.shortcuts.on("Space", event => this.#onShortcut("Space", event));
@@ -813,17 +813,9 @@ class CssRuleView extends EventEmitter {
       console.warn("Color scheme emulation is disabled in RFP mode.");
     }
 
-    // @backward-compat { version 155 } Once 155 leaves release, we can remove this boolean
-    // and always consider it true (i.e. only keep the code inside the if block)
-    const hasReducedMotionEmulationSupport =
-      await this.inspector.commands.targetConfigurationCommand.supports(
-        "reducedMotionEmulation"
-      );
-    if (hasReducedMotionEmulationSupport) {
-      this.styleDocument
-        .getElementById("emulation-reduced-motion-container")
-        .removeAttribute("hidden");
-    }
+    this.styleDocument
+      .getElementById("emulation-reduced-motion-container")
+      .removeAttribute("hidden");
   }
 
   /**

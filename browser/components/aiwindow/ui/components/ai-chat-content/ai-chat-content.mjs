@@ -2,8 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { html, nothing } from "chrome://global/content/vendor/lit.all.mjs";
+import {
+  html,
+  nothing,
+  repeat,
+} from "chrome://global/content/vendor/lit.all.mjs";
 import { MozLitElement } from "chrome://global/content/lit-utils.mjs";
+import { isTabGroupMember } from "chrome://browser/content/urlbar/SmartbarMentionUtils.mjs";
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://browser/content/aiwindow/components/assistant-message-footer.mjs";
 // eslint-disable-next-line import/no-unassigned-import
@@ -22,6 +27,8 @@ import "chrome://browser/content/aiwindow/components/ai-action-confirmation.mjs"
 import "chrome://browser/content/aiwindow/components/kit-mention.mjs";
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://browser/content/aiwindow/components/agent-monitor-item.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://browser/content/aiwindow/components/aitab-tool-ui.mjs";
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://global/content/elements/moz-textarea.mjs";
 import {
@@ -42,6 +49,7 @@ const INVALID_MESSAGE_DATA = {};
  * UI labels for tool results and follow-ups.
  */
 const UI_TYPES = {
+  AITAB: "aitab",
   WEBSITE_CONFIRMATION: "website-confirmation",
   TAB_GROUP_CONFIRMATION: "tab-group-confirmation",
   AI_ACTION_RESULT: "ai-action-result",
@@ -54,6 +62,7 @@ const UI_TYPES = {
  * UI update types for communicating user interactions with tool UIs back to the actor.
  */
 const UI_UPDATE_TYPES = {
+  OPEN_AITAB: "open-aitab",
   CONFIRMATION_TAB_SELECTION: "confirmation-tab-selection",
   CANCEL_TAB_SELECTION: "cancel-tab-selection",
   CONFIRM_TAB_GROUP_SELECTION: "confirm-tab-group-selection",
@@ -140,6 +149,7 @@ export class AIChatContent extends MozLitElement {
 
   #lastScrollReq = null;
   #overflowObserver = null;
+  #overflowRafId = null;
   #scrollHandler = null;
   #jumpClickHandler = null;
   #scrollRafId = null;
@@ -150,6 +160,8 @@ export class AIChatContent extends MozLitElement {
   #uiRenderMap = null;
   // English fallback until connectedCallback()'s l10n lookup resolves.
   #defaultTabGroupLabel = "Tab Group";
+  // Identity of the agent-monitor "create" card we have already auto-focused
+  #focusedMonitorCardId = null;
 
   constructor() {
     super();
@@ -162,6 +174,7 @@ export class AIChatContent extends MozLitElement {
 
     // Initialize UI render map
     this.#uiRenderMap = {
+      [UI_TYPES.AITAB]: msg => this.#renderAITab(msg),
       [UI_TYPES.TAB_GROUP_CONFIRMATION]: msg =>
         this.#renderTabGroupConfirmation(msg),
       [UI_TYPES.WEBSITE_CONFIRMATION]: msg =>
@@ -219,6 +232,10 @@ export class AIChatContent extends MozLitElement {
     super.disconnectedCallback();
     this.#overflowObserver?.disconnect();
     this.#overflowObserver = null;
+    if (this.#overflowRafId) {
+      cancelAnimationFrame(this.#overflowRafId);
+      this.#overflowRafId = null;
+    }
     this.#teardownScrollListener();
     this.#removeClientErrorListeners?.();
     this.#removeClientErrorListeners = null;
@@ -226,11 +243,42 @@ export class AIChatContent extends MozLitElement {
 
   updated(changedProperties) {
     super.updated(changedProperties);
-    // When the conversation is replaced (e.g. switching to a tab with an empty
-    // sidebar) no scroll event fires, so recompute the jump-to-bottom button
-    // here to avoid it lingering from the previous conversation.
-    if (changedProperties.has("conversationState")) {
-      this.#updateJumpButtonState();
+    this.#maybeFocusAgentMonitorCard();
+  }
+
+  /**
+   * Give keyboard users an immediate focus target when a new agent-monitor
+   * "create" card is seeded into the chat (e.g. from a /watch command)
+   */
+  #maybeFocusAgentMonitorCard() {
+    const card = this.conversationState.findLast(
+      msg =>
+        msg?.toolUIData?.uiType === UI_TYPES.AGENT_MONITOR &&
+        (msg.toolUIData.properties?.mode ?? "create") === "create" &&
+        !msg.isRestored
+    );
+    if (!card) {
+      return;
+    }
+    const cardId = card.toolUIData.toolCallId ?? card.messageId;
+    if (cardId == null || this.#focusedMonitorCardId === cardId) {
+      return;
+    }
+    this.#focusedMonitorCardId = cardId;
+    this.#focusMonitorNameInput(cardId);
+  }
+
+  async #focusMonitorNameInput(cardId) {
+    const item = this.shadowRoot?.querySelector(
+      `agent-monitor-item[data-tool-call-id="${CSS.escape(cardId)}"]`
+    );
+    if (!item) {
+      return;
+    }
+    await item.updateComplete;
+    // The card can be submitted or cancelled while it renders.
+    if (item.isConnected && item.getAttribute("mode") === "create") {
+      item.focusName();
     }
   }
 
@@ -377,37 +425,79 @@ export class AIChatContent extends MozLitElement {
     this.addEventListener("thumbs-down", event => {
       this.#dispatchAction("thumbs-down", event.detail);
     });
+
+    this.addEventListener("shown", this.#onPanelShown);
+  }
+
+  // panel-list positions itself against the viewport and is unaware of the
+  // chrome chat header. If it opens into the header area, it can be covered and
+  // intercept header clicks, so shift it below the header.
+  #onPanelShown = event => {
+    const panel = event.composedPath()[0];
+    if (panel?.localName !== "panel-list") {
+      return;
+    }
+
+    const bounds = panel.getBoundingClientRect();
+    const overlap = this.#topSpacing() - bounds.top;
+    if (overlap <= 0) {
+      return;
+    }
+
+    panel.style.top = `${(parseFloat(panel.style.top) || 0) + overlap}px`;
+    const height =
+      panel.getAttribute("valign") === "top"
+        ? bounds.height - overlap
+        : window.innerHeight - (bounds.top + overlap);
+    panel.style.maxHeight = `${Math.max(0, height)}px`;
+  };
+
+  // How much of the viewport's top edge the floating chat header covers, read
+  // off the space the chat list already reserves for it.
+  #topSpacing() {
+    const innerWrapper = this.shadowRoot?.querySelector(".chat-inner-wrapper");
+    if (!innerWrapper) {
+      return 0;
+    }
+    return parseFloat(getComputedStyle(innerWrapper).paddingBlockStart) || 0;
   }
 
   #initOverflowObserver() {
-    this.#overflowObserver = new ResizeObserver(() => {
-      const wrapper = this.shadowRoot.querySelector(".chat-content-wrapper");
-      const innerWrapper = this.shadowRoot.querySelector(".chat-inner-wrapper");
-
-      if (!wrapper || !innerWrapper) {
-        return;
-      }
-
-      const hasContent = innerWrapper.children.length;
-      // Use a 10px threshold to avoid false positives from layout differences
-      const thresholdPadding = 10;
-
-      wrapper.toggleAttribute(
-        "overflowing",
-        hasContent &&
-          wrapper.scrollHeight > wrapper.clientHeight + thresholdPadding
-      );
-
-      // Recompute the jump-to-bottom button after content resizes (e.g.
-      // switching to an empty/short conversation) since no scroll event
-      // fires in that case and the button would otherwise stay visible.
-      this.#updateJumpButtonState();
-    });
+    this.#overflowObserver = new ResizeObserver(() =>
+      this.#updateOverflowState()
+    );
     this.updateComplete.then(() => {
       this.#overflowObserver.observe(
         this.shadowRoot.querySelector(".chat-inner-wrapper")
       );
     });
+  }
+
+  /**
+   * Toggle the scroll container's `overflowing` attribute (which drives the
+   * scroll fades) to match whether it actually scrolls, and recompute the
+   * jump-to-bottom button, which no scroll event covers when the change came
+   * from content rather than from scrolling.
+   */
+  #updateOverflowState() {
+    const wrapper = this.#wrapper;
+    const innerWrapper = this.shadowRoot?.querySelector(".chat-inner-wrapper");
+
+    if (!wrapper || !innerWrapper) {
+      return;
+    }
+
+    const hasContent = innerWrapper.children.length;
+    // Use a 10px threshold to avoid false positives from layout differences
+    const thresholdPadding = 10;
+
+    wrapper.toggleAttribute(
+      "overflowing",
+      hasContent &&
+        wrapper.scrollHeight > wrapper.clientHeight + thresholdPadding
+    );
+
+    this.#updateJumpButtonState();
   }
 
   get #wrapper() {
@@ -962,7 +1052,18 @@ export class AIChatContent extends MozLitElement {
       citations = [],
     } = event.detail;
 
-    if (!this.#isAIResponseValid(content, toolUIData)) {
+    const hasRenderableResponse = this.#isAIResponseValid(content, toolUIData);
+    const isToolUICleared = toolUIData === null;
+
+    if (!hasRenderableResponse) {
+      if (isToolUICleared) {
+        this.conversationState = this.conversationState.filter(message => {
+          const isMatchingMessage = message.messageId === messageId;
+          const hasToolUI = !!message.toolUIData;
+          const shouldRemoveMessage = isMatchingMessage && hasToolUI;
+          return !shouldRemoveMessage;
+        });
+      }
       return;
     }
 
@@ -1076,8 +1177,9 @@ export class AIChatContent extends MozLitElement {
   }
 
   /**
-   * Returns the chips to display for a message, suppressing the current-tab
-   * chip when the page context hasn't changed since the previous user message.
+   * Returns the chips to display for a message, hiding the tabs expanded from
+   * a tab group and suppressing the current-tab chip when the page context
+   * hasn't changed since the previous user message.
    *
    * @param {object} msg - A conversationState entry.
    * @param {string|null} lastContextPageUrl - The page URL of the preceding
@@ -1090,15 +1192,14 @@ export class AIChatContent extends MozLitElement {
     if (!msg || msg.role !== "user" || !msg.contextMentions?.length) {
       return [];
     }
+    const chips = msg.contextMentions.filter(chip => !isTabGroupMember(chip));
     const currentPageUrl = msg.pageUrl;
     const shouldHideDuplicatePageChip =
       currentPageUrl && currentPageUrl === lastContextPageUrl;
     if (shouldHideDuplicatePageChip) {
-      return msg.contextMentions.filter(
-        chip => URL.parse(chip.url)?.href !== currentPageUrl
-      );
+      return chips.filter(chip => URL.parse(chip.url)?.href !== currentPageUrl);
     }
-    return msg.contextMentions;
+    return chips;
   }
 
   openAccountSignInAfterError() {
@@ -1166,8 +1267,10 @@ export class AIChatContent extends MozLitElement {
 
   #getGroupTabsData(confirmedData) {
     const selectedTabs = confirmedData.selectedTabs || [];
-    const tabCount = selectedTabs.length;
     const group = confirmedData.group || {};
+    // The group can also hold the chat tab, which the user never picked, so
+    // report the size of the group rather than the size of their selection.
+    const tabCount = group.tabCount ?? selectedTabs.length;
 
     const rows = this.#buildTabsRow(
       "smart-window-grouped-tabs-row-label",
@@ -1344,6 +1447,20 @@ export class AIChatContent extends MozLitElement {
     return renderFn ? renderFn(msg) : nothing;
   }
 
+  #renderAITab(msg) {
+    return html`<aitab-tool-ui
+      .state=${msg.toolUIData.properties?.state ?? "creating"}
+      .title=${msg.toolUIData.properties?.title ?? ""}
+      @aitab-open-request=${event =>
+        this.#dispatchToolUIUpdate({
+          messageId: msg.messageId,
+          toolCallId: msg.toolUIData.toolCallId,
+          updateType: UI_UPDATE_TYPES.OPEN_AITAB,
+          updateData: { openTarget: event.detail.openTarget },
+        })}
+    ></aitab-tool-ui>`;
+  }
+
   #handleConfirmationSubmit = (event, messageId, toolCallId) => {
     this.#dispatchToolUIUpdate({
       messageId,
@@ -1399,6 +1516,7 @@ export class AIChatContent extends MozLitElement {
     const { messageId, toolUIData, toolUIDraft } = msg;
     const toolCallId = toolUIData.toolCallId;
     return html`<agent-monitor-item
+      data-tool-call-id=${toolCallId ?? messageId}
       mode=${toolUIData.properties?.mode ?? "create"}
       .agent=${toolUIData.properties?.agent}
       .draft=${toolUIDraft}
@@ -1831,15 +1949,28 @@ export class AIChatContent extends MozLitElement {
   }
 
   #renderMessages(items) {
-    return items.map((item, i) => {
-      const { type, msgs, msg, isComplete, contextPageUrl } = item;
-      if (type === "action-log") {
-        return this.#renderActionLogGroup(msgs, isComplete, i);
-      }
+    return repeat(
+      items,
+      (item, i) => this.#renderItemKey(item, i),
+      (item, i) => {
+        const { type, msgs, msg, isComplete, contextPageUrl } = item;
+        if (type === "action-log") {
+          return this.#renderActionLogGroup(msgs, isComplete, i);
+        }
 
-      const chips = this.#getVisibleChips(msg, contextPageUrl);
-      return this.#renderMessage(msg, chips);
-    });
+        const chips = this.#getVisibleChips(msg, contextPageUrl);
+        return this.#renderMessage(msg, chips);
+      }
+    );
+  }
+
+  #renderItemKey(item, i) {
+    if (item.type === "action-log") {
+      const first = item.msgs?.[0];
+      return `action-log:${first?.toolCallId ?? first?.messageId ?? i}`;
+    }
+    const { msg } = item;
+    return `message:${msg?.convId ?? ""}:${msg?.ordinal ?? i}`;
   }
 
   render() {
@@ -1855,6 +1986,10 @@ export class AIChatContent extends MozLitElement {
       lastItem?.type === "message" &&
       lastItem.msg?.role === "assistant" &&
       !!lastItem.msg?.body;
+    const aiTabCreating =
+      lastItem?.type === "message" &&
+      lastItem.msg?.toolUIData?.uiType === UI_TYPES.AITAB &&
+      lastItem.msg.toolUIData.properties?.state === "creating";
     return html`
       <link
         rel="stylesheet"
@@ -1864,12 +1999,13 @@ export class AIChatContent extends MozLitElement {
         <div class="chat-inner-wrapper">
           ${this.#renderMessages(renderItems)}
           ${this.#renderFollowUpSuggestions()}
-          ${this.#renderLoader(actionLogInProgress || replyStreaming)}
+          ${this.#renderLoader(
+            actionLogInProgress || replyStreaming || aiTabCreating
+          )}
           ${this.#renderError()}
         </div>
       </div>
-      <div class="fullpage-top-blur"></div>
-      <div class="fullpage-top-scrim"></div>
+      <div class="fullpage-top-box-shadow"></div>
       <kit-mention variant="sidebar"></kit-mention>
       <div
         class="assistant-response-announcer"

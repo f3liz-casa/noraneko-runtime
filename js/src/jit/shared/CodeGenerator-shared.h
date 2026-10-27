@@ -58,6 +58,13 @@ class CodeGeneratorShared : public LElementVisitor {
   // Label for the common return path.
   NonAssertingLabel returnLabel_;
 
+  // Label for the common non-table-based bailout path.
+  NonAssertingLabel deoptLabel_;
+
+  // Whether the out-of-line path just generated ends with a jump to
+  // deoptLabel_ that has not been emitted yet. See jumpToDeoptLabel.
+  bool deoptJumpPending_ = false;
+
   // Amount of bytes allocated for incoming args. Used for Wasm return calls.
   uint32_t inboundStackArgBytes_;
 
@@ -393,6 +400,42 @@ class CodeGeneratorShared : public LElementVisitor {
   void addOutOfLineCode(OutOfLineCode* code, const MInstruction* mir);
   void addOutOfLineCode(OutOfLineCode* code, const BytecodeSite* site);
   bool generateOutOfLineCode();
+
+  // Jump to deoptLabel_ at the end of an out-of-line path. The jump is only
+  // emitted once another out-of-line path follows, so the last one may fall
+  // through to deoptLabel_, which is bound right after the out-of-line code.
+  void jumpToDeoptLabel() {
+    MOZ_ASSERT(!deoptJumpPending_);
+    deoptJumpPending_ = true;
+  }
+  bool needsDeoptLabel() const {
+    return deoptLabel_.used() || deoptJumpPending_;
+  }
+
+  void bailoutFrom(Label* label, LSnapshot* snapshot);
+  void bailout(LSnapshot* snapshot);
+
+  template <typename T1, typename T2>
+  void bailoutCmpPtr(Assembler::Condition c, T1 lhs, T2 rhs,
+                     LSnapshot* snapshot) {
+    Label bail;
+    masm.branchPtr(c, lhs, rhs, &bail);
+    bailoutFrom(&bail, snapshot);
+  }
+  template <typename T1, typename T2>
+  void bailoutCmp32(Assembler::Condition c, T1 lhs, T2 rhs,
+                    LSnapshot* snapshot) {
+    Label bail;
+    masm.branch32(c, lhs, rhs, &bail);
+    bailoutFrom(&bail, snapshot);
+  }
+  template <typename T1, typename T2>
+  void bailoutTest32(Assembler::Condition c, T1 lhs, T2 rhs,
+                     LSnapshot* snapshot) {
+    Label bail;
+    masm.branchTest32(c, lhs, rhs, &bail);
+    bailoutFrom(&bail, snapshot);
+  }
 
   Label* getJumpLabelForBranch(MBasicBlock* block);
 

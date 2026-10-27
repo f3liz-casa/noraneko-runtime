@@ -360,16 +360,6 @@ void IpcResourceUpdateQueue::PushExternalImageForTexture(
       aExtId, aKey, WrapNotNull(aTexture->GetIPDLActor()), aIsUpdate));
 }
 
-bool IpcResourceUpdateQueue::UpdateImageBuffer(
-    ImageKey aKey, const ImageDescriptor& aDescriptor, Range<uint8_t> aBytes) {
-  auto bytes = mWriter.Write(aBytes);
-  if (!bytes.length()) {
-    return false;
-  }
-  mUpdates.AppendElement(layers::OpUpdateImage(aDescriptor, bytes, aKey));
-  return true;
-}
-
 bool IpcResourceUpdateQueue::UpdateBlobImage(BlobImageKey aKey,
                                              const ImageDescriptor& aDescriptor,
                                              Range<uint8_t> aBytes,
@@ -438,7 +428,7 @@ void IpcResourceUpdateQueue::AddFontInstance(
     wr::FontInstanceKey aKey, wr::FontKey aFontKey, float aGlyphSize,
     const wr::FontInstanceOptions* aOptions,
     const wr::FontInstancePlatformOptions* aPlatformOptions,
-    Range<const gfx::FontVariation> aVariations) {
+    Range<const wr::FontVariation> aVariations) {
   auto bytes = mWriter.WriteAsBytes(aVariations);
   mUpdates.AppendElement(layers::OpAddFontInstance(
       aOptions ? Some(*aOptions) : Nothing(),

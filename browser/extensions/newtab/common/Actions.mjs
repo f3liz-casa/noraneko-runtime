@@ -37,6 +37,7 @@ for (const type of [
   "BLOCK_SECTION",
   "BLOCK_URL",
   "BOOKMARK_URL",
+  "CARD_SECTIONS_ORDER",
   "CARD_SECTION_IMPRESSION",
   "CAROUSEL_NAVIGATE",
   "CAROUSEL_TOGGLE_AUTOPLAY",
@@ -86,6 +87,7 @@ for (const type of [
   "DISCOVERY_STREAM_TOPICS_LOADING",
   "DISCOVERY_STREAM_USER_EVENT",
   "DOWNLOAD_CHANGED",
+  "DWELL_LINK_OPENED",
   "FILL_SEARCH_TERM",
   "FOLLOW_SECTION",
   "HIDE_PERSONALIZE",
@@ -208,11 +210,9 @@ for (const type of [
   "UPDATE_SEARCH_SHORTCUTS",
   "WALLPAPERS_CATEGORY_SET",
   "WALLPAPERS_CUSTOM_APPLY",
+  "WALLPAPERS_CUSTOM_LIBRARY_REQUEST",
   "WALLPAPERS_CUSTOM_LIBRARY_SET",
   "WALLPAPERS_CUSTOM_SET",
-  "WALLPAPERS_CUSTOM_THUMBNAILS_MADE",
-  "WALLPAPERS_CUSTOM_THUMBNAILS_REQUEST",
-  "WALLPAPERS_CUSTOM_THUMBNAILS_SET",
   "WALLPAPERS_FEATURE_HIGHLIGHT_COUNTER_INCREMENT",
   "WALLPAPERS_FEATURE_HIGHLIGHT_CTA_CLICKED",
   "WALLPAPERS_FEATURE_HIGHLIGHT_DISMISSED",
@@ -268,28 +268,6 @@ for (const type of [
   "WIDGETS_RECENT_SEARCHES_OPEN_LINK",
   "WIDGETS_RECENT_SEARCHES_REMOVE_SEARCH",
   "WIDGETS_RECENT_SEARCHES_UPDATE",
-  "WIDGETS_SPORTS_CHANGE_FOLLOWED_ONLY",
-  "WIDGETS_SPORTS_CHANGE_LIVE_INDEX",
-  "WIDGETS_SPORTS_CHANGE_MATCHES_TAB",
-  "WIDGETS_SPORTS_CHANGE_SELECTED_TEAMS",
-  "WIDGETS_SPORTS_CHANGE_WIDGET_STATE",
-  "WIDGETS_SPORTS_FETCH_MORE_MATCHES",
-  "WIDGETS_SPORTS_LIVE_HIDDEN",
-  "WIDGETS_SPORTS_LIVE_REFRESH",
-  "WIDGETS_SPORTS_LIVE_UPDATE",
-  "WIDGETS_SPORTS_LIVE_VISIBLE",
-  "WIDGETS_SPORTS_MARK_CELEBRATED",
-  "WIDGETS_SPORTS_OPEN_MATCH_SEARCH",
-  "WIDGETS_SPORTS_SET_CELEBRATIONS",
-  "WIDGETS_SPORTS_SET_FOLLOWED_ONLY",
-  "WIDGETS_SPORTS_SET_LIVE_INDEX",
-  "WIDGETS_SPORTS_SET_LOAD_MORE",
-  "WIDGETS_SPORTS_SET_MATCHES_TAB",
-  "WIDGETS_SPORTS_SET_SELECTED_TEAMS",
-  "WIDGETS_SPORTS_SET_WIDGET_STATE",
-  "WIDGETS_SPORTS_WATCH_LIVE_REQUEST",
-  "WIDGETS_SPORTS_WATCH_LIVE_SET",
-  "WIDGETS_SPORTS_WIDGET_SET",
   "WIDGETS_STOCKS_SEARCH_CLEAR",
   "WIDGETS_STOCKS_SEARCH_REQUEST",
   "WIDGETS_STOCKS_SEARCH_RESPONSE",
@@ -337,9 +315,8 @@ function _RouteMessage(action, options) {
  * AlsoToMain - Creates a message that will be dispatched locally and also sent to the Main process.
  *
  * @param  {object} action Any redux action (required)
- * @param  {object} options
- * @param  {bool}   skipLocal Used by OnlyToMain to skip the main reducer
- * @param  {string} fromTarget The id of the content port from which the action originated. (optional)
+ * @param  {string} [fromTarget] The id of the content port from which the action originated.
+ * @param  {boolean} [skipLocal] Used by OnlyToMain to skip the main reducer
  * @return {object} An action with added .meta properties
  */
 function AlsoToMain(action, fromTarget, skipLocal) {
@@ -355,8 +332,7 @@ function AlsoToMain(action, fromTarget, skipLocal) {
  * OnlyToMain - Creates a message that will be sent to the Main process and skip the local reducer.
  *
  * @param  {object} action Any redux action (required)
- * @param  {object} options
- * @param  {string} fromTarget The id of the content port from which the action originated. (optional)
+ * @param  {string} [fromTarget] The id of the content port from which the action originated.
  * @return {object} An action with added .meta properties
  */
 function OnlyToMain(action, fromTarget) {
@@ -384,7 +360,7 @@ function BroadcastToContent(action, options) {
  *
  * @param  {object} action Any redux action (required)
  * @param  {string} target The id of a content port
- * @param  {bool} skipMain Used by OnlyToOneContent to skip the main process
+ * @param  {boolean} skipMain Used by OnlyToOneContent to skip the main process
  * @return {object} An action with added .meta properties
  */
 function AlsoToOneContent(action, target, skipMain) {
@@ -458,7 +434,7 @@ function DiscoveryStreamUserEvent(data) {
  * ImpressionStats - A telemetry ping indicating an impression stats.
  *
  * @param  {object} data Fields to include in the ping
- * @param  {int} importContext (For testing) Override the import context for testing.
+ * @param  {number} importContext (For testing) Override the import context for testing.
  * #return {object} An action. For UI code, a AlsoToMain action.
  */
 function ImpressionStats(data, importContext = globalImportContext) {
@@ -473,7 +449,7 @@ function ImpressionStats(data, importContext = globalImportContext) {
  * DiscoveryStreamImpressionStats - A telemetry ping indicating an impression stats in Discovery Stream.
  *
  * @param  {object} data Fields to include in the ping
- * @param  {int} importContext (For testing) Override the import context for testing.
+ * @param  {number} importContext (For testing) Override the import context for testing.
  * #return {object} An action. For UI code, a AlsoToMain action.
  */
 function DiscoveryStreamImpressionStats(
@@ -491,7 +467,7 @@ function DiscoveryStreamImpressionStats(
  * DiscoveryStreamLoadedContent - A telemetry ping indicating a content gets loaded in Discovery Stream.
  *
  * @param  {object} data Fields to include in the ping
- * @param  {int} importContext (For testing) Override the import context for testing.
+ * @param  {number} importContext (For testing) Override the import context for testing.
  * #return {object} An action. For UI code, a AlsoToMain action.
  */
 function DiscoveryStreamLoadedContent(

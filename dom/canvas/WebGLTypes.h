@@ -209,17 +209,20 @@ enum class WebGLTexDimensions : uint8_t { Tex2D, Tex3D };
 enum class WebGLExtensionID : uint8_t {
   ANGLE_instanced_arrays,
   EXT_blend_minmax,
+  EXT_clip_control,
   EXT_color_buffer_float,
   EXT_color_buffer_half_float,
   EXT_depth_clamp,
   EXT_disjoint_timer_query,
   EXT_float_blend,
   EXT_frag_depth,
+  EXT_polygon_offset_clamp,
   EXT_shader_texture_lod,
   EXT_sRGB,
   EXT_texture_compression_bptc,
   EXT_texture_compression_rgtc,
   EXT_texture_filter_anisotropic,
+  EXT_texture_mirror_clamp_to_edge,
   EXT_texture_norm16,
   MOZ_debug,
   OES_draw_buffers_indexed,
@@ -639,6 +642,9 @@ struct InitContextDesc final {
 
 constexpr uint32_t kMaxTransformFeedbackSeparateAttribs = 4;
 
+// This matches ANGLE's IMPLEMENTATION_MAX_UNIFORM_BLOCK_SIZE.
+constexpr uint32_t kMaxUniformBlockSize = 64 * 1024;
+
 struct Limits final {
   ExtensionBits supportedExtensions;
 
@@ -873,7 +879,7 @@ struct LinkActiveInfo final {
 };
 
 struct LinkResult final : public SupportsWeakPtr {
-  LinkResult() {}
+  LinkResult() = default;
   ~LinkResult() = default;
 
   bool pending = true;
@@ -938,7 +944,7 @@ struct VertAttribPointerCalculated final {
 }  // namespace webgl
 
 template <class T>
-inline Range<T> ShmemRange(const mozilla::ipc::Shmem& shmem) {
+inline mozilla::Range<T> ShmemRange(const mozilla::ipc::Shmem& shmem) {
   return {shmem.get<T>(), shmem.Size<T>()};
 }
 
@@ -1163,6 +1169,7 @@ struct TexUnpackBlobDesc final {
 
   webgl::PixelUnpackStateWebgl unpacking;
   bool applyUnpackTransforms = true;
+  gfx::SurfaceFormat destFormat = gfx::SurfaceFormat::UNKNOWN;
 
   // -
 
@@ -1182,12 +1189,12 @@ struct TexUnpackBlobDesc final {
 // MakeRange
 
 template <typename T, size_t N>
-inline Range<const T> MakeRange(T (&arr)[N]) {
+inline mozilla::Range<const T> MakeRange(T (&arr)[N]) {
   return {arr, N};
 }
 
 template <typename T>
-inline Range<const T> MakeRange(const dom::Sequence<T>& seq) {
+inline mozilla::Range<const T> MakeRange(const dom::Sequence<T>& seq) {
   return {seq.Elements(), seq.Length()};
 }
 
@@ -1205,7 +1212,7 @@ inline size_t AlignmentOffset(const size_t alignment, const T posOrPtr) {
 }
 
 template <typename T>
-inline size_t ByteSize(const Range<T>& range) {
+inline size_t ByteSize(const mozilla::Range<T>& range) {
   return range.length() * sizeof(T);
 }
 
@@ -1242,13 +1249,13 @@ inline void Memcpy(const RangedPtr<uint8_t>& destBytes,
 }
 
 template <class T, class U>
-inline void Memcpy(const Range<T>* const destRange,
+inline void Memcpy(const mozilla::Range<T>* const destRange,
                    const RangedPtr<U>& srcBegin) {
   Memcpy(destRange->begin(), srcBegin, destRange->length());
 }
 template <class T, class U>
 inline void Memcpy(const RangedPtr<T>* const destBegin,
-                   const Range<U>& srcRange) {
+                   const mozilla::Range<U>& srcRange) {
   Memcpy(destBegin, srcRange->begin(), srcRange->length());
 }
 

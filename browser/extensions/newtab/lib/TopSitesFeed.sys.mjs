@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/** @import {Store} from "resource://newtab/lib/Store.sys.mjs" */
+
 // We use importESModule here instead of static import so that
 // the Karma test environment won't choke on this module. This
 // is because the Karma test environment already stubs out
@@ -520,18 +522,32 @@ export class ContileIntegration {
   }
 
   /**
-   * Normalize new Unified Ads API response into
-   * previous Contile ads response
+   * Normalize new Unified Ads API response into previous Contile ads response shape.
+   *
+   * @param {object} data
+   *   Tiles keyed by placement ID, as returned by MARS or the ads client.
+   *   Each value should be an array of 0 or 1 items.
+   * @param {Array<string>} placementIds
+   *   Placement IDs in the order tiles should appear.
+   *   IDs absent from this list are emitted last, keeping their iteration order from `data`.
    */
-  _normalizeTileData(data) {
+  _normalizeTileData(data, placementIds) {
+    // Requested placement ids are in iteration order from placementIds
+    const requestedPlacementIds = placementIds.filter(id =>
+      Object.hasOwn(data, id)
+    );
+    // Extra placement ids are in iteration order from data
+    const extraPlacementIds = Object.keys(data).filter(
+      id => !placementIds.includes(id)
+    );
+
     const formattedTileData = [];
-    const responseTilesData = Object.values(data);
-
-    for (const tileData of responseTilesData) {
-      if (tileData?.length) {
-        // eslint-disable-next-line prefer-destructuring
-        const tile = tileData[0];
-
+    for (const placementId of [
+      ...requestedPlacementIds,
+      ...extraPlacementIds,
+    ]) {
+      const [tile] = data[placementId] ?? [];
+      if (tile) {
         const formattedData = {
           id: tile.block_key,
           block_key: tile.block_key,
@@ -641,6 +657,7 @@ export class ContileIntegration {
       // Search engines unavailable; the search-hostname filter is skipped.
     }
 
+    let placementsArray = [];
     let response;
     let body;
 
@@ -659,7 +676,7 @@ export class ContileIntegration {
         // Fetch tiles via UAPI service directly from TopSitesFeed.sys.mjs
         if (unifiedAdsTilesEnabled) {
           // Shared set up for manual MARS call and ads-client calls
-          const placementsArray = state.Prefs.values[
+          placementsArray = state.Prefs.values[
             PREF_UNIFIED_ADS_PLACEMENTS
           ]?.split(`,`)
             .map(s => s.trim())
@@ -845,7 +862,7 @@ export class ContileIntegration {
           body = { tiles };
         } else {
           // Converts UAPI response into normalized tiles[] array
-          body = this._normalizeTileData(body);
+          body = this._normalizeTileData(body, placementsArray);
         }
       }
 
@@ -917,7 +934,12 @@ export class ContileIntegration {
   }
 
   async _fetchSitesWithAdsClient(placements) {
-    const options = lazy.AdsClient.requestOptions();
+    const options = lazy.AdsClient.requestOptions(
+      this._topSitesFeed.store.getState().Prefs.values,
+      // Also block the user's current default search engine hostname so
+      // MARS returns a substitute sponsor instead of leaving us short.
+      this._topSitesFeed._currentSearchHostname || []
+    );
 
     const requests = placements.map(
       placementId =>
@@ -962,12 +984,17 @@ ContileIntegration.prototype.PersistentCache = (...args) => {
 };
 
 export class TopSitesFeed {
+  /** @type {Store} */
+  store = null;
+
   constructor() {
     this._telemetryUtility = new TopSitesTelemetry();
     this._contile = new ContileIntegration(this);
     this._tippyTopProvider = new TippyTopProvider();
     this._refreshGeneration = 0;
+    this._broadcastPending = false;
     this._latestRefreshPromise = Promise.resolve();
+    this._uninitialized = false;
     ChromeUtils.defineLazyGetter(
       this,
       "_currentSearchHostname",
@@ -1025,6 +1052,7 @@ export class TopSitesFeed {
   }
 
   uninit() {
+    this._uninitialized = true;
     lazy.PageThumbs.removeExpirationFilter(this);
     Services.obs.removeObserver(this, "browser-search-engine-modified");
     Services.obs.removeObserver(this, "browser-region-updated");
@@ -1097,7 +1125,6 @@ export class TopSitesFeed {
         isDefault: true,
         url: site.url,
         hostname,
-        sendAttributionRequest: false,
         label: site.name,
         show_sponsored_label: hostname !== "yandex",
         sponsored_position: contilePositions[contilePositionIndex++],
@@ -1200,7 +1227,6 @@ export class TopSitesFeed {
         isDefault: true,
         url: siteData.url,
         hostname,
-        sendAttributionRequest: !!siteData.send_attribution_request,
       };
       if (siteData.url_urlbar_override) {
         link.url_urlbar = siteData.url_urlbar_override;
@@ -1410,7 +1436,7 @@ export class TopSitesFeed {
    * shouldFilterSearchTile - is default filtering enabled and does a given hostname match the user's default search engine?
    *
    * @param {string} hostname a top site hostname, such as "amazon" or "foo"
-   * @returns {bool}
+   * @returns {boolean}
    */
   shouldFilterSearchTile(hostname) {
     if (
@@ -1428,7 +1454,7 @@ export class TopSitesFeed {
    * needed.
    *
    * @param {Array} plainPinnedSites (from the pinnedSitesCache)
-   * @returns {boolean} Did we insert any search shortcuts?
+   * @returns {Promise<boolean>} Did we insert any search shortcuts?
    */
   async _maybeInsertSearchShortcuts(plainPinnedSites) {
     // Only insert shortcuts if the experiment is running
@@ -1519,7 +1545,7 @@ export class TopSitesFeed {
   /**
    * Fetch topsites spocs that are frecency boosted.
    *
-   * @returns {Array} An array of sponsored tile objects.
+   * @returns {Promise<Array>} An array of sponsored tile objects.
    */
   async fetchFrecencyBoostedSpocs() {
     let candidates = [];
@@ -2070,10 +2096,16 @@ export class TopSitesFeed {
   /**
    * Refresh the top sites data for content.
    *
-   * @param {bool} options.broadcast Should the update be broadcasted.
-   * @param {bool} options.isStartup Being called while TopSitesFeed is initting.
+   * @param {object} [options]
+   * @param {boolean} [options.broadcast] Should the update be broadcasted.
+   * @param {boolean} [options.isStartup] Being called while TopSitesFeed is initting.
    */
   async refresh(options = {}) {
+    if (this._uninitialized) {
+      // The store has already dropped this feed, and may hold a newer instance.
+      // An in-flight Contile fetch can still get here, through _readDefaults().
+      return;
+    }
     if (!this._startedUp && !options.isStartup) {
       // Initial refresh still pending.
       return;
@@ -2081,6 +2113,9 @@ export class TopSitesFeed {
     this._startedUp = true;
 
     const refreshId = ++this._refreshGeneration;
+    // Only the newest refresh dispatches, so a refresh started while a
+    // broadcasting one is in flight has to broadcast on its behalf.
+    this._broadcastPending ||= !!options.broadcast;
     const refreshPromise = (async () => {
       if (!this._tippyTopProvider.initialized) {
         await this._tippyTopProvider.init();
@@ -2092,7 +2127,7 @@ export class TopSitesFeed {
         },
         refreshId
       );
-      if (refreshId !== this._refreshGeneration) {
+      if (this._uninitialized || refreshId !== this._refreshGeneration) {
         return;
       }
 
@@ -2104,7 +2139,8 @@ export class TopSitesFeed {
         };
       }
 
-      if (options.broadcast) {
+      if (this._broadcastPending) {
+        this._broadcastPending = false;
         // Broadcast an update to all open content pages
         this.store.dispatch(ac.BroadcastToContent(newAction));
       } else {

@@ -25,6 +25,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/RWLock.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/TypedEnumBits.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/intl/UnicodeScriptCodes.h"
@@ -63,6 +64,10 @@ namespace fontlist {
 struct Face;
 struct Family;
 }  // namespace fontlist
+namespace gfx {
+class FontPalette;
+class PaletteCache;
+}  // namespace gfx
 }  // namespace mozilla
 
 typedef struct gr_face gr_face;
@@ -365,6 +370,10 @@ class gfxFontEntry {
 
   bool TryGetColorGlyphs();
 
+  already_AddRefed<mozilla::gfx::FontPalette> GetPalette(
+      nsAtom* aPaletteName,
+      mozilla::gfx::FontPaletteValueSet* aPaletteValueSet);
+
   bool HasColorBitmapTable() {
     LazyFlag flag = mHasColorBitmapTable;
     if (flag == LazyFlag::Uninitialized) {
@@ -638,6 +647,8 @@ class gfxFontEntry {
   hb_blob_t* GetCOLR() const { return mCOLR; }
   hb_blob_t* GetCPAL() const { return mCPAL; }
 
+  mozilla::Atomic<mozilla::gfx::PaletteCache*> mPaletteCache;
+
   // bitvector of substitution space features per script, one each
   // for default and non-default features
   uint32_t mDefaultSubSpaceFeatures[(int(Script::NUM_SCRIPT_CODES) + 31) /
@@ -751,7 +762,10 @@ class gfxFontEntry {
     if (!mSkrifaFontInitialized) {
       mozilla::AutoWriteLock lock(mLock);
       if (!mSkrifaFontInitialized) {
-        InitSkrifaFontFace();
+        if (mozilla::StaticPrefs::
+                gfx_font_rendering_fontations_enabled_AtStartup()) {
+          InitSkrifaFontFace();
+        }
         mSkrifaFontInitialized = true;
       }
     }
@@ -834,12 +848,13 @@ class gfxFontEntry {
   // Set the Skrifa font ref and hold on to the memory mapping, unless the
   // face has already been set, in which case the passed font and mapping
   // are discarded.
-  void SetSkrifaFont(SkrifaFontRef* aSkrifaFont,
+  // Returns true if the font was set, false if it was discarded.
+  bool SetSkrifaFont(SkrifaFontRef* aSkrifaFont,
                      mozilla::MemoryMappedFile&& aSkrifaFontFile);
 
   // Set the Skrifa font ref with no memmap'd file. Used for webfonts when
   // mIsDataUserFont is true.
-  void SetSkrifaFont(SkrifaFontRef* aSkrifaFont);
+  bool SetSkrifaFont(SkrifaFontRef* aSkrifaFont);
 
   // Attempt to initialize a SkrifaFontRef for this resource, and record it
   // via SetSkrifaFont.

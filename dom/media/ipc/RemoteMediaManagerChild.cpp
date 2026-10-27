@@ -168,6 +168,13 @@ void RemoteMediaManagerChild::Shutdown() {
     sObserver = nullptr;
   }
 
+  {
+    StaticMutexAutoLock lock(sProcessSupportedMutex);
+    for (auto& state : sCodecSupportState) {
+      state.mHolder.RejectIfExists(NS_ERROR_ABORT, __func__);
+    }
+  }
+
   nsCOMPtr<nsIThread> childThread;
   {
     auto remoteDecoderManagerThread = sRemoteMediaManagerChildThread.Lock();
@@ -1212,6 +1219,24 @@ void RemoteMediaManagerChild::HandleFatalError(const char* aMsg) {
   dom::ContentChild::FatalErrorIfNotUsingGPUProcess(aMsg, OtherChildID());
 }
 
+void RemoteMediaManagerChild::ActorDestroy(ActorDestroyReason aWhy) {
+  // A stale actor that has already been replaced must not reject the wait
+  // for its successor.
+  if (GetSingleton(mLocation) != this) {
+    return;
+  }
+  StaticMutexAutoLock lock(sProcessSupportedMutex);
+  CodecSupportState& state = sCodecSupportState[mLocation];
+  if (state.mHolder.IsEmpty()) {
+    return;
+  }
+  LOGE("Remote process '{}' went away before reporting codec support",
+       RemoteMediaInToStr(mLocation));
+  state.mHolder.Reject(aWhy == NormalShutdown ? NS_ERROR_ILLEGAL_DURING_SHUTDOWN
+                                              : NS_ERROR_FAILURE,
+                       __func__);
+}
+
 void RemoteMediaManagerChild::SetSupported(
     RemoteMediaIn aLocation, const media::MediaCodecsSupported& aSupported) {
   MozPromiseHolder<CodecSupportPromise> holder;
@@ -1269,15 +1294,15 @@ RemoteMediaManagerChild::EnsureCodecSupportFor(RemoteMediaIn aLocation,
       break;
   }
 
-  if (!launchPromise) {
+  nsCOMPtr<nsISerialEventTarget> managerThread = GetManagerThread();
+  if (!launchPromise || !managerThread) {
     LOGE("Failed to launch remote process '{}'", RemoteMediaInToStr(aLocation));
     StaticMutexAutoLock lock(sProcessSupportedMutex);
     CodecSupportState& state = sCodecSupportState[aLocation];
-    state.mHolder.Reject(NS_ERROR_FAILURE, __func__);
+    state.mHolder.RejectIfExists(NS_ERROR_FAILURE, __func__);
     return promise;
   }
 
-  nsCOMPtr managerThread = GetManagerThread();
   launchPromise->Then(
       managerThread, __func__,
       [] {
@@ -1288,7 +1313,7 @@ RemoteMediaManagerChild::EnsureCodecSupportFor(RemoteMediaIn aLocation,
              RemoteMediaInToStr(aLocation), aRv);
         StaticMutexAutoLock lock(sProcessSupportedMutex);
         CodecSupportState& state = sCodecSupportState[aLocation];
-        state.mHolder.Reject(aRv, __func__);
+        state.mHolder.RejectIfExists(aRv, __func__);
       });
 
   return promise;

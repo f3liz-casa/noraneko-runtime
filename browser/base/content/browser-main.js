@@ -21,13 +21,13 @@
   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/drag-and-drop.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/split-view-footer.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/status-panel.js", this);
-  Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/tab.js", this);
+  ChromeUtils.importESModule("chrome://browser/content/tabbrowser/tab.mjs", { global: "current" });
   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/tab-bar-visibility.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/tab-context-menu.js", this);
   ChromeUtils.importESModule("chrome://browser/content/tabbrowser/tabgroup.mjs", { global: "current" });
   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/tabgroup-menu.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/tabnote-menu.js", this);
-  Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/tabs.js", this);
+  ChromeUtils.importESModule("chrome://browser/content/tabbrowser/tabs.mjs", { global: "current" });
   ChromeUtils.importESModule("chrome://browser/content/tabbrowser/tabsplitview.mjs", { global: "current" });
   Services.scriptloader.loadSubScript("chrome://browser/content/places/places-menupopup.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/search/autocomplete-popup.js", this);

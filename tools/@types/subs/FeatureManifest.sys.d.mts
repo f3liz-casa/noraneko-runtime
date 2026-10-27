@@ -1737,10 +1737,6 @@ export const FeatureManifest: {
                 type: string;
                 description: string;
             };
-            sportsWidgetEnabled: {
-                type: string;
-                description: string;
-            };
             listsBadgeEnabled: {
                 type: string;
                 description: string;
@@ -1912,14 +1908,6 @@ export const FeatureManifest: {
                 };
             };
             spocsEndpointAllowlist: {
-                description: string;
-                type: string;
-                setPref: {
-                    branch: string;
-                    pref: string;
-                };
-            };
-            spocsClearEndpoint: {
                 description: string;
                 type: string;
                 setPref: {

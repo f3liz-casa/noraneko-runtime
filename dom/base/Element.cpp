@@ -55,6 +55,7 @@
 #include "mozilla/ReflowOutput.h"
 #include "mozilla/RelativeTo.h"
 #include "mozilla/ScrollContainerFrame.h"
+#include "mozilla/ScrollState.h"
 #include "mozilla/ScrollTypes.h"
 #include "mozilla/ServoStyleConsts.h"
 #include "mozilla/ServoStyleConstsInlines.h"
@@ -63,6 +64,7 @@
 #include "mozilla/StaticAnalysisFunctions.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_full_screen_api.h"
+#include "mozilla/StaticPrefs_mathml.h"
 #include "mozilla/StaticString.h"
 #include "mozilla/TextControlElement.h"
 #include "mozilla/TextEditor.h"
@@ -115,6 +117,7 @@
 #include "mozilla/dom/Sanitizer.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/ShadowRoot.h"
+#include "mozilla/dom/SpeculationRules.h"
 #include "mozilla/dom/StylePropertyMapReadOnly.h"
 #include "mozilla/dom/Text.h"
 #include "mozilla/dom/TreeIterator.h"
@@ -209,7 +212,7 @@
 #include "nsXULElement.h"
 
 #ifdef DEBUG
-#  include "nsRange.h"
+#  include "mozilla/dom/Range.h"
 #endif
 
 #ifdef ACCESSIBILITY
@@ -516,15 +519,6 @@ void Element::TraverseCustomElementRegistry(
   }
 }
 
-/* static */
-void Element::UnlinkCustomElementRegistry(Element* aElement) {
-  if (aElement->GetCustomElementRegistryState() ==
-      CustomElementRegistryState::Scoped) {
-    CustomElementRegistry::RemoveScopedRegistry(*aElement);
-    aElement->SetCustomElementRegistryState(CustomElementRegistryState::Global);
-  }
-}
-
 void Element::Focus(const FocusOptions& aOptions, CallerType aCallerType,
                     ErrorResult& aError) {
   const RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager();
@@ -574,7 +568,6 @@ void Element::SetCustomElementRegistry(
       "We shouldn't override an already assigned scoped registry");
 
   if (aCustomElementRegistry->IsScoped()) {
-    SetCustomElementRegistryState(CustomElementRegistryState::Scoped);
     CustomElementRegistry::SetScopedRegistry(*this, *aCustomElementRegistry);
     // https://html.spec.whatwg.org/#scoped-document-set
     // Append element's node document to the registry's scoped document set.
@@ -1350,7 +1343,9 @@ void Element::AddToIdTable(nsAtom* aId) {
   NS_ASSERTION(HasID(), "Node doesn't have an ID?");
   if (IsInShadowTree()) {
     ShadowRoot* containingShadow = GetContainingShadow();
-    containingShadow->AddToIdTable(this, aId);
+    if (nsContentUtils::IsInSameAnonymousTree(this, containingShadow)) {
+      containingShadow->AddToIdTable(this, aId);
+    }
   } else {
     Document* doc = GetUncomposedDoc();
     if (doc && !IsInNativeAnonymousSubtree()) {
@@ -1367,9 +1362,12 @@ void Element::RemoveFromIdTable() {
   nsAtom* id = DoGetID();
   if (IsInShadowTree()) {
     ShadowRoot* containingShadow = GetContainingShadow();
-    // Check for containingShadow because it may have
-    // been deleted during unlinking.
-    if (containingShadow) {
+    // Check for containingShadow because it may have been deleted during
+    // unlinking. We can't use the stricter IsInSameAnonymousTree because our
+    // ancestors may have already been unbound.
+    if (containingShadow &&
+        IsInNativeAnonymousSubtree() ==
+            containingShadow->IsInNativeAnonymousSubtree()) {
       containingShadow->RemoveFromIdTable(this, id);
     }
   } else {
@@ -1591,9 +1589,9 @@ already_AddRefed<ShadowRoot> Element::AttachShadowWithoutNameChecks(
   if (ranges) {
     for (const AbstractRange* range : *ranges) {
       if (range->MayCrossShadowBoundary()) {
-        MOZ_ASSERT(range->IsDynamicRange());
+        MOZ_ASSERT(range->IsRange());
         CrossShadowBoundaryRange* crossBoundaryRange =
-            range->AsDynamicRange()->GetCrossShadowBoundaryRange();
+            range->AsRange()->GetCrossShadowBoundaryRange();
         MOZ_ASSERT(crossBoundaryRange);
         // We may have previously selected this node before it
         // becomes a shadow host, so we need to reset the values
@@ -3189,6 +3187,17 @@ static bool WillDetachFromShadowOnUnbind(const Element& aElement,
          (aNullParent || !aElement.GetParent()->IsInShadowTree());
 }
 
+void Element::NodeInfoChanged(Document* aOldDoc) {
+  FragmentOrElement::NodeInfoChanged(aOldDoc);
+  // https://dom.spec.whatwg.org/#concept-node-adopt
+  // 3.3.1. Set the node document of each attribute in inclusiveDescendant's
+  //        attribute list to document.
+  mAttrs.NodeInfoChanged(NodeInfoManager());
+  if (nsDOMAttributeMap* attributeMap = GetAttributeMap()) {
+    attributeMap->AdoptCachedAttributes(NodeInfoManager());
+  }
+}
+
 void Element::UnbindFromTree(UnbindContext& aContext) {
   const bool nullParent = aContext.IsUnbindRoot(this);
 
@@ -3251,43 +3260,45 @@ void Element::UnbindFromTree(UnbindContext& aContext) {
     }
   }
 
-  // Make sure to unbind this node before doing the kids
-  Document* document = GetComposedDoc();
-
   if (HasPointerLock()) {
     PointerLockManager::Unlock("Element::UnbindFromTree");
   }
-  if (!aContext.IsMove() && mState.HasState(ElementState::FULLSCREEN)) {
-    // The element being removed is an ancestor of the fullscreen element,
-    // exit fullscreen state.
-    nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns,
-                                    OwnerDoc(), PropertiesFile::DOM_PROPERTIES,
-                                    "RemovedFullscreenElement");
-    // Fully exit fullscreen.
-    Document::ExitFullscreenInDocTree(OwnerDoc());
-  }
 
+  // Make sure to unbind this node before doing the kids
+  Document* document = GetComposedDoc();
   MOZ_ASSERT_IF(HasServoData(), document);
   MOZ_ASSERT_IF(HasServoData() && !aContext.IsMove(),
                 IsInNativeAnonymousSubtree());
-  if (document && !aContext.IsMove()) {
-    ClearServoData(document);
-  }
 
-  // Ensure that CSS transitions don't continue on an element at a
-  // different place in the tree (even if reinserted before next
-  // animation refresh).
-  //
-  // We need to delete the properties while we're still in document
-  // (if we were in document) so that they can look up the
-  // PendingAnimationTracker on the document and remove their animations,
-  // and so they can find their pres context for dispatching cancel events.
-  //
-  // FIXME(bug 522599): Need a test for this.
-  // FIXME(emilio): Why not clearing the effect set as well?
   if (!aContext.IsMove()) {
+    if (mState.HasState(ElementState::FULLSCREEN)) {
+      // The element being removed is an ancestor of the fullscreen element,
+      // exit fullscreen state.
+      nsContentUtils::ReportToConsole(
+          nsIScriptError::warningFlag, "DOM"_ns, OwnerDoc(),
+          PropertiesFile::DOM_PROPERTIES, "RemovedFullscreenElement");
+      // Fully exit fullscreen.
+      Document::ExitFullscreenInDocTree(OwnerDoc());
+    }
+    if (document) {
+      ClearServoData(document);
+    }
     if (auto* data = GetAnimationData()) {
+      // Ensure that CSS transitions don't continue on an element at a
+      // different place in the tree (even if reinserted before next
+      // animation refresh).
+      //
+      // We need to delete the properties while we're still in document
+      // (if we were in document) so that they can look up the
+      // PendingAnimationTracker on the document and remove their animations,
+      // and so they can find their pres context for dispatching cancel events.
+      //
+      // FIXME(bug 522599): Need a test for this.
+      // FIXME(emilio): Why not clearing the effect set as well?
       data->ClearAllAnimationCollections();
+    }
+    if (auto* slots = GetExistingExtendedDOMSlots()) {
+      slots->mSavedScrollState = nullptr;
     }
   }
 
@@ -4707,6 +4718,7 @@ void Element::GetEventTargetParentForLinks(EventChainPreVisitor& aVisitor) {
     case eFocus:
     case eMouseOut:
     case eBlur:
+    case ePointerDown:
       break;
     default:
       return;
@@ -4754,7 +4766,11 @@ void Element::GetEventTargetParentForLinks(EventChainPreVisitor& aVisitor) {
       }
       break;
     }
-
+    case ePointerDown:
+      if (auto* speculationRules = OwnerDoc()->GetSpeculationRules()) {
+        speculationRules->PointerDown(this);
+      }
+      break;
     default:
       // switch not in sync with the optimization switch earlier in this
       // function
@@ -5126,7 +5142,7 @@ CORSMode Element::AttrValueToCORSMode(const nsAttrValue* aValue) {
  * context. Requests are only allowed if the user initiated them (like with
  * a mouse-click or key press), unless this check has been disabled by
  * setting the pref "full-screen-api.allow-trusted-requests-only" to false
- * or if the caller is privileged. Feature policy may also deny requests.
+ * or if the caller is privileged. Permissions policy may also deny requests.
  * If fullscreen is not allowed, a key for the error message is returned.
  */
 static const char* GetFullscreenError(CallerType aCallerType,
@@ -6066,7 +6082,12 @@ Element* Element::GetPseudoElement(const PseudoStyleRequest& aRequest) const {
 }
 
 ReferrerPolicy Element::GetReferrerPolicyAsEnum() const {
-  if (IsHTMLElement() || IsSVGElement()) {
+  // Currently, referrerpolicy attribute is supported on HTML elements (a, area,
+  // img, iframe, script, link) as well as SVG and MathML <a> elements.
+  // TODO: Restrict to elements specified above for HTML.
+  if (IsHTMLElement() || IsSVGElement(nsGkAtoms::a) ||
+      (IsMathMLElement(nsGkAtoms::a) &&
+       StaticPrefs::mathml_a_element_enabled())) {
     return ReferrerPolicyFromAttr(GetParsedAttr(nsGkAtoms::referrerpolicy));
   }
   return ReferrerPolicy::_empty;
@@ -6106,6 +6127,10 @@ void Element::GetCustomInterface(nsGetterAddRefs<T> aResult) {
       return;
     }
   }
+}
+
+void Element::SetSavedScrollState(UniquePtr<ScrollState> aState) {
+  ExtendedDOMSlots()->mSavedScrollState = std::move(aState);
 }
 
 void Element::ClearServoData(Document* aDoc) {

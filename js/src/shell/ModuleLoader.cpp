@@ -7,6 +7,7 @@
 #include "mozilla/TextUtils.h"
 
 #include "jsapi.h"
+#include "jsfriendapi.h"
 #include "NamespaceImports.h"
 
 #include "builtin/TestingUtility.h"  // js::CreateScriptPrivate
@@ -14,6 +15,7 @@
 #include "js/MapAndSet.h"
 #include "js/Modules.h"
 #include "js/Prefs.h"
+#include "js/Promise.h"             // JS::AddPromiseReactions
 #include "js/PropertyAndElement.h"  // JS_DefineProperty, JS_GetProperty
 #include "js/SourceText.h"
 #include "js/StableStringChars.h"
@@ -66,7 +68,7 @@ bool ModuleLoader::init(JSContext* cx, HandleString loadPath) {
 
 // static
 bool ModuleLoader::LoadImportedModule(JSContext* cx,
-                                      JS::Handle<JSScript*> referrer,
+                                      JS::Handle<JS::Value> referrer,
                                       JS::Handle<JSObject*> moduleRequest,
                                       JS::HandleValue hostDefined,
                                       JS::HandleValue payload,
@@ -162,7 +164,8 @@ bool ModuleLoader::loadRootModule(JSContext* cx, HandleString path) {
 
 bool ModuleLoader::registerTestModule(JSContext* cx, HandleObject moduleRequest,
                                       Handle<ModuleObject*> module) {
-  Rooted<JSLinearString*> path(cx, resolve(cx, moduleRequest, nullptr));
+  Rooted<JSLinearString*> path(
+      cx, resolve(cx, moduleRequest, JS::UndefinedHandleValue));
   if (!path) {
     return false;
   }
@@ -239,8 +242,7 @@ static const JSClass DynamicImportClosureClass = {
     "DynamicImportClosure",
     JSCLASS_HAS_RESERVED_SLOTS(DynamicImportClosureSlotCount)};
 
-static JSObject* CreateDynamicImportClosure(JSContext* cx,
-                                            Handle<JSScript*> referrer,
+static JSObject* CreateDynamicImportClosure(JSContext* cx, HandleValue referrer,
                                             HandleObject moduleRequest,
                                             HandleValue payload,
                                             HandleObject module) {
@@ -250,9 +252,7 @@ static JSObject* CreateDynamicImportClosure(JSContext* cx,
     return nullptr;
   }
 
-  JS_SetReservedSlot(
-      closure, ClosureReferrerSlot,
-      referrer ? PrivateGCThingValue(referrer) : UndefinedValue());
+  JS_SetReservedSlot(closure, ClosureReferrerSlot, referrer);
   JS_SetReservedSlot(closure, ClosureModuleRequestSlot,
                      ObjectValue(*moduleRequest));
   JS_SetReservedSlot(closure, ClosurePayloadSlot, payload);
@@ -261,33 +261,47 @@ static JSObject* CreateDynamicImportClosure(JSContext* cx,
 }
 
 /* static */
-bool ModuleLoader::DynamicImportLoadResolved(JSContext* cx,
-                                             HandleValue hostDefined) {
-  RootedObject closure(cx, &hostDefined.toObject());
+bool ModuleLoader::DynamicImportLoadResolved(JSContext* cx, unsigned argc,
+                                             Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedObject closure(
+      cx, &js::GetFunctionNativeReserved(&args.callee().as<JSFunction>(),
+                                         LoadReactionHostDefinedSlot)
+               .toObject());
 
-  Value referrerValue = JS::GetReservedSlot(closure, ClosureReferrerSlot);
-  RootedScript referrer(cx);
-  if (!referrerValue.isUndefined()) {
-    referrer = static_cast<JSScript*>(referrerValue.toGCThing());
-  }
-
+  RootedValue referrer(cx, JS::GetReservedSlot(closure, ClosureReferrerSlot));
   RootedObject moduleRequest(
       cx, &JS::GetReservedSlot(closure, ClosureModuleRequestSlot).toObject());
   RootedValue payload(cx, JS::GetReservedSlot(closure, ClosurePayloadSlot));
   RootedObject module(
       cx, &JS::GetReservedSlot(closure, ClosureModuleSlot).toObject());
 
-  return JS::FinishLoadingImportedModule(cx, referrer, moduleRequest, payload,
-                                         module, /* usePromise = */ true);
+  if (!JS::FinishLoadingImportedModule(cx, referrer, moduleRequest, payload,
+                                       module, /* usePromise = */ true)) {
+    return false;
+  }
+
+  args.rval().setUndefined();
+  return true;
 }
 
 /* static */
-bool ModuleLoader::DynamicImportLoadRejected(JSContext* cx,
-                                             HandleValue hostDefined,
-                                             HandleValue error) {
-  RootedObject closure(cx, &hostDefined.toObject());
+bool ModuleLoader::DynamicImportLoadRejected(JSContext* cx, unsigned argc,
+                                             Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedObject closure(
+      cx, &js::GetFunctionNativeReserved(&args.callee().as<JSFunction>(),
+                                         LoadReactionHostDefinedSlot)
+               .toObject());
+
   RootedValue payload(cx, JS::GetReservedSlot(closure, ClosurePayloadSlot));
-  return JS::FinishLoadingImportedModuleFailed(cx, payload, error);
+  RootedValue error(cx, args.get(DynamicImportLoadRejectedErrorArg));
+  if (!JS::FinishLoadingImportedModuleFailed(cx, payload, error)) {
+    return false;
+  }
+
+  args.rval().setUndefined();
+  return true;
 }
 
 // See https://github.com/tc39/test262/blob/main/INTERPRETING.md#modules
@@ -334,7 +348,7 @@ static bool IsDynamicImport(HandleValue payload) {
 }
 
 JSObject* ModuleLoader::getOrLoadModule(
-    JSContext* cx, JS::Handle<JSScript*> referrer,
+    JSContext* cx, JS::HandleValue referrer,
     JS::Handle<JSObject*> moduleRequestArg) {
   Rooted<ModuleRequestObject*> moduleRequest(
       cx, &moduleRequestArg->as<ModuleRequestObject>());
@@ -353,8 +367,7 @@ JSObject* ModuleLoader::getOrLoadModule(
   return loadAndParse(cx, path, moduleRequest);
 }
 
-bool ModuleLoader::loadImportedModule(JSContext* cx,
-                                      JS::Handle<JSScript*> referrer,
+bool ModuleLoader::loadImportedModule(JSContext* cx, JS::HandleValue referrer,
                                       JS::Handle<JSObject*> moduleRequest,
                                       JS::HandleValue payload) {
   RootedObject module(cx, getOrLoadModule(cx, referrer, moduleRequest));
@@ -371,10 +384,38 @@ bool ModuleLoader::loadImportedModule(JSContext* cx,
       return false;
     }
 
+    RootedFunction onResolved(
+        cx, js::NewFunctionWithReserved(cx, DynamicImportLoadResolved,
+                                        DynamicImportLoadResolvedNumArgs, 0,
+                                        "resolved"));
+    if (!onResolved) {
+      return false;
+    }
+
+    RootedFunction onRejected(
+        cx, js::NewFunctionWithReserved(cx, DynamicImportLoadRejected,
+                                        DynamicImportLoadRejectedNumArgs, 0,
+                                        "rejected"));
+    if (!onRejected) {
+      return false;
+    }
+
     RootedValue hostDefined(cx, ObjectValue(*closure));
-    if (!JS::LoadRequestedModules(cx, module, hostDefined,
-                                  DynamicImportLoadResolved,
-                                  DynamicImportLoadRejected)) {
+    RootedObject onResolvedObj(cx, JS_GetFunctionObject(onResolved));
+    js::SetFunctionNativeReserved(onResolvedObj, LoadReactionHostDefinedSlot,
+                                  hostDefined);
+
+    RootedObject onRejectedObj(cx, JS_GetFunctionObject(onRejected));
+    js::SetFunctionNativeReserved(onRejectedObj, LoadReactionHostDefinedSlot,
+                                  hostDefined);
+
+    RootedObject loadPromise(cx);
+    if (!JS::LoadRequestedModules(cx, module, hostDefined, &loadPromise)) {
+      return false;
+    }
+
+    if (!JS::AddPromiseReactions(cx, loadPromise, onResolvedObj,
+                                 onRejectedObj)) {
       return false;
     }
 
@@ -438,11 +479,8 @@ bool ModuleLoader::importMetaResolve(JSContext* cx,
 
 JSLinearString* ModuleLoader::resolve(JSContext* cx,
                                       HandleObject moduleRequestArg,
-                                      HandleScript referrer) {
-  RootedValue referencingInfo(cx);
-  if (referrer) {
-    referencingInfo = GetScriptPrivate(referrer);
-  }
+                                      HandleValue referrer) {
+  RootedValue referencingInfo(cx, JS::GetReferrerPrivate(referrer));
 
   ModuleRequestObject* moduleRequest =
       &moduleRequestArg->as<ModuleRequestObject>();

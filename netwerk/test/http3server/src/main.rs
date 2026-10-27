@@ -114,6 +114,24 @@ impl Http3TestServer {
         }
     }
 
+    fn respond_to_post(
+        &mut self,
+        stream: Http3OrWebTransportStream,
+        received_len: usize,
+        now: Instant,
+    ) {
+        let default_ret = b"Hello World".to_vec();
+        stream
+            .send_headers(&[
+                Header::new(":status", "200"),
+                Header::new("cache-control", "no-cache"),
+                Header::new("x-data-received-length", received_len.to_string()),
+                Header::new("content-length", default_ret.len().to_string()),
+            ])
+            .unwrap();
+        self.new_response(stream, default_ret, now);
+    }
+
     fn new_response(&mut self, stream: Http3OrWebTransportStream, mut data: Vec<u8>, now: Instant) {
         if data.len() == 0 {
             let _ = stream.stream_close_send(now);
@@ -285,6 +303,7 @@ impl HttpServer for Http3TestServer {
         while let Some(event) = self.server.next_event() {
             qtrace!("Event: {:?}", event);
             match event {
+                Http3ServerEvent::OutgoingDatagramSpaceAvailable { .. } => {}
                 Http3ServerEvent::Headers {
                     stream,
                     headers,
@@ -307,6 +326,20 @@ impl HttpServer for Http3TestServer {
                         Header::new("content-length", default_ret.len().to_string()),
                         Header::new("x-http3-conn-hash", connection_hash.to_string()),
                     ];
+
+                    // Mimic a server that rejects a raw non-ASCII cookie by
+                    // closing the whole connection with H3_FRAME_ERROR.
+                    if headers
+                        .iter()
+                        .any(|h| h.name() == "cookie" && !h.value().is_ascii())
+                    {
+                        stream.conn.borrow_mut().close(
+                            now,
+                            0x0106,
+                            "http3.invalid_header_field",
+                        );
+                        continue;
+                    }
 
                     let path_hdr = headers.iter().find(|&h| h.name() == ":path");
                     match path_hdr {
@@ -449,8 +482,15 @@ impl HttpServer for Http3TestServer {
                                     .unwrap();
                                 self.new_response(stream, vec![b'a'; 8000], now);
                             } else if path == b"/post" {
-                                // Read all data before responding.
-                                self.posts.insert(stream, 0);
+                                if fin {
+                                    // An empty request body finishes on the
+                                    // HEADERS frame and never fires a Data
+                                    // event, so respond immediately.
+                                    self.respond_to_post(stream, 0, now);
+                                } else {
+                                    // Read all data before responding.
+                                    self.posts.insert(stream, 0);
+                                }
                             } else if path == b"/priority_mirror" {
                                 if let Some(priority) =
                                     headers.iter().find(|h| h.name() == "priority")
@@ -596,16 +636,7 @@ impl HttpServer for Http3TestServer {
                     }
                     if fin {
                         if let Some(r) = self.posts.remove(&stream) {
-                            let default_ret = b"Hello World".to_vec();
-                            stream
-                                .send_headers(&[
-                                    Header::new(":status", "200"),
-                                    Header::new("cache-control", "no-cache"),
-                                    Header::new("x-data-received-length", r.to_string()),
-                                    Header::new("content-length", default_ret.len().to_string()),
-                                ])
-                                .unwrap();
-                            self.new_response(stream, default_ret, now);
+                            self.respond_to_post(stream, r, now);
                         }
                     }
                 }
@@ -1106,6 +1137,7 @@ impl HttpServer for Http3ReverseProxyServer {
         while let Some(event) = self.server.next_event() {
             qtrace!("Event: {:?}", event);
             match event {
+                Http3ServerEvent::OutgoingDatagramSpaceAvailable { .. } => {}
                 Http3ServerEvent::Headers {
                     stream,
                     headers,
@@ -1237,6 +1269,7 @@ impl HttpServer for Http3ConnectProxyServer {
         while let Some(event) = self.server.next_event() {
             qtrace!("Event: {:?}", event);
             match event {
+                Http3ServerEvent::OutgoingDatagramSpaceAvailable { .. } => {}
                 Http3ServerEvent::Headers {
                     stream,
                     headers,
@@ -1638,16 +1671,10 @@ fn spawn_server<S: HttpServer + Unpin + 'static>(
         Ok(s) => s,
     };
 
-    let local_addr = match socket.local_addr() {
-        Err(err) => {
-            eprintln!("Socket local address not bound: {}", err);
-            exit(1)
-        }
-        Ok(s) => s,
-    };
+    let local_addr = socket.local_addr();
 
     task_set
-        .spawn_local(Runner::new(server, Box::new(Instant::now), vec![(local_addr, socket)]).run());
+        .spawn_local(Runner::new(server, Box::new(Instant::now), vec![socket]).run());
     hosts.push(local_addr);
 
     Ok(())
@@ -1852,13 +1879,3 @@ extern "C" fn __tsan_default_suppressions() -> *const std::os::raw::c_char {
     )
     .as_ptr() as *const _
 }
-
-// Work around until we can use raw-dylibs.
-#[cfg_attr(target_os = "windows", link(name = "runtimeobject"))]
-extern "C" {}
-#[cfg_attr(target_os = "windows", link(name = "propsys"))]
-extern "C" {}
-#[cfg_attr(target_os = "windows", link(name = "iphlpapi"))]
-extern "C" {}
-#[cfg_attr(target_os = "windows", link(name = "rpcrt4"))]
-extern "C" {}

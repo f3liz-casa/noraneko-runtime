@@ -82,16 +82,15 @@ elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
         "nsNativeAppSupportCocoa.mm",
         "updaterfileutils_osx.mm",
     ]
-    if CONFIG["NIGHTLY_BUILD"]:
-        XPIDL_SOURCES += [
-            "nsIASWebAuthSessionRequest.idl",
-        ]
-        UNIFIED_SOURCES += [
-            "ASWebAuthSessionHandler.mm",
-        ]
-        OS_LIBS += [
-            "-framework AuthenticationServices",
-        ]
+    XPIDL_SOURCES += [
+        "nsIASWebAuthSessionRequest.idl",
+    ]
+    UNIFIED_SOURCES += [
+        "ASWebAuthSessionHandler.mm",
+    ]
+    OS_LIBS += [
+        "-framework AuthenticationServices",
+    ]
     DEFINES["PROXY_PRINTING"] = 1
     LOCAL_INCLUDES += [
         "../components/printingui",
@@ -208,6 +207,9 @@ for var in (
 
 if CONFIG["MOZ_DEFAULT_BROWSER_AGENT"] and CONFIG["OS_ARCH"] == "WINNT":
     DEFINES["MOZ_DEFAULT_BROWSER_AGENT"] = CONFIG["MOZ_DEFAULT_BROWSER_AGENT"]
+
+if CONFIG["MOZ_PUSH_NOTIFICATION_HELPER"] and CONFIG["OS_ARCH"] == "WINNT":
+    DEFINES["MOZ_PUSH_NOTIFICATION_HELPER"] = CONFIG["MOZ_PUSH_NOTIFICATION_HELPER"]
 
 if CONFIG["MOZ_UPDATER"] and CONFIG["MOZ_WIDGET_TOOLKIT"] != "android":
     DEFINES["MOZ_UPDATER"] = True

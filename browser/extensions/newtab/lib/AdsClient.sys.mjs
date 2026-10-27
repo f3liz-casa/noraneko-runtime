@@ -2,6 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/**
+ * @import {MozAdsCacheConfig, MozAdsCallbackOptions, MozAdsClient, MozAdsRequestOptions, MozAdsTelemetry} from "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustAdsClient.sys.mjs"
+ */
+
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.sys.mjs",
@@ -24,6 +28,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 const PREF_ADSCLIENT_ENABLED = "unifiedAds.adsClient.enabled";
+const PREF_BLOCKED_LIST = "unifiedAds.blockedAds";
+
 const PREF_ADSCLIENT_LOG =
   "browser.newtabpage.activity-stream.unifiedAds.adsClient.log";
 
@@ -75,6 +81,23 @@ export class _AdsClient {
   }
 
   /**
+   * @param {object} prefValues The New Tab store's Prefs.values.
+   * @param {string | Array<string>} additionalBlocks Additional value(s) to add to blocks.
+   * @returns {Array<string>} Trimmed, non-empty, blocked ads.
+   */
+  getBlocks(prefValues, additionalBlocks = []) {
+    return Array.from(
+      new Set(
+        (prefValues[PREF_BLOCKED_LIST] ?? "")
+          .split(",")
+          .concat(additionalBlocks)
+          .map(block => block.trim())
+          .filter(block => Boolean(block))
+      )
+    );
+  }
+
+  /**
    * Build (once) and return the MozAdsClient singleton.
    *
    * @returns {?MozAdsClient} null if the bindings are unavailable.
@@ -104,10 +127,12 @@ export class _AdsClient {
    * configured from prefs, and flags from passed in prefValues.
    *
    * @param {object} prefValues The New Tab store's Prefs.values.
+   * @param {string | Array<string>} additionalBlocks Additional value(s) to add to blocks.
    * @returns {MozAdsRequestOptions}
    */
-  requestOptions(prefValues) {
+  requestOptions(prefValues, additionalBlocks = []) {
     return new lazy.MozAdsRequestOptions({
+      blocks: this.getBlocks(prefValues, additionalBlocks),
       flags: new Map(Object.entries(prefValues?.adsBackendConfig || {})),
       ohttp: this.#configureOhttp(),
     });
@@ -220,7 +245,18 @@ export class _AdsClient {
       }
 
       const builtAdsClient = lazy.MozAdsClientBuilder.init()
-        .environment(lazy.MozAdsEnvironment.PROD)
+        /**
+         * @backward-compat { version 158 }
+         *
+         * The environment constructor depends on the app-services commit.
+         * Once 158 reaches release, this can just be `new
+         * lazy.MozAdsEnvironment.Prod()`
+         */
+        .environment(
+          lazy.MozAdsEnvironment.PROD !== undefined
+            ? lazy.MozAdsEnvironment.PROD
+            : new lazy.MozAdsEnvironment.Prod()
+        )
         .cacheConfig(this.cacheConfig)
         .telemetry(this.buildTelemetry())
         .build();

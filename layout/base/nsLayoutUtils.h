@@ -120,6 +120,9 @@ class WebRenderLayerManager;
 namespace widget {
 enum class TransparencyMode : uint8_t;
 }
+namespace wr {
+class DisplayListBuilder;
+}  // namespace wr
 }  // namespace mozilla
 
 // Flags to customize the behavior of nsLayoutUtils::DrawString.
@@ -1016,7 +1019,7 @@ class nsLayoutUtils {
    * Whether author-specified borders / backgrounds disable theming for a given
    * appearance value.
    */
-  static bool AuthorSpecifiedBorderBackgroundDisablesTheming(
+  static bool AuthorOrUserSpecifiedBorderBackgroundDisablesTheming(
       mozilla::StyleAppearance);
 
   /**
@@ -1749,9 +1752,9 @@ class nsLayoutUtils {
    *   StyleBoxSizing::ContentBox to this function, or to just use the
    *   convenience-wrapper that has "ContentBox" in the function name.
    */
-  static inline nscoord ComputeStretchBSize(
-      nscoord aSizeToFill, nscoord aMargin, nscoord aBorderPadding,
-      mozilla::StyleBoxSizing aBoxSizing) {
+  static inline nscoord ComputeStretchSize(nscoord aSizeToFill, nscoord aMargin,
+                                           nscoord aBorderPadding,
+                                           mozilla::StyleBoxSizing aBoxSizing) {
     NS_ASSERTION(aSizeToFill != NS_UNCONSTRAINEDSIZE,
                  "We don't handle situations with unconstrained "
                  "aSizeToFill; caller should handle that!");
@@ -1765,16 +1768,15 @@ class nsLayoutUtils {
   static inline nscoord ComputeStretchContentBoxBSize(nscoord aSizeToFill,
                                                       nscoord aMargin,
                                                       nscoord aBorderPadding) {
-    return ComputeStretchBSize(aSizeToFill, aMargin, aBorderPadding,
-                               mozilla::StyleBoxSizing::ContentBox);
+    return ComputeStretchSize(aSizeToFill, aMargin, aBorderPadding,
+                              mozilla::StyleBoxSizing::ContentBox);
   }
   // Similar to the above convenience-wrapper, but now for inline-axis.
-  // TODO(dholbert): would it be useful to add a box-sizing-aware version of
-  // this API for the inline axis too, like we've got for the block axis?
   static inline nscoord ComputeStretchContentBoxISize(nscoord aSizeToFill,
                                                       nscoord aMargin,
                                                       nscoord aBorderPadding) {
-    return std::max(0, aSizeToFill - aMargin - aBorderPadding);
+    return ComputeStretchSize(aSizeToFill, aMargin, aBorderPadding,
+                              mozilla::StyleBoxSizing::ContentBox);
   }
 
   /**
@@ -2187,13 +2189,18 @@ class nsLayoutUtils {
   /**
    * Given the image container, frame, and dest rect, determine the best fitting
    * size to decode the image at, and calculate any necessary SVG parameters.
+   * aRasterizedForDest, if given, is set when the returned size is the dest
+   * rect's own snapped device size, so a surface of that size is meant to be
+   * drawn 1:1 in the dest rect rather than scaled to it.
    */
   static mozilla::gfx::IntSize ComputeImageContainerDrawingParameters(
       imgIContainer* aImage, nsIFrame* aForFrame,
       const LayoutDeviceRect& aDestRect, const LayoutDeviceRect& aFillRect,
+      mozilla::wr::DisplayListBuilder& aBuilder,
       const StackingContextHelper& aSc, uint32_t aFlags,
       mozilla::SVGImageContext& aSVGContext,
-      mozilla::Maybe<mozilla::image::ImageIntRegion>& aRegion);
+      mozilla::Maybe<mozilla::image::ImageIntRegion>& aRegion,
+      bool* aRasterizedForDest = nullptr);
 
   /**
    * Given a source area of an image (in appunits) and a destination area
@@ -2399,7 +2406,7 @@ class nsLayoutUtils {
   // This function can be called on any thread.
   static mozilla::SurfaceFromElementResult SurfaceFromVideoFrame(
       mozilla::dom::VideoFrame* aVideoFrame, uint32_t aSurfaceFlags,
-      RefPtr<DrawTarget>& aTarget);
+      RefPtr<DrawTarget>& aTarget, bool aOptimizeSourceSurface = true);
   static mozilla::SurfaceFromElementResult SurfaceFromVideoFrame(
       mozilla::dom::VideoFrame* aVideoFrame, uint32_t aSurfaceFlags = 0) {
     RefPtr<DrawTarget> target = nullptr;

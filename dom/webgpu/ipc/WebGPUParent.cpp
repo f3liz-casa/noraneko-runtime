@@ -258,7 +258,7 @@ extern void wgpu_parent_buffer_unmap(WGPUWebGPUParentPtr aParent,
 }
 
 extern void wgpu_parent_queue_submit(
-    WGPUWebGPUParentPtr aParent, WGPUDeviceId aDeviceId, WGPUQueueId aQueueId,
+    WGPUWebGPUParentPtr aParent, WGPUQueueId aQueueId,
     const WGPUCommandBufferId* aCommandBufferIds,
     uintptr_t aCommandBufferIdsLength, const WGPUTextureId* aTextureIds,
     uintptr_t aTextureIdsLength,
@@ -269,7 +269,7 @@ extern void wgpu_parent_queue_submit(
   auto textures = Span(aTextureIds, aTextureIdsLength);
   auto externalTextureSources =
       Span(aExternalTextureSourceIds, aExternalTextureSourceIdsLength);
-  parent->QueueSubmit(aQueueId, aDeviceId, command_buffers, textures,
+  parent->QueueSubmit(aQueueId, command_buffers, textures,
                       externalTextureSources);
 }
 
@@ -610,7 +610,7 @@ void WebGPUParent::BufferUnmap(RawId aDeviceId, RawId aBufferId, bool aFlush) {
     }
   }
 
-  ffi::wgpu_server_buffer_unmap(mContext.get(), aBufferId, mapData->mIsMapped);
+  ffi::wgpu_server_buffer_unmap(mContext.get(), aBufferId);
 
   mapData->mMappedOffset = 0;
   mapData->mMappedSize = 0;
@@ -662,7 +662,7 @@ void WebGPUParent::DropExternalTextureSource(RawId aSourceId) {
   }
 }
 
-void WebGPUParent::QueueSubmit(RawId aQueueId, RawId aDeviceId,
+void WebGPUParent::QueueSubmit(RawId aQueueId,
                                Span<const RawId> aCommandBuffers,
                                Span<const RawId> aTextureIds,
                                Span<const RawId> aExternalTextureSourceIds) {
@@ -670,7 +670,7 @@ void WebGPUParent::QueueSubmit(RawId aQueueId, RawId aDeviceId,
     auto it = mExternalTextureSources.find(sourceId);
     if (it != mExternalTextureSources.end()) {
       auto& source = it->second;
-      if (!source.OnBeforeQueueSubmit(this, aDeviceId, aQueueId)) {
+      if (!source.OnBeforeQueueSubmit(this, aQueueId)) {
         // If the above call failed we cannot submit the command buffers, as
         // it would be invalid to read from the external textures.
         return;
@@ -686,13 +686,13 @@ void WebGPUParent::QueueSubmit(RawId aQueueId, RawId aDeviceId,
     auto it = mSharedTextures.find(textureId);
     if (it != mSharedTextures.end()) {
       auto& sharedTexture = it->second;
-      sharedTexture->onBeforeQueueSubmit(mContext.get(), aDeviceId, aQueueId,
+      sharedTexture->onBeforeQueueSubmit(mContext.get(), aQueueId,
                                          signalSemaphores);
     }
   }
 
   auto index = ffi::wgpu_server_queue_submit(
-      mContext.get(), aDeviceId, aQueueId,
+      mContext.get(), aQueueId,
       {aCommandBuffers.Elements(), aCommandBuffers.Length()},
       {signalSemaphores.Elements(), signalSemaphores.Length()});
   // Check if index is valid. 0 means error.
@@ -908,7 +908,7 @@ static void ReadbackPresentCallback(uint8_t* userdata,
       NS_WARNING("WebGPU present skipped: the swapchain is resized!");
     }
 
-    wgpu_server_buffer_unmap(req->mContext, bufferId, true);
+    wgpu_server_buffer_unmap(req->mContext, bufferId);
   } else {
     // TODO: better handle errors
     NS_WARNING("WebGPU frame mapping failed!");
@@ -990,7 +990,7 @@ static void ReadbackSnapshotCallback(uint8_t* userdata,
     dst += req->mDestStride;
   }
 
-  wgpu_server_buffer_unmap(req->mContext, req->mBufferId, true);
+  wgpu_server_buffer_unmap(req->mContext, req->mBufferId);
 }
 
 ipc::IPCResult WebGPUParent::GetFrontBufferSnapshot(
@@ -1283,8 +1283,8 @@ void WebGPUParent::SwapChainPresent(
 
   data->mQueuedBufferIds.insert(data->mQueuedBufferIds.begin(), bufferId);
 
-  ffi::wgpu_server_buffer_map(mContext.get(), data->mDeviceId, bufferId, 0,
-                              bufferSize, ffi::WGPUHostMap_Read, closure);
+  ffi::wgpu_server_buffer_map(mContext.get(), bufferId, 0, bufferSize,
+                              ffi::WGPUHostMap_Read, closure);
   // bufferId was transferred to ReadbackPresentCallback.
   bufferId = 0;
 }

@@ -6,10 +6,8 @@ import os
 
 config = {
     "default_actions": [
-        "clobber",
         "build",
     ],
-    "stage_platform": "win32-debug",
     "debug_build": True,
     #### 32 bit build specific #####
     "env": {
@@ -23,6 +21,5 @@ config = {
         "TOOLTOOL_CACHE": "c:/builds/tooltool_cache",
         "TOOLTOOL_HOME": "/c/builds",
     },
-    "mozconfig_variant": "debug",
     #######################
 }

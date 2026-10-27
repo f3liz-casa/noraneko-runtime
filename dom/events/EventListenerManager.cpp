@@ -434,11 +434,6 @@ void EventListenerManager::AddEventListenerInternal(
           window->SetHasMouseEnterLeaveEventListeners();
         }
         break;
-      case eEditorBeforeInput:
-        if (nsPIDOMWindowInner* window = GetInnerWindowForTarget()) {
-          window->SetHasBeforeInputEventListenersForTelemetry();
-        }
-        break;
       case eSelectionChange:
         mMayHaveSelectionChangeEventListener = true;
         if (nsPIDOMWindowInner* window = GetInnerWindowForTarget()) {
@@ -559,10 +554,6 @@ void EventListenerManager::AddEventListenerInternal(
                                      ToChar(resolvedEventMessage))
                          .get());
         NS_ASSERTION(aTypeAtom != nsGkAtoms::onmouseleave,
-                     nsPrintfCString("resolvedEventMessage=%s",
-                                     ToChar(resolvedEventMessage))
-                         .get());
-        NS_ASSERTION(aTypeAtom != nsGkAtoms::onbeforeinput,
                      nsPrintfCString("resolvedEventMessage=%s",
                                      ToChar(resolvedEventMessage))
                          .get());
@@ -1090,7 +1081,20 @@ nsresult EventListenerManager::SetEventHandler(nsAtom* aName,
                                                aPermitUntrustedEvents);
 
   if (!aDeferCompilation) {
-    return CompileEventHandlerInternal(listener, aName, &aBody, aElement);
+    if (nsContentUtils::IsSafeToRunScript()) [[likely]] {
+      return CompileEventHandlerInternal(listener, aName, &aBody, aElement);
+    }
+    // Scripts are blocked (e.g. inside CloneAndAdopt or AfterSetAttr).
+    nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
+        "EventListenerManager::DeferredCompileEventHandler",
+        [self = RefPtr{this}, typeAtom = RefPtr{aName}, body = nsString(aBody),
+         element = RefPtr{aElement}]() {
+          Listener* listener = self->FindEventHandler(typeAtom);
+          if (listener && listener->mHandlerIsString) {
+            self->CompileEventHandlerInternal(listener, typeAtom, &body,
+                                              element);
+          }
+        }));
   }
 
   return NS_OK;

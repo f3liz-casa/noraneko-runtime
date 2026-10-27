@@ -912,13 +912,47 @@ CoderResult CodeCustomSection(Coder<mode>& coder,
   return Ok();
 }
 
+template <CoderMode mode, typename MapT,
+          typename = std::enable_if_t<mode == MODE_DECODE>>
+CoderResult CodeNameMap(Coder<mode>& coder, MapT* item) {
+  size_t length;
+  MOZ_TRY(CodePod(coder, &length));
+  if (!item->reserve(length)) {
+    return Err(OutOfMemory());
+  }
+  for (size_t i = 0; i < length; i++) {
+    typename MapT::Entry::KeyType key;
+    typename MapT::Entry::ValueType value;
+    MOZ_TRY(CodePod(coder, &key));
+    MOZ_TRY(CodePod(coder, &value));
+    if (!item->putNew(key, value)) {
+      return Err(OutOfMemory());
+    }
+  }
+  return Ok();
+}
+
+template <CoderMode mode, typename MapT,
+          typename = std::enable_if_t<mode != MODE_DECODE>>
+CoderResult CodeNameMap(Coder<mode>& coder, const MapT* item) {
+  STATIC_ASSERT_ENCODING_OR_SIZING;
+
+  const size_t length = item->count();
+  MOZ_TRY(CodePod(coder, &length));
+  for (auto iter = item->iter(); !iter.done(); iter.next()) {
+    MOZ_TRY(CodePod(coder, &iter.get().key()));
+    MOZ_TRY(CodePod(coder, &iter.get().value()));
+  }
+  return Ok();
+}
+
 template <CoderMode mode>
 CoderResult CodeNameSection(Coder<mode>& coder,
                             CoderArg<mode, NameSection> item) {
   WASM_VERIFY_SERIALIZATION_FOR_SIZE(wasm::NameSection, 56);
   MOZ_TRY(CodePod(coder, &item->customSectionIndex));
   MOZ_TRY(CodePod(coder, &item->moduleName));
-  MOZ_TRY(CodePodVector(coder, &item->funcNames));
+  MOZ_TRY(CodeNameMap(coder, &item->funcNames));
   // We do not serialize `payload` because the ModuleMetadata will do that for
   // us.
   return Ok();
@@ -1392,9 +1426,9 @@ CoderResult CodeCodeBlock(Coder<mode>& coder,
 CoderResult CodeSharedCode(Coder<MODE_DECODE>& coder, wasm::SharedCode* item,
                            const wasm::ModuleMetadata& moduleMeta) {
 #ifdef ENABLE_WASM_JSPI
-  WASM_VERIFY_SERIALIZATION_FOR_SIZE(wasm::Code, 1008);
+  WASM_VERIFY_SERIALIZATION_FOR_SIZE(wasm::Code, 1016);
 #else
-  WASM_VERIFY_SERIALIZATION_FOR_SIZE(wasm::Code, 968);
+  WASM_VERIFY_SERIALIZATION_FOR_SIZE(wasm::Code, 976);
 #endif
 
   FuncImportVector funcImports;
@@ -1467,9 +1501,9 @@ template <CoderMode mode>
 CoderResult CodeSharedCode(Coder<mode>& coder,
                            CoderArg<mode, wasm::SharedCode> item) {
 #ifdef ENABLE_WASM_JSPI
-  WASM_VERIFY_SERIALIZATION_FOR_SIZE(wasm::Code, 1008);
+  WASM_VERIFY_SERIALIZATION_FOR_SIZE(wasm::Code, 1016);
 #else
-  WASM_VERIFY_SERIALIZATION_FOR_SIZE(wasm::Code, 968);
+  WASM_VERIFY_SERIALIZATION_FOR_SIZE(wasm::Code, 976);
 #endif
   STATIC_ASSERT_ENCODING_OR_SIZING;
   // Don't encode the CodeMetadata or CodeTailMetadata, that is handled by

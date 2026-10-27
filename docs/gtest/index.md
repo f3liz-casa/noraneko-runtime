@@ -81,7 +81,7 @@ GTEST_FILTER='AsyncPanZoom*' MOZ_RUN_GTEST=1 ./mach run --debug [--debugger gdb]
 
 ### Debugging with Xcode
 
-See {ref}`Debugging On macOS` for initial
+See {doc}`/contributing/debugging/debugging_on_macos` for initial
 setup. You'll likely want to create a separate scheme for running GTest
 ("Product" > "Scheme" > "New Scheme…"). In addition to GTEST_FILTER, Set
 the following environment variables:
@@ -145,7 +145,7 @@ tear down any dependencies you have in your test fixtures. Avoid
 writing integration tests and focus on testing individual units.
 :::
 
-See https://hg.mozilla.org/mozilla-central/rev/ed612eec41a44867a for an
+See <https://hg.mozilla.org/mozilla-central/rev/ed612eec41a44867a> for an
 example of how to add a simple test.
 
 If you're converting an existing C++ unit test to a GTest, [this

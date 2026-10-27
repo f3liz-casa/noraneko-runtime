@@ -20,14 +20,14 @@ use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use crate::display_item as di;
 use crate::{APZScrollGeneration, HasScrollLinkedEffect, PipelineId, PropertyBinding};
 use crate::gradient_builder::GradientBuilder;
-use crate::color::ColorF;
+use crate::color::{ColorF, ColorU};
 use crate::font::{FontInstanceKey, GlyphInstance, GlyphOptions};
 use crate::image::{ColorDepth, ImageKey};
-use crate::key_types::EdgeMask;
-use crate::key_types::GradientStopKey;
+use crate::interning::{self, DlDelta};
+use crate::key_types::{EdgeMask, GradientStopKey, StretchSizeKey};
 use crate::prim_geometry::{
-    apply_gradient_local_clip, optimize_linear_gradient, optimize_radial_gradient,
-    resolve_tile_size, simplify_repeated_primitive,
+    apply_gradient_local_clip, image_stretch_size, optimize_linear_gradient,
+    optimize_radial_gradient, resolve_tile_size, simplify_repeated_primitive,
 };
 use crate::units::*;
 
@@ -35,6 +35,22 @@ use crate::units::*;
 // We don't want to push a long text-run. If a text-run is too long, split it into several parts.
 // This needs to be set to (renderer::MAX_VERTEX_TEXTURE_WIDTH - VECS_PER_TEXT_RUN) * 2
 pub const MAX_TEXT_RUN_LENGTH: usize = 2040;
+
+/// Whether an item of this colour draws anything. Tested on the quantized
+/// colour, which is what the scene builder's primitive data holds, so this
+/// is the same predicate it applies.
+fn color_is_visible(color: ColorF) -> bool {
+    ColorU::from(color).a > 0
+}
+
+/// A rectangle with an animated colour is taken to be visible, since the
+/// binding resolves at frame time.
+fn rect_is_visible(color: &PropertyBinding<ColorF>) -> bool {
+    match *color {
+        PropertyBinding::Value(color) => color_is_visible(color),
+        PropertyBinding::Binding(..) => true,
+    }
+}
 
 // See ROOT_REFERENCE_FRAME_SPATIAL_ID and ROOT_SCROLL_NODE_SPATIAL_ID
 // TODO(mrobinson): It would be a good idea to eliminate the root scroll frame which is only
@@ -124,6 +140,11 @@ pub struct DisplayListPayload {
 
     /// Serde encoded SpatialTreeItem structs
     pub spatial_tree: Vec<u8>,
+
+    /// The build's interner delta, encoded only when the list has to cross a
+    /// process boundary. Empty in process, where `BuiltDisplayList::delta`
+    /// carries it directly; see `BuiltDisplayList::into_data`.
+    pub interner_delta: Vec<u8>,
 }
 
 impl DisplayListPayload {
@@ -131,6 +152,7 @@ impl DisplayListPayload {
         DisplayListPayload {
             items_data: Vec::new(),
             spatial_tree: Vec::new(),
+            interner_delta: Vec::new(),
         }
     }
 
@@ -156,7 +178,8 @@ impl DisplayListPayload {
 
     fn size_in_bytes(&self) -> usize {
         self.items_data.len() +
-        self.spatial_tree.len()
+        self.spatial_tree.len() +
+        self.interner_delta.len()
     }
 
     #[cfg(feature = "serialize")]
@@ -174,7 +197,8 @@ impl DisplayListPayload {
 impl MallocSizeOf for DisplayListPayload {
     fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
         self.items_data.size_of(ops) +
-        self.spatial_tree.size_of(ops)
+        self.spatial_tree.size_of(ops) +
+        self.interner_delta.size_of(ops)
     }
 }
 
@@ -183,6 +207,10 @@ impl MallocSizeOf for DisplayListPayload {
 pub struct BuiltDisplayList {
     payload: DisplayListPayload,
     descriptor: BuiltDisplayListDescriptor,
+    /// What this build did to the builder's interners. The receiver has to
+    /// apply it to its stores before it can resolve any handle in `payload`,
+    /// including ones minted by earlier builds that this list still references.
+    delta: DlDelta,
 }
 
 impl MallocSizeOf for BuiltDisplayList {
@@ -326,7 +354,6 @@ impl<'de> Deserialize<'de> for BuiltDisplayList {
                 Debug::HitTest(v) => Real::HitTest(v),
                 Debug::Line(v) => Real::Line(v),
                 Debug::Image(v) => Real::Image(v),
-                Debug::RepeatingImage(v) => Real::RepeatingImage(v),
                 Debug::YuvImage(v) => Real::YuvImage(v),
                 Debug::Border(v) => Real::Border(v),
                 Debug::BoxShadow(v) => Real::BoxShadow(v),
@@ -355,7 +382,13 @@ impl<'de> Deserialize<'de> for BuiltDisplayList {
             payload: DisplayListPayload {
                 items_data,
                 spatial_tree,
+                interner_delta: Vec::new(),
             },
+            // A capture records one build's delta, but the list can reference
+            // handles interned by earlier builds, so replaying needs the store
+            // contents rather than a delta. Empty until captures carry the
+            // stores.
+            delta: DlDelta::default(),
         })
     }
 }
@@ -495,18 +528,45 @@ pub struct AuxIter<'a, T> {
 }
 
 impl BuiltDisplayList {
+    /// Reconstruct a list from the buffers it was sent as. The inverse of
+    /// `into_data`, and the only path that decodes the interner delta.
     pub fn from_data(
         payload: DisplayListPayload,
         descriptor: BuiltDisplayListDescriptor,
     ) -> Self {
+        let delta = if payload.interner_delta.is_empty() {
+            DlDelta::default()
+        } else {
+            bincode::deserialize(&payload.interner_delta)
+                .expect("corrupt display list interner delta")
+        };
+
         BuiltDisplayList {
             payload,
             descriptor,
+            delta,
         }
     }
 
-    pub fn into_data(self) -> (DisplayListPayload, BuiltDisplayListDescriptor) {
+    /// Take the list apart into the buffers that cross a process boundary.
+    ///
+    /// The interner delta is encoded here rather than in `end`, so that a
+    /// consumer in the same process (wrench, and the parent-side pipelines) is
+    /// handed `delta` directly and pays nothing for a round trip it does not
+    /// need. A delta that asks for nothing is still encoded: it carries the
+    /// build number, and builds have to stay contiguous for the receiver to
+    /// tell an idle build from a lost one. Dropping it would make the next
+    /// non-empty delta look out of sequence.
+    pub fn into_data(mut self) -> (DisplayListPayload, BuiltDisplayListDescriptor) {
+        self.payload.interner_delta = bincode::serialize(&self.delta)
+            .expect("failed to encode display list interner delta");
+
         (self.payload, self.descriptor)
+    }
+
+    /// This build's interner delta. See the field.
+    pub fn delta(&self) -> &DlDelta {
+        &self.delta
     }
 
     pub fn items_data(&self) -> &[u8] {
@@ -616,7 +676,6 @@ impl BuiltDisplayList {
                 Real::HitTest(v) => Debug::HitTest(v),
                 Real::Line(v) => Debug::Line(v),
                 Real::Image(v) => Debug::Image(v),
-                Real::RepeatingImage(v) => Debug::RepeatingImage(v),
                 Real::YuvImage(v) => Debug::YuvImage(v),
                 Real::Border(v) => Debug::Border(v),
                 Real::BoxShadow(v) => Debug::BoxShadow(v),
@@ -1090,6 +1149,11 @@ pub struct DisplayListBuilder {
     /// `Screen` base. Resolving here rather than in the scene builder means one
     /// stack instead of two that have to agree.
     raster_space_stack: Vec<di::RasterSpace>,
+    /// Everything the `push_*` functions intern. Deliberately *not* cleared
+    /// by `reset`: retaining it across builds is what lets an unchanged item
+    /// keep its handle and stay off the wire entirely. See
+    /// [`crate::interning`].
+    interners: interning::DlInterners,
 }
 
 /// A shadow declared by `push_shadow`, awaiting desugaring at `pop_all_shadows`.
@@ -1137,6 +1201,7 @@ impl DisplayListBuilder {
             shadow_capture: Vec::new(),
             pending_shadows: Vec::new(),
             raster_space_stack: vec![di::RasterSpace::Screen],
+            interners: interning::DlInterners::default(),
         }
     }
 
@@ -1157,6 +1222,8 @@ impl DisplayListBuilder {
 
         self.raster_space_stack.clear();
         self.raster_space_stack.push(di::RasterSpace::Screen);
+
+        // `interners` is intentionally left alone - see its declaration.
     }
 
     /// Saves the current display list state, so it may be `restore()`'d.
@@ -1370,14 +1437,7 @@ impl DisplayListBuilder {
         bounds: LayoutRect,
         color: ColorF,
     ) {
-        let (common, offset) = self.normalize_common(common);
-        let item = di::DisplayItem::Rectangle(di::RectangleDisplayItem {
-            common,
-            color: PropertyBinding::Value(color),
-            bounds: self.shift_rect(bounds, offset),
-            transformed_aa_edges: EdgeMask::all(),
-        });
-        self.push_item(&item);
+        self.push_rect_with_animation(common, bounds, PropertyBinding::Value(color));
     }
 
     pub fn push_rect_with_animation(
@@ -1387,13 +1447,39 @@ impl DisplayListBuilder {
         color: PropertyBinding<ColorF>,
     ) {
         let (common, offset) = self.normalize_common(common);
-        let item = di::DisplayItem::Rectangle(di::RectangleDisplayItem {
-            common,
+        let bounds = self.shift_rect(bounds, offset);
+        self.push_rect_prim(&common, bounds, color, EdgeMask::all());
+    }
+
+    /// Record a rectangle whose `common` and `bounds` are already normalised.
+    /// Every rectangle item goes through here, so this is the one place the
+    /// visibility test lives.
+    fn push_rect_prim(
+        &mut self,
+        common: &di::CommonItemProperties,
+        bounds: LayoutRect,
+        color: PropertyBinding<ColorF>,
+        transformed_aa_edges: EdgeMask,
+    ) {
+        // A fully transparent rectangle draws nothing, so drop it here rather
+        // than have the scene builder discover it. Two exceptions: inside a
+        // shadow scope it is still captured so `pop_all_shadows` can copy it
+        // in the shadow's colour (the original re-emission drops it again), and
+        // a checkerboard background still marks a tile cache barrier whatever
+        // its colour.
+        if !rect_is_visible(&color)
+            && self.pending_shadows.is_empty()
+            && !common.flags.contains(di::PrimitiveFlags::CHECKERBOARD_BACKGROUND)
+        {
+            return;
+        }
+
+        self.push_item(&di::DisplayItem::Rectangle(di::RectangleDisplayItem {
+            common: *common,
             color,
-            bounds: self.shift_rect(bounds, offset),
-            transformed_aa_edges: EdgeMask::all(),
-        });
-        self.push_item(&item);
+            bounds,
+            transformed_aa_edges,
+        }));
     }
 
     pub fn push_hit_test(
@@ -1423,6 +1509,11 @@ impl DisplayListBuilder {
         color: &ColorF,
         style: di::LineStyle,
     ) {
+        // Same shadow-scope exception as `push_text`.
+        if !color_is_visible(*color) && self.pending_shadows.is_empty() {
+            return;
+        }
+
         let (common, offset) = self.normalize_common(common);
         let area = self.shift_rect(*area, offset);
 
@@ -1447,17 +1538,16 @@ impl DisplayListBuilder {
         key: ImageKey,
         color: ColorF,
     ) {
-        let (common, offset) = self.normalize_common(common);
-        let item = di::DisplayItem::Image(di::ImageDisplayItem {
+        self.push_image_prim(
             common,
-            bounds: self.shift_rect(bounds, offset),
-            image_key: key,
+            bounds,
+            StretchSizeKey::fills_prim(),
+            LayoutSize::zero(),
             image_rendering,
             alpha_type,
+            key,
             color,
-        });
-
-        self.push_item(&item);
+        );
     }
 
     pub fn push_repeating_image(
@@ -1471,13 +1561,37 @@ impl DisplayListBuilder {
         key: ImageKey,
         color: ColorF,
     ) {
+        self.push_image_prim(
+            common,
+            bounds,
+            image_stretch_size(&bounds, stretch_size),
+            tile_spacing,
+            image_rendering,
+            alpha_type,
+            key,
+            color,
+        );
+    }
+
+    /// The one item both image pushes produce.
+    fn push_image_prim(
+        &mut self,
+        common: &di::CommonItemProperties,
+        bounds: LayoutRect,
+        stretch_size: StretchSizeKey,
+        tile_spacing: LayoutSize,
+        image_rendering: di::ImageRendering,
+        alpha_type: di::AlphaType,
+        key: ImageKey,
+        color: ColorF,
+    ) {
         let (common, offset) = self.normalize_common(common);
-        let item = di::DisplayItem::RepeatingImage(di::RepeatingImageDisplayItem {
+        let item = di::DisplayItem::Image(di::ImageDisplayItem {
             common,
             bounds: self.shift_rect(bounds, offset),
-            image_key: key,
             stretch_size,
             tile_spacing,
+            image_key: key,
             image_rendering,
             alpha_type,
             color,
@@ -1519,6 +1633,15 @@ impl DisplayListBuilder {
         color: ColorF,
         glyph_options: Option<GlyphOptions>,
     ) {
+        // Fully transparent text draws nothing. The exception is a shadow
+        // scope: an invisible original can still cast a visible shadow (CSS
+        // `color: transparent` with a `text-shadow`), so the item is still
+        // captured for `pop_all_shadows` to copy; the original re-emission
+        // there drops it.
+        if !color_is_visible(color) && self.pending_shadows.is_empty() {
+            return;
+        }
+
         let (common, offset) = self.normalize_common(common);
         let item = di::DisplayItem::Text(di::TextDisplayItem {
             common,
@@ -1567,8 +1690,8 @@ impl DisplayListBuilder {
     /// pushed strictly one at a time. Handing them back removes that hazard.
     pub fn create_gradient(
         &mut self,
-        start_point: LayoutPoint,
-        end_point: LayoutPoint,
+        start_point: LayoutVector2D,
+        end_point: LayoutVector2D,
         stops: Vec<di::GradientStop>,
         extend_mode: di::ExtendMode,
     ) -> (di::Gradient, Vec<di::GradientStop>) {
@@ -1580,7 +1703,7 @@ impl DisplayListBuilder {
     /// See [`create_gradient`](#method.create_gradient).
     pub fn create_radial_gradient(
         &mut self,
-        center: LayoutPoint,
+        center: LayoutVector2D,
         radius: LayoutSize,
         stops: Vec<di::GradientStop>,
         extend_mode: di::ExtendMode,
@@ -1593,7 +1716,7 @@ impl DisplayListBuilder {
     /// See [`create_gradient`](#method.create_gradient).
     pub fn create_conic_gradient(
         &mut self,
-        center: LayoutPoint,
+        center: LayoutVector2D,
         angle: f32,
         stops: Vec<di::GradientStop>,
         extend_mode: di::ExtendMode,
@@ -1816,6 +1939,7 @@ impl DisplayListBuilder {
                         mode: ClipMode::ClipOut,
                     },
                     0.0,
+                    false,
                 ));
 
                 (shadow_rect, shadow_radius, shadow_inset)
@@ -1831,6 +1955,7 @@ impl DisplayListBuilder {
                             mode: ClipMode::ClipOut,
                         },
                         spread_radius,
+                        false,
                     ));
                 }
 
@@ -1848,6 +1973,7 @@ impl DisplayListBuilder {
                 mode: ClipMode::Clip,
             },
             0.0,
+            false,
         ));
 
         // Chain the shaping clips on top of the item's own clip chain.
@@ -1900,8 +2026,8 @@ impl DisplayListBuilder {
 
         let mut tile_size = resolve_tile_size(&bounds, tile_size);
 
-        let mut start = gradient.start_point;
-        let mut end = gradient.end_point;
+        let mut start = gradient.start;
+        let mut end = gradient.end;
         // The simplification and clip pass. The fast-path two-stop segment
         // decomposition is not done here: it happens at prepare time, so
         // segments tile against the snapped prim rect (see
@@ -1925,8 +2051,8 @@ impl DisplayListBuilder {
             common,
             bounds,
             gradient: di::Gradient {
-                start_point: start,
-                end_point: end,
+                start,
+                end,
                 ..gradient
             },
             tile_size,
@@ -1983,14 +2109,16 @@ impl DisplayListBuilder {
             gradient.extend_mode,
             &stop_keys,
             &mut |solid_rect, color, aa_mask| {
-                // Pushed before the gradient, and unconditionally: a gradient
-                // that optimizes away entirely is all margin.
-                self.push_item(&di::DisplayItem::Rectangle(di::RectangleDisplayItem {
-                    common,
-                    bounds: *solid_rect,
-                    color: PropertyBinding::Value(color.into()),
-                    transformed_aa_edges: aa_mask,
-                }));
+                // Pushed before the gradient, and whether or not the gradient
+                // itself survives the empty-tile reject below: a gradient that
+                // optimizes away entirely is all margin. A transparent margin
+                // is dropped like any other transparent rectangle.
+                self.push_rect_prim(
+                    &common,
+                    *solid_rect,
+                    PropertyBinding::Value(color.into()),
+                    aa_mask,
+                );
             },
         );
 
@@ -2342,6 +2470,20 @@ impl DisplayListBuilder {
         offset
     }
 
+    /// The accumulated external scroll offset for `spatial_id`, in this list's
+    /// pixels: what `normalize_rect` adds to an item to move it from the
+    /// pre-scrolled coordinates it was authored in to the scroll-invariant ones
+    /// it is snapped in. Lets an embedder that predicts that snapping use the
+    /// same accumulation rather than re-derive it.
+    pub fn accumulated_scroll_offset_px(
+        &mut self,
+        spatial_id: di::SpatialId,
+    ) -> LayoutVector2D {
+        let offset = self.accumulated_scroll_offset(spatial_id);
+        let grid = self.au_grid;
+        LayoutVector2D::new(grid.from_au(offset.x as f64), grid.from_au(offset.y as f64))
+    }
+
     /// Record the accumulated external scroll offset for a freshly-defined
     /// spatial node.
     fn record_scroll_offset(&mut self, spatial_id: di::SpatialId, offset: AuOffset) {
@@ -2484,12 +2626,32 @@ impl DisplayListBuilder {
         spatial_id: di::SpatialId,
         clip_rect: LayoutRect,
     ) -> di::ClipId {
+        self.define_clip_rect_impl(spatial_id, clip_rect, false)
+    }
+
+    /// As `define_clip_rect`, but the clip is not snapped to the device pixel
+    /// grid (see `RectClipDisplayItem::anti_aliased`).
+    pub fn define_anti_aliased_clip_rect(
+        &mut self,
+        spatial_id: di::SpatialId,
+        clip_rect: LayoutRect,
+    ) -> di::ClipId {
+        self.define_clip_rect_impl(spatial_id, clip_rect, true)
+    }
+
+    fn define_clip_rect_impl(
+        &mut self,
+        spatial_id: di::SpatialId,
+        clip_rect: LayoutRect,
+        anti_aliased: bool,
+    ) -> di::ClipId {
         let id = self.generate_clip_index();
 
         let item = di::DisplayItem::RectClip(di::RectClipDisplayItem {
             id,
             spatial_id,
             clip_rect: self.normalize_rect(clip_rect, spatial_id),
+            anti_aliased,
         });
 
         self.push_item(&item);
@@ -2501,7 +2663,17 @@ impl DisplayListBuilder {
         spatial_id: di::SpatialId,
         clip: di::ComplexClipRegion,
     ) -> di::ClipId {
-        self.define_clip_rounded_rect_impl(spatial_id, clip, 0.0)
+        self.define_clip_rounded_rect_impl(spatial_id, clip, 0.0, false)
+    }
+
+    /// As `define_clip_rounded_rect`, but the clip is not snapped to the device
+    /// pixel grid (see `RectClipDisplayItem::anti_aliased`).
+    pub fn define_anti_aliased_clip_rounded_rect(
+        &mut self,
+        spatial_id: di::SpatialId,
+        clip: di::ComplexClipRegion,
+    ) -> di::ClipId {
+        self.define_clip_rounded_rect_impl(spatial_id, clip, 0.0, true)
     }
 
     /// As `define_clip_rounded_rect`, but with a `snap_outset` for the internal
@@ -2511,6 +2683,7 @@ impl DisplayListBuilder {
         spatial_id: di::SpatialId,
         mut clip: di::ComplexClipRegion,
         snap_outset: f32,
+        anti_aliased: bool,
     ) -> di::ClipId {
         let id = self.generate_clip_index();
 
@@ -2521,6 +2694,7 @@ impl DisplayListBuilder {
             spatial_id,
             clip,
             snap_outset,
+            anti_aliased,
         });
 
         self.push_item(&item);
@@ -2720,8 +2894,23 @@ impl DisplayListBuilder {
                 None,
             );
 
+            // A transparent shadow colour makes every text, rectangle and
+            // line copy invisible; images and borders take it as a tint and
+            // still draw.
+            let copies_visible = color_is_visible(s.color);
+
             for p in &parsed {
                 if let Parsed::Draw(entry) = p {
+                    if !copies_visible
+                        && matches!(
+                            entry.item,
+                            di::DisplayItem::Text(..)
+                                | di::DisplayItem::Rectangle(..)
+                                | di::DisplayItem::Line(..)
+                        )
+                    {
+                        continue;
+                    }
                     if let Some(copy) = Self::shadow_copy_of_item(
                         &entry.item,
                         s.offset,
@@ -2740,8 +2929,19 @@ impl DisplayListBuilder {
         }
 
         // 3. The original (unshadowed) content, drawn on top of the shadows.
+        //    An invisible original was captured only so it could cast a shadow.
         for p in &parsed {
             if let Parsed::Draw(entry) = p {
+                let visible = match entry.item {
+                    di::DisplayItem::Text(ref info) => color_is_visible(info.color),
+                    di::DisplayItem::Rectangle(ref info) => rect_is_visible(&info.color),
+                    di::DisplayItem::Line(ref info) => color_is_visible(info.color),
+                    _ => true,
+                };
+                if !visible {
+                    continue;
+                }
+
                 self.push_item(&entry.item);
                 if matches!(entry.item, di::DisplayItem::Text(..)) {
                     self.push_iter(&entry.glyphs);
@@ -2839,6 +3039,7 @@ impl DisplayListBuilder {
         self.builder_start_time = zeitstempel::now();
         self.reset();
         self.au_grid = AuGrid::new(au_per_dev_px);
+        self.interners.begin_build();
     }
 
     pub fn end(&mut self) -> (PipelineId, BuiltDisplayList) {
@@ -2871,6 +3072,10 @@ impl DisplayListBuilder {
         );
         let end_time = zeitstempel::now();
 
+        // Close the build on every interner: collect stale entries and take the
+        // delta the receiver needs. Must happen exactly once per build.
+        let delta = self.interners.end_build();
+
         self.state = BuildState::Idle;
 
         (
@@ -2886,6 +3091,7 @@ impl DisplayListBuilder {
                     off_grid_coords: self.off_grid_coords,
                 },
                 payload,
+                delta,
             },
         )
     }

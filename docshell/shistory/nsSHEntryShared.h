@@ -9,7 +9,9 @@
 #include "nsCOMPtr.h"
 #include "nsExpirationTracker.h"
 #include "nsIBFCacheEntry.h"
+#include "nsILayoutHistoryState.h"
 #include "nsIPolicyContainer.h"
+#include "nsIPrincipal.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsRect.h"
 #include "nsString.h"
@@ -22,9 +24,7 @@ class nsISHEntry;
 class nsISHistory;
 class nsIDocShellTreeItem;
 class nsIDocumentViewer;
-class nsILayoutHistoryState;
 class nsIPolicyContainer;
-class nsIPrincipal;
 class nsDocShellEditorData;
 class nsFrameLoader;
 class nsIMutableArray;
@@ -96,6 +96,13 @@ class SHEntrySharedParentState : public SHEntrySharedState {
   uint64_t GetId() const { return mId; }
   void ChangeId(uint64_t aId);
 
+  // The inner window of the document this state belongs to, or 0 if the parent
+  // can't vouch for any.
+  uint64_t InnerWindowId() const { return mInnerWindowId; }
+  void SetInnerWindowId(uint64_t aInnerWindowId) {
+    mInnerWindowId = aInnerWindowId;
+  }
+
   void SetFrameLoader(nsFrameLoader* aFrameLoader);
 
   nsFrameLoader* GetFrameLoader();
@@ -138,12 +145,16 @@ class SHEntrySharedParentState : public SHEntrySharedState {
 
   RefPtr<nsFrameLoader> mFrameLoader;
 
+  uint64_t mInnerWindowId = 0;
+
   nsExpirationState mExpirationState;
 
   bool mSticky = true;
   bool mDynamicallyCreated = false;
 
   // This flag is about necko cache, not bfcache.
+  // True when the HTTP response was already expired at the time this entry was
+  // committed.
   bool mExpired = false;
 };
 

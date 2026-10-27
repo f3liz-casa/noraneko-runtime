@@ -397,6 +397,10 @@ pref("browser.overlink-delay", 80);
   pref("browser.taskbarTabs.enabled", false);
 #endif
 
+// How the shell service should create desktop entries on Unix-likes.
+// See ShellService.sys.mjs for the valid APIs.
+pref("browser.shell.desktop-entry-api", "default");
+
 // Whether using `ctrl` or `command` when hitting return/enter
 // in the URL bar should add prefix 'www.' and suffix
 // Services.locale.urlFixupSuffix to the URL bar value prior to navigating.
@@ -457,13 +461,14 @@ pref("browser.urlbar.focusContentDocumentOnEsc", true);
 pref("browser.urlbar.ipc.chromeMessagePassing", false);
 
 // Feature gate for the <moz-urlbar> on about:newtab and about:home. When
-// enabled, it supersedes New Tab's handoff search bar. Disabled in debug
-// because of bug 2065180.
-#if defined(NIGHTLY_BUILD) && !defined(DEBUG)
+// enabled, it supersedes New Tab's handoff search bar.
+#ifdef NIGHTLY_BUILD
 pref("browser.urlbar.newtab.featureGate", true);
 #else
 pref("browser.urlbar.newtab.featureGate", false);
 #endif
+pref("browser.urlbar.newtab.variantA", false);
+pref("browser.urlbar.newtab.variantB", false);
 
 // Enable a certain level of urlbar logging to the Browser Console. See
 // ConsoleInstance.webidl.
@@ -471,6 +476,10 @@ pref("browser.urlbar.loglevel", "Error");
 
 // The maximum number of mentions to show.
 pref("browser.urlbar.mentions.maxResults", 5);
+
+// The maximum number of tab groups to show in the mentions panel. Capped
+// separately from maxResults so groups and tabs are limited independently.
+pref("browser.urlbar.mentions.maxGroupResults", 5);
 
 // the maximum number of results to show in autocomplete when doing richResults
 pref("browser.urlbar.maxRichResults", 10);
@@ -1039,6 +1048,12 @@ pref("browser.theme.forced-colors-override.enabled", true);
 // as separate icons in the Windows taskbar.
 pref("browser.privateWindowSeparation.enabled", true);
 
+// Private browsing window redesign experiment; enabled via Nimbus.
+pref("browser.privateWindowRedesign.enabled", false);
+
+// Whether the private-browsing first-run intro animation has been shown.
+pref("browser.privatebrowsing.introAnimationShown", false);
+
 // Controls visibility of the privacy segmentation preferences section.
 pref("browser.privacySegmentation.preferences.show", false);
 
@@ -1447,6 +1462,9 @@ pref("mousewheel.with_meta.action", 1);
 
 pref("browser.xul.error_pages.expert_bad_cert", false);
 pref("browser.xul.error_pages.show_safe_browsing_details_on_load", false);
+
+// Deployments that do not want the artwork on error pages can turn this off
+pref("browser.netError.illustration.enabled", true);
 
 // Enable the one-click search call-to-action on the online dnsNotFound error
 // page. On in Nightly, off elsewhere until a Nimbus rollout (bug 2055718).
@@ -1930,11 +1948,6 @@ pref("browser.topsites.useRemoteSetting", true);
 pref("browser.topsites.contile.enabled", true);
 pref("browser.topsites.contile.endpoint", "https://contile.services.mozilla.com/v1/tiles");
 
-// The base URL for the Quick Suggest anonymizing proxy. To make a request to
-// the proxy, include a campaign ID in the path.
-pref("browser.partnerlink.attributionURL", "https://topsites.services.mozilla.com/cid/");
-pref("browser.partnerlink.campaign.topsites", "amzn_2020_a1");
-
 // Activates preloading of the new tab url.
 pref("browser.newtab.preload", true);
 
@@ -1999,6 +2012,41 @@ pref("browser.newtabpage.activity-stream.discoverystream.region-weather-config",
 // List of locales that weather widget supports.
 pref("browser.newtabpage.activity-stream.discoverystream.locale-weather-config", "bg,cs,da,de,el,en-CA,en-GB,en-US,es-ES,et,fi,fr,hr,hu,is,it,lv,nb-NO,nl,pl,pt-PT,ro,sk,sl,sv-SE,tr");
 
+// Regions with no widgets at all. Everywhere else the container is available
+// and on, and each widget's own prefs decide what appears. Blank means no
+// restriction, so there is no allow list here. Nightly ignores every list
+// below -- see marketGate in ActivityStream.sys.mjs.
+pref("browser.newtabpage.activity-stream.widgets.system.region-block", "");
+
+// Lists is available everywhere the container is except PL, and off by
+// default. The second region-block is unread until widgets.lists.enabled goes
+// back to marketGate.
+pref("browser.newtabpage.activity-stream.widgets.system.lists.region-block", "PL");
+pref("browser.newtabpage.activity-stream.widgets.lists.region-block", "DE,FR,PL,US");
+
+// Focus timer is available everywhere the container is except PL, and off by
+// default. The second region-block is unread until widgets.focusTimer.enabled
+// goes back to marketGate.
+pref("browser.newtabpage.activity-stream.widgets.system.focusTimer.region-block", "PL");
+pref("browser.newtabpage.activity-stream.widgets.focusTimer.region-block", "DE,FR,PL,US");
+
+// Clocks is available everywhere the container is except PL, and off by
+// default. The second region-block is unread until widgets.clocks.enabled goes
+// back to marketGate.
+pref("browser.newtabpage.activity-stream.widgets.system.clocks.region-block", "PL");
+pref("browser.newtabpage.activity-stream.widgets.clocks.region-block", "DE,FR,PL,US");
+
+// Picture of the day is available everywhere the container is except PL, and
+// off by default. The second region-block is unread until
+// widgets.pictureOfTheDay.enabled goes back to marketGate.
+pref("browser.newtabpage.activity-stream.widgets.system.pictureOfTheDay.region-block", "PL");
+pref("browser.newtabpage.activity-stream.widgets.pictureOfTheDay.region-block", "DE,FR,PL,US");
+
+// Crossword is English-only, available in every region except PL and off by
+// default.
+pref("browser.newtabpage.activity-stream.widgets.system.crossword.locale-config", "en-CA,en-GB,en-US");
+pref("browser.newtabpage.activity-stream.widgets.system.crossword.region-block", "PL");
+
 // Promo card visibility
 pref("browser.newtabpage.activity-stream.discoverystream.promoCard.visible", true);
 
@@ -2006,6 +2054,8 @@ pref("browser.newtabpage.activity-stream.discoverystream.promoCard.visible", tru
 pref("browser.newtabpage.activity-stream.newtabWallpapers.enabled", true);
 pref("browser.newtabpage.activity-stream.newtabWallpapers.customColor.enabled", true);
 pref("browser.newtabpage.activity-stream.newtabWallpapers.customWallpaper.enabled", true);
+// Keeps more than one custom wallpaper, shown as "Your images" in the picker
+pref("browser.newtabpage.activity-stream.newtabWallpapers.customWallpaper.library.enabled", true);
 
 // Utility preferences for custom wallpaper upload
 pref("browser.newtabpage.activity-stream.newtabWallpapers.customWallpaper.uuid", "");
@@ -2110,9 +2160,9 @@ pref("browser.newtabpage.activity-stream.discoverystream.topicSelection.locale-t
 pref("browser.newtabpage.activity-stream.discoverystream.topicLabels.locale-topic-label-config", "en-US, en-GB, en-CA");
 
 // List of locales that get section layout by default
-pref("browser.newtabpage.activity-stream.discoverystream.sections.locale-content-config", "en-US,en-CA,en-GB");
+pref("browser.newtabpage.activity-stream.discoverystream.sections.locale-content-config", "en-US,en-CA,en-GB,de,fr,it,es-ES,pl");
 // List of regions that get section layout by default
-pref("browser.newtabpage.activity-stream.discoverystream.sections.region-content-config", "US,GB,CA,IE");
+pref("browser.newtabpage.activity-stream.discoverystream.sections.region-content-config", "US,GB,CA,IE,IN,DE,AT,CH,BE,FR,IT,ES,PL");
 
 pref("browser.newtabpage.activity-stream.discoverystream.sections.cards.enabled", true);
 
@@ -2315,6 +2365,14 @@ pref("sidebar.openTabsPanel.hoverPreview.enabled", true);
 
 pref("sidebar.notification.badge.aichat", false);
 
+// Adds the contextual password manager to the launcher for existing sidebar
+// users, as long as browser.contextual-password-manager.enabled is true.
+// See browser/components/sidebar/docs/index.md.
+pref(
+  "sidebar.newTool.migration.passwords",
+  '{"visibilityPref":"browser.contextual-password-manager.enabled"}'
+);
+
 pref("browser.resourceMonitor.enabled", false);
 // Registers the Resource Monitor for sidebar new-tool migration. When
 // browser.resourceMonitor.enabled flips to true, the tool is auto-added
@@ -2341,6 +2399,7 @@ pref("browser.ml.chat.shortcuts", true);
 pref("browser.ml.chat.shortcuts.custom", true);
 pref("browser.ml.chat.shortcuts.smartwindow", true);
 pref("browser.ml.chat.shortcuts.longPress", 60000);
+pref("browser.ml.chat.shortcuts.debounce", 200);
 pref("browser.ml.chat.shortcut.onboardingMouseoverCount", 0);
 pref("browser.ml.chat.sidebar", true);
 
@@ -2362,10 +2421,6 @@ pref("browser.ml.linkPreview.supportedLocales", "en");
 
 pref("browser.ml.pageAssist.enabled", false);
 
-// Set once the native ONNX runtime availability has been reported to telemetry,
-// so that the one-off probe behind it runs at most once per profile.
-pref("browser.ml.onnxNativeAvailabilityReported", false);
-
 // Smart Window Feature
 pref("browser.smartwindow.enabled", false);
 // Default endpoint for preset models
@@ -2374,6 +2429,10 @@ pref("browser.smartwindow.memories.generateFromHistory", true);
 pref("browser.smartwindow.memories.generateFromConversation", true);
 pref("browser.smartwindow.memories.hasSeenMemories", false);
 pref("browser.smartwindow.memoriesLogLevel", "Warn");
+// Gates resume-activity ("pick up where you left off") starter generation.
+pref("browser.smartwindow.resumeActivity.enabled", true);
+// TODO Bug 2067871: remove once journey store is available.
+pref("browser.smartwindow.resumeCards.enabled", false);
 pref("browser.smartwindow.firstrun.autoAdvanceMS", 3000);
 pref("browser.smartwindow.firstrun.hasCompleted", false);
 pref("browser.smartwindow.showThemesNotice", true);
@@ -2387,38 +2446,41 @@ pref("browser.smartwindow.mistralRelease", true);
 // Semantic distance threshold for Smart Window history search only.
 pref("places.semanticHistory.smartwindow.distanceThreshold", "0.6");
 
-// Smart Window: AITab
-pref("browser.smartwindow.aitab.enabled", false);
-// Base URL of the external AITab viewer used for development prototyping.
-// The generate_aitab tool returns a link to this viewer with the page config in the URL hash.
-pref("browser.smartwindow.aitab.viewerURL", "");
-
 // Smart Window: Auto Tab Grouping (bug 2054500).
 pref("browser.smartwindow.autoTabGrouping.enabled", true);
 pref("browser.smartwindow.autoTabGrouping.preloadModels", true);
 pref("browser.smartwindow.autoTabGrouping.maxGroups", 3);
 pref("browser.smartwindow.autoTabGrouping.minTabsPerGroup", 2);
-pref("browser.smartwindow.autoTabGrouping.minCandidateTabs", 4);
+pref("browser.smartwindow.autoTabGrouping.minCandidateTabs", 2);
 pref("browser.smartwindow.autoTabGrouping.minCohesion", "0.15");
 pref("browser.smartwindow.autoTabGrouping.timeoutMs", 8000);
 pref("browser.smartwindow.autoTabGrouping.loglevel", "Warn");
 
 // Smart Window: Smart Form Fill (bug 2055009).
-pref("browser.smartwindow.smartformfill.enabled", false);
+pref("browser.smartwindow.smartformfill.enabled", true);
 
 // Comma-separated ISO 3166-1 region codes where the feature is unavailable.
 pref("browser.smartwindow.smartformfill.disallowedRegions", "FR");
+
+// How many fields a form needs before Smart Form Fill offers itself for it,
+// which keeps the feature away from the stray inputs a page uses for
+// something other than a form the user fills in.
+pref("browser.smartwindow.smartformfill.minFormFields", 4);
 
 // Smart Window Agent
 pref("browser.smartwindow.agent.enabled", true);
 pref("browser.smartwindow.agent.supportedRegions", "US,CA");
 // Toolbar button that opens the monitor creation panel (bug 2062113).
-pref("browser.smartwindow.agent.toolbar.enabled", false);
+pref("browser.smartwindow.agent.toolbar.enabled", true);
 // Announces the monitor agent as a new feature with a dot on the toolbar
 // button, for as long as the rollout runs. Set on the default branch by Nimbus
 // so that dismissing it, which writes the user branch, survives the rollout
 // being re-applied (bug 2066576).
 pref("browser.smartwindow.agent.monitorAnnouncement", false);
+// Monitors pause themselves after this many days without their condition
+// being met, and after this many days in total. Zero disables the rule.
+pref("browser.smartwindow.agent.expiry.noMatchDays", 60);
+pref("browser.smartwindow.agent.expiry.maxAgeDays", 90);
 
 
 // Smart Window: Exa search endpoint, used by the search_the_web agentic flow (bug 2037948)
@@ -2428,6 +2490,11 @@ pref("browser.smartwindow.searchQuery.apiKey", "");
 // Smart Window: when true, search_the_web returns Exa snippets straight to the
 // main assistant instead of generating an answer from background page reads.
 pref("browser.smartwindow.searchTheWebFast", true);
+
+// Smart Window: when true, search_the_web asks Exa's /answers service for a
+// written answer and its citations in one call. Takes precedence over
+// browser.smartwindow.searchTheWebFast.
+pref("browser.smartwindow.searchTheWebAnswers", false);
 
 // Smart Window Logging
 pref("browser.smartwindow.aiTabHistory.logLevel", "Error");
@@ -2477,7 +2544,7 @@ pref("identity.fxaccounts.remote.oauth.uri", "https://oauth.accounts.firefox.com
 pref("identity.fxaccounts.pairing.enabled", true);
 
 // The version of the pairing flow to be used by FxA.
-pref("identity.fxaccounts.pairing.version", 1);
+pref("identity.fxaccounts.pairing.version", 2);
 
 // The remote URI of the FxA pairing server
 pref("identity.fxaccounts.remote.pairing.uri", "wss://channelserver.services.mozilla.com");
@@ -2558,6 +2625,7 @@ pref("media.videocontrols.picture-in-picture.video-toggle.visibility-threshold",
 pref("media.videocontrols.picture-in-picture.keyboard-controls.enabled", true);
 pref("media.videocontrols.picture-in-picture.urlbar-button.enabled", true);
 pref("media.videocontrols.picture-in-picture.enable-when-switching-tabs.enabled", false);
+pref("media.videocontrols.picture-in-picture.enable-when-occluded.enabled", false);
 pref("media.videocontrols.picture-in-picture.auto-close.enabled", true);
 pref("media.videocontrols.picture-in-picture.auto-close.timeoutMs", 1000);
 
@@ -3003,6 +3071,16 @@ pref("screenshots.browser.component.preventContentEvents", true);
 pref("browser.screenshots.folderList", 4);
 pref("browser.screenshots.dir", "");
 
+// Enable/disable opening a tab into a mini window.
+pref("browser.mini-window.enabled", false);
+pref("browser.mini-window.log", false);
+// How long the toolbar stays up before idling away.
+pref("browser.mini-window.toolbar.hide-delay-ms", 2000);
+// Depth of the top-edge strip that reveals the toolbar on hover.
+pref("browser.mini-window.toolbar.edge-zone-px", 12);
+// Dwell before a hover on the top edge reveals the toolbar.
+pref("browser.mini-window.toolbar.hover-reveal-delay-ms", 50);
+
 // DoH Rollout: whether to clear the mode value at shutdown.
 pref("doh-rollout.clearModeOnShutdown", false);
 
@@ -3050,10 +3128,6 @@ pref("app.normandy.onsync_skew_sec", 600);
   pref("intl.multilingual.liveReloadBidirectional", false);
   pref("intl.multilingual.aboutWelcome.languageMismatchEnabled", false);
 #endif
-
-// Coverage ping is disabled by default.
-pref("toolkit.coverage.enabled", false);
-pref("toolkit.coverage.endpoint.base", "https://coverage.mozilla.org");
 
 // Enable personalized extension recommendations
 pref("browser.discovery.enabled", true);
@@ -3110,6 +3184,11 @@ pref("identity.fxaccounts.toolbar.pxiToolbarEnabled.vpnEnabled", true);
 // Prefs to control Mozilla account panels that shows an updated flow
 // for users who don't have sync enabled
 pref("identity.fxaccounts.toolbar.syncSetup.panelAccessed", false);
+
+// Whether the user dismissed the app menu's sign-in promo. Once dismissed, the
+// promo is never shown again and the compact sign-in row takes its place. Only
+// the app menu's promo is dismissible; the account menu's is not (bug 2070687).
+pref("identity.fxaccounts.toolbar.appMenuSignInPromo.dismissed", false);
 
 // Toolbox preferences
 pref("devtools.toolbox.footer.height", 250);
@@ -3517,6 +3596,9 @@ pref("devtools.popup.disable_autohide", false);
   pref("devtools.high-contrast-mode-support", false);
 #endif
 
+// Enable the in-progress devtools settings redesign/rewrite
+pref("devtools.settings.redesign-enabled", false);
+
 // FirstStartup service time-out in ms
 pref("first-startup.timeout", 30000);
 pref("first-startup.category-tasks-enabled", true);
@@ -3532,6 +3614,13 @@ pref("first-startup.category-tasks-enabled", true);
   // Timeouts used to receive push messages with --receive-push-messages
   pref("app.backgroundNotifications.receivePushMessages.perMessageTimeoutMs", 5000);
   pref("app.backgroundNotifications.receivePushMessages.totalTimeoutMs", 60000);
+
+  // The helper runs only while both of these are true; available is Nimbus's
+  // and enabled is the user's. See pushNotificationHelper in
+  // FeatureManifest.yaml.
+  pref("app.backgroundNotifications.helper.available", false);
+  pref("app.backgroundNotifications.helper.enabled", false);
+  pref("app.backgroundNotifications.helper.loglevel", "Error");
 #endif
 
 // Shows 'View Image Info' item in the image context menu

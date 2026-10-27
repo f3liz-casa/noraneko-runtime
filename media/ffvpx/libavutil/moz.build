@@ -24,9 +24,11 @@ SOURCES += [
     'cpu.c',
     'crc.c',
     'dict.c',
+    'display.c',
     'error.c',
     'eval.c',
     'fifo.c',
+    'file_open.c',
     'fixed_dsp.c',
     'float_dsp.c',
     'float_scalarproduct.c',
@@ -62,6 +64,7 @@ if not CONFIG['MOZ_FFVPX_AUDIOONLY']:
         'base64.c',
         'film_grain_params.c',
         'hdr_dynamic_metadata.c',
+        'hdr_dynamic_vivid_metadata.c',
         'integer.c',
         'intmath.c',
         'lls.c',
@@ -74,14 +77,29 @@ if not CONFIG['MOZ_FFVPX_AUDIOONLY']:
         LOCAL_INCLUDES += ['/third_party/khronos/vulkan-headers/include']
         SOURCES += [
             'hwcontext_vulkan.c',
+            'uuid.c',
             'vulkan.c',
         ]
+        SOURCES['hwcontext_vulkan.c'].flags += ['-DMOZ_FFVPX_VULKAN_LIBDRM']
     if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
         LOCAL_INCLUDES += ['/media/mozva']
         SOURCES += [
             'hwcontext_vaapi.c',
         ]
         USE_LIBS += ['mozva']
+        if CONFIG['MOZ_ENABLE_VULKAN_VIDEO']:
+            SOURCES += [
+                '/third_party/drm/libdrm/mozdrm.cpp',
+            ]
+            USE_LIBS += ['nspr']
+            CFLAGS += CONFIG['MOZ_LIBDRM_CFLAGS']
+            CXXFLAGS += CONFIG['MOZ_LIBDRM_CFLAGS']
+            if not CONFIG['MOZ_SYSTEM_LIBDRM']:
+                LOCAL_INCLUDES += [
+                    '/third_party/drm/drm/',
+                    '/third_party/drm/drm/include',
+                    '/third_party/drm/drm/include/libdrm',
+                ]
     elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
         SOURCES += [
             'hwcontext_d3d11va.c',

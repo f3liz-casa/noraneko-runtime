@@ -107,6 +107,7 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
   void OnMemoryPressure() override;
   void OnBeforePaintTransaction() override;
   void OnDidPaintTransaction() override;
+  void OnWindowDestroy() override;
   layers::PersistentBufferProvider* GetBufferProvider() override;
 
   Maybe<layers::SurfaceDescriptor> GetFrontBuffer(
@@ -744,9 +745,6 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
    */
   void TransformCurrentPath(const mozilla::gfx::Matrix& aTransform);
 
-  // Report the fillRule has changed.
-  void FillRuleChanged();
-
   /**
    * Check if the target is in an error state. Functions that may need to
    * access the transform or clip state with or without a target should call
@@ -1315,8 +1313,6 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
   ColorStyleCache mColorStyleCache;
 
   ColorStyleCacheEntry ParseColorSlow(const nsACString&);
-
-  mozilla::gfx::PaletteCache mPaletteCache;
 
   friend class CanvasGeneralPattern;
   friend class AdjustedTarget;

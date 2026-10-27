@@ -6,6 +6,7 @@ plugins {
 }
 
 import groovy.json.JsonOutput
+import org.mozilla.conventions.WriteRuntimeDependencies
 
 // The SDK binding generation tasks depend on the JAR creation task of the
 // :annotations project.
@@ -59,6 +60,7 @@ android {
 
         // Is the underlying compiled C/C++ code compiled with --enable-debug?
         buildConfigField 'boolean', 'DEBUG_BUILD', mozconfig.substs.MOZ_DEBUG ? 'true' : 'false';
+        buildConfigField 'boolean', 'MOZ_CODE_COVERAGE', mozconfig.substs.MOZ_CODE_COVERAGE ? 'true' : 'false';
 
         // See this wiki page for more details about channel specific build defines:
         // https://wiki.mozilla.org/Platform/Channel-specific_build_defines
@@ -76,9 +78,6 @@ android {
         // developer-only functionality when this flag is set.
         // This makes no sense for GeckoView and should be removed as soon as possible.
         buildConfigField 'boolean', 'MOZILLA_OFFICIAL', mozconfig.substs.MOZILLA_OFFICIAL ? 'true' : 'false';
-
-        // This env variable signifies whether we are running an isolated process build.
-        buildConfigField 'boolean', 'MOZ_ANDROID_CONTENT_SERVICE_ISOLATED_PROCESS', mozconfig.substs.MOZ_ANDROID_CONTENT_SERVICE_ISOLATED_PROCESS ? 'true' : 'false';
     }
 
     lint {
@@ -527,6 +526,12 @@ tasks.register("generateSDKBindings", JavaExec) {
 
     dependsOn project(':annotations').jar
     dependsOn rootProject.verifyGleanVersion
+}
+
+// The published variant is the one the AAR brings into an application.
+tasks.register("writeRuntimeDependencies", WriteRuntimeDependencies) {
+    classpath(configurations.named("debugRuntimeClasspath"))
+    outputFile = layout.buildDirectory.file("sbom/runtime-dependencies.json")
 }
 
 apiLint {

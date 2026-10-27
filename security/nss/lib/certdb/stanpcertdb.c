@@ -67,7 +67,7 @@ SEC_DeletePermCertificate(CERTCertificate *cert)
 
     certTrust = nssTrust_GetCERTCertTrustForCert(c, cert);
     if (certTrust) {
-        NSSTrust *nssTrust = nssTrustDomain_FindTrustForCertificate(td, c);
+        NSSTrust *nssTrust = nssTrustDomain_FindTrustForCertificate(td, &c->encoding, &c->issuer, &c->serial);
         if (nssTrust) {
             nssrv = STAN_DeleteCertTrustMatchingSlot(c);
             if (nssrv != PR_SUCCESS) {
@@ -102,6 +102,37 @@ CERT_GetCertTrust(const CERTCertificate *cert, CERTCertTrust *trust)
     }
     CERT_UnlockCertTrust(cert);
     return (rv);
+}
+
+SECStatus
+CERT_GetDERCertTrust(SECItem *derCert, CERTCertTrust *trust)
+{
+    if (!derCert || !trust) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+        return SECFailure;
+    }
+    NSSTrustDomain *td = STAN_GetDefaultTrustDomain();
+    NSSDER encoding;
+    NSSITEM_FROM_SECITEM(&encoding, derCert);
+    NSSDER issuer;
+    NSSDER serial;
+    if (nssPKIX509_GetIssuerAndSerialFromDER(&encoding, &issuer, &serial) != PR_SUCCESS) {
+        // Despite the name, any errors here would be set by CERT_* functions,
+        // so no need to map a STAN error.
+        return SECFailure;
+    }
+    NSSTrust *nssTrust = nssTrustDomain_FindTrustForCertificate(td, &encoding, &issuer, &serial);
+    if (!nssTrust) {
+        CERT_MapStanError();
+        PORT_Free(issuer.data);
+        PORT_Free(serial.data);
+        return SECFailure;
+    }
+    nssTrust_ToCERTCertTrust(nssTrust, trust);
+    (void)nssTrust_Destroy(nssTrust);
+    PORT_Free(issuer.data);
+    PORT_Free(serial.data);
+    return SECSuccess;
 }
 
 extern const NSSError NSS_ERROR_NO_ERROR;
@@ -294,17 +325,6 @@ __CERT_AddTempCertToPerm(CERTCertificate *cert, char *nickname,
     nssPKIObject_Unlock(&c->object);
     nssCertificateStore_Unlock(context->certStore, &lockTrace, &unlockTrace);
 
-    /* if the id has not been set explicitly yet, create one from the public
-     * key. */
-    if (c->id.data == NULL) {
-        SECItem *keyID = pk11_mkcertKeyID(cert);
-        if (keyID) {
-            nssItem_Create(c->object.arena, &c->id, keyID->len, keyID->data);
-            SECITEM_FreeItem(keyID, PR_TRUE);
-        }
-        /* if any of these failed, continue with our null c->id */
-    }
-
     /* Import the perm instance onto the internal token */
     slot = PK11_GetInternalKeySlot();
     internal = PK11Slot_GetNSSToken(slot);
@@ -447,6 +467,10 @@ CERT_NewTempCertificate(CERTCertDBHandle *handle, SECItem *derCert,
                    derSerial.data);
     PORT_Free(derSerial.data);
 
+    if (nssCertificate_SetCertKeyID(c) != PR_SUCCESS) {
+        goto loser;
+    }
+
     if (nickname) {
         c->object.tempName =
             nssUTF8_Create(c->object.arena, nssStringType_UTF8String,
@@ -480,8 +504,7 @@ CERT_NewTempCertificate(CERTCertDBHandle *handle, SECItem *derCert,
     CERT_UnlockCertTempPerm(cc);
     return cc;
 loser:
-    /* Perhaps this should be nssCertificate_Destroy(c) */
-    nssPKIObject_Destroy(&c->object);
+    nssCertificate_Destroy(c);
     return NULL;
 }
 
@@ -565,33 +588,6 @@ CERT_FindCertByName(CERTCertDBHandle *handle, SECItem *name)
         CERT_DestroyCertificate(STAN_GetCERTCertificateOrRelease(cp));
     }
     return c ? STAN_GetCERTCertificateOrRelease(c) : NULL;
-}
-
-CERTCertificate *
-CERT_FindCertByKeyID(CERTCertDBHandle *handle, SECItem *name, SECItem *keyID)
-{
-    CERTCertList *list;
-    CERTCertificate *cert = NULL;
-    CERTCertListNode *node;
-
-    list = CERT_CreateSubjectCertList(NULL, handle, name, 0, PR_FALSE);
-    if (list == NULL)
-        return NULL;
-
-    node = CERT_LIST_HEAD(list);
-    while (!CERT_LIST_END(node, list)) {
-        if (node->cert &&
-            SECITEM_ItemsAreEqual(&node->cert->subjectKeyID, keyID)) {
-            cert = CERT_DupCertificate(node->cert);
-            goto done;
-        }
-        node = CERT_LIST_NEXT(node);
-    }
-    PORT_SetError(SEC_ERROR_UNKNOWN_ISSUER);
-
-done:
-    CERT_DestroyCertList(list);
-    return cert;
 }
 
 CERTCertificate *

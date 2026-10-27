@@ -20,6 +20,7 @@
 #include "js/PropertyDescriptor.h"  // JS::PropertyDescriptor, JS_GetOwnPropertyDescriptorById
 #include "js/SavedFrameAPI.h"
 #include "js/Value.h"  // JS::Value, JS::StringValue
+#include "jsapi.h"
 #include "jsfriendapi.h"
 #include "mozJSModuleLoader.h"
 #include "mozilla/AwakeTimeStamp.h"
@@ -279,7 +280,7 @@ void ChromeUtils::RegisterMarkerSchema(GlobalObject& aGlobal,
 //    (empty-name markers are filtered out during schema streaming)
 struct JSCustomMarker : public ::mozilla::BaseMarkerType<JSCustomMarker> {
   static constexpr const char* Name = "";
-  static constexpr bool StoreName = true;
+  static constexpr bool ETWStoreName = true;
 
   using MS = ::mozilla::MarkerSchema;
 
@@ -593,8 +594,7 @@ void ChromeUtils::ShallowClone(GlobalObject& aGlobal,
       id = valuesIds[i];
       value = values[i];
 
-      JS_MarkCrossZoneId(cx, id);
-      if (!JS_WrapValue(cx, &value) ||
+      if (!JS_WrapId(cx, &id) || !JS_WrapValue(cx, &value) ||
           !JS_SetPropertyById(cx, obj, id, value)) {
         return;
       }
@@ -1861,11 +1861,9 @@ void ChromeUtils::InvalidateResourceCache(GlobalObject& aGlobal,
 
 void ChromeUtils::GetCachedJavaScriptSource(
     GlobalObject& aGlobal, const nsACString& aKey, const nsACString& aURI,
-    const nsACString& aHintCharset, JS::MutableHandle<JS::Value> aRetval,
-    ErrorResult& aRv) {
+    JS::MutableHandle<JS::Value> aRetval, ErrorResult& aRv) {
   JSContext* cx = aGlobal.Context();
-  if (!SharedScriptCache::GetCachedScriptSource(cx, aKey, aURI, aHintCharset,
-                                                aRetval)) {
+  if (!SharedScriptCache::GetCachedScriptSource(cx, aKey, aURI, aRetval)) {
     aRv.NoteJSContextException(aGlobal.Context());
   }
 }
@@ -1909,7 +1907,7 @@ static WebIDLProcType ProcTypeToWebIDL(mozilla::ProcType aType) {
 #ifndef MOZ_ENABLE_FORKSERVER
 #  define SKIP_PROCESS_TYPE_FORKSERVER
 #endif  // MOZ_ENABLE_FORKSERVER
-#include "mozilla/GeckoProcessTypes.h"
+#include "mozilla/GeckoProcessTypes.inc"
 #undef SKIP_PROCESS_TYPE_CONTENT
 #ifndef MOZ_ENABLE_FORKSERVER
 #  undef SKIP_PROCESS_TYPE_FORKSERVER
@@ -1998,7 +1996,7 @@ already_AddRefed<Promise> ChromeUtils::RequestProcInfo(GlobalObject& aGlobal,
 #ifndef MOZ_ENABLE_FORKSERVER
 #  define SKIP_PROCESS_TYPE_FORKSERVER
 #endif  // MOZ_ENABLE_FORKSERVER
-#include "mozilla/GeckoProcessTypes.h"
+#include "mozilla/GeckoProcessTypes.inc"
 #ifndef MOZ_ENABLE_FORKSERVER
 #  undef SKIP_PROCESS_TYPE_FORKSERVER
 #endif  // MOZ_ENABLE_FORKSERVER

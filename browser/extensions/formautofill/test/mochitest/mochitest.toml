@@ -6,8 +6,8 @@ prefs = [
   "extensions.formautofill.addresses.enabled=true",
   "extensions.formautofill.skipProgrammaticCheckForTests=true"
 ]
-skip-if = [
-  "os == 'android'", # bug 1730213
+run-if = [
+  "os != 'android'", # browser/ is not built for Android (bug 1730213)
 ]
 support-files = [
   "../../../../../toolkit/components/satchel/test/satchel_common.js",
@@ -17,9 +17,6 @@ support-files = [
 ]
 
 ["test_autofill_and_ordinal_forms.html"]
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # Bug 1803644
-]
 
 ["test_autofocus_form.html"]
 

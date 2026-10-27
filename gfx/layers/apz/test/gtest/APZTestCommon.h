@@ -12,6 +12,7 @@
 
 #include "TestWRScrollData.h"
 #include "UnitTransforms.h"
+#include "Units.h"
 #include "apz/src/APZCTreeManager.h"
 #include "apz/src/AsyncPanZoomController.h"
 #include "apz/src/HitTestingTreeNode.h"
@@ -235,9 +236,12 @@ class MockContentControllerDelayed : public MockContentController {
 
 class TestAPZCTreeManager : public APZCTreeManager {
  public:
-  explicit TestAPZCTreeManager(MockContentControllerDelayed* aMcc,
-                               UniquePtr<IAPZHitTester> aHitTester = nullptr)
-      : APZCTreeManager(LayersId{0}, std::move(aHitTester)), mcc(aMcc) {
+  explicit TestAPZCTreeManager(
+      MockContentControllerDelayed* aMcc,
+      const CSSToLayoutDeviceScale& aWidgetScale = CSSToLayoutDeviceScale{1.0F},
+      UniquePtr<IAPZHitTester> aHitTester = nullptr)
+      : APZCTreeManager(LayersId{0}, aWidgetScale, std::move(aHitTester)),
+        mcc(aMcc) {
     Init();
   }
 

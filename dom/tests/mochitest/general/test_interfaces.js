@@ -1539,7 +1539,7 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "ScrollAreaEvent", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "ScrollTimeline", insecureContext: true, nightly: true },
+  { name: "ScrollTimeline", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "SecurityPolicyViolationEvent", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -1564,6 +1564,76 @@ let interfaceNamesInGlobalScope = [
   { name: "SourceBufferList", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "SpecialPowers", insecureContext: true },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechGrammar",
+    insecureContext: true,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechGrammarList",
+    insecureContext: true,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechRecognition",
+    insecureContext: false,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechRecognitionAlternative",
+    insecureContext: false,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechRecognitionErrorEvent",
+    insecureContext: false,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechRecognitionErrorEvent",
+    insecureContext: false,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechRecognitionEvent",
+    insecureContext: false,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechRecognitionPhrase",
+    insecureContext: false,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechRecognitionResult",
+    insecureContext: false,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "SpeechRecognitionResultList",
+    insecureContext: false,
+    nightly: true,
+    android: false,
+  },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "SpeechSynthesis", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -1687,7 +1757,7 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "VideoPlaybackQuality", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "ViewTimeline", insecureContext: true, nightly: true },
+  { name: "ViewTimeline", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "ViewTransition", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -2273,6 +2343,27 @@ let interfaceNamesInGlobalScope = [
   { name: "updateCommands", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "visualViewport", insecureContext: true },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "webkitSpeechGrammar",
+    insecureContext: true,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "webkitSpeechGrammarList",
+    insecureContext: true,
+    nightly: true,
+    android: false,
+  },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  {
+    name: "webkitSpeechRecognition",
+    insecureContext: false,
+    nightly: true,
+    android: false,
+  },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "webkitURL", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!

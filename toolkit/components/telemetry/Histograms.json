@@ -196,84 +196,6 @@
     "bug_numbers": [1172689, 1531034],
     "description": "Recorded when application reputation remote lookup is performed, `true` is recorded if the lookup times out."
   },
-  "CHILD_PROCESS_LAUNCH_MS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": [
-      "jld@mozilla.com",
-      "jimm@mozilla.com",
-      "mconley@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "bug_numbers": [1474991],
-    "kind": "exponential",
-    "high": 64000,
-    "n_buckets": 100,
-    "releaseChannelCollection": "opt-out",
-    "description": "Time spent in the generic child process launching code, which is run off-main-thread and used by all child process types"
-  },
-  "CONTENT_PROCESS_LAUNCH_MAINTHREAD_MS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": [
-      "jld@mozilla.com",
-      "jimm@mozilla.com",
-      "mconley@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "bug_numbers": [1474991],
-    "kind": "exponential",
-    "high": 64000,
-    "n_buckets": 100,
-    "releaseChannelCollection": "opt-out",
-    "description": "Time spent on the main thread during asynchronous content process launch."
-  },
-  "CONTENT_PROCESS_LAUNCH_TOTAL_MS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": [
-      "jld@mozilla.com",
-      "jimm@mozilla.com",
-      "mconley@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "bug_numbers": [1474991],
-    "kind": "exponential",
-    "high": 64000,
-    "n_buckets": 100,
-    "releaseChannelCollection": "opt-out",
-    "description": "Total time elapsed during asynchronous content process launch, until the process is usable for loading content."
-  },
-  "CONTENT_PROCESS_SYNC_LAUNCH_MS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": [
-      "jld@mozilla.com",
-      "jimm@mozilla.com",
-      "mconley@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "bug_numbers": [1474991],
-    "kind": "exponential",
-    "high": 64000,
-    "n_buckets": 100,
-    "releaseChannelCollection": "opt-out",
-    "description": "Time elapsed during synchronous content process launch until the process is usable for loading content."
-  },
-  "CONTENT_PROCESS_LAUNCH_IS_SYNC": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": [
-      "jld@mozilla.com",
-      "jimm@mozilla.com",
-      "mconley@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "bug_numbers": [1474991],
-    "kind": "boolean",
-    "releaseChannelCollection": "opt-out",
-    "description": "Whether a content process was launched synchronously (unnecessarily delaying UI response)."
-  },
   "DEVICE_RESET_REASON": {
     "record_in_processes": ["main", "content", "gpu"],
     "products": ["firefox", "fennec"],
@@ -399,7 +321,7 @@
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 8,
-    "description": "DirectWrite system fontlist initialization problem (1=GDI interop, 2=system font collection, 3=no fonts)"
+    "description": "DirectWrite system fontlist initialization problem: 1=GDI interop (removed in bug 2011408), 2=system font collection, 3=no fonts"
   },
   "MAC_INITFONTLIST_TOTAL": {
     "record_in_processes": ["main", "content"],
@@ -1122,17 +1044,6 @@
     "keyed": true,
     "description": "How many extensions were matched to be imported from another browser, keyed by the name of the browser."
   },
-  "PWMGR_IMPORT_LOGINS_FROM_FILE_CATEGORICAL": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "bug_numbers": [1688653, 1749882, 1777397, 1850888, 1978988, 2010472],
-    "alert_emails": ["passwords-dev@mozilla.org"],
-    "expires_in_version": "160",
-    "kind": "categorical",
-    "labels": ["added", "modified", "error", "no_change"],
-    "releaseChannelCollection": "opt-out",
-    "description": "Results of login import from a CSV/TSV file, by category"
-  },
   "FX_ABOUTHOME_CACHE_CONSTRUCTION": {
     "record_in_processes": ["content"],
     "products": ["firefox"],
@@ -1786,27 +1697,6 @@
     "bug_numbers": [1600335],
     "description": "Firefox: Time in ms spent selecting and matching messages to user profile."
   },
-  "SECURITY_UI": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": [
-      "seceng-telemetry@mozilla.com",
-      "fxprivacyandsecurity@mozilla.com"
-    ],
-    "bug_numbers": [767676],
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 100,
-    "description": "Security-related UI events (addons, form submission, TLS certs, Safe Browsing, updates and geolocation). See /security/manager/ssl/nsISecurityUITelemetry.idl for the specific values."
-  },
-  "IPC_TRANSACTION_CANCEL": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["billm@mozilla.com"],
-    "expires_in_version": "never",
-    "kind": "boolean",
-    "description": "True when an IPC transaction is canceled"
-  },
   "SEARCH_COUNTS": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -1821,16 +1711,6 @@
     "description": "Records search counts for search access points. The format is: <engine-name>.<search-access-point>. For the urlbar when in search mode, the format is <engine name>.urlbar-searchmode. For the urlbar when an internal @engine shortcut is used, the format is: <engine-name>.alias.",
     "record_into_store": ["main", "account-ecosystem"]
   },
-  "TOUCH_ENABLED_DEVICE": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "boolean",
-    "releaseChannelCollection": "opt-out",
-    "bug_numbers": [795307, 1390269],
-    "alert_emails": ["jimm@mozilla.com"],
-    "description": "Boolean indicating if a touch input device is detected."
-  },
   "CRASH_STORE_COMPRESSED_BYTES": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -1839,44 +1719,6 @@
     "high": 1000000,
     "n_buckets": 202,
     "description": "Size (in bytes) of the compressed crash store JSON file."
-  },
-  "POPUP_NOTIFICATION_STATS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["MattN+telemetry@mozilla.com", "jhofmann@mozilla.com"],
-    "bug_numbers": [1207089, 1536454, 1584554],
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "keyed": true,
-    "n_values": 40,
-    "description": "(Bug 1207089) Usage of popup notifications, keyed by ID (0 = Offered, 1..4 = Action (3 is unused), 5 = Click outside (unused), 6 = Leave page, 7 = Use 'X' (unused), 8 = Not now (unused), 10 = Open submenu, 11 = Learn more. Add 20 if happened after reopen.)"
-  },
-  "POPUP_NOTIFICATION_MAIN_ACTION_MS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "alert_emails": ["MattN+telemetry@mozilla.com", "jhofmann@mozilla.com"],
-    "bug_numbers": [1207089, 1584554],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "keyed": true,
-    "low": 100,
-    "high": 600000,
-    "n_buckets": 40,
-    "description": "(Bug 1207089) Time in ms between initially requesting a popup notification and triggering the main action, keyed by ID"
-  },
-  "POPUP_NOTIFICATION_DISMISSAL_MS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "alert_emails": ["MattN+telemetry@mozilla.com", "jhofmann@mozilla.com"],
-    "bug_numbers": [1207089, 1584554],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "keyed": true,
-    "low": 200,
-    "high": 20000,
-    "n_buckets": 50,
-    "description": "(Bug 1207089) Time in ms between displaying a popup notification and dismissing it without an action the first time, keyed by ID"
   },
   "MEDIA_MP4_PARSE_SAMPLE_DESCRIPTION_ENTRIES_HAVE_MULTIPLE_CODECS": {
     "record_in_processes": ["main", "content"],
@@ -2361,66 +2203,6 @@
     "n_buckets": 15,
     "description": "BACKGROUND THUMBNAILS: Time it took to draw the capture's window to canvas (ms)"
   },
-  "PAGE_LOAD_ERROR": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "releaseChannelCollection": "opt-out",
-    "kind": "categorical",
-    "keyed": true,
-    "keys": ["top", "frame"],
-    "n_values": 45,
-    "labels": [
-      "UNKNOWN_PROTOCOL",
-      "FILE_NOT_FOUND",
-      "FILE_ACCESS_DENIED",
-      "UNKNOWN_HOST",
-      "CONNECTION_REFUSED",
-      "PROXY_BAD_GATEWAY",
-      "NET_INTERRUPT",
-      "NET_TIMEOUT",
-      "P_GATEWAY_TIMEOUT",
-      "CSP_FRAME_ANCEST",
-      "CSP_FORM_ACTION",
-      "CSP_NAVIGATE_TO",
-      "XFO_VIOLATION",
-      "PHISHING_URI",
-      "MALWARE_URI",
-      "UNWANTED_URI",
-      "HARMFUL_URI",
-      "CONTENT_CRASHED",
-      "FRAME_CRASHED",
-      "BUILDID_MISMATCH",
-      "NET_RESET",
-      "MALFORMED_URI",
-      "REDIRECT_LOOP",
-      "UNKNOWN_SOCKET",
-      "DOCUMENT_N_CACHED",
-      "OFFLINE",
-      "DOC_PRINTMODE",
-      "PORT_ACCESS",
-      "UNKNOWN_PROXY_HOST",
-      "PROXY_CONNECTION",
-      "PROXY_FORBIDDEN",
-      "P_NOT_IMPLEMENTED",
-      "PROXY_AUTH",
-      "PROXY_TOO_MANY",
-      "CONTENT_ENCODING",
-      "REMOTE_XUL",
-      "UNSAFE_CONTENT",
-      "CORRUPTED_CONTENT",
-      "INTERCEPTION_FAIL",
-      "INADEQUATE_SEC",
-      "BLOCKED_BY_POLICY",
-      "HTTP2_SENT_GOAWAY",
-      "HTTP3_PROTOCOL",
-      "BINDING_FAILED",
-      "otherError"
-    ],
-    "description": "Page load errors. Match values with type of error in nsDocShellTelemetryUtils.cpp",
-    "alert_emails": ["seceng-telemetry@mozilla.com"],
-    "bug_numbers": [1636962]
-  },
   "STORAGE_ACCESS_GRANTED_COUNT": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -2521,95 +2303,6 @@
       "seceng-telemetry@mozilla.com"
     ],
     "bug_numbers": [1762374, 1830058]
-  },
-  "SERVICE_WORKER_LAUNCH_TIME_2": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "bug_numbers": [1328398, 1693074],
-    "kind": "exponential",
-    "high": 30000,
-    "n_buckets": 25,
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["sw-telemetry@mozilla.com", "echuang@mozilla.com"],
-    "description": "Time (ms) for spawning a service worker in the remote content process."
-  },
-  "SERVICE_WORKER_ISOLATED_LAUNCH_TIME": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "bug_numbers": [1740335],
-    "kind": "exponential",
-    "high": 30000,
-    "n_buckets": 25,
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": [
-      "sw-telemetry@mozilla.com",
-      "rjesup@mozilla.com",
-      "echuang@mozilla.com"
-    ],
-    "description": "Time (ms) for spawning a service worker in an isolated content process."
-  },
-  "SERVICE_WORKER_REGISTRATION_LOADING": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 5000,
-    "n_buckets": 20,
-    "description": "Tracking how ServiceWorkerRegistrar loads data before the first content is shown. File bugs in Core::DOM in case of a Telemetry regression."
-  },
-  "SERVICE_WORKER_FETCH_INTERCEPTION_DURATION_MS_2": {
-    "expires_in_version": "never",
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "kind": "exponential",
-    "bug_numbers": [1359610, 1433916, 1693074],
-    "high": 60000,
-    "keyed": true,
-    "n_buckets": 25,
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["sw-telemetry@mozilla.com"],
-    "description": "Time delta (ms) between when a network request is intercepted in the parent process and the service worker provides a response."
-  },
-  "SERVICE_WORKER_FETCH_EVENT_DISPATCH_MS_2": {
-    "expires_in_version": "never",
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "bug_numbers": [1359610, 1433916, 1693074],
-    "kind": "exponential",
-    "high": 5000,
-    "n_buckets": 25,
-    "keyed": true,
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["sw-telemetry@mozilla.com", "echuang@mozilla.com"],
-    "description": "Time (in ms) measured between when the fetch event is dispatched by the Service Worker and before we execute the event listeners."
-  },
-  "SERVICE_WORKER_FETCH_EVENT_FINISH_SYNTHESIZED_RESPONSE_MS_2": {
-    "expires_in_version": "never",
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "bug_numbers": [1359610, 1433916, 1693074],
-    "kind": "exponential",
-    "high": 5000,
-    "n_buckets": 25,
-    "keyed": true,
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["sw-telemetry@mozilla.com", "echuang@mozilla.com"],
-    "description": "Time (in ms) measured between when the respondWith promise resolves and when we provide the response through the intercepted channel."
-  },
-  "SERVICE_WORKER_FETCH_EVENT_CHANNEL_RESET_MS_2": {
-    "expires_in_version": "never",
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "bug_numbers": [1359610, 1433916, 1693074],
-    "kind": "exponential",
-    "high": 5000,
-    "n_buckets": 25,
-    "keyed": true,
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["sw-telemetry@mozilla.com", "echuang@mozilla.com"],
-    "description": "Time (in ms) measured between when the fetch handler finished executing and when we reset the network channel."
   },
   "SUBPROCESS_ABNORMAL_ABORT": {
     "record_in_processes": ["main", "content"],
@@ -2995,50 +2688,6 @@
     "releaseChannelCollection": "opt-out",
     "description": "Elapsed time to detect whether a <form> element is a signup form."
   },
-  "SERVICE_WORKER_SPAWN_GETS_QUEUED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["amarchesini@mozilla.com"],
-    "bug_numbers": [1286895],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Tracking whether a ServiceWorker spawn gets queued due to hitting max workers per domain limit. File bugs in Core::DOM in case of a Telemetry regression."
-  },
-  "SHARED_WORKER_SPAWN_GETS_QUEUED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["amarchesini@mozilla.com"],
-    "bug_numbers": [1286895],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Tracking whether a SharedWorker spawn gets queued due to hitting max workers per domain limit. File bugs in Core::DOM in case of a Telemetry regression."
-  },
-  "DEDICATED_WORKER_SPAWN_GETS_QUEUED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["amarchesini@mozilla.com"],
-    "bug_numbers": [1286895],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Tracking whether a DedicatedWorker spawn gets queued due to hitting max workers per domain limit. File bugs in Core::DOM in case of a Telemetry regression."
-  },
-  "SERVICE_WORKER_RUNNING": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "linear",
-    "high": 31,
-    "n_buckets": 30,
-    "keyed": true,
-    "keys": ["All", "Fetch"],
-    "bug_numbers": [1740335],
-    "alert_emails": [
-      "sw-telemetry@mozilla.com",
-      "rjesup@mozilla.com",
-      "echuang@mozilla.com"
-    ],
-    "description": "The sampled number of simultaneous running ServiceWorkers in a session, sampled once each 10 seconds (lazily on state change)"
-  },
   "GRAPHICS_SANITY_TEST": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -3285,17 +2934,6 @@
     "n_values": 10,
     "description": "Media decoder backend (0=WMF Software, 1=DXVA2D3D9, 2=DXVA2D3D11)"
   },
-  "SANDBOX_REJECTED_SYSCALLS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["jld@mozilla.com", "gcp@mozilla.com"],
-    "bug_numbers": [1286865],
-    "expires_in_version": "never",
-    "releaseChannelCollection": "opt-out",
-    "kind": "count",
-    "keyed": true,
-    "description": "System calls blocked by a seccomp-bpf sandbox policy; limited to syscalls where we would crash on Nightly.  The key is generally the architecture and syscall ID but in some cases we include non-personally-identifying information from the syscall arguments; see the function SubmitToTelemetry in security/sandbox/linux/reporter/SandboxReporter.cpp for details."
-  },
   "SANDBOX_FAILED_LAUNCH_KEYED": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
@@ -3306,18 +2944,6 @@
     "n_values": 50,
     "bug_numbers": [1368600],
     "description": "Error code when a Windows sandboxed process fails to launch, keyed by process type and Windows error code. See https://searchfox.org/mozilla-central/search?q=ResultCode++path%3Asandbox_types.h&redirect=true for definitions of the error codes."
-  },
-  "SYNC_WORKER_OPERATION": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["amarchesini@mozilla.com", "khuey@mozilla.com"],
-    "bug_numbers": [1267904],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 5000,
-    "n_buckets": 20,
-    "keyed": true,
-    "description": "Tracking how long a Worker thread is blocked when a sync operation is executed on the main-thread."
   },
   "SUBPROCESS_KILL_HARD": {
     "record_in_processes": ["main", "content"],
@@ -3425,43 +3051,6 @@
       "FailSurface",
       "FailEnqueue"
     ]
-  },
-  "QM_QUOTA_INFO_LOAD_TIME_V0": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "bug_numbers": [1609625, 1683102],
-    "kind": "exponential",
-    "keyed": true,
-    "high": 180000,
-    "n_buckets": 60,
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["jan.varga@gmail.com", "storage-telemetry@mozilla.com"],
-    "description": "Time (ms) for the QuotaManager to load quota information. Keyed by conditions during quota info loading, see RecordTimeDeltaHelper::Run in https://searchfox.org/firefox-main/source/dom/quota/ActorsParent.cpp"
-  },
-  "QM_FIRST_INITIALIZATION_ATTEMPT": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "bug_numbers": [1592934],
-    "kind": "boolean",
-    "keyed": true,
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["jan.varga@gmail.com", "storage-telemetry@mozilla.com"],
-    "description": "True if the first initialization attempt succeeded, keyed by the initialization type."
-  },
-  "QM_SHUTDOWN_TIME_V0": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "bug_numbers": [1824075],
-    "kind": "exponential",
-    "keyed": true,
-    "high": 60000,
-    "n_buckets": 60,
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["jan.varga@gmail.com", "storage-telemetry@mozilla.com"],
-    "description": "Time (ms) for the QuotaManager to shutdown. Keyed by conditions during shutdown, see RecordTimeDeltaHelper::Run in https://searchfox.org/firefox-main/source/dom/quota/ActorsParent.cpp"
   },
   "COOKIE_PURGING_ORIGINS_PURGED": {
     "expires_in_version": "never",

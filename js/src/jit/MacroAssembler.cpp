@@ -355,16 +355,6 @@ void MacroAssembler::nurseryAllocateObject(Register result, Register temp,
         Address(result, thingSize + ObjectSlots::offsetOfSlots()), temp);
 
     storePtr(temp, Address(result, NativeObject::offsetOfSlots()));
-
-#ifdef JS_GC_CONCURRENT_MARKING
-    // For concurrent marking we currently preinitialize all dynamic slots.
-    //
-    // TODO: This will unnecessarily initialize slots that are explicitly
-    // initialized after this call.
-    push(result);
-    fillSlotsWithUndefined(Address(temp, 0), result, 0, nDynamicSlots);
-    pop(result);
-#endif
   }
 }
 
@@ -721,7 +711,11 @@ void MacroAssembler::bumpPointerAllocate(Register result, Register temp,
     Register site = allocSite.as<Register>();
     updateAllocSite(temp, result, zone, site);
     // See NurseryCellHeader::MakeValue.
-    orPtr(Imm32(int32_t(traceKind)), site);
+    static_assert(int32_t(JS::TraceKind::Object) == 0,
+                  "Object contributes no tag bits, making the OR a no-op");
+    if (traceKind != JS::TraceKind::Object) {
+      orPtr(Imm32(int32_t(traceKind)), site);
+    }
     storePtr(site, Address(result, -js::Nursery::nurseryCellHeaderSize()));
   }
 }
@@ -827,29 +821,45 @@ void MacroAssembler::preserveWrapper(Register wrapper, Register scratchSuccess,
 }
 
 void MacroAssembler::copySlotsFromTemplate(
-    Register obj, const TemplateNativeObject& templateObj, uint32_t start,
-    uint32_t end) {
-  uint32_t nfixed = std::min(templateObj.numFixedSlots(), end);
-  for (unsigned i = start; i < nfixed; i++) {
+    Register obj, Register temp, const TemplateNativeObject& templateObj,
+    uint32_t start, uint32_t end) {
+  auto slotValue = [&](uint32_t i) {
     // Template objects are not exposed to script and therefore immutable.
     // However, regexp template objects are sometimes used directly (when
     // the cloning is not observable), and therefore we can end up with a
     // non-zero lastIndex. Detect this case here and just substitute 0, to
     // avoid racing with the main thread updating this slot.
-    Value v;
     if (templateObj.isRegExpObject() && i == RegExpObject::lastIndexSlot()) {
-      v = Int32Value(0);
-    } else {
-      v = templateObj.getSlot(i);
+      return Int32Value(0);
     }
-    storeValue(v, Address(obj, NativeObject::getFixedSlotOffset(i)));
+    return templateObj.getSlot(i);
+  };
+
+  uint32_t nfixed = std::min(templateObj.numFixedSlots(), end);
+  for (uint32_t i = start; i < nfixed;) {
+    Value v = slotValue(i);
+    Address addr(obj, NativeObject::getFixedSlotOffset(i));
+
+    uint32_t runEnd = i + 1;
+    if (!v.isGCThing()) {
+      while (runEnd < nfixed && slotValue(runEnd) == v) {
+        runEnd++;
+      }
+    }
+
+    if (runEnd - i > 1) {
+      fillSlotsWithConstantValue(addr, temp, i, runEnd, v);
+    } else {
+      storeValue(v, addr);
+    }
+    i = runEnd;
   }
 }
 
 void MacroAssembler::fillSlotsWithConstantValue(Address base, Register temp,
                                                 uint32_t start, uint32_t end,
                                                 const Value& v) {
-  MOZ_ASSERT(v.isUndefined() || IsUninitializedLexical(v));
+  MOZ_ASSERT(!v.isGCThing());
 
   if (start >= end) {
     return;
@@ -1058,7 +1068,7 @@ void MacroAssembler::initGCSlots(Register obj, Register temp,
                 startOfUninitialized == startOfUndefined);
 
   // Copy over any preserved reserved slots.
-  copySlotsFromTemplate(obj, templateObj, 0, startOfUninitialized);
+  copySlotsFromTemplate(obj, temp, templateObj, 0, startOfUninitialized);
 
   // Fill the rest of the fixed slots with undefined and uninitialized.
   size_t offset = NativeObject::getFixedSlotOffset(startOfUninitialized);
@@ -2011,8 +2021,7 @@ void MacroAssembler::lookupStaticString(Register ch1, Register ch2,
   branch32(Assembler::Equal, ch2, Imm32(StaticStrings::INVALID_SMALL_CHAR),
            fail);
 
-  lshift32(Imm32(StaticStrings::SMALL_CHAR_BITS), ch1);
-  add32(ch2, ch1);
+  lshift32ThenAdd(Imm32(StaticStrings::SMALL_CHAR_BITS), ch2, ch1);
 
   // Look up the string from the computed index.
   movePtr(ImmPtr(&staticStrings.length2StaticTable), dest);
@@ -3128,10 +3137,9 @@ void MacroAssembler::emitMegamorphicCacheLookupByValueCommon(
   // outEntryPtr = ((outEntryPtr >> 3) + scratchHash) ^ (outEntryPtr >> 13)
   rshiftPtr(Imm32(MegamorphicCache::ShapeHashShift1), outEntryPtr);
   addPtr(outEntryPtr, scratchHash);
-  rshiftPtr(Imm32(MegamorphicCache::ShapeHashShift2 -
-                  MegamorphicCache::ShapeHashShift1),
-            outEntryPtr);
-  xorPtr(scratchHash, outEntryPtr);
+  rshiftPtrThenXor(Imm32(MegamorphicCache::ShapeHashShift2 -
+                         MegamorphicCache::ShapeHashShift1),
+                   scratchHash, outEntryPtr);
 
   // outEntryPtr %= MegamorphicCache::NumEntries
   constexpr size_t cacheSize = MegamorphicCache::NumEntries;
@@ -3348,12 +3356,11 @@ void MacroAssembler::emitMegamorphicCachedSetSlot(
   // outEntryPtr = obj->shape()
   loadPtr(Address(obj, JSObject::offsetOfShape()), scratch3);
 
-  movePtr(scratch3, scratch2);
-
   // scratch3 = (scratch3 >> 3) ^ (scratch3 >> 13) + idHash
-  rshiftPtr(Imm32(MegamorphicSetPropCache::ShapeHashShift1), scratch3);
-  rshiftPtr(Imm32(MegamorphicSetPropCache::ShapeHashShift2), scratch2);
-  xorPtr(scratch2, scratch3);
+  rshiftPtr(Imm32(MegamorphicSetPropCache::ShapeHashShift1), scratch3,
+            scratch2);
+  rshiftPtrThenXor(Imm32(MegamorphicSetPropCache::ShapeHashShift2), scratch2,
+                   scratch3);
 
   if constexpr (std::is_same_v<IdType, ValueOperand>) {
     loadAtomOrSymbolAndHash(id, scratch1, scratch2, &cacheMiss);
@@ -3857,6 +3864,64 @@ void MacroAssembler::timeClip(FloatRegister time, FloatRegister output,
   bind(&done);
 }
 
+void MacroAssembler::unpackTime(ValueOperand packedVal, Register dest,
+                                Register temp, uint32_t shiftImm,
+                                uint32_t maskImm) {
+  MOZ_ASSERT(maskImm <= INT32_MAX);
+
+#ifdef DEBUG
+  {
+    Label okValue;
+
+    branchTestDouble(Condition::Equal, packedVal, &okValue);
+    assumeUnreachable("packedTime is not a double");
+    bind(&okValue);
+  }
+#endif
+
+#ifdef JS_NUNBOX32
+  Register64 dest64(temp, dest);
+#else
+  MOZ_ASSERT(temp == InvalidReg);
+  Register64 dest64(dest);
+#endif
+
+  Register64 packedReg = packedVal.toRegister64();
+
+  if (shiftImm != 0) {
+    rshift64(Imm32(shiftImm), packedReg, dest64);
+  } else if (packedReg != dest64) {
+    move64(packedReg, dest64);
+  }
+
+  and32(Imm32(maskImm), dest);
+
+#ifdef JS_PUNBOX64
+  debugAssertCanonicalInt32(dest);
+#endif
+}
+
+void MacroAssembler::epochMilliseconds(FloatRegister seconds,
+                                       Register nanoseconds,
+                                       FloatRegister output, Register temp) {
+  // Inlined version of EpochNanoseconds::floorToMilliseconds. The
+  // C++ code uses integer arithmetic, but computing this with doubles
+  // gives identical results because all intermediate values are integers
+  // in the range ±8.64e15 and representable as doubles.
+  //
+  // |nanoseconds| is in the range [0, 999'999'999], so our unsigned division
+  // computes the same result as the signed division in the C++ code.
+
+  udiv32ByConstant(nanoseconds, 1'000'000, temp);
+
+  ScratchDoubleScope scratch(*this);
+  loadConstantDouble(1000.0, scratch);
+  mulDouble(seconds, scratch);
+
+  convertInt32ToDouble(temp, output);
+  addDouble(scratch, output);
+}
+
 void MacroAssembler::computeImplicitThis(Register env, ValueOperand output,
                                          Label* slowPath) {
   // Inline implementation of ComputeImplicitThis.
@@ -4053,42 +4118,85 @@ void MacroAssembler::generateBailoutTail(Register scratch,
     AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
     MOZ_ASSERT_IF(!IsHiddenSP(getStackPointer()),
                   !regs.has(AsRegister(getStackPointer())));
+    regs.take(scratch);
     regs.take(bailoutInfo);
+    regs.take(BailoutStubHandlerReg);
 
-    Register temp = regs.takeAny();
+    Register copyCur = regs.takeAny();
+    Register copyEnd = regs.takeAny();
+    Register stubInfo = regs.takeAny();
 
 #ifdef DEBUG
     // Assert the stack pointer points to the JitFrameLayout header. Copying
     // starts here.
     Label ok;
     loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, incomingStack)),
-            temp);
-    branchStackPtr(Assembler::Equal, temp, &ok);
+            scratch);
+    branchStackPtr(Assembler::Equal, scratch, &ok);
     assumeUnreachable("Unexpected stack pointer value");
     bind(&ok);
 #endif
 
-    Register copyCur = regs.takeAny();
-    Register copyEnd = regs.takeAny();
-
     // Copy data onto stack.
     loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, copyStackTop)),
             copyCur);
-    loadPtr(
-        Address(bailoutInfo, offsetof(BaselineBailoutInfo, copyStackBottom)),
-        copyEnd);
-    {
-      Label copyLoop;
-      Label endOfCopy;
-      bind(&copyLoop);
-      branchPtr(Assembler::BelowOrEqual, copyCur, copyEnd, &endOfCopy);
-      subPtr(Imm32(sizeof(uintptr_t)), copyCur);
-      subFromStackPtr(Imm32(sizeof(uintptr_t)));
-      loadPtr(Address(copyCur, 0), temp);
-      storePtr(temp, Address(getStackPointer(), 0));
-      jump(&copyLoop);
-      bind(&endOfCopy);
-    }
+    // Instead of directly copying the entire bailout stack in one go, we
+    // materialize the frames one at a time using calls to bailout stubs for the
+    // return addresses.
+    computeEffectiveAddress(Address(bailoutInfo, sizeof(BaselineBailoutInfo)),
+                            stubInfo);
+
+    CodeLabel bailoutStubHandler;
+    // Pin the BailoutStubHandlerReg that each bailout stub will call.
+    mov(&bailoutStubHandler, BailoutStubHandlerReg);
+
+#ifdef JS_USE_LINK_REGISTER
+    // On the first iteration into the bailout stub handler,
+    // the link register does not need to be pushed.
+    Label copyFrame;
+    jump(&copyFrame);
+#endif
+
+    bind(&bailoutStubHandler);
+    addCodeLabel(bailoutStubHandler);
+
+#ifdef JS_USE_LINK_REGISTER
+    // The call from the bailout stub to the bailout stub handler
+    // does not actually push the return address onto the stack.
+    pushReturnAddress();
+    bind(&copyFrame);
+#endif
+
+    // Bailout segment handler starts here. The baseline bailout stubs
+    // repeatedly call into this to push the return address and begin
+    // copying the next frame on the stack.
+    loadPtr(Address(stubInfo, offsetof(BailoutStubInfo, frameBoundary)),
+            copyEnd);
+
+    Label copyLoop;
+    Label endOfCopy;
+    bind(&copyLoop);
+    branchStackPtr(Assembler::BelowOrEqual, copyEnd, &endOfCopy);
+    subPtr(Imm32(sizeof(uintptr_t)), copyCur);
+    subFromStackPtr(Imm32(sizeof(uintptr_t)));
+    loadPtr(Address(copyCur, 0), scratch);
+    storePtr(scratch, Address(getStackPointer(), 0));
+    jump(&copyLoop);
+
+    bind(&endOfCopy);
+    // all of the frame's contents have been copied except the return address.
+    loadPtr(Address(stubInfo, offsetof(BailoutStubInfo, bailoutStub)), scratch);
+    // move to the next bailout stub info.
+    addPtr(Imm32(sizeof(BailoutStubInfo)), stubInfo);
+    Label copyDone;
+    // A null stubAddr marks the final stack boundary.
+    branchTestPtr(Assembler::Zero, scratch, scratch, &copyDone);
+
+    // The call in each bailout stub recreates the return address skipped here.
+    subPtr(Imm32(sizeof(uintptr_t)), copyCur);
+    jump(scratch);
+
+    bind(&copyDone);
 
     loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeFramePtr)),
             FramePointer);
@@ -4106,7 +4214,7 @@ void MacroAssembler::generateBailoutTail(Register scratch,
 
     // Call a stub to free allocated memory and create arguments objects.
     using Fn = bool (*)(BaselineBailoutInfo* bailoutInfoArg);
-    setupUnalignedABICall(temp);
+    setupUnalignedABICall(scratch);
     passABIArg(bailoutInfo);
     callWithABI<Fn, FinishBailoutToBaseline>(
         ABIType::General, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
@@ -4667,8 +4775,7 @@ MacroAssembler::AutoProfilerCallInstrumentation::
 
   Register reg = CallTempReg0;
   Register reg2 = CallTempReg1;
-  masm.push(reg);
-  masm.push(reg2);
+  masm.pushRegs(reg, reg2);
 
   CodeOffset label = masm.movWithPatch(ImmWord(uintptr_t(-1)), reg);
   masm.loadJSContext(reg2);
@@ -4678,8 +4785,7 @@ MacroAssembler::AutoProfilerCallInstrumentation::
 
   masm.appendProfilerCallSite(label);
 
-  masm.pop(reg2);
-  masm.pop(reg);
+  masm.popRegs(reg2, reg);
 }
 
 void MacroAssembler::linkProfilerCallSites(JitCode* code) {
@@ -5862,9 +5968,9 @@ void MacroAssembler::loadParsedRegExpShared(Register regexp, Register result,
   branchTestUndefined(Assembler::Equal, sharedSlot, unparsed);
   unboxNonDouble(sharedSlot, result, JSVAL_TYPE_PRIVATE_GCTHING);
 
-  static_assert(sizeof(RegExpShared::Kind) == sizeof(uint32_t));
-  branch32(Assembler::Equal, Address(result, RegExpShared::offsetOfKind()),
-           Imm32(int32_t(RegExpShared::Kind::Unparsed)), unparsed);
+  static_assert(sizeof(RegExpShared::Kind) == sizeof(uint8_t));
+  branch8(Assembler::Equal, Address(result, RegExpShared::offsetOfKind()),
+          Imm32(int32_t(RegExpShared::Kind::Unparsed)), unparsed);
 }
 
 // ===============================================================
@@ -6197,7 +6303,10 @@ void MacroAssembler::appendAndVerify(wasm::Trap trap,
   }
 #endif
 
-  appendNoVerify(trap, insn, fcr, desc);
+  // See block comment at the definition of FaultingCodeRange.
+  if (fcr.isValid()) {
+    appendNoVerify(trap, insn, fcr, desc);
+  }
 }
 
 void MacroAssembler::appendAndVerify(const wasm::MemoryAccessDesc& access,
@@ -6323,7 +6432,7 @@ static ReturnCallTrampolineData MakeReturnCallTrampoline(MacroAssembler& masm) {
   masm.loadPtr(
       Address(masm.getStackPointer(), WasmCallerInstanceOffsetBeforeCall),
       InstanceReg);
-  masm.loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+  masm.loadWasmPinnedRegsFromInstance();
   masm.switchToWasmInstanceRealm(ABINonArgReturnReg0, ABINonArgReturnReg1);
   masm.moveToStackPtr(FramePointer);
 #ifdef JS_CODEGEN_ARM64
@@ -6338,6 +6447,19 @@ static ReturnCallTrampolineData MakeReturnCallTrampoline(MacroAssembler& masm) {
   masm.append(wasm::CodeRangeUnwindInfo::UseFpLr, masm.currentOffset());
   masm.addToStackPtr(Imm32(sizeof(wasm::Frame)));
   masm.abiret();
+#elif defined(JS_CODEGEN_RISCV64)
+  {
+    // This should be 4 instructions, but make room for 5 (25% slack) to be
+    // safe.
+    AutoForbidPoolsAndNops afp(&masm, 5);
+
+    masm.loadPtr(Address(FramePointer, wasm::Frame::returnAddressOffset()), ra);
+    masm.loadPtr(Address(FramePointer, wasm::Frame::callerFPOffset()),
+                 FramePointer);
+    masm.append(wasm::CodeRangeUnwindInfo::UseFpLr, masm.currentOffset());
+    masm.addToStackPtr(Imm32(sizeof(wasm::Frame)));
+    masm.abiret();
+  }
 #else
   masm.pop(FramePointer);
   masm.append(wasm::CodeRangeUnwindInfo::UseFp, masm.currentOffset());
@@ -6575,7 +6697,7 @@ static void CollapseWasmFrameSlow(MacroAssembler& masm,
   masm.mov(&data.trampoline, ScratchRegister);
   // thus, modify ra in only one instruction.
   masm.mov(ScratchRegister, tempForRA);
-#  elif defined(JS_CODEGEN_LOONG64)
+#  elif defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
   // intermediate values in ra can break the unwinder.
   masm.mov(&data.trampoline, SavedScratchRegister);
   // thus, modify ra in only one instruction.
@@ -6683,7 +6805,7 @@ CodeOffset MacroAssembler::wasmCallImport(const wasm::CallSiteDesc& desc,
 
   storePtr(InstanceReg,
            Address(getStackPointer(), WasmCalleeInstanceOffsetBeforeCall));
-  loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+  loadWasmPinnedRegsFromInstance();
 
   return wasmMarkedSlowCall(desc, ABINonArgReg0);
 }
@@ -6724,7 +6846,7 @@ CodeOffset MacroAssembler::wasmReturnCallImport(
 
   storePtr(InstanceReg,
            Address(getStackPointer(), WasmCalleeInstanceOffsetBeforeCall));
-  loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+  loadWasmPinnedRegsFromInstance();
 
   wasm::CallSiteDesc stubDesc(desc.bytecodeOffset(),
                               wasm::CallSiteKind::ReturnStub);
@@ -6834,11 +6956,11 @@ CodeOffset MacroAssembler::wasmTrapOnFailedInstanceCall(
 // call without the context switch (which additionally avoids a null check) and
 // one for the slow call with the context switch.
 
-void MacroAssembler::wasmCallIndirect(const wasm::CallSiteDesc& desc,
-                                      const wasm::CalleeDesc& callee,
-                                      Label* nullCheckFailedLabel,
-                                      CodeOffset* fastCallOffset,
-                                      CodeOffset* slowCallOffset) {
+[[nodiscard]]
+FaultingCodeRange MacroAssembler::wasmCallIndirect(
+    const wasm::CallSiteDesc& desc, const wasm::CalleeDesc& callee,
+    Label* nullCheckFailedLabel, CodeOffset* fastCallOffset,
+    CodeOffset* slowCallOffset) {
   static_assert(sizeof(wasm::FunctionTableElem) == 2 * sizeof(void*),
                 "Exactly two pointers or index scaling won't work correctly");
   MOZ_ASSERT(callee.which() == wasm::CalleeDesc::WasmTable);
@@ -6898,17 +7020,18 @@ void MacroAssembler::wasmCallIndirect(const wasm::CallSiteDesc& desc,
   storePtr(InstanceReg,
            Address(getStackPointer(), WasmCalleeInstanceOffsetBeforeCall));
 
+  FaultingCodeRange fcr;
 #ifdef WASM_HAS_HEAPREG
   // Use the null pointer exception resulting from loading HeapReg from a null
   // instance to handle a call to a null slot.
   MOZ_ASSERT(nullCheckFailedLabel == nullptr);
-  loadWasmPinnedRegsFromInstance(mozilla::Some(desc.toTrapSiteDesc()));
+  fcr = loadWasmPinnedRegsFromInstance(desc.toTrapSiteDesc());
 #else
   MOZ_ASSERT(nullCheckFailedLabel != nullptr);
   branchTestPtr(Assembler::Zero, InstanceReg, InstanceReg,
                 nullCheckFailedLabel);
 
-  loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+  loadWasmPinnedRegsFromInstance();
 #endif
   switchToWasmInstanceRealm(index, WasmTableCallScratchReg1);
 
@@ -6921,7 +7044,7 @@ void MacroAssembler::wasmCallIndirect(const wasm::CallSiteDesc& desc,
 
   loadPtr(Address(getStackPointer(), WasmCallerInstanceOffsetBeforeCall),
           InstanceReg);
-  loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+  loadWasmPinnedRegsFromInstance();
   switchToWasmInstanceRealm(ABINonArgReturnReg0, ABINonArgReturnReg1);
   jump(&done);
 
@@ -6945,9 +7068,12 @@ void MacroAssembler::wasmCallIndirect(const wasm::CallSiteDesc& desc,
   *fastCallOffset = call(newDesc, calleeScratch);
 
   bind(&done);
+
+  return fcr;
 }
 
-void MacroAssembler::wasmReturnCallIndirect(
+[[nodiscard]]
+FaultingCodeRange MacroAssembler::wasmReturnCallIndirect(
     const wasm::CallSiteDesc& desc, const wasm::CalleeDesc& callee,
     Label* nullCheckFailedLabel, const ReturnCallAdjustmentInfo& retCallInfo) {
   static_assert(sizeof(wasm::FunctionTableElem) == 2 * sizeof(void*),
@@ -7001,17 +7127,18 @@ void MacroAssembler::wasmReturnCallIndirect(
            Address(getStackPointer(), WasmCallerInstanceOffsetBeforeCall));
   movePtr(newInstanceTemp, InstanceReg);
 
+  FaultingCodeRange fcr;
 #ifdef WASM_HAS_HEAPREG
   // Use the null pointer exception resulting from loading HeapReg from a null
   // instance to handle a call to a null slot.
   MOZ_ASSERT(nullCheckFailedLabel == nullptr);
-  loadWasmPinnedRegsFromInstance(mozilla::Some(desc.toTrapSiteDesc()));
+  fcr = loadWasmPinnedRegsFromInstance(desc.toTrapSiteDesc());
 #else
   MOZ_ASSERT(nullCheckFailedLabel != nullptr);
   branchTestPtr(Assembler::Zero, InstanceReg, InstanceReg,
                 nullCheckFailedLabel);
 
-  loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+  loadWasmPinnedRegsFromInstance();
 #endif
   switchToWasmInstanceRealm(index, WasmTableCallScratchReg1);
 
@@ -7034,12 +7161,17 @@ void MacroAssembler::wasmReturnCallIndirect(
   wasmCollapseFrameFast(retCallInfo);
   jump(calleeScratch);
   append(wasm::CodeRangeUnwindInfo::Normal, currentOffset());
+
+  return fcr;
 }
 
 void MacroAssembler::wasmCallRef(const wasm::CallSiteDesc& desc,
                                  const wasm::CalleeDesc& callee,
                                  CodeOffset* fastCallOffset,
-                                 CodeOffset* slowCallOffset) {
+                                 CodeOffset* slowCallOffset,
+                                 wasm::StackMap* stackMapForTraps,
+                                 wasm::StackMapRegistry* stackMapRegistry) {
+  MOZ_ASSERT_IF(stackMapForTraps, stackMapRegistry);
   MOZ_ASSERT(callee.which() == wasm::CalleeDesc::FuncRef);
   const Register calleeScratch = WasmCallRefCallScratchReg0;
   const Register calleeFnObj = WasmCallRefReg;
@@ -7059,6 +7191,10 @@ void MacroAssembler::wasmCallRef(const wasm::CallSiteDesc& desc,
   appendAndVerify(wasm::Trap::NullPointerDereference,
                   wasm::TrapMachineInsnForLoadWord(), fcr,
                   desc.toTrapSiteDesc());
+  if (stackMapForTraps) {
+    propagateOOM(stackMapRegistry->addMap(stackMapForTraps, fcr));
+  }
+
   branchPtr(Assembler::Equal, InstanceReg, newInstanceTemp, &fastCall);
 
   storePtr(InstanceReg,
@@ -7067,7 +7203,7 @@ void MacroAssembler::wasmCallRef(const wasm::CallSiteDesc& desc,
   storePtr(InstanceReg,
            Address(getStackPointer(), WasmCalleeInstanceOffsetBeforeCall));
 
-  loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+  loadWasmPinnedRegsFromInstance();
   switchToWasmInstanceRealm(WasmCallRefCallScratchReg0,
                             WasmCallRefCallScratchReg1);
 
@@ -7082,7 +7218,7 @@ void MacroAssembler::wasmCallRef(const wasm::CallSiteDesc& desc,
   // Restore registers and realm and back to this caller's.
   loadPtr(Address(getStackPointer(), WasmCallerInstanceOffsetBeforeCall),
           InstanceReg);
-  loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+  loadWasmPinnedRegsFromInstance();
   switchToWasmInstanceRealm(ABINonArgReturnReg0, ABINonArgReturnReg1);
   jump(&done);
 
@@ -7105,7 +7241,10 @@ void MacroAssembler::wasmCallRef(const wasm::CallSiteDesc& desc,
 
 void MacroAssembler::wasmReturnCallRef(
     const wasm::CallSiteDesc& desc, const wasm::CalleeDesc& callee,
-    const ReturnCallAdjustmentInfo& retCallInfo) {
+    const ReturnCallAdjustmentInfo& retCallInfo,
+    wasm::StackMap* stackMapForTraps,
+    wasm::StackMapRegistry* stackMapRegistry) {
+  MOZ_ASSERT_IF(stackMapForTraps, stackMapRegistry);
   MOZ_ASSERT(callee.which() == wasm::CalleeDesc::FuncRef);
   const Register calleeScratch = WasmCallRefCallScratchReg0;
   const Register calleeFnObj = WasmCallRefReg;
@@ -7125,6 +7264,10 @@ void MacroAssembler::wasmReturnCallRef(
   appendAndVerify(wasm::Trap::NullPointerDereference,
                   wasm::TrapMachineInsnForLoadWord(), fcr,
                   desc.toTrapSiteDesc());
+  if (stackMapForTraps) {
+    propagateOOM(stackMapRegistry->addMap(stackMapForTraps, fcr));
+  }
+
   branchPtr(Assembler::Equal, InstanceReg, newInstanceTemp, &fastCall);
 
   storePtr(InstanceReg,
@@ -7133,7 +7276,7 @@ void MacroAssembler::wasmReturnCallRef(
   storePtr(InstanceReg,
            Address(getStackPointer(), WasmCalleeInstanceOffsetBeforeCall));
 
-  loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+  loadWasmPinnedRegsFromInstance();
   switchToWasmInstanceRealm(WasmCallRefCallScratchReg0,
                             WasmCallRefCallScratchReg1);
 
@@ -7161,7 +7304,7 @@ void MacroAssembler::wasmReturnCallRef(
   append(wasm::CodeRangeUnwindInfo::Normal, currentOffset());
 }
 
-void MacroAssembler::wasmBoundsCheckRange32(
+FaultingCodeRange MacroAssembler::wasmBoundsCheckRange32(
     Register index, Register length, Register limit, Register tmp,
     const wasm::TrapSiteDesc& trapSiteDesc) {
   Label ok;
@@ -7173,9 +7316,10 @@ void MacroAssembler::wasmBoundsCheckRange32(
   jump(&ok);
 
   bind(&fail);
-  wasmTrap(wasm::Trap::OutOfBounds, trapSiteDesc);
+  FaultingCodeRange fcr = wasmTrap(wasm::Trap::OutOfBounds, trapSiteDesc);
 
   bind(&ok);
+  return fcr;
 }
 
 void MacroAssembler::wasmClampTable64Address(Register64 address, Register out) {
@@ -7321,12 +7465,12 @@ FaultingCodeRange MacroAssembler::branchWasmRefIsSubtypeAny(
     //    then we will segfault.
     // We could ignore the former check, but better to be precise and ensure
     // that we are getting the optimizations we expect.
-    MOZ_ASSERT_IF(signalNullChecks && fcr.isValid(), canOmitNullCheck);
-    MOZ_ASSERT_IF(signalNullChecks && !fcr.isValid(), !canOmitNullCheck);
+    MOZ_ASSERT_IF(!oom() && signalNullChecks,
+                  canOmitNullCheck == fcr.isValid());
 
     // We should never get a valid FCR if the caller doesn't expect signal
     // handling. This simplifies life for the caller.
-    MOZ_ASSERT_IF(!signalNullChecks, !fcr.isValid());
+    MOZ_ASSERT_IF(!oom() && !signalNullChecks, !fcr.isValid());
   }));
 
   // -----------------------------------
@@ -8602,21 +8746,37 @@ void MacroAssembler::boundsCheck32PowerOfTwo(Register index, uint32_t length,
   }
 }
 
-void MacroAssembler::loadWasmPinnedRegsFromInstance(
-    const wasm::MaybeTrapSiteDesc& trapSiteDesc) {
 #ifdef WASM_HAS_HEAPREG
+// The target has a dedicated HeapReg, so load it from the Instance, and note
+// the load as possibly trapping.
+[[nodiscard]]
+FaultingCodeRange MacroAssembler::loadWasmPinnedRegsFromInstance(
+    const wasm::TrapSiteDesc& trapSiteDesc) {
   static_assert(wasm::Instance::offsetOfMemory0Base() < 4096,
                 "We count only on the low page being inaccessible");
   FaultingCodeRange fcr = loadPtr(
       Address(InstanceReg, wasm::Instance::offsetOfMemory0Base()), HeapReg);
-  if (trapSiteDesc) {
+  if (fcr.isValid()) {
     appendAndVerify(wasm::Trap::IndirectCallToNull,
-                    wasm::TrapMachineInsnForLoadWord(), fcr, *trapSiteDesc);
+                    wasm::TrapMachineInsnForLoadWord(), fcr, trapSiteDesc);
   }
-#else
-  MOZ_ASSERT(!trapSiteDesc);
-#endif
+  return fcr;
 }
+
+// The same, but don't bother with the trapping aspect.
+void MacroAssembler::loadWasmPinnedRegsFromInstance() {
+  static_assert(wasm::Instance::offsetOfMemory0Base() < 4096);
+  FaultingCodeRange fcr = loadPtr(
+      Address(InstanceReg, wasm::Instance::offsetOfMemory0Base()), HeapReg);
+  (void)fcr;
+}
+
+#else
+
+// There's no dedicated HeapReg, so nothing to do.
+void MacroAssembler::loadWasmPinnedRegsFromInstance() {}
+
+#endif
 
 //}}} check_macroassembler_style
 
@@ -10505,10 +10665,8 @@ void MacroAssembler::prepareHashObject(Register setObj, ValueOperand value,
     add64(v1, v0);
 
     // mV1 = RotateLeft(mV1, 13);
-    rotateLeft64(Imm32(13), v1, v1, InvalidReg);
-
     // mV1 ^= mV0;
-    xor64(v0, v1);
+    rotateLeft64ThenXor(Imm32(13), v0, v1);
 
     // mV0 = RotateLeft(mV0, 32);
     rotateLeft64(Imm32(32), v0, v0, InvalidReg);
@@ -10517,28 +10675,22 @@ void MacroAssembler::prepareHashObject(Register setObj, ValueOperand value,
     add64(v3, v2);
 
     // mV3 = RotateLeft(mV3, 16);
-    rotateLeft64(Imm32(16), v3, v3, InvalidReg);
-
     // mV3 ^= mV2;
-    xor64(v2, v3);
+    rotateLeft64ThenXor(Imm32(16), v2, v3);
 
     // mV0 = WrappingAdd(mV0, mV3);
     add64(v3, v0);
 
     // mV3 = RotateLeft(mV3, 21);
-    rotateLeft64(Imm32(21), v3, v3, InvalidReg);
-
     // mV3 ^= mV0;
-    xor64(v0, v3);
+    rotateLeft64ThenXor(Imm32(21), v0, v3);
 
     // mV2 = WrappingAdd(mV2, mV1);
     add64(v1, v2);
 
     // mV1 = RotateLeft(mV1, 17);
-    rotateLeft64(Imm32(17), v1, v1, InvalidReg);
-
     // mV1 ^= mV2;
-    xor64(v2, v1);
+    rotateLeft64ThenXor(Imm32(17), v2, v1);
 
     // mV2 = RotateLeft(mV2, 32);
     rotateLeft64(Imm32(32), v2, v2, InvalidReg);

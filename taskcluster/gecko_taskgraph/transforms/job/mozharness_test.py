@@ -148,24 +148,12 @@ def mozharness_test_on_docker(config, job, taskdesc):
     env.update({
         "MOZHARNESS_CONFIG": " ".join(mozharness["config"]),
         "MOZHARNESS_SCRIPT": mozharness["script"],
-        "MOZILLA_BUILD_URL": {"artifact-reference": installer},
         "NEED_WINDOW_MANAGER": "true",
         "ENABLE_E10S": str(bool(test.get("e10s"))).lower(),
         "WORKING_DIR": "/builds/worker",
     })
 
     env["PYTHON"] = "python3"
-
-    if test.get("docker-image", {}).get("in-tree") == "ubuntu1804-test":
-        env["NEED_PULSEAUDIO"] = "true"
-
-        # Bug 1602701/1601828 - use compiz on ubuntu1804 due to GTK asynchiness
-        # when manipulating windows.
-        if "wdspec" in job["run"]["test"]["suite"] or (
-            "marionette" in job["run"]["test"]["suite"]
-            and "headless" not in job["label"]
-        ):
-            env.update({"NEED_COMPIZ": "true"})
 
     if test.get("docker-image", {}).get("in-tree") == "ubuntu2404-test":
         env["NEED_PIPEWIRE"] = "true"
@@ -383,7 +371,6 @@ def mozharness_test_on_generic_worker(config, job, taskdesc):
             "MOZHARNESS_URL": {
                 "artifact-reference": "<build/public/build/mozharness.zip>"
             },
-            "MOZILLA_BUILD_URL": {"artifact-reference": installer},
             "NEED_XVFB": "false",
             "XPCOM_DEBUG_BREAK": "warn",
             "NO_FAIL_ON_TEST_ERRORS": "1",

@@ -44,21 +44,25 @@ rtc_source_set("module_fec_api") {
 }
 
 if (rtc_include_tests && !build_with_chromium) {
-  rtc_test("modules_tests") {
-    testonly = true
-
-    deps = [
-      "../test:video_test_common",
+  rtc_test_suite("modules_tests") {
+    tests = [
       "audio_coding:audio_coding_modules_tests",
       "rtp_rtcp:rtp_rtcp_modules_tests",
-      "video_coding:video_coding_modules_tests",
-      "//testing/gtest",
+      "video_coding:h264_impl_unittest",
+      "video_coding:video_encoder_decoder_instantiation_tests",
+      "video_coding:videocodec_test_av1",
+      "video_coding:videocodec_test_libvpx",
+      "video_coding:vp8_impl_unittest",
     ]
 
-    data_deps = [ "../resources:modules_tests_data" ]
-
-    if (is_ios) {
-      deps += [ "../resources:modules_tests_bundle_data" ]
+    if (rtc_use_h264) {
+      tests += [ "video_coding:videocodec_test_openh264" ]
+    }
+    if (rtc_libvpx_build_vp9) {
+      tests += [ "video_coding:vp9_impl_unittest" ]
+    }
+    if (is_ios || is_mac) {
+      tests += [ "video_coding:videocodec_test_videotoolbox" ]
     }
   }
   rtc_test("modules_unittests") {
@@ -73,8 +77,6 @@ if (rtc_include_tests && !build_with_chromium) {
       "audio_coding:audio_coding_unittests",
       "audio_device:audio_device_unittests",
       "audio_mixer:audio_mixer_unittests",
-      "audio_processing:audio_processing_unittests",
-      "audio_processing/ns:ns_unittests",
       "congestion_controller:congestion_controller_unittests",
       "pacing:pacing_unittests",
       "remote_bitrate_estimator:remote_bitrate_estimator_unittests",
@@ -83,13 +85,6 @@ if (rtc_include_tests && !build_with_chromium) {
       "video_coding:video_coding_unittests",
       "video_coding/timing:timing_unittests",
     ]
-
-    if (rtc_enable_protobuf) {
-      deps += [
-        "audio_processing/aec3:aec3_unittests",
-        "audio_processing/aec3/neural_residual_echo_estimator:neural_residual_echo_estimator_unittest",
-      ]
-    }
 
     data_deps = [ "../resources:modules_unittests_data" ]
 

@@ -6,14 +6,13 @@
 Module to handle Gecko profiling.
 """
 
-import json
 import os
 import tempfile
 import zipfile
 
 import mozfile
 from logger.logger import RaptorLogger
-from mozgeckoprofiler import ProfileSymbolicator
+from mozgeckoprofiler import symbolicate_profile_file
 
 here = os.path.dirname(os.path.realpath(__file__))
 LOG = RaptorLogger(component="raptor-gecko-profile")
@@ -29,7 +28,6 @@ class GeckoProfile(RaptorProfiling):
 
     def __init__(self, upload_dir, raptor_config, test_config):
         super().__init__(upload_dir, raptor_config, test_config)
-        self.cleanup = True
 
         # define the key in the results json for gecko profiles
         self.profile_entry_string = "geckoProfiles"
@@ -44,7 +42,7 @@ class GeckoProfile(RaptorProfiling):
         ) or test_config.get("gecko_profile_entries", 1000000)
 
         # We need symbols_path; if it wasn't passed in on cmdline, set it
-        # use objdir/dist/crashreporter-symbols for symbolsPath if none provided
+        # to use objdir/dist/crashreporter-symbols if none provided
         if (
             not self.raptor_config["symbols_path"]
             and self.raptor_config["run_local"]
@@ -69,11 +67,6 @@ class GeckoProfile(RaptorProfiling):
         LOG.info(f"Clearing archive {self.profile_arcname}")
         mozfile.remove(self.profile_arcname)
 
-        self.symbol_paths = {
-            "FIREFOX": tempfile.mkdtemp(),
-            "WINDOWS": tempfile.mkdtemp(),
-        }
-
         LOG.info(
             "Activating gecko profiling, temp profile dir:"
             f" {self.temp_profile_dir}, interval: {gecko_profile_interval}, entries: {gecko_profile_entries}"
@@ -83,25 +76,16 @@ class GeckoProfile(RaptorProfiling):
     def _is_extra_profiler_run(self):
         return self.raptor_config.get("extra_profiler_run", False)
 
-    def _symbolicate_profile(self, profile, missing_symbols_zip, symbolicator):
+    def _symbolicate_profile(self, profile_path, out_path):
         try:
-            symbolicator.dump_and_integrate_missing_symbols(
-                profile, missing_symbols_zip
-            )
-            symbolicator.symbolicate_profile(profile)
-            return profile
-        except MemoryError:
-            LOG.critical(
-                "Ran out of memory while trying to symbolicate profile.", exc_info=True
-            )
-            raise
+            return symbolicate_profile_file(profile_path, out_path)
         except Exception:
             LOG.critical(
                 "Encountered an exception during profile symbolication.", exc_info=True
             )
-            # Do not raise an exception and return the profile so we won't block
-            # the profile capturing pipeline if symbolication fails.
-            return profile
+            # Do not raise, so we won't block the profile capturing pipeline
+            # if symbolication fails.
+            return False
 
     def symbolicate(self):
         """
@@ -116,46 +100,6 @@ class GeckoProfile(RaptorProfiling):
                 LOG.error("No profiles collected")
             return
 
-        symbolicator = ProfileSymbolicator({
-            # Trace-level logging (verbose)
-            "enableTracing": 0,
-            # Fallback server if symbol is not found locally
-            "remoteSymbolServer": "https://symbolication.services.mozilla.com/symbolicate/v4",
-            # Maximum number of symbol files to keep in memory
-            "maxCacheEntries": 2000000,
-            # Frequency of checking for recent symbols to
-            # cache (in hours)
-            "prefetchInterval": 12,
-            # Oldest file age to prefetch (in hours)
-            "prefetchThreshold": 48,
-            # Maximum number of library versions to pre-fetch
-            # per library
-            "prefetchMaxSymbolsPerLib": 3,
-            # Default symbol lookup directories
-            "defaultApp": "FIREFOX",
-            "defaultOs": "WINDOWS",
-            # Paths to .SYM files, expressed internally as a
-            # mapping of app or platform names to directories
-            # Note: App & OS names from requests are converted
-            # to all-uppercase internally
-            "symbolPaths": self.symbol_paths,
-        })
-
-        if self.raptor_config.get("symbols_path") is not None:
-            if mozfile.is_url(self.raptor_config["symbols_path"]):
-                symbolicator.integrate_symbol_zip_from_url(
-                    self.raptor_config["symbols_path"]
-                )
-            elif os.path.isfile(self.raptor_config["symbols_path"]):
-                symbolicator.integrate_symbol_zip_from_file(
-                    self.raptor_config["symbols_path"]
-                )
-            elif os.path.isdir(self.raptor_config["symbols_path"]):
-                sym_path = self.raptor_config["symbols_path"]
-                symbolicator.options["symbolPaths"]["FIREFOX"] = sym_path
-                self.cleanup = False
-
-        missing_symbols_zip = os.path.join(self.upload_dir, "missingsymbols.zip")
         test_type = self.test_config.get("type", "pageload")
 
         try:
@@ -163,14 +107,13 @@ class GeckoProfile(RaptorProfiling):
         except NameError:
             mode = zipfile.ZIP_STORED
 
-        with zipfile.ZipFile(self.profile_arcname, "a", mode) as arc:
-            for profile_info in profiles:
+        with tempfile.TemporaryDirectory() as sym_dir, zipfile.ZipFile(
+            self.profile_arcname, "a", mode
+        ) as arc:
+            for index, profile_info in enumerate(profiles):
                 profile_path = profile_info["path"]
 
-                LOG.info(f"Opening profile at {profile_path}")
-                try:
-                    profile = self._open_profile_file(profile_path)
-                except FileNotFoundError:
+                if not os.path.exists(profile_path):
                     if self._is_extra_profiler_run:
                         LOG.info("Profile not found on extra profiler run.")
                     else:
@@ -178,8 +121,15 @@ class GeckoProfile(RaptorProfiling):
                     continue
 
                 LOG.info(f"Symbolicating profile from {profile_path}")
-                symbolicated_profile = self._symbolicate_profile(
-                    profile, missing_symbols_zip, symbolicator
+                # The archive deflates its entries already, so the symbolicated
+                # profile is written uncompressed: profiler-edit writes plain
+                # JSON for a ".json" output name whatever the input's
+                # compression. On failure we archive the profile as it came.
+                sym_path = os.path.join(sym_dir, f"{index}.json")
+                archived_path = (
+                    sym_path
+                    if self._symbolicate_profile(profile_path, sym_path)
+                    else profile_path
                 )
 
                 try:
@@ -190,33 +140,32 @@ class GeckoProfile(RaptorProfiling):
                     # For example, "cnn-pageload-warm".
                     # The file names are formatted as <ITERATION-TYPE>-<ITERATION>
                     # to clearly indicate without redundant information.
-                    # For example, "browser-cycle-1".
+                    # For example, "browser-cycle-1.json".
                     test_run_type = (
                         "{}-{}".format(test_type, profile_info["type"])
                         if test_type == "pageload"
                         else test_type
                     )
                     folder_name = f"{self.test_config['name']}-{test_run_type}"
-                    iteration = str(os.path.split(profile_path)[-1].split("-")[-1])
+                    basename = os.path.basename(profile_path)
+                    iteration = basename.split("-")[-1].split(".", 1)[0]
                     if test_type == "pageload" and profile_info["type"] == "cold":
                         iteration_type = "browser-cycle"
                     elif profile_info["type"] == "warm":
                         iteration_type = "page-cycle"
                     else:
                         iteration_type = "iteration"
-                    profile_name = "-".join([iteration_type, iteration])
+                    # State the archived profile's own compression: plain JSON
+                    # once symbolicated, and the collected profile's otherwise.
+                    suffix = ".json.gz" if archived_path.endswith(".gz") else ".json"
+                    profile_name = f"{iteration_type}-{iteration}{suffix}"
                     path_in_zip = os.path.join(folder_name, profile_name)
 
                     LOG.info(
                         f"Adding profile {profile_path} to archive "
                         f"{self.profile_arcname} as {path_in_zip}"
                     )
-                    arc.writestr(
-                        path_in_zip,
-                        json.dumps(symbolicated_profile, ensure_ascii=False).encode(
-                            "utf-8"
-                        ),
-                    )
+                    arc.write(archived_path, path_in_zip)
                 except Exception:
                     LOG.exception(
                         f"Failed to add symbolicated profile {profile_path} to "
@@ -227,12 +176,3 @@ class GeckoProfile(RaptorProfiling):
         # save the latest gecko profile archive to an env var, so later on
         # it can be viewed automatically via the view-gecko-profile tool
         os.environ["RAPTOR_LATEST_PROFILE"] = self.profile_arcname
-
-    def clean(self):
-        """
-        Clean up temp folders created with the instance creation.
-        """
-        super().clean()
-        if self.cleanup:
-            for symbol_path in self.symbol_paths.values():
-                mozfile.remove(symbol_path)

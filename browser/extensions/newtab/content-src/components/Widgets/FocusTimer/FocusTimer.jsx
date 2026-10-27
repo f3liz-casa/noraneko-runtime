@@ -10,6 +10,7 @@ import { WIDGET_REGISTRY, resolveWidgetSize } from "common/WidgetsRegistry.mjs";
 import { WidgetCelebration } from "../WidgetCelebration";
 import { useWidgetCelebration } from "../useWidgetCelebration";
 import { SizeSubmenu } from "../SizeSubmenu";
+import { WidgetMenuButton } from "../WidgetMenuButton";
 import { WidgetMenuFooter } from "../WidgetMenuFooter";
 
 const FOCUS_TIMER_CELEBRATION_GRADIENT_STOPS = [
@@ -578,80 +579,90 @@ export const FocusTimer = ({
   };
 
   // Toggles between "focus" and "break" timer types
-  const toggleType = type => {
-    const oldTypeRemaining = calculateTimeRemaining(duration, startTime);
+  const toggleType = useCallback(
+    type => {
+      const oldTypeRemaining = calculateTimeRemaining(duration, startTime);
 
-    batch(() => {
-      // The type we are toggling away from automatically pauses
-      dispatch(
-        ac.AlsoToMain({
-          type: at.WIDGETS_TIMER_PAUSE,
-          data: {
-            timerType,
-            duration: oldTypeRemaining,
-          },
-        })
-      );
+      batch(() => {
+        // The type we are toggling away from automatically pauses
+        dispatch(
+          ac.AlsoToMain({
+            type: at.WIDGETS_TIMER_PAUSE,
+            data: {
+              timerType,
+              duration: oldTypeRemaining,
+            },
+          })
+        );
 
-      dispatch(
-        ac.OnlyToMain({
-          type: at.WIDGETS_TIMER_USER_EVENT,
-          data: { userAction: USER_ACTION_TYPES.TIMER_PAUSE },
-        })
-      );
+        dispatch(
+          ac.OnlyToMain({
+            type: at.WIDGETS_TIMER_USER_EVENT,
+            data: { userAction: USER_ACTION_TYPES.TIMER_PAUSE },
+          })
+        );
 
-      const pauseTelemetryData = {
-        widget_name: "focus_timer",
-        widget_source: "widget",
-        user_action: USER_ACTION_TYPES.TIMER_PAUSE,
-        widget_size: widgetSize,
-      };
+        const pauseTelemetryData = {
+          widget_name: "focus_timer",
+          widget_source: "widget",
+          user_action: USER_ACTION_TYPES.TIMER_PAUSE,
+          widget_size: widgetSize,
+        };
 
-      dispatch(
-        ac.OnlyToMain({
-          type: at.WIDGETS_USER_EVENT,
-          data: pauseTelemetryData,
-        })
-      );
+        dispatch(
+          ac.OnlyToMain({
+            type: at.WIDGETS_USER_EVENT,
+            data: pauseTelemetryData,
+          })
+        );
 
-      // Sets the current timer type so it persists when opening a new tab
-      dispatch(
-        ac.AlsoToMain({
-          type: at.WIDGETS_TIMER_SET_TYPE,
-          data: {
-            timerType: type,
-          },
-        })
-      );
+        // Sets the current timer type so it persists when opening a new tab
+        dispatch(
+          ac.AlsoToMain({
+            type: at.WIDGETS_TIMER_SET_TYPE,
+            data: {
+              timerType: type,
+            },
+          })
+        );
 
-      const toggleUserAction =
-        type === "focus"
-          ? USER_ACTION_TYPES.TIMER_TOGGLE_FOCUS
-          : USER_ACTION_TYPES.TIMER_TOGGLE_BREAK;
+        const toggleUserAction =
+          type === "focus"
+            ? USER_ACTION_TYPES.TIMER_TOGGLE_FOCUS
+            : USER_ACTION_TYPES.TIMER_TOGGLE_BREAK;
 
-      dispatch(
-        ac.OnlyToMain({
-          type: at.WIDGETS_TIMER_USER_EVENT,
-          data: { userAction: toggleUserAction },
-        })
-      );
+        dispatch(
+          ac.OnlyToMain({
+            type: at.WIDGETS_TIMER_USER_EVENT,
+            data: { userAction: toggleUserAction },
+          })
+        );
 
-      const toggleTelemetryData = {
-        widget_name: "focus_timer",
-        widget_source: "widget",
-        user_action: toggleUserAction,
-        widget_size: widgetSize,
-      };
+        const toggleTelemetryData = {
+          widget_name: "focus_timer",
+          widget_source: "widget",
+          user_action: toggleUserAction,
+          widget_size: widgetSize,
+        };
 
-      dispatch(
-        ac.OnlyToMain({
-          type: at.WIDGETS_USER_EVENT,
-          data: toggleTelemetryData,
-        })
-      );
-    });
-    handleTimerInteraction();
-  };
+        dispatch(
+          ac.OnlyToMain({
+            type: at.WIDGETS_USER_EVENT,
+            data: toggleTelemetryData,
+          })
+        );
+      });
+      handleTimerInteraction();
+    },
+    [
+      duration,
+      startTime,
+      timerType,
+      dispatch,
+      widgetSize,
+      handleTimerInteraction,
+    ]
+  );
 
   const handleKeyDown = e => {
     if (e.key === "Enter") {
@@ -946,14 +957,25 @@ export const FocusTimer = ({
     setTimerMinutes(next);
   };
 
-  // Drop this if the Focus/Break radiogroup is ever replaced.
-  const handleRadiogroupKeyDown = e => {
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") {
-      return;
-    }
-    e.preventDefault();
-    toggleType(timerType === "focus" ? "break" : "focus");
-  };
+  // The item assigns the group's value before firing change, so reading it
+  // here is safe. Change fires on re-selecting the active mode too, hence the
+  // comparison below.
+  const modeGroupRef = useCallback(
+    modeGroup => {
+      if (!modeGroup) {
+        return undefined;
+      }
+      const handleModeChange = () => {
+        const selectedTimerType = modeGroup.value;
+        if (selectedTimerType && selectedTimerType !== timerType) {
+          toggleType(selectedTimerType);
+        }
+      };
+      modeGroup.addEventListener("change", handleModeChange);
+      return () => modeGroup.removeEventListener("change", handleModeChange);
+    },
+    [timerType, toggleType]
+  );
 
   // Keep the running-state body layout through the celebration so the ring
   // doesn't shift to a third position during the animation.
@@ -1004,12 +1026,10 @@ export const FocusTimer = ({
       <div className="newtab-widget-timer-notification-title-wrapper">
         <h2 data-l10n-id="newtab-widget-timer-notification-title"></h2>
         <div className="focus-timer-context-menu-wrapper">
-          <moz-button
+          <WidgetMenuButton
             className="focus-timer-context-menu-button"
-            iconSrc="chrome://global/skin/icons/more.svg"
             menuId="focus-timer-context-menu"
-            type="ghost"
-            data-l10n-id="newtab-widget-timer-menu-button"
+            l10nId="newtab-widget-timer-open-menu-button"
           />
           <panel-list
             className="panel-list-no-icons"
@@ -1182,29 +1202,20 @@ export const FocusTimer = ({
                   />
                 )}
                 {showModeGroup && (
-                  <div
-                    className="focus-timer-mode-group"
-                    role="radiogroup"
+                  <moz-segmented-control
                     data-l10n-id="newtab-widget-timer-mode-group"
-                    onKeyDown={handleRadiogroupKeyDown}
+                    value={timerType}
+                    ref={modeGroupRef}
                   >
-                    <moz-button
-                      role="radio"
-                      aria-checked={timerType === "focus" ? "true" : "false"}
-                      tabindex={timerType === "focus" ? "0" : "-1"}
-                      type={timerType === "focus" ? "default" : "ghost"}
+                    <moz-segmented-control-item
+                      value="focus"
                       data-l10n-id="newtab-widget-timer-mode-focus"
-                      onClick={() => toggleType("focus")}
                     />
-                    <moz-button
-                      role="radio"
-                      aria-checked={timerType === "break" ? "true" : "false"}
-                      tabindex={timerType === "break" ? "0" : "-1"}
-                      type={timerType === "break" ? "default" : "ghost"}
+                    <moz-segmented-control-item
+                      value="break"
                       data-l10n-id="newtab-widget-timer-mode-break"
-                      onClick={() => toggleType("break")}
                     />
-                  </div>
+                  </moz-segmented-control>
                 )}
               </div>
             </div>

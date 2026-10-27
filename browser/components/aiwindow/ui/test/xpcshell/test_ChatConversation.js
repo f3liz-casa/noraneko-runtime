@@ -881,6 +881,19 @@ add_task(function test_ChatConversation_renderState_filters_phantom_messages() {
   Assert.equal(renderState[1].content.body, "Here is the weather forecast.");
 });
 
+add_task(function test_renderState_includes_empty_message_with_tool_ui() {
+  const conversation = new ChatConversation({});
+  conversation.addUserMessage("Create a page", null);
+  const message = conversation.addAssistantMessage("text", "");
+  conversation.addUIToolToCurrentMessage(
+    "aitab-call",
+    { uiType: "aitab", properties: { state: "creating" } },
+    { emitComplete: false }
+  );
+
+  Assert.ok(conversation.renderState().includes(message));
+});
+
 add_task(
   async function test_deduplicatesMemoryIds_ChatConversation_receiveResponse() {
     let sandbox = lazy.sinon.createSandbox();
@@ -1004,6 +1017,131 @@ add_task(
       assistantMsg.memoriesApplied,
       mockMemories,
       "memoriesApplied should end up as the resolved memories"
+    );
+
+    sandbox.restore();
+  }
+);
+
+add_task(
+  async function test_promptEmbeddedMemories_ChatConversation_receiveResponse() {
+    let sandbox = lazy.sinon.createSandbox();
+
+    const mockMemories = [
+      { id: "mem-1", lifetime_accessed_count: 0, recent_accessed_counts: {} },
+    ];
+    sandbox.stub(MemoryStore, "getMemories").resolves(mockMemories);
+    sandbox.stub(MemoryStore, "requestSave").resolves();
+
+    const conversation = new ChatConversation({});
+    conversation.promptEmbeddedMemories = [
+      { id: "mem-1", memory_summary: "Trip planning" },
+    ];
+    conversation.addAssistantMessage("text", "some response");
+    const assistantMsg = conversation.messages.at(-1);
+
+    async function* emptyStream() {}
+    await conversation.receiveResponse(emptyStream());
+
+    Assert.deepEqual(
+      assistantMsg.memoriesApplied,
+      mockMemories,
+      "memoriesApplied should include the prompt-embedded memory, resolved through resolveUsedMemories, when nothing is cited"
+    );
+    Assert.equal(
+      mockMemories[0].lifetime_accessed_count,
+      1,
+      "Prompt-embedded memory use should be recorded like a cited one"
+    );
+    Assert.deepEqual(
+      conversation.promptEmbeddedMemories,
+      [],
+      "promptEmbeddedMemories should be consumed after the turn completes"
+    );
+
+    sandbox.restore();
+  }
+);
+
+add_task(
+  async function test_citedAndPromptEmbeddedMemoriesAreUnioned_ChatConversation_receiveResponse() {
+    let sandbox = lazy.sinon.createSandbox();
+
+    const mockMemories = [
+      { id: "mem-1", lifetime_accessed_count: 0, recent_accessed_counts: {} },
+      {
+        id: "mem-embedded",
+        lifetime_accessed_count: 0,
+        recent_accessed_counts: {},
+      },
+    ];
+    sandbox.stub(MemoryStore, "getMemories").resolves(mockMemories);
+    sandbox.stub(MemoryStore, "requestSave").resolves();
+
+    const conversation = new ChatConversation({});
+    conversation.promptEmbeddedMemories = [
+      { id: "mem-embedded", memory_summary: "Trip planning" },
+    ];
+    conversation.addAssistantMessage("text", "some response");
+    const assistantMsg = conversation.messages.at(-1);
+    assistantMsg.tokens.existing_memory = ["mem-1"];
+
+    async function* emptyStream() {}
+    await conversation.receiveResponse(emptyStream());
+
+    const memoryIds = new Set(
+      assistantMsg.memoriesApplied.map(memory => memory.id)
+    );
+    Assert.equal(
+      memoryIds.size,
+      2,
+      "memoriesApplied should include both the cited and prompt-embedded memories"
+    );
+    Assert.ok(memoryIds.has("mem-1"), "Should include the cited memory");
+    Assert.ok(
+      memoryIds.has("mem-embedded"),
+      "Should include the prompt-embedded memory"
+    );
+    Assert.deepEqual(
+      conversation.promptEmbeddedMemories,
+      [],
+      "promptEmbeddedMemories should be cleared after the turn completes"
+    );
+
+    sandbox.restore();
+  }
+);
+
+add_task(
+  async function test_citedAndPromptEmbeddedSameMemoryIsDeduped_ChatConversation_receiveResponse() {
+    let sandbox = lazy.sinon.createSandbox();
+
+    const mockMemories = [
+      { id: "mem-1", lifetime_accessed_count: 0, recent_accessed_counts: {} },
+    ];
+    sandbox.stub(MemoryStore, "getMemories").resolves(mockMemories);
+    sandbox.stub(MemoryStore, "requestSave").resolves();
+
+    const conversation = new ChatConversation({});
+    conversation.promptEmbeddedMemories = [
+      { id: "mem-1", memory_summary: "Trip planning" },
+    ];
+    conversation.addAssistantMessage("text", "some response");
+    const assistantMsg = conversation.messages.at(-1);
+    assistantMsg.tokens.existing_memory = ["mem-1"];
+
+    async function* emptyStream() {}
+    await conversation.receiveResponse(emptyStream());
+
+    Assert.equal(
+      assistantMsg.memoriesApplied.length,
+      1,
+      "The same memory cited and prompt-embedded should only appear once"
+    );
+    Assert.equal(
+      mockMemories[0].lifetime_accessed_count,
+      1,
+      "Use should be recorded once, not twice, for the same memory"
     );
 
     sandbox.restore();
@@ -1863,6 +2001,26 @@ add_task(function test_addUIToolToCurrentMessage_emits_events() {
 
   Assert.ok(updateEventFired, "Update event should be emitted");
   Assert.ok(completeEventFired, "Complete event should be re-emitted");
+});
+
+add_task(function test_addUIToolToCurrentMessage_can_defer_completion() {
+  const conversation = new ChatConversation({});
+  conversation.addUserMessage("Create a page", null);
+  conversation.addAssistantMessage("text", "");
+
+  let updates = 0;
+  let completions = 0;
+  conversation.on("chat-conversation:message-update", () => updates++);
+  conversation.on("chat-conversation:message-complete", () => completions++);
+
+  conversation.addUIToolToCurrentMessage(
+    "aitab-call",
+    { uiType: "aitab", properties: { state: "creating" } },
+    { emitComplete: false }
+  );
+
+  Assert.equal(updates, 1);
+  Assert.equal(completions, 0);
 });
 
 add_task(async function test_addUserMessage_dismisses_prior_undo() {

@@ -82,7 +82,7 @@ include "mozilla/URLClassifierIPCUtils.h";
 include "mozilla/dom/BindingIPCUtils.h";
 include "mozilla/dom/CSPMessageUtils.h";
 include "mozilla/dom/DocShellMessageUtils.h";
-include "mozilla/dom/FeaturePolicyUtils.h";
+include "mozilla/dom/PermissionsPolicyUtils.h";
 include "mozilla/dom/GeolocationIPCUtils.h";
 include "mozilla/dom/MediaSessionIPCUtils.h";
 include "mozilla/dom/NavigationAPIIPCUtils.h";
@@ -137,7 +137,7 @@ using mozilla::dom::PermissionState from "mozilla/dom/PermissionMessageUtils.h";
 
 #if defined(XP_WIN)
 [MoveOnly] using mozilla::UntrustedModulesData from "mozilla/UntrustedModulesData.h";
-[MoveOnly] using mozilla::ModulePaths from "mozilla/UntrustedModulesData.h";
+[MoveOnly] using mozilla::ModuleIdentifiers from "mozilla/UntrustedModulesData.h";
 [MoveOnly] using mozilla::ModulesMapResult from "mozilla/UntrustedModulesData.h";
 #endif  // defined(XP_WIN)
 
@@ -174,11 +174,12 @@ using mozilla::PermissionDelegateHandler::DelegatedPermissionList from "mozilla/
 using class mozilla::dom::SessionHistoryInfo from "mozilla/dom/SessionHistoryEntry.h";
 using class mozilla::dom::PreviousSessionHistoryInfo from "mozilla/dom/SessionHistoryEntry.h";
 using struct mozilla::dom::LoadingSessionHistoryInfo from "mozilla/dom/SessionHistoryEntry.h";
+using struct mozilla::dom::NewSessionHistorySharedState from "mozilla/dom/SessionHistoryEntry.h";
 using struct nsPoint from "nsPoint.h";
 using mozilla::media::MediaCodecsSupported from "MediaCodecsSupport.h";
 using mozilla::RemoteMediaIn from "mozilla/RemoteMediaManagerChild.h";
 using mozilla::dom::PerformanceTimingData from "mozilla/dom/PerformanceTiming.h";
-using mozilla::dom::MaybeFeaturePolicyInfo from "mozilla/dom/FeaturePolicy.h";
+using mozilla::dom::MaybePermissionsPolicyInfo from "mozilla/dom/PermissionsPolicy.h";
 using mozilla::dom::Wireframe from "mozilla/dom/DocumentBinding.h";
 using mozilla::PerfStats::MetricMask from "mozilla/PerfStats.h";
 using nsIDNSService::ResolverMode from "nsIDNSService.h";
@@ -1155,7 +1156,7 @@ parent:
     async SessionHistoryEntryWireframe(MaybeDiscardedBrowsingContext aContext,
                                        Wireframe aWireframe);
 
-    async GetLoadingSessionHistoryInfoFromParent(MaybeDiscardedBrowsingContext aContext)
+    async AdoptChildSHEntry(MaybeDiscardedBrowsingContext aContext)
         returns (LoadingSessionHistoryInfo? aLoadingInfo);
 
     async SynchronizeNavigationAPIState(MaybeDiscardedBrowsingContext aContext,
@@ -1683,7 +1684,8 @@ parent:
                                  nullable nsIPrincipal aTrackingPrincipal,
                                  nsCString aTrackingOrigin,
                                  uint32_t aCookieBehavior,
-                                 StorageAccessPermissionGrantedReason aReason)
+                                 StorageAccessPermissionGrantedReason aReason,
+                                 bool? aHadPriorUserInteraction)
           returns (StorageAccessPromptChoices? choice);
 
     async StoreUserInteractionAsPermission(nullable nsIPrincipal aPrincipal);
@@ -1789,8 +1791,12 @@ parent:
      * obtain enough information about a DLL file to determine its
      * trustworthiness. This API asks the chrome process to perform that
      * evaluation.
+     *
+     * Each entry carries a handle to the file backing the module, captured by
+     * the DLL blocklist from the handle the loader opened. The parent derives
+     * the module's path from the handle and evaluates the module it targets.
      */
-    async GetModulesTrust(ModulePaths aModPaths, bool aRunAtNormalPriority)
+    async GetModulesTrust(ModuleIdentifiers aModIdents, bool aRunAtNormalPriority)
         returns (ModulesMapResult? modMapResult);
 #endif  // defined(XP_WIN)
 
@@ -1812,7 +1818,7 @@ parent:
     async HistoryReload(MaybeDiscardedBrowsingContext aContext, uint32_t aReloadFlags);
 
     async NotifyOnHistoryReload(MaybeDiscardedBrowsingContext aContext,
-                                bool aForceReload)
+                                uint32_t aReloadFlags)
             returns (bool canReload, nsDocShellLoadState? loadState,
                      bool? reloadActiveEntry);
 
@@ -1839,12 +1845,14 @@ parent:
                              nsCString aPartitionKey)
       returns (BlobURLDataRequestResult aResult);
 
-    async SetActiveSessionHistoryEntry(MaybeDiscardedBrowsingContext context,
+    async SetActiveSessionHistoryEntry(MaybeDiscardedWindowContext context,
                                        nsPoint? previousScrollPosition,
                                        SessionHistoryInfo info, uint32_t loadType,
-                                       uint32_t updatedCacheKey, nsID changeID);
+                                       uint32_t updatedCacheKey, nsID changeID,
+                                       NewSessionHistorySharedState? newSharedState);
     async ReplaceActiveSessionHistoryEntry(
-        MaybeDiscardedBrowsingContext context, SessionHistoryInfo info);
+        MaybeDiscardedWindowContext context, SessionHistoryInfo info,
+        NewSessionHistorySharedState? newSharedState);
 
     async RemoveDynEntriesFromActiveSessionHistoryEntry(
         MaybeDiscardedBrowsingContext aContext);
@@ -1989,8 +1997,8 @@ child:
     async SystemPermissionChanged(PermissionName aName, PermissionState aState);
 
 parent:
-    async SetContainerFeaturePolicy(MaybeDiscardedBrowsingContext aContainerContext,
-                                    MaybeFeaturePolicyInfo aContainerFeaturePolicyInfo);
+    async SetContainerPermissionsPolicy(MaybeDiscardedBrowsingContext aContainerContext,
+                                        MaybePermissionsPolicyInfo aContainerPermissionsPolicyInfo);
 
     // Notify parent process that aContext must update its ancestor origins list
     // This is only used for about:blank, because for normal navigations

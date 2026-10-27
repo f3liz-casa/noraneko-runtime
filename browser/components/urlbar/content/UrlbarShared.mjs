@@ -9,8 +9,12 @@
  * its own copy of the module).
  */
 
-import * as UrlbarContentUtils from "chrome://browser/content/urlbar/UrlbarContentUtils.mjs";
+import { UrlbarContentUtils } from "chrome://browser/content/urlbar/UrlbarContentUtils.mjs";
 import UrlbarPrefs from "chrome://browser/content/urlbar/UrlbarContentPrefs.mjs";
+
+/**
+ * @import { URILoadingHelper } from "resource:///modules/URILoadingHelper.sys.mjs"
+ */
 
 /**
  * @typedef {object} LocalSearchMode
@@ -29,7 +33,8 @@ import UrlbarPrefs from "chrome://browser/content/urlbar/UrlbarContentPrefs.mjs"
  *   The telemetry label for recording searches in this mode.
  * @property {string} uiLabel
  *   The L10n ID to use for the UI label.
- *   Has a value and an accesskey attribute.
+ * @property {string} [keyId]
+ *   The ID of the browser window's <key> element that enters the search mode.
  */
 
 /**
@@ -54,6 +59,11 @@ import UrlbarPrefs from "chrome://browser/content/urlbar/UrlbarContentPrefs.mjs"
  * @typedef {{urlLoad: UrlLoad, engineSearch?: never} |
  *           {engineSearch: EngineSearchLoad, urlLoad?: never}} UrlbarLoadRequest
  *  Either a URL or an engine search.
+ */
+
+/**
+ * @typedef {Parameters<URILoadingHelper["openLinkIn"]>[3]} LoadURLParams
+ *   The parameters related to how and where the result will be opened.
  */
 
 /**
@@ -97,16 +107,19 @@ export const UrlbarShared = {
    * chrome-only, and unlike `instanceof` it holds for a value from another
    * global; a content realm compares against its own interface object.
    *
+   * @template T
    * @param {any} value
    *   The value to check.
-   * @param {object} iface
+   * @param {{ new (...args: any[]): T; isInstance?: (obj: any) => boolean }} iface
    *   The interface, e.g. `KeyboardEvent`.
-   * @returns {boolean}
+   * @returns {value is T}
    */
-  isInstance:
-    typeof ChromeUtils != "undefined"
-      ? (value, iface) => iface.isInstance(value)
-      : (value, iface) => value instanceof iface,
+  isInstance(value, iface) {
+    if (typeof ChromeUtils != "undefined") {
+      return iface.isInstance(value);
+    }
+    return value instanceof iface;
+  },
 
   // REGEXP_ constants are duplicated from UrlUtils.sys.mjs
   // Regex matching on whitespaces.
@@ -355,6 +368,10 @@ export const UrlbarShared = {
     DEFAULT: "chrome://global/skin/icons/defaultFavicon.svg",
   },
 
+  // Size in `px` of icons in top-pick rows in the view. Should be kept in sync
+  // with the `--urlbarview-top-pick-icon-size` CSS variable.
+  TOP_PICK_ICON_SIZE: 58,
+
   // The number of results by which Page Up/Down move the selection.
   PAGE_UP_DOWN_DELTA: 5,
 
@@ -436,7 +453,7 @@ export const UrlbarShared = {
         icon: "chrome://browser/skin/bookmark.svg",
         pref: "shortcuts.bookmarks",
         telemetryLabel: "bookmarks",
-        uiLabel: "urlbar-searchmode-bookmarks3",
+        uiLabel: "urlbar-searchmode-bookmarks4",
       },
       {
         source: this.RESULT_SOURCE.TABS,
@@ -444,7 +461,8 @@ export const UrlbarShared = {
         icon: "chrome://browser/skin/open-tabs.svg",
         pref: "shortcuts.tabs",
         telemetryLabel: "tabs",
-        uiLabel: "urlbar-searchmode-tabs3",
+        uiLabel: "urlbar-searchmode-tabs4",
+        keyId: "key_searchTabs",
       },
       {
         source: this.RESULT_SOURCE.HISTORY,
@@ -452,7 +470,7 @@ export const UrlbarShared = {
         icon: "chrome://browser/skin/history.svg",
         pref: "shortcuts.history",
         telemetryLabel: "history",
-        uiLabel: "urlbar-searchmode-history3",
+        uiLabel: "urlbar-searchmode-history4",
       },
       {
         source: this.RESULT_SOURCE.ACTIONS,
@@ -460,7 +478,7 @@ export const UrlbarShared = {
         icon: "chrome://browser/skin/lightning-bolt.svg",
         pref: "shortcuts.actions",
         telemetryLabel: "actions",
-        uiLabel: "urlbar-searchmode-actions3",
+        uiLabel: "urlbar-searchmode-actions4",
       },
     ]);
   },
@@ -712,6 +730,24 @@ export const UrlbarShared = {
    */
   navigationEnabled(sapName) {
     return sapName != "searchbar";
+  },
+
+  /**
+   * Whether a string that is a URL may be navigated to in an engine search
+   * mode, as it would be outside of search mode, rather than searched for. This
+   * holds where the unified search button is always available.
+   *
+   * @param {string} sapName
+   *   The SAP name to check.
+   * @returns {boolean}
+   *   Whether navigation is enabled in an engine search mode.
+   */
+  navigationInSearchModeEnabled(sapName) {
+    return (
+      this.navigationEnabled(sapName) &&
+      (this.isSearchbarSAP(sapName) ||
+        UrlbarPrefs.get("unifiedSearchButton.always"))
+    );
   },
 
   /**
@@ -1285,6 +1321,8 @@ export const UrlbarShared = {
             return "unit";
           case "UrlbarProviderQuickSuggestContextualOptIn":
             return "fxsuggest_data_sharing_opt_in";
+          case "UrlbarProviderAddonsShortcutMoved":
+            return "addons_shortcut_moved";
           case "UrlbarProviderGlobalActions":
           case "UrlbarProviderActionsSearchMode":
             return "action";

@@ -26,27 +26,27 @@ AWSY tests consist of three types: TP5\*, TP6, and Base Memory Usage.
 **Owner**: :mccr8 and Perftest Team
 
 * **Test Task**:
-  * test-linux2404-64-clang-trunk/opt
+  * {ref}`test-linux2404-64-clang-trunk/opt <hardware-gcp-c3d-standard-8>`
     * awsy-base: None
     * awsy-base-dmd: None
 
-  * test-linux2404-64-shippable/opt
+  * {ref}`test-linux2404-64-shippable/opt <hardware-gcp-c3d-standard-8>`
     * awsy-base: trunk
     * awsy-base-dmd: None
 
-  * test-linux2404-64/opt
+  * {ref}`test-linux2404-64/opt <hardware-gcp-c3d-standard-8>`
     * awsy-base: None
     * awsy-base-dmd: None
 
-  * test-macosx1470-64-shippable/opt
+  * {ref}`test-macosx1500-aarch64-shippable/opt <hardware-mac-mini-m4>`
     * awsy-base: trunk
     * awsy-base-dmd: None
 
-  * test-windows11-64-25h2-shippable/opt
+  * {ref}`test-windows11-64-25h2-shippable/opt <hardware-azure-standard-f8alds-v7>`
     * awsy-base: trunk
     * awsy-base-dmd: None
 
-  * test-windows11-64-25h2/opt
+  * {ref}`test-windows11-64-25h2/opt <hardware-azure-standard-f8alds-v7>`
     * awsy-base: None
     * awsy-base-dmd: None
 
@@ -66,27 +66,27 @@ AWSY tests consist of three types: TP5\*, TP6, and Base Memory Usage.
 **Owner**: :mccr8 and Perftest Team
 
 * **Test Task**:
-  * test-linux2404-64-clang-trunk/opt
+  * {ref}`test-linux2404-64-clang-trunk/opt <hardware-gcp-c3d-standard-8>`
     * awsy-base-dmd: None
     * awsy-dmd: None
 
-  * test-linux2404-64-shippable/opt
+  * {ref}`test-linux2404-64-shippable/opt <hardware-gcp-c3d-standard-8>`
     * awsy-base-dmd: None
     * awsy-dmd: None
 
-  * test-linux2404-64/opt
+  * {ref}`test-linux2404-64/opt <hardware-gcp-c3d-standard-8>`
     * awsy-base-dmd: None
     * awsy-dmd: None
 
-  * test-macosx1470-64-shippable/opt
+  * {ref}`test-macosx1500-aarch64-shippable/opt <hardware-mac-mini-m4>`
     * awsy-base-dmd: None
     * awsy-dmd: None
 
-  * test-windows11-64-25h2-shippable/opt
+  * {ref}`test-windows11-64-25h2-shippable/opt <hardware-azure-standard-f8alds-v7>`
     * awsy-base-dmd: None
     * awsy-dmd: None
 
-  * test-windows11-64-25h2/opt
+  * {ref}`test-windows11-64-25h2/opt <hardware-azure-standard-f8alds-v7>`
     * awsy-base-dmd: None
     * awsy-dmd: None
 
@@ -106,17 +106,17 @@ AWSY tests consist of three types: TP5\*, TP6, and Base Memory Usage.
 **Owner**: :mccr8 and Perftest Team
 
 * **Test Task**:
-  * test-linux2404-64-clang-trunk/opt
+  * {ref}`test-linux2404-64-clang-trunk/opt <hardware-gcp-c3d-standard-8>`
 
-  * test-linux2404-64-shippable/opt
+  * {ref}`test-linux2404-64-shippable/opt <hardware-gcp-c3d-standard-8>`
 
-  * test-linux2404-64/opt
+  * {ref}`test-linux2404-64/opt <hardware-gcp-c3d-standard-8>`
 
-  * test-macosx1470-64-shippable/opt
+  * {ref}`test-macosx1500-aarch64-shippable/opt <hardware-mac-mini-m4>`
 
-  * test-windows11-64-25h2-shippable/opt
+  * {ref}`test-windows11-64-25h2-shippable/opt <hardware-azure-standard-f8alds-v7>`
 
-  * test-windows11-64-25h2/opt
+  * {ref}`test-windows11-64-25h2/opt <hardware-azure-standard-f8alds-v7>`
 
 ::::
 
@@ -134,22 +134,22 @@ AWSY tests consist of three types: TP5\*, TP6, and Base Memory Usage.
 **Owner**: :mccr8 and Perftest Team
 
 * **Test Task**:
-  * test-linux2404-64-clang-trunk/opt
+  * {ref}`test-linux2404-64-clang-trunk/opt <hardware-gcp-c3d-standard-8>`
     * awsy-tp6: None
 
-  * test-linux2404-64-shippable/opt
+  * {ref}`test-linux2404-64-shippable/opt <hardware-gcp-c3d-standard-8>`
     * awsy-tp6: trunk
 
-  * test-linux2404-64/opt
+  * {ref}`test-linux2404-64/opt <hardware-gcp-c3d-standard-8>`
     * awsy-tp6: None
 
-  * test-macosx1470-64-shippable/opt
+  * {ref}`test-macosx1500-aarch64-shippable/opt <hardware-mac-mini-m4>`
     * awsy-tp6: trunk
 
-  * test-windows11-64-25h2-shippable/opt
+  * {ref}`test-windows11-64-25h2-shippable/opt <hardware-azure-standard-f8alds-v7>`
     * awsy-tp6: trunk
 
-  * test-windows11-64-25h2/opt
+  * {ref}`test-windows11-64-25h2/opt <hardware-azure-standard-f8alds-v7>`
     * awsy-tp6: None
 
 ::::

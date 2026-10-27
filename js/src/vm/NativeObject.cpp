@@ -9,6 +9,7 @@
 
 #include "gc/MaybeRooted.h"
 #include "gc/StableCellHasher.h"
+#include "jit/JitRuntime.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/Printer.h"               // js::GenericPrinter
@@ -351,15 +352,17 @@ bool NativeObject::growSlots(JSContext* cx, uint32_t oldCapacity,
       new (allocation) ObjectSlots(newCapacity, dictionarySpan, uid);
 
   HeapSlot* newSlots = newHeaderSlots->slots();
-#ifdef JS_GC_CONCURRENT_MARKING
-  InitializeSlotRange(newSlots + oldCapacity, newSlots + newCapacity);
-#else
   Debug_SetSlotRangeToCrashOnTouch(newSlots + oldCapacity,
                                    newCapacity - oldCapacity);
-#endif
 
   gc::MemoryReleaseFence(zone());
   slots_ = newSlots;
+
+  if (cx->runtime()->hasJitRuntime() &&
+      MOZ_UNLIKELY(cx->runtime()->jitRuntime()->inPureCall()) &&
+      is<GlobalObject>()) {
+    cx->runtime()->jitRuntime()->handleGrowSlotsForPureCall(cx);
+  }
 
   MOZ_ASSERT(hasDynamicSlots());
   return true;
@@ -395,13 +398,7 @@ bool NativeObject::allocateInitialSlots(JSContext* cx, uint32_t capacity) {
       ObjectSlots(capacity, 0, ObjectSlots::NoUniqueIdInDynamicSlots);
   HeapSlot* slots = headerSlots->slots();
 
-#ifdef JS_GC_CONCURRENT_MARKING
-  // TODO: This (and the other uses of InitializeSlotRange in this file) may
-  // unnecessarily initialize slots that get explicitly initialized later.
-  InitializeSlotRange(slots, slots + capacity);
-#else
   Debug_SetSlotRangeToCrashOnTouch(slots, capacity);
-#endif
 
   // Fence between initializing slot data and writing the slots_ pointer ensure
   // marking doesn't observe uninitialized memory.
@@ -432,11 +429,7 @@ bool NativeObject::allocateSlots(Nursery& nursery, uint32_t newCapacity) {
       newCapacity, dictionarySpan, ObjectSlots::NoUniqueIdInDynamicSlots);
 
   HeapSlot* newSlots = newHeaderSlots->slots();
-#ifdef JS_GC_CONCURRENT_MARKING
-  InitializeSlotRange(newSlots, newSlots + newCapacity);
-#else
   Debug_SetSlotRangeToCrashOnTouch(newSlots, newCapacity);
-#endif
 
   gc::MemoryReleaseFence(zone());
   slots_ = newSlots;
@@ -526,6 +519,15 @@ void NativeObject::shrinkSlots(JSContext* cx, uint32_t oldCapacity,
 
   auto* newHeaderSlots =
       new (allocation) ObjectSlots(newCapacity, dictionarySpan, uid);
+
+#ifdef JS_GC_CONCURRENT_MARKING
+  // Clear any unused slots up to the end of the allocation in case we end up
+  // marking them.
+  // TODO: Not required for correctness. Could be removed.
+  InitializeSlotRange(newHeaderSlots->slots() + newCapacity,
+                      allocation + newAllocated);
+#endif
+
   gc::MemoryReleaseFence(zone());
   slots_ = newHeaderSlots->slots();
 }
@@ -644,15 +646,7 @@ DenseElementResult NativeObject::maybeDensifySparseElements(
     }
   }
 
-  obj->ensureDenseInitializedLength(newInitializedLength, 0);
-
-  if (obj->compartment()->objectMaybeInIteration(obj)) {
-    // Mark the densified elements as maybe-in-iteration. See also the comment
-    // in GetIterator.
-    obj->markDenseElementsMaybeInIteration();
-  }
-
-  if (!NativeObject::densifySparseElements(cx, obj)) {
+  if (!NativeObject::densifySparseElements(cx, obj, newInitializedLength)) {
     return DenseElementResult::Failure;
   }
 
@@ -1459,36 +1453,12 @@ static MOZ_ALWAYS_INLINE bool AddOrChangeProperty(
 
   MOZ_ASSERT(slot < obj->slotSpan());
 
-  // Clear any existing dense index after adding a sparse indexed property,
-  // and investigate converting the object to dense indexes.
+  // Clear any existing dense index after adding a sparse indexed property.
   if (id.isInt()) {
-    uint32_t index = id.toInt();
     if constexpr (AddOrChange == IsAddOrChange::Add) {
-      MOZ_ASSERT(!obj->containsDenseElement(index));
+      MOZ_ASSERT(!obj->containsDenseElement(id.toInt()));
     } else {
-      obj->removeDenseElementForSparseIndex(index);
-    }
-    // Only try to densify sparse elements if the property we just added/changed
-    // is in the last slot. This avoids a perf cliff in pathological cases: in
-    // maybeDensifySparseElements we densify if the slot span is a power-of-two,
-    // but if we get slots from the free list, the slot span will stay the same
-    // until the free list is empty. This means we'd get quadratic behavior by
-    // trying to densify for each sparse element we add. See bug 1782487.
-    if (slot == obj->slotSpan() - 1) {
-      DenseElementResult edResult =
-          NativeObject::maybeDensifySparseElements(cx, obj);
-      if (edResult == DenseElementResult::Failure) {
-        return false;
-      }
-      if (edResult == DenseElementResult::Success) {
-        MOZ_ASSERT(!desc.isAccessorDescriptor());
-        if constexpr (AddOrChange == IsAddOrChange::Add) {
-          if (!CallAddPropertyHookDense(cx, obj, index, desc.value())) {
-            return false;
-          }
-        }
-        return true;
-      }
+      obj->removeDenseElementForSparseIndex(id.toInt());
     }
   }
 
@@ -1502,6 +1472,25 @@ static MOZ_ALWAYS_INLINE bool AddOrChangeProperty(
         return false;
       }
     }
+  }
+
+  // Investigate converting the object to dense indexes. This is fallible so we
+  // do this after the add-property hook.
+  //
+  // Only try to densify sparse elements if the property we just added/changed
+  // is in the last slot. This avoids a perf cliff in pathological cases: in
+  // maybeDensifySparseElements we densify if the slot span is a power-of-two,
+  // but if we get slots from the free list, the slot span will stay the same
+  // until the free list is empty. This means we'd get quadratic behavior by
+  // trying to densify for each sparse element we add. See bug 1782487.
+  if (id.isInt() && slot == obj->slotSpan() - 1) {
+    DenseElementResult edResult =
+        NativeObject::maybeDensifySparseElements(cx, obj);
+    if (edResult == DenseElementResult::Failure) {
+      return false;
+    }
+    MOZ_ASSERT_IF(edResult == DenseElementResult::Success,
+                  !desc.isAccessorDescriptor());
   }
 
   return true;

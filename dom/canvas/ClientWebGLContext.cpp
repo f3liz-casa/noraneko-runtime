@@ -3184,6 +3184,10 @@ void ClientWebGLContext::ClearDepth(GLclampf v) { Run<RPROC(ClearDepth)>(v); }
 
 void ClientWebGLContext::ClearStencil(GLint v) { Run<RPROC(ClearStencil)>(v); }
 
+void ClientWebGLContext::ClipControlEXT(GLenum origin, GLenum depth) {
+  Run<RPROC(ClipControlEXT)>(origin, depth);
+}
+
 void ClientWebGLContext::ColorMaskI(Maybe<GLuint> i, bool r, bool g, bool b,
                                     bool a) const {
   const FuncScope funcScope(*this, "colorMask");
@@ -3347,6 +3351,11 @@ void ClientWebGLContext::PolygonOffset(GLfloat factor, GLfloat units) {
   Run<RPROC(PolygonOffset)>(factor, units);
 }
 
+void ClientWebGLContext::PolygonOffsetClampEXT(GLfloat factor, GLfloat units,
+                                               GLfloat clamp) {
+  Run<RPROC(PolygonOffsetClampEXT)>(factor, units, clamp);
+}
+
 void ClientWebGLContext::SampleCoverage(GLclampf value, WebGLboolean invert) {
   Run<RPROC(SampleCoverage)>(value, invert);
 }
@@ -3489,6 +3498,21 @@ Maybe<webgl::ErrorInfo> CheckBindBufferRange(
       const auto info =
           nsPrintfCString("Unrecognized `target`: 0x%04x", target);
       return fnSome(LOCAL_GL_INVALID_ENUM, info);
+    }
+  }
+
+  // The driver rejects a range that does not fit GLintptr/GLsizeiptr and keeps
+  // its previous binding, so we must not record such a range as bound.
+  if (isBuffer) {
+    if (!CheckedInt<GLintptr>(offset).isValid()) {
+      const auto info = nsPrintfCString(
+          "`offset` (%" PRIu64 ") must fit in GLintptr.", offset);
+      return fnSome(LOCAL_GL_INVALID_VALUE, info);
+    }
+    if (!CheckedInt<GLsizeiptr>(size).isValid()) {
+      const auto info =
+          nsPrintfCString("`size` (%" PRIu64 ") must fit in GLsizeiptr.", size);
+      return fnSome(LOCAL_GL_INVALID_VALUE, info);
     }
   }
 
@@ -4407,10 +4431,10 @@ static inline uvec3 CastUvec3(const ivec3& val) {
 }
 
 template <typename T>
-Range<T> SubRange(const Range<T>& full, const size_t offset,
-                  const size_t length) {
+mozilla::Range<T> SubRange(const mozilla::Range<T>& full, const size_t offset,
+                           const size_t length) {
   const auto newBegin = full.begin() + offset;
-  return Range<T>{newBegin, newBegin + length};
+  return mozilla::Range<T>{newBegin, newBegin + length};
 }
 
 Maybe<Span<const uint8_t>> GetRangeFromData(const Span<uint8_t>& data,
@@ -5113,7 +5137,7 @@ void ClientWebGLContext::GetVertexAttrib(JSContext* cx, GLuint index,
 void ClientWebGLContext::UniformData(const GLenum funcElemType,
                                      const WebGLUniformLocationJS* const loc,
                                      bool transpose,
-                                     const Range<const uint8_t>& bytes,
+                                     const mozilla::Range<const uint8_t>& bytes,
                                      JS::AutoCheckCannotGC&& nogc,
                                      GLuint elemOffset,
                                      GLuint elemCountOverride) const {
@@ -5262,8 +5286,9 @@ WebGLsizeiptr ClientWebGLContext::GetVertexAttribOffset(GLuint index,
   return *maybe;
 }
 
-void ClientWebGLContext::VertexAttrib4Tv(GLuint index, webgl::AttribBaseType t,
-                                         const Range<const uint8_t>& src) {
+void ClientWebGLContext::VertexAttrib4Tv(
+    GLuint index, webgl::AttribBaseType t,
+    const mozilla::Range<const uint8_t>& src) {
   const FuncScope funcScope(*this, "vertexAttrib[1234]u?[fi]{v}");
   RefPtr<webgl::NotLostData> notLost(mNotLost);
   if (!notLost) {

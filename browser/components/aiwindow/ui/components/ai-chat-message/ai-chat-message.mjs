@@ -6,9 +6,14 @@ import { html, nothing } from "chrome://global/content/vendor/lit.all.mjs";
 import { MozLitElement } from "chrome://global/content/lit-utils.mjs";
 import {
   parseMarkdown,
+  parseMarkdownBlocks,
   CHAT_WRAPPER_ELEMENTS,
 } from "chrome://browser/content/aiwindow/modules/ChatMarkdownParser.mjs";
 import { dispatchClientError } from "chrome://browser/content/aiwindow/modules/ClientErrorTelemetry.mjs";
+import {
+  isSettingsURL,
+  isSmartPageURL,
+} from "chrome://browser/content/aiwindow/modules/TrustedInternalURLs.mjs";
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://browser/content/aiwindow/components/ai-chat-card.mjs";
 // eslint-disable-next-line import/no-unassigned-import
@@ -32,7 +37,8 @@ const HISTORY_GRID_PAGE_SIZE = 12;
  */
 export class AIChatMessage extends MozLitElement {
   #lastMessage = null;
-  #lastMessageElement = "";
+  #lastMessageElement = null;
+  #blockHtml = [];
 
   /**
    * Track if link unfurling needs to re-run, as it needs to manually manipulate
@@ -253,38 +259,27 @@ export class AIChatMessage extends MozLitElement {
       }
 
       const label = a.textContent || linkHref;
-      const iconSrc = this.#getIconSrc(linkHref);
 
       // Create Website Chip
       const chip = root.ownerDocument.createElement("ai-website-chip");
       chip.type = "in-line";
       chip.label = label;
-      chip.iconSrc = iconSrc;
-      chip.href = linkHref;
+
+      // Messages submitted before the type was serialized carry only a color.
+      const color = params.get("color");
+      const isTabGroup = params.get("type")
+        ? params.get("type") == "tabGroup"
+        : !!color;
+      if (isTabGroup) {
+        chip.isTabGroup = true;
+        chip.tabGroupColor = color ?? "";
+      } else {
+        chip.iconSrc = this.#getIconSrc(linkHref);
+        chip.href = linkHref;
+      }
 
       a.replaceWith(chip);
     }
-  }
-
-  static #SETTINGS_URL = new URL("about:preferences");
-  static #SETTINGS_ALIAS_URL = new URL("about:settings");
-
-  /**
-   * Returns true if the parsed URL points to the browser settings page.
-   * Matches both about:preferences and its about:settings alias,
-   *
-   * @param {URL} parsed - A parsed URL object
-   * @returns {boolean}
-   */
-  #isSettingsURL(parsed) {
-    if (!parsed) {
-      return false;
-    }
-    return (
-      parsed.protocol === AIChatMessage.#SETTINGS_URL.protocol &&
-      (parsed.pathname === AIChatMessage.#SETTINGS_URL.pathname ||
-        parsed.pathname === AIChatMessage.#SETTINGS_ALIAS_URL.pathname)
-    );
   }
 
   /**
@@ -308,8 +303,12 @@ export class AIChatMessage extends MozLitElement {
     for (const anchor of root.querySelectorAll("a[href]")) {
       const parsed = URL.parse(anchor.href);
 
-      // Settings pages are always trusted
-      if (this.#isSettingsURL(parsed)) {
+      // Settings pages are always trusted; a generated page only when this
+      // conversation produced it.
+      if (
+        isSettingsURL(parsed) ||
+        (isSmartPageURL(parsed) && this.seenUrls.has(anchor.href))
+      ) {
         continue;
       }
 
@@ -646,12 +645,6 @@ export class AIChatMessage extends MozLitElement {
       dispatchClientError(this, error, "markdown");
       throw error;
     }
-    // Pass messageId to table elements for copy functionality.
-    if (this.messageId) {
-      for (const table of element.querySelectorAll("ai-chat-table")) {
-        table.setAttribute("message-id", this.messageId);
-      }
-    }
   }
 
   /**
@@ -663,6 +656,61 @@ export class AIChatMessage extends MozLitElement {
   parseUserMarkdown(markdown, element) {
     this.#parseMarkdown(markdown, element);
     this.#replaceWebsiteMentions(element);
+  }
+
+  /**
+   * Render one top-level block's HTML into a single sanitized element.
+   * markdown-it renders each block to exactly one element, which we return.
+   *
+   * @param {string} blockHtml
+   * @returns {Element|null}
+   */
+  #renderBlockElement(blockHtml) {
+    const scratch = this.ownerDocument.createElement("div");
+    try {
+      scratch.setHTML(blockHtml, {
+        sanitizer: AIChatMessage.#chatMessageSanitizer,
+      });
+    } catch (error) {
+      dispatchClientError(this, error, "markdown");
+      throw error;
+    }
+    return scratch.firstElementChild;
+  }
+
+  /**
+   * Reconcile the container's children against freshly parsed block HTML. Blocks
+   * whose HTML is unchanged keep their existing DOM untouched (so finished
+   * tables and their observers are never rebuilt); only changed or new blocks
+   * are re-rendered, and trailing removed blocks are dropped.
+   *
+   * @param {Element} container
+   * @param {Array<string>} newHtml - One HTML string per top-level block.
+   * @returns {number} How many blocks were (re)rendered this pass.
+   */
+  #reconcileBlocks(container, newHtml) {
+    const oldHtml = this.#blockHtml;
+    let rebuilt = 0;
+    for (let i = 0; i < newHtml.length; i++) {
+      if (container.children[i] && oldHtml[i] === newHtml[i]) {
+        continue;
+      }
+      const node = this.#renderBlockElement(newHtml[i]);
+      if (!node) {
+        continue;
+      }
+      rebuilt++;
+      if (container.children[i]) {
+        container.replaceChild(node, container.children[i]);
+      } else {
+        container.append(node);
+      }
+    }
+    while (container.children.length > newHtml.length) {
+      container.lastElementChild.remove();
+    }
+    this.#blockHtml = newHtml;
+    return rebuilt;
   }
 
   /**
@@ -678,37 +726,62 @@ export class AIChatMessage extends MozLitElement {
       return this.#renderL10nMessage();
     }
 
+    // Reuse one persistent container across chunks so finished DOM
+    // (and its custom elements) is never torn down; we refill it in place.
+    if (!this.#lastMessageElement) {
+      this.#lastMessageElement = this.ownerDocument.createElement("div");
+      this.#lastMessageElement.className = "message-" + this.role;
+    }
+    const messageElement = this.#lastMessageElement;
+
     if (this.message == this.#lastMessage && !this.#unfurledUrlsNeedUpdating) {
       // The message is the same and the seen URLs haven't changed.
       return this.#lastMessageElement;
     }
 
-    let messageElement = this.ownerDocument.createElement("div");
-    messageElement.className = "message-" + this.role;
-
     if (!this.message) {
       // There is no message to show. Use an empty message element.
+      messageElement.replaceChildren();
+      messageElement.classList.remove("with-history");
+      this.#blockHtml = [];
       this.#lastMessage = this.message;
-      this.#lastMessageElement = messageElement;
       return messageElement;
     }
 
-    // Parse the message into markdown, and unfurl any unseen links.
-    this.#parseMarkdown(this.message, messageElement);
+    // seenUrls/history/completion changes can alter an already-rendered block
+    // (e.g. a now-seen link must stop being unfurled), so force a full reconcile.
+    if (this.#unfurledUrlsNeedUpdating) {
+      this.#blockHtml = [];
+    }
+
+    // Time the render so its per-chunk cost shows up in the Firefox Profiler.
+    // This runs in the content process, so use the User Timing API rather than
+    // ChromeUtils markers (which are parent-process only).
+    const renderStart = performance.now();
+    const blockHtml = parseMarkdownBlocks(this.message).map(
+      block => block.html
+    );
+    const rebuiltCount = this.#reconcileBlocks(messageElement, blockHtml);
 
     // When the conversation has history results, hide lists by default so a
     // list that will become a grid never flashes as raw bullets;
     // #replaceHistoryResults reveals non-history lists (and converts matches).
     if (this.historyResults?.size) {
       messageElement.classList.add("with-history");
+    } else {
+      messageElement.classList.remove("with-history");
     }
 
     this.#replaceHistoryResults(messageElement);
     this.#unfurlUnseenLinks(messageElement);
 
+    performance.measure("SmartWindow chat render", {
+      start: renderStart,
+      detail: { rebuilt: rebuiltCount, total: blockHtml.length },
+    });
+
     // Track the properties for memoization.
     this.#lastMessage = this.message;
-    this.#lastMessageElement = messageElement;
     this.#unfurledUrlsNeedUpdating = false;
 
     return messageElement;

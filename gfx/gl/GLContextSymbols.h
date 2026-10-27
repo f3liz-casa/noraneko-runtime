@@ -119,6 +119,7 @@ struct GLContextSymbols final {
   void(GLAPIENTRY* fPointParameterf)(GLenum, GLfloat);
   void(GLAPIENTRY* fPolygonMode)(GLenum, GLenum);
   void(GLAPIENTRY* fPolygonOffset)(GLfloat, GLfloat);
+  void(GLAPIENTRY* fPolygonOffsetClamp)(GLfloat, GLfloat, GLfloat);
   void(GLAPIENTRY* fReadBuffer)(GLenum);
   void(GLAPIENTRY* fReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum,
                                 GLvoid*);
@@ -289,6 +290,9 @@ struct GLContextSymbols final {
                                       GLint dstX, GLint dstY, GLint dstZ,
                                       GLsizei srcWidth, GLsizei srcHeight,
                                       GLsizei srcDepth);
+
+  // ARB_clip_control / OpenGL 4.5
+  void(GLAPIENTRY* fClipControl)(GLenum, GLenum);
 
   GLenum(GLAPIENTRY* fGetGraphicsResetStatus)();
 

@@ -330,8 +330,8 @@ pub const VIS_CLIP_REJECTS: usize = 143;
 /// had no pre-image in visibility space. Zero while visibility space is
 /// axis-aligned with the screen.
 pub const VIS_CULLING_RECT_FALLBACKS: usize = 144;
-/// Clips whose space cannot be related to the visibility space at all, so a
-/// mask is assumed. Non-zero only for a clip outside the 3D context that
+/// Clips whose space cannot be related to the surface's raster space at all, so
+/// a mask is assumed. Non-zero only for a clip outside the 3D context that
 /// established the surface's raster root.
 pub const VIS_CLIP_INDETERMINATE: usize = 145;
 
@@ -597,6 +597,20 @@ impl Profiler {
 
             ui: Vec::new(),
         }
+    }
+
+    /// The named values of the counters that were set in a transaction profile.
+    pub fn counter_values(&self, profile: &TransactionProfile) -> Vec<ProfileCounterValue> {
+        profile.events.iter().zip(self.counters.iter()).filter_map(|(event, counter)| {
+            match *event {
+                Event::Value(value) => Some(ProfileCounterValue {
+                    name: counter.name,
+                    unit: counter.unit,
+                    value,
+                }),
+                _ => None,
+            }
+        }).collect()
     }
 
     pub fn set_parameter(&mut self, param: &api::Parameter) {
@@ -1623,6 +1637,14 @@ impl Expected<i64> {
     }
 }
 
+/// The value a profiler counter was set to in one transaction profile.
+#[derive(Copy, Clone, Debug)]
+pub struct ProfileCounterValue {
+    pub name: &'static str,
+    pub unit: &'static str,
+    pub value: f64,
+}
+
 pub struct CounterDescriptor {
     pub name: &'static str,
     pub unit: &'static str,
@@ -1816,7 +1838,7 @@ impl TransactionProfile {
     pub fn end_time_if_started(&mut self, id: usize) -> Option<f64> {
         if let Event::Start(start) = self.events[id] {
             let now = zeitstempel::now();
-            let time_ns = now - start;
+            let time_ns = now.saturating_sub(start);
 
             let time_ms = ns_to_ms(time_ns);
             self.events[id] = Event::Value(time_ms);
@@ -2187,5 +2209,17 @@ impl RenderCommandLog {
             shader: self.current_shader.into(),
             instances,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn end_time_before_start_time() {
+        let mut profile = TransactionProfile::new();
+        profile.events[API_SEND_TIME] = Event::Start(zeitstempel::now() + 1_000_000);
+        assert_eq!(profile.end_time_if_started(API_SEND_TIME), Some(0.0));
     }
 }

@@ -77,6 +77,7 @@
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_test.h"
 #include "mozilla/StaticPrefs_toolkit.h"
+#include "mozilla/StaticPrefs_ui.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/Telemetry.h"
@@ -116,6 +117,7 @@
 #include "mozilla/dom/PointerEventBinding.h"
 #include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/PopupBlocker.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/SVGAnimationElement.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/Selection.h"
@@ -189,7 +191,6 @@
 #include "nsPlaceholderFrame.h"
 #include "nsPresContext.h"
 #include "nsQueryObject.h"
-#include "nsRange.h"
 #include "nsReadableUtils.h"
 #include "nsRefreshDriver.h"
 #include "nsRegion.h"
@@ -437,12 +438,16 @@ class MOZ_STACK_CLASS nsPresShellEventCB : public EventDispatchingCallback {
   virtual void HandleEvent(EventChainPostVisitor& aVisitor) override {
     if (aVisitor.mPresContext && aVisitor.mEvent->mClass != eBasicEventClass) {
       if (aVisitor.mEvent->mMessage == eMouseDown ||
-          aVisitor.mEvent->mMessage == eMouseUp) {
-        // Mouse-up and mouse-down events call nsIFrame::HandlePress/Release
-        // which call GetContentOffsetsFromPoint which requires up-to-date
-        // layout. Bring layout up-to-date now so that GetCurrentEventFrame()
-        // below will return a real frame and we don't have to worry about
-        // destroying it by flushing later.
+          aVisitor.mEvent->mMessage == eMouseUp ||
+          (aVisitor.mEvent->mMessage == eContextMenu &&
+           StaticPrefs::ui_mouse_right_click_select_under_cursor())) {
+        // Mouse-up, mouse-down and contextmenu events call
+        // nsIFrame::HandlePress/Release and
+        // nsIFrame::HandleContextMenuEventToSelectWordOrLink which call
+        // GetContentOffsetsFromPoint which requires up-to-date layout. Bring
+        // layout up-to-date now so that GetCurrentEventFrame() below will
+        // return a real frame and we don't have to worry about destroying it by
+        // flushing later.
         MOZ_KnownLive(mPresShell)->FlushPendingNotifications(FlushType::Layout);
       } else if (aVisitor.mEvent->mMessage == eWheel &&
                  aVisitor.mEventStatus != nsEventStatus_eConsumeNoDefault) {
@@ -1844,6 +1849,10 @@ void PresShell::FlushDelayedResize() {
 }
 
 void PresShell::SetLayoutViewportSize(const nsSize& aSize, bool aDelay) {
+  if (mPresContext && aSize == mPresContext->GetVisibleArea().Size()) {
+    mPendingLayoutViewportSize.reset();
+    return;
+  }
   mPendingLayoutViewportSize = Some(aSize);
   if (aDelay || ShouldDelayResize()) {
     SetNeedStyleFlush();
@@ -1924,7 +1933,7 @@ bool PresShell::CanHandleUserInputEvents(WidgetGUIEvent* aGUIEvent) {
   return true;
 }
 
-void PresShell::PostScrollEvent(Runnable* aEvent) {
+uint32_t PresShell::PostScrollEvent(Runnable* aEvent) {
   MOZ_ASSERT(aEvent);
   mPendingScrollEvents.AppendElement(aEvent);
 
@@ -1938,6 +1947,7 @@ void PresShell::PostScrollEvent(Runnable* aEvent) {
   mPresContext->RefreshDriver()->ScheduleRenderingPhases(
       {RenderingPhase::ScrollSteps, RenderingPhase::Layout,
        RenderingPhase::UpdateIntersectionObservations});
+  return mScrollEventGeneration;
 }
 
 void PresShell::ScheduleResizeEventIfNeeded(ResizeEventKind aKind) {
@@ -2123,6 +2133,11 @@ void PresShell::RunScrollSteps() {
   // events to be posted, so we move the initial set into a temporary array
   // first. (Newly posted scroll events will be dispatched on the next tick.)
   auto events = std::move(mPendingScrollEvents);
+  // Bump the scroll event generation before events fire. Any event queued from
+  // now will fire next frame.
+  if (++mScrollEventGeneration == 0) {
+    ++mScrollEventGeneration;
+  }
   for (auto& event : events) {
     event->Run();
   }
@@ -3190,7 +3205,8 @@ UniquePtr<gfxContext> PresShell::CreateReferenceRenderingContext() {
 
 // https://html.spec.whatwg.org/#scroll-to-the-fragment-identifier
 nsresult PresShell::GoToAnchor(const nsAString& aAnchorName,
-                               const nsRange* aFirstTextDirective, bool aScroll,
+                               const dom::Range* aFirstTextDirective,
+                               bool aScroll,
                                ScrollFlags aAdditionalScrollFlags) {
   if (!mDocument) {
     return NS_ERROR_FAILURE;
@@ -3322,7 +3338,7 @@ nsresult PresShell::GoToAnchor(const nsAString& aAnchorName,
       //
       // NOTE: Intentionally out of order for now with the focus steps, see
       // https://github.com/whatwg/html/issues/7759
-      RefPtr<nsRange> jumpToRange = nsRange::Create(mDocument);
+      RefPtr<dom::Range> jumpToRange = dom::Range::Create(mDocument);
       nsCOMPtr<nsIContent> nodeToSelect = target.get();
       while (nodeToSelect->GetFirstChild()) {
         nodeToSelect = nodeToSelect->GetFirstChild();
@@ -4267,7 +4283,7 @@ void PresShell::ClearMouseCapture(nsIFrame* aFrame) {
 }
 
 nsresult PresShell::CaptureHistoryState(nsILayoutHistoryState** aState) {
-  MOZ_ASSERT(nullptr != aState, "null state pointer");
+  MOZ_ASSERT(aState, "null state pointer");
 
   // We actually have to mess with the docshell here, since we want to
   // store the state back in it.
@@ -4291,14 +4307,10 @@ nsresult PresShell::CaptureHistoryState(nsILayoutHistoryState** aState) {
   *aState = historyState;
   NS_IF_ADDREF(*aState);
 
-  // Capture frame state for the entire frame hierarchy
-  nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
-  if (!rootFrame) {
-    return NS_OK;
+  // Capture the root scroll state.
+  if (auto* sf = GetRootScrollContainerFrame()) {
+    sf->SaveState(historyState);
   }
-
-  mFrameConstructor->CaptureFrameState(rootFrame, historyState);
-
   return NS_OK;
 }
 
@@ -4600,12 +4612,6 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
   // main document is flushing >= FlushType::Frames, so we flush external
   // resources here instead of Document::FlushPendingNotifications.
   doc->FlushExternalResources(flushType);
-
-  // Force flushing of any pending content notifications that might have
-  // queued up while our event was pending.  That will ensure that we don't
-  // construct frames for content right now that's still waiting to be
-  // notified on,
-  doc->FlushPendingNotifications(FlushType::ContentAndNotify);
 
   doc->UpdateSVGUseElementShadowTrees();
 
@@ -5097,7 +5103,7 @@ nsresult PresShell::RenderDocument(const nsRect& aRect,
  * rectangle surrounding the range.
  */
 nsRect PresShell::ClipListToRange(nsDisplayListBuilder* aBuilder,
-                                  nsDisplayList* aList, nsRange* aRange) {
+                                  nsDisplayList* aList, dom::Range* aRange) {
   // iterate though the display items and add up the bounding boxes of each.
   // This will allow the total area of the frames within the range to be
   // determined. To do this, remove an item from the bottom of the list, check
@@ -5218,7 +5224,7 @@ static bool gDumpRangePaintList = false;
 #endif
 
 UniquePtr<RangePaintInfo> PresShell::CreateRangePaintInfo(
-    nsRange* aRange, nsRect& aSurfaceRect, bool aForPrimarySelection) {
+    dom::Range* aRange, nsRect& aSurfaceRect, bool aForPrimarySelection) {
   nsIFrame* ancestorFrame = nullptr;
   nsIFrame* rootFrame = GetRootFrame();
 
@@ -5578,7 +5584,7 @@ already_AddRefed<SourceSurface> PresShell::RenderNode(
     return nullptr;
   }
 
-  RefPtr<nsRange> range = nsRange::Create(aNode);
+  RefPtr<dom::Range> range = dom::Range::Create(aNode);
   IgnoredErrorResult rv;
   range->SelectNode(*aNode, rv);
   if (rv.Failed()) {
@@ -5630,7 +5636,7 @@ already_AddRefed<SourceSurface> PresShell::RenderSelection(
   NS_ASSERTION(rangeCount > 0, "RenderSelection called with no selection");
   for (const uint32_t r : IntegerRange(rangeCount)) {
     MOZ_ASSERT(aSelection->RangeCount() == rangeCount);
-    RefPtr<nsRange> range = aSelection->GetRangeAt(r);
+    RefPtr<dom::Range> range = aSelection->GetRangeAt(r);
 
     UniquePtr<RangePaintInfo> info = CreateRangePaintInfo(range, area, true);
     if (info) {
@@ -5697,6 +5703,9 @@ void PresShell::AddCanvasBackgroundColorItem(nsDisplayListBuilder* aBuilder,
 
   nsDisplaySolidColor* item =
       MakeDisplayItem<nsDisplaySolidColor>(aBuilder, aFrame, aBounds, bgcolor);
+  if (!item) {
+    return;
+  }
   if (canvasBg.mCSSSpecified && isRootContentDocumentCrossProcess) {
     item->SetIsCheckerboardBackground();
   }
@@ -11634,17 +11643,30 @@ nsIFrame* PresShell::GetAbsoluteContainingBlock(nsIFrame* aFrame) {
 }
 
 nsIFrame* PresShell::GetAnchorPosAnchor(
-    const ScopedNameRef& aName, const nsIFrame* aPositionedFrame) const {
+    const ScopedNameRef& aName, const nsIFrame* aPositionedFrame,
+    uint32_t aPositionedFrameTreeDepth,
+    AnchorPosAnchorTopLayerIndexCache* aTopLayerIndexCache) const {
   MOZ_ASSERT(aName.mName);
   MOZ_ASSERT(!aName.mName->IsEmpty());
   MOZ_ASSERT(mLazyAnchorPosAnchorChanges.IsEmpty());
+  MOZ_ASSERT(aPositionedFrame->GetDepthInFrameTree() ==
+             aPositionedFrameTreeDepth);
   if (aName.mName == nsGkAtoms::AnchorPosImplicitAnchor) {
     return AnchorPositioningUtils::GetAnchorPosImplicitAnchor(aPositionedFrame)
         .mAnchorFrame;
   }
   if (const auto& entry = mAnchorPosAnchors.Lookup(aName.mName)) {
+    auto cacheEntry = [&]() -> nsTArray<size_t>* {
+      if (!aTopLayerIndexCache) {
+        return nullptr;
+      }
+      auto& v =
+          aTopLayerIndexCache->LookupOrInsert(aName.mName, entry->Length());
+      return &v;
+    }();
     return AnchorPositioningUtils::FindFirstAcceptableAnchor(
-        aName, aPositionedFrame, entry.Data());
+        aName, aPositionedFrame, entry.Data(), aPositionedFrameTreeDepth,
+        cacheEntry);
   }
   return nullptr;
 }
@@ -11658,30 +11680,37 @@ void PresShell::CollectAnchorNames(const nsIFrame* aPositionedFrame,
     const auto& name = iter.Key();
     ScopedNameRef scopedName{name, anchorTreeScope};
     if (AnchorPositioningUtils::FindFirstAcceptableAnchor(
-            scopedName, aPositionedFrame, iter.Data())) {
+            scopedName, aPositionedFrame, iter.Data(),
+            aPositionedFrame->GetDepthInFrameTree(), nullptr)) {
       aResult.AppendElement(nsDependentAtomString(name));
     }
   }
 }
+
+struct AnchorPosAnchorInfoComparator {
+  bool Equals(const AnchorPosAnchorInfo& aEntry, const nsIFrame* aFrame) const {
+    return aFrame == aEntry.mAnchor;
+  }
+};
 
 void PresShell::AddAnchorPosAnchorImpl(const nsAtom* aName, nsIFrame* aFrame,
                                        bool aForMerge) {
   MOZ_ASSERT(aName);
 
   auto& entry = mAnchorPosAnchors.LookupOrInsertWith(
-      aName, []() { return nsTArray<nsIFrame*>(); });
+      aName, []() { return nsTArray<AnchorPosAnchorInfo>(); });
 
   if (entry.IsEmpty()) {
-    entry.AppendElement(aFrame);
+    entry.AppendElement(AnchorPosAnchorInfo{aFrame});
     return;
   }
 
   struct FrameTreeComparator {
     nsIFrame* mFrame;
 
-    int32_t operator()(nsIFrame* aOther) const {
+    int32_t operator()(const AnchorPosAnchorInfo& aEntry) const {
       return nsLayoutUtils::CompareTreePosition(
-          mFrame, aOther, nullptr,
+          mFrame, aEntry.mAnchor, nullptr,
           nsLayoutUtils::CompareTreePositionFlags::
               FramesMayBeInDifferentOrIncompleteTrees);
     }
@@ -11693,7 +11722,7 @@ void PresShell::AddAnchorPosAnchorImpl(const nsAtom* aName, nsIFrame* aFrame,
   // If the same element is already in the array,
   // someone forgot to call RemoveAnchorPosAnchor.
   if (BinarySearchIf(entry, 0, entry.Length(), cmp, &matchOrInsertionIdx)) {
-    if (entry.ElementAt(matchOrInsertionIdx) == aFrame) {
+    if (entry.ElementAt(matchOrInsertionIdx).mAnchor == aFrame) {
       // nsLayoutUtils::CompareTreePosition() returns 0 when the frames are
       // in different documents or child lists. This could indicate that
       // the tree is being restructured and we can defer anchor insertion
@@ -11701,7 +11730,7 @@ void PresShell::AddAnchorPosAnchorImpl(const nsAtom* aName, nsIFrame* aFrame,
       MOZ_ASSERT_UNREACHABLE("Attempt to insert a frame twice was made");
       return;
     }
-    MOZ_ASSERT(!entry.Contains(aFrame));
+    MOZ_ASSERT(!entry.Contains(aFrame, AnchorPosAnchorInfoComparator{}));
 
     if (!aForMerge) {
       // nsLayoutUtils::CompareTreePosition() returns 0 when the frames are
@@ -11714,8 +11743,8 @@ void PresShell::AddAnchorPosAnchorImpl(const nsAtom* aName, nsIFrame* aFrame,
     }
   }
 
-  MOZ_ASSERT(!entry.Contains(aFrame));
-  entry.InsertElementAt(matchOrInsertionIdx, aFrame);
+  MOZ_ASSERT(!entry.Contains(aFrame, AnchorPosAnchorInfoComparator{}));
+  entry.InsertElementAt(matchOrInsertionIdx, AnchorPosAnchorInfo{aFrame});
 }
 
 void PresShell::AddAnchorPosAnchor(Span<const StyleAtom> aNames,
@@ -11767,7 +11796,7 @@ void PresShell::RemoveAnchorPosAnchor(const nsAtom* aName, nsIFrame* aFrame) {
   // we should probably assert here that anchorArray
   // is not empty and aFrame is in it.
 
-  anchorArray.RemoveElement(aFrame);
+  anchorArray.RemoveElement(aFrame, AnchorPosAnchorInfoComparator{});
   if (anchorArray.IsEmpty()) {
     entry.Remove();
   }
@@ -11843,6 +11872,7 @@ PresShell::AnchorPosUpdateResult PresShell::UpdateAnchorPosLayout() {
 
   auto result = AnchorPosUpdateResult::Flushed;
   AUTO_PROFILER_MARKER_UNTYPED("UpdateAnchorPosLayout", LAYOUT, {});
+  AnchorPosAnchorTopLayerIndexCache topLayerCache;
   for (auto* positioned : mAnchorPosPositioned) {
     MOZ_ASSERT(positioned->IsAbsolutelyPositioned(),
                "Anchor positioned frame is not absolutely positioned?");
@@ -11866,7 +11896,9 @@ PresShell::AnchorPosUpdateResult PresShell::UpdateAnchorPosLayout() {
         return Nothing{};
       }
       const ScopedNameRef& usedName = *usedAnchorName;
-      const auto* anchor = GetAnchorPosAnchor(usedName, positioned);
+      const auto* anchor = GetAnchorPosAnchor(
+          usedName, positioned, anchorPosReferenceData->mFrameTreeDepth,
+          &topLayerCache);
       if (!anchor) {
         return Nothing{};
       }
@@ -11886,11 +11918,13 @@ PresShell::AnchorPosUpdateResult PresShell::UpdateAnchorPosLayout() {
           [&](const ScopedNameRef& aNameRef,
               const nsIFrame* aPositioned) -> const nsIFrame* {
         if (!defaultAnchorInfo) {
-          return GetAnchorPosAnchor(aNameRef, aPositioned);
+          return GetAnchorPosAnchor(aNameRef, aPositioned,
+                                    anchorPosReferenceData->mFrameTreeDepth);
         }
         const auto* defaultAnchorName = defaultAnchorInfo->mName;
         if (aNameRef.mName != defaultAnchorName) {
-          return GetAnchorPosAnchor(aNameRef, aPositioned);
+          return GetAnchorPosAnchor(aNameRef, aPositioned,
+                                    anchorPosReferenceData->mFrameTreeDepth);
         }
         return defaultAnchorInfo->mAnchor;
       };
@@ -12525,7 +12559,7 @@ nsSize PresShell::GetVisualViewportSizeUpdatedByDynamicToolbar() const {
 
 nsSize PresShell::GetFixedViewportSize() const {
   nsSize layoutViewportSize = GetLayoutViewportSize();
-  if (!mPresContext->IsKeyboardHiddenOrResizesContentMode()) {
+  if (mPresContext->IsKeyboardVisibleOnOverlaysContent()) {
     return layoutViewportSize;
   }
   layoutViewportSize.height +=

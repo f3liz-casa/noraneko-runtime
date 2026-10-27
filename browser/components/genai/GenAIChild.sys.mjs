@@ -10,10 +10,12 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "shortcutsDelay",
   "browser.ml.chat.shortcuts.longPress"
 );
-
-ChromeUtils.defineESModuleGetters(lazy, {
-  ReaderMode: "moz-src:///toolkit/components/reader/ReaderMode.sys.mjs",
-});
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "shortcutsDebounce",
+  "browser.ml.chat.shortcuts.debounce",
+  200
+);
 
 // Events to register after shortcuts are shown
 const HIDE_EVENTS = ["pagehide", "resize", "scroll"];
@@ -25,7 +27,6 @@ export class GenAIChild extends JSWindowActorChild {
   mouseUpTimeout = null;
   downSelection = null;
   downTimeStamp = 0;
-  debounceDelay = 200;
   pendingHide = false;
   #compositionActive = false;
 
@@ -115,7 +116,7 @@ export class GenAIChild extends JSWindowActorChild {
 
           // Clear the timeout reference after execution
           this.mouseUpTimeout = null;
-        }, this.debounceDelay);
+        }, lazy.shortcutsDebounce);
 
         break;
       }
@@ -153,18 +154,23 @@ export class GenAIChild extends JSWindowActorChild {
    */
   getSelectionInfo() {
     // Handle regular selection outside of inputs
-    const { activeElement } = this.document;
-    const selection = this.contentWindow.getSelection()?.toString().trim();
+    const contentSelection = this.contentWindow.getSelection();
+    const selection = contentSelection?.toString().trim();
     if (selection) {
-      return {
-        inputType: activeElement.closest("[contenteditable]")
-          ? "contenteditable"
-          : "",
-        selection,
-      };
+      const anchor = contentSelection.anchorNode;
+      const anchorElement =
+        anchor.nodeType === Node.ELEMENT_NODE ? anchor : anchor.parentElement;
+      let inputType = "";
+      let host;
+      if (anchorElement?.closest("[contenteditable]")) {
+        inputType = "contenteditable";
+        host = anchorElement.getRootNode().host?.localName;
+      }
+      return { inputType, host, selection };
     }
 
     // Selection within input elements
+    const { activeElement } = this.document;
     const { selectionStart, value } = activeElement;
     if (selectionStart != null && value != null) {
       return {
@@ -184,8 +190,6 @@ export class GenAIChild extends JSWindowActorChild {
    */
   async receiveMessage({ name, data }) {
     switch (name) {
-      case "GetReadableText":
-        return this.getContentText();
       case "AutoSubmit":
         return await this.autoSubmitClick(data);
       default:
@@ -290,24 +294,6 @@ export class GenAIChild extends JSWindowActorChild {
       // Disconnect once things stabilize
       win.setTimeout(() => observer.disconnect(), 2000);
     }
-  }
-
-  /**
-   * Get readable article text or whole innerText from the content side.
-   *
-   * @returns {string} text from the page
-   */
-  async getContentText() {
-    const win = this.browsingContext?.window;
-    const doc = win?.document;
-    const article = await lazy.ReaderMode.parseDocument(doc);
-    return {
-      readerMode: !!article?.textContent,
-      selection: (article?.textContent || doc?.body?.innerText || "")
-        .trim()
-        // Replace duplicate whitespace with either a single newline or space
-        .replace(/(\s*\n\s*)|\s{2,}/g, (_, newline) => (newline ? "\n" : " ")),
-    };
   }
 
   didDestroy() {

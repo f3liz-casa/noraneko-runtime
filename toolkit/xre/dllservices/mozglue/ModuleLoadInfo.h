@@ -8,6 +8,8 @@
 #include "mozilla/NativeNt.h"
 #include "mozilla/Vector.h"
 
+class TestDllServices_RejectIncompatibleModuleLoadInfo_Test;
+
 namespace mozilla {
 
 struct ModuleLoadInfo final {
@@ -16,6 +18,33 @@ struct ModuleLoadInfo final {
     Blocked,
     Redirected,
   };
+
+  // Identifies this layout to the other binaries that a ModuleLoadInfo passes
+  // between (firefox.exe, mozglue.dll and xul.dll), which an interrupted update
+  // can leave at different versions.  Bump kVersion whenever the layout
+  // changes.  mMagic can never be mistaken for the QueryPerformanceCounter
+  // value that earlier layouts started with.
+  static constexpr uint64_t kMagic = 0xF14D6F644C6F6164ull;
+  static constexpr uint32_t kVersion = 2;
+
+  // Each of those binaries exports a function of this name that returns its
+  // kVersion, so that a sender can check a receiver before handing one over.
+  static constexpr const char kLayoutVersionExport[] =
+      "ModuleLoadInfoLayoutVersion";
+
+  /**
+   * Returns true if aModule exports kLayoutVersionExport and reports our
+   * layout version.  Not for freestanding code.
+   */
+  static bool IsLayoutCompatible(HMODULE aModule) {
+    if (!aModule) {
+      return false;
+    }
+
+    auto getVersion = reinterpret_cast<uint32_t (*)()>(
+        ::GetProcAddress(aModule, kLayoutVersionExport));
+    return getVersion && getVersion() == kVersion;
+  }
 
   // We do not provide these methods inside Gecko proper.
 #if !defined(MOZILLA_INTERNAL_API)
@@ -113,7 +142,6 @@ struct ModuleLoadInfo final {
   ModuleLoadInfo(ModuleLoadInfo&&) = default;
   ModuleLoadInfo& operator=(ModuleLoadInfo&&) = default;
 
-  ModuleLoadInfo() = delete;
   ModuleLoadInfo(const ModuleLoadInfo&) = delete;
   ModuleLoadInfo& operator=(const ModuleLoadInfo&) = delete;
 
@@ -147,6 +175,18 @@ struct ModuleLoadInfo final {
    */
   bool WasBlocked() const { return mStatus == ModuleLoadInfo::Status::Blocked; }
 
+  /**
+   * Returns false if this object was built by a binary whose ModuleLoadInfo
+   * layout differs from ours.  Only mMagic and mVersion are read, so this is
+   * safe to call on an object of any layout.
+   */
+  bool HasCompatibleLayout() const {
+    return mMagic == kMagic && mVersion == kVersion;
+  }
+
+  // These must stay the first members.  See kMagic.
+  uint64_t mMagic = kMagic;
+  uint32_t mVersion = kVersion;
   // Timestamp for the creation of this event
   LARGE_INTEGER mBeginTimestamp;
   // Duration of the LdrLoadDll call
@@ -161,12 +201,31 @@ struct ModuleLoadInfo final {
   nt::AllocatedUnicodeString mSectionName;
   // The base address of the module's mapped section
   const void* mBaseAddr;
+  // A duplicate of the handle the loader opened this module's file with, taken
+  // by the NtCreateSection hook.  It grants no access to the file's contents.
+  //
+  // Null for any load the NtCreateSection hook did not take a handle for.
+  nt::AutoHandle mFileHandle;
   // If the module was successfully loaded, stack trace of the DLL load request
   Vector<PVOID, 0, nt::RtlAllocPolicy> mBacktrace;
   // The status of DLL load
   Status mStatus;
   // Whether the module is one of the executables's dependent modules or not
   bool mIsDependent;
+
+ private:
+  // Builds an empty object whose layout version is deliberately wrong, for
+  // tests of the layout checks only.
+  ModuleLoadInfo()
+      : mVersion(kVersion + 1),
+        mBeginTimestamp(),
+        mLoadTimeInfo(),
+        mThreadId(0),
+        mBaseAddr(nullptr),
+        mStatus(Status::Loaded),
+        mIsDependent(false) {}
+
+  friend class ::TestDllServices_RejectIncompatibleModuleLoadInfo_Test;
 };
 
 using ModuleLoadInfoVec = Vector<ModuleLoadInfo, 0, nt::RtlAllocPolicy>;

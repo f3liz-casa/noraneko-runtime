@@ -11,8 +11,6 @@ support-files = [
   "head.js",
   "head-common.js",
   "addons/pl-dictionary.xpi",
-  "addons/set_homepage.xpi",
-  "addons/set_newtab.xpi",
 ]
 tags = "os_integration"
 
@@ -42,8 +40,6 @@ support-files = [
   "browser_bug1184989_prevent_scrolling_when_preferences_flipped.xhtml",
 ]
 
-["browser_bug1579418.js"]
-
 ["browser_colors_dialog_xul.js"]
 
 ["browser_ensure_prefs_bindings_initted.js"]
@@ -52,7 +48,6 @@ support-files = [
 skip-if = [
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && ccov", # Linux: bug 1613530
   "os == 'win' && ccov",                                                                    # Windows: bug 1437051
-  "tsan",
 ]
 
 ["browser_fluent.js"]
@@ -70,6 +65,8 @@ run-if = ["os == 'mac'"]
 
 ["browser_subdialogs.js"]
 support-files = ["subdialog.xhtml", "subdialog2.xhtml"]
+
+["browser_tabs_browsing_highlightToSearch.js"]
 
 ["browser_tabs_open_external_next_to_active_tab.js"]
 

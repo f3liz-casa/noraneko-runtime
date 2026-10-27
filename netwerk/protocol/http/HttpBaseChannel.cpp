@@ -23,6 +23,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/InputStreamLengthHelper.h"
 #include "mozilla/LoadInfo.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/PermissionManager.h"
@@ -78,7 +79,6 @@
 #include "nsIDocShell.h"
 #include "nsIEncodedChannel.h"
 #include "nsIHttpHeaderVisitor.h"
-#include "nsILoadGroupChild.h"
 #include "nsIMIMEInputStream.h"
 #include "nsIMultiplexInputStream.h"
 #include "nsIMutableArray.h"
@@ -541,15 +541,14 @@ HttpBaseChannel::SetDocshellUserAgentOverride() {
     return NS_OK;
   }
 
-  nsAutoString customUserAgent;
+  nsAutoCString customUserAgent;
   bc->GetCustomUserAgent(customUserAgent);
   if (customUserAgent.IsEmpty() || customUserAgent.IsVoid()) {
     return NS_OK;
   }
 
-  NS_ConvertUTF16toUTF8 utf8CustomUserAgent(customUserAgent);
   nsresult rv = SetRequestHeaderInternal(
-      "User-Agent"_ns, utf8CustomUserAgent, false,
+      "User-Agent"_ns, customUserAgent, false,
       nsHttpHeaderArray::eVarietyRequestEnforceDefault);
   if (NS_FAILED(rv)) {
     return rv;
@@ -1142,9 +1141,23 @@ static nsresult NormalizeUploadStream(nsIInputStream* aUploadStream,
 
   NS_WARNING("Upload Stream is being copied into StorageStream");
 
+  // nsStorageStream requires a power-of-two segment size.
+  static constexpr uint32_t kMinCopySegmentSize = 4 * 1024;
+  static constexpr uint32_t kMaxCopySegmentSize = 1u << 31;
+  const uint32_t maxCopySegmentSize = RoundUpPow2(
+      std::clamp(StaticPrefs::network_http_upload_copy_max_segment_size(),
+                 kMinCopySegmentSize, kMaxCopySegmentSize));
+  uint32_t segmentSize = maxCopySegmentSize;
+  int64_t length;
+  if (InputStreamLengthHelper::GetSyncLength(aUploadStream, &length) &&
+      length >= 0) {
+    segmentSize = RoundUpPow2(
+        std::clamp<int64_t>(length, kMinCopySegmentSize, maxCopySegmentSize));
+  }
+
   nsCOMPtr<nsIStorageStream> storageStream;
-  nsresult rv =
-      NS_NewStorageStream(4096, UINT32_MAX, getter_AddRefs(storageStream));
+  nsresult rv = NS_NewStorageStream(segmentSize, UINT32_MAX,
+                                    getter_AddRefs(storageStream));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIOutputStream> sink;
@@ -1161,7 +1174,7 @@ static nsresult NormalizeUploadStream(nsIInputStream* aUploadStream,
   if (!NS_InputStreamIsBuffered(aUploadStream)) {
     nsCOMPtr<nsIInputStream> bufferedSource;
     rv = NS_NewBufferedInputStream(getter_AddRefs(bufferedSource),
-                                   source.forget(), 4096);
+                                   source.forget(), segmentSize);
     NS_ENSURE_SUCCESS(rv, rv);
     source = bufferedSource.forget();
   }
@@ -1170,8 +1183,9 @@ static nsresult NormalizeUploadStream(nsIInputStream* aUploadStream,
   nsCOMPtr<nsIEventTarget> target =
       do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID);
   RefPtr<GenericPromise::Private> ready = new GenericPromise::Private(__func__);
-  rv = NS_AsyncCopy(source, sink, target, NS_ASYNCCOPY_VIA_READSEGMENTS, 4096,
-                    NormalizeCopyComplete, do_AddRef(ready).take());
+  rv =
+      NS_AsyncCopy(source, sink, target, NS_ASYNCCOPY_VIA_READSEGMENTS,
+                   segmentSize, NormalizeCopyComplete, do_AddRef(ready).take());
   if (NS_WARN_IF(NS_FAILED(rv))) {
     ready.get()->Release();
     return rv;
@@ -1197,6 +1211,13 @@ HttpBaseChannel::CloneUploadStream(int64_t* aContentLength,
   }
 
   if (!mUploadStream) {
+    return NS_OK;
+  }
+
+  // Teeing an async pipe would buffer an upload of unbounded size in memory,
+  // so report no clone.
+  if (LoadUploadStreamIsStreaming()) {
+    *aContentLength = -1;
     return NS_OK;
   }
 
@@ -1258,6 +1279,18 @@ nsresult HttpBaseChannel::InternalSetUploadStream(
 
     mUploadStream = aUploadStream;
     ExplicitSetUploadStreamLength(aContentLength, aSetContentLengthHeader);
+    return NS_OK;
+  }
+
+  // For streaming uploads (JS ReadableStream body), the stream is an async
+  // pipe fed by FetchStreamReader. It cannot be normalized (buffered into a
+  // StorageStream) because it's consumed incrementally. Skip normalization
+  // entirely and use the pipe as-is.
+  if (LoadUploadStreamIsStreaming()) {
+    mUploadStream = aUploadStream;
+    // mReqContentLength stays 0: the length genuinely is not known yet.
+    // nsHttpTransaction::Init consults RequestBodyIsStreaming() so that it
+    // does not mistake that for "no body".
     return NS_OK;
   }
 
@@ -2204,6 +2237,12 @@ HttpBaseChannel::GetAllowSTS(bool* value) {
 
 NS_IMETHODIMP
 HttpBaseChannel::SetAllowSTS(bool value) {
+  // This controls whether the parent process honors HSTS for this channel, so
+  // it must not be settable from a content process.
+  if (!XRE_IsParentProcess()) {
+    MOZ_ASSERT(value == true, "allowSTS = false is parent process only");
+    return NS_OK;
+  }
   ENSURE_CALLED_BEFORE_CONNECT();
   StoreAllowSTS(value);
   return NS_OK;
@@ -4151,16 +4190,6 @@ HttpBaseChannel::SetTlsFlags(uint32_t aTlsFlags) {
 }
 
 NS_IMETHODIMP
-HttpBaseChannel::GetApiRedirectToURI(nsIURI** aResult) {
-  if (!mAPIRedirectTo) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-  NS_ENSURE_ARG_POINTER(aResult);
-  *aResult = do_AddRef(mAPIRedirectTo->first()).take();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 HttpBaseChannel::GetResponseTimeoutEnabled(bool* aEnable) {
   if (NS_WARN_IF(!aEnable)) {
     return NS_ERROR_NULL_POINTER;
@@ -4459,6 +4488,27 @@ bool HttpBaseChannel::IsNavigation() {
   return LoadForceMainDocumentChannel() || (mLoadFlags & LOAD_DOCUMENT_URI);
 }
 
+nsIPrincipal* HttpBaseChannel::GetAltDataBindingPrincipal() {
+  if (!mLoadInfo) {
+    return nullptr;
+  }
+
+  nsIPrincipal* principal = mLoadInfo->GetLoadingPrincipal();
+  if (!principal) {
+    principal = mLoadInfo->TriggeringPrincipal();
+  }
+  return principal;
+}
+
+nsresult HttpBaseChannel::GetAltDataBindingOrigin(nsACString& aOrigin) {
+  aOrigin.Truncate();
+  nsIPrincipal* principal = GetAltDataBindingPrincipal();
+  if (!principal) {
+    return NS_ERROR_FAILURE;
+  }
+  return principal->GetOrigin(aOrigin);
+}
+
 bool HttpBaseChannel::BypassServiceWorker() const {
   return mLoadFlags & LOAD_BYPASS_SERVICE_WORKER;
 }
@@ -4580,7 +4630,7 @@ already_AddRefed<nsILoadInfo> HttpBaseChannel::CloneLoadInfoForRedirect(
         this, getter_AddRefs(redirectPrincipal));
     nsCOMPtr<nsIPrincipal> nullPrincipalToInherit =
         NullPrincipal::CreateWithInheritedAttributes(redirectPrincipal);
-    newLoadInfo->SetPrincipalToInherit(nullPrincipalToInherit);
+    newLoadInfo->SetTrustedPrincipalToInherit(nullPrincipalToInherit);
   }
 
   bool isTopLevelDoc = newLoadInfo->GetExternalContentPolicyType() ==
@@ -4995,6 +5045,7 @@ HttpBaseChannel::CloneReplacementChannelConfig(bool aPreserveMethod,
       config.uploadStream = mUploadStream;
     }
     config.uploadStreamLength = mReqContentLength;
+    config.uploadStreamIsStreaming = LoadUploadStreamIsStreaming();
 
     nsAutoCString contentType;
     nsresult rv = mRequestHead.GetHeader(nsHttp::Content_Type, contentType);
@@ -5137,6 +5188,12 @@ HttpBaseChannel::CloneReplacementChannelConfig(bool aPreserveMethod,
       // because ExplicitSetUploadStream treats the former as "no header" and
       // the latter as "header with empty string value".
       const nsACString& method = config.method ? *config.method : VoidCString();
+      if (config.uploadStreamIsStreaming) {
+        RefPtr<HttpBaseChannel> baseChan = do_QueryObject(httpChannel);
+        if (baseChan) {
+          baseChan->SetUploadStreamIsStreaming(true);
+        }
+      }
       uploadChannel2->ExplicitSetUploadStream(
           config.uploadStream, ctype, config.uploadStreamLength, method);
     } else if (nsCOMPtr<nsIUploadChannel> uploadChannel =
@@ -5168,6 +5225,7 @@ HttpBaseChannel::ReplacementChannelConfig::ReplacementChannelConfig(
   timedChannelInfo = aInit.timedChannelInfo();
   uploadStream = aInit.uploadStream();
   uploadStreamLength = aInit.uploadStreamLength();
+  uploadStreamIsStreaming = aInit.uploadStreamIsStreaming();
   contentType = aInit.contentType();
   contentLength = aInit.contentLength();
 }
@@ -5184,6 +5242,7 @@ HttpBaseChannel::ReplacementChannelConfig::Serialize() {
   config.uploadStream() =
       uploadStream ? RemoteLazyInputStream::WrapStream(uploadStream) : nullptr;
   config.uploadStreamLength() = uploadStreamLength;
+  config.uploadStreamIsStreaming() = uploadStreamIsStreaming;
   config.contentType() = contentType;
   config.contentLength() = contentLength;
 
@@ -5283,7 +5342,6 @@ nsresult HttpBaseChannel::SetupReplacementChannel(nsIURI* newURI,
     }
   }
 
-  // convey the LoadAllowSTS() flags
   rv = httpChannel->SetAllowSTS(LoadAllowSTS());
   MOZ_ASSERT(NS_SUCCEEDED(rv));
 
@@ -6236,13 +6294,12 @@ bool HttpBaseChannel::EnsureRequestContextID() {
   // Find the loadgroup at the end of the chain in order
   // to make sure all channels derived from the load group
   // use the same connection scope.
-  nsCOMPtr<nsILoadGroupChild> childLoadGroup = do_QueryInterface(mLoadGroup);
-  if (!childLoadGroup) {
+  if (!mLoadGroup) {
     return false;
   }
 
   nsCOMPtr<nsILoadGroup> rootLoadGroup;
-  childLoadGroup->GetRootLoadGroup(getter_AddRefs(rootLoadGroup));
+  mLoadGroup->GetRootLoadGroup(getter_AddRefs(rootLoadGroup));
   if (!rootLoadGroup) {
     return false;
   }
@@ -6771,7 +6828,7 @@ NS_IMETHODIMP HttpBaseChannel::GetDocumentCharacterSet(
 }
 
 void HttpBaseChannel::SetConnectionInfo(nsHttpConnectionInfo* aCI) {
-  mConnectionInfo = aCI ? aCI->Clone() : nullptr;
+  mConnectionInfo = aCI;
 }
 
 NS_IMETHODIMP

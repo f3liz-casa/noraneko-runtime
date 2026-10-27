@@ -10,17 +10,11 @@ This feature is no longer recommended. Though some browsers might
 still support it, it may have already been removed from the
 relevant web standards, may be in the process of being dropped, or
 may only be kept for compatibility purposes. Avoid using it, and
-update existing code if possible; see the
-
-[compatibility
-table](#Browser_compatibility)
-
- at the bottom of this page to
-guide your decision. Be aware that this feature may cease to work
-at any time.
+update existing code if possible. Be aware that this feature may
+cease to work at any time.
 :::
 
-Deprecated in favor of {ref}`PR_Seek64`.
+Deprecated in favor of {doc}`pr_seek64`.
 
 ## Syntax
 
@@ -39,7 +33,7 @@ The function has the following parameters:
 
 `fd`
 
-: A pointer to a {ref}`PRFileDesc` object.
+: A pointer to a {doc}`prfiledesc` object.
 
 `offset`
 
@@ -48,7 +42,7 @@ The function has the following parameters:
 
 `whence`
 
-: A value of type {ref}`PRSeekWhence` that specifies how to interpret the
+: A value of type {doc}`prseekwhence` that specifies how to interpret the
   `offset` parameter in setting the file pointer associated with the
   fd parameter. The value for the `whence` parameter can be one of
   the following:
@@ -68,7 +62,7 @@ The function returns one of the following values:
   pointer location, measured in bytes from the beginning of the file.
 - If the function fails, the file pointer remains unchanged and the
   function returns -1. The error code can then be retrieved with
-  {ref}`PR_GetError`.
+  {doc}`pr_geterror`.
 
 ### Description
 
@@ -80,5 +74,5 @@ for the file descriptor `fd`:
 ### See Also
 
 If you need to move the file pointer by a large offset that's out of the
-range of a 32-bit integer, use {ref}`PR_Seek64`. New code should use
-{ref}`PR_Seek64` so that it can handle files larger than 2 GB.
+range of a 32-bit integer, use {doc}`pr_seek64`. New code should use
+{doc}`pr_seek64` so that it can handle files larger than 2 GB.

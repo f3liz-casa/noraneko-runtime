@@ -189,6 +189,14 @@ var gBrowserInit = {
       }
     }
 
+    let tabToAdopt = this.getTabToAdopt();
+    if (tabToAdopt?.hasAttribute?.("mini-window")) {
+      document.documentElement.setAttribute("mini-window", "true");
+      if (tabToAdopt.hasAttribute("cropped-mini-window")) {
+        document.documentElement.setAttribute("cropped-mini-window", "true");
+      }
+    }
+
     // Run menubar initialization first, to avoid CustomTitlebar code picking
     // up mutations from it and causing a reflow.
     BrowserUtils.callModulesFromCategory(
@@ -333,7 +341,8 @@ var gBrowserInit = {
 
     if (
       !window.toolbar.visible ||
-      window.document.documentElement.hasAttribute("taskbartab")
+      window.document.documentElement.hasAttribute("taskbartab") ||
+      window.document.documentElement.hasAttribute("cropped-mini-window")
     ) {
       // adjust browser UI for popups
       gURLBar.readOnly = true;
@@ -363,17 +372,17 @@ var gBrowserInit = {
       gURLBar.removeAttribute("focused");
 
       let swapBrowsers = () => {
-        if (gBrowser.isTabGroupLabel(tabToAdopt)) {
+        if (Tabbrowser.isTabGroupLabel(tabToAdopt)) {
           // TODO bug 1967937: Merge this case with the tab group case below.
           gBrowser.adoptTabGroup(tabToAdopt.group, { elementIndex: 0 });
           gBrowser.removeTab(gBrowser.selectedTab);
-        } else if (gBrowser.isTabGroup(tabToAdopt)) {
+        } else if (Tabbrowser.isTabGroup(tabToAdopt)) {
           // Via gBrowser.replaceGroupWithWindow
           let tempBlankTab = gBrowser.selectedTab;
           gBrowser.adoptTabGroup(tabToAdopt, { tabIndex: 0, selectTab: true });
           gBrowser.removeTab(tempBlankTab);
           Glean.tabgroup.groupInteractions.move_window.add(1);
-        } else if (gBrowser.isSplitViewWrapper(tabToAdopt)) {
+        } else if (Tabbrowser.isSplitViewWrapper(tabToAdopt)) {
           let tempBlankTab = gBrowser.selectedTab;
           let splitview = gBrowser.adoptSplitView(tabToAdopt, {
             elementIndex: 0,
@@ -398,7 +407,7 @@ var gBrowserInit = {
         this._clearTabToAdopt();
       };
       if (
-        gBrowser.isTab(tabToAdopt) &&
+        Tabbrowser.isTab(tabToAdopt) &&
         !tabToAdopt.linkedBrowser.isRemoteBrowser
       ) {
         swapBrowsers();
@@ -550,13 +559,13 @@ var gBrowserInit = {
 
     initBackForwardButtonTooltip(
       "back-button-tooltip-description",
-      "navbar-tooltip-back-2",
+      "navbar-tooltip-back-3",
       "goBackKb"
     );
 
     initBackForwardButtonTooltip(
       "forward-button-tooltip-description",
-      "navbar-tooltip-forward-2",
+      "navbar-tooltip-forward-3",
       "goForwardKb"
     );
 
@@ -964,91 +973,25 @@ var gBrowserInit = {
       return;
     }
 
-    function scheduleIdleTask(func, options) {
-      requestIdleCallback(function idleTaskRunner() {
-        if (!window.closed) {
-          func();
-        }
-      }, options);
-    }
-
-    scheduleIdleTask(() => {
-      // Initialize the Sync UI
-      gSync.init();
-    });
-
-    scheduleIdleTask(() => {
-      // Read prefers-reduced-motion setting
-      let reduceMotionQuery = window.matchMedia(
-        "(prefers-reduced-motion: reduce)"
-      );
-      function readSetting() {
-        gReduceMotionSetting = reduceMotionQuery.matches;
-      }
-      reduceMotionQuery.addListener(readSetting);
-      readSetting();
-    });
-
-    scheduleIdleTask(() => {
-      // setup simple gestures support
-      gGestureSupport.init(true);
-
-      // setup history swipe animation
-      gHistorySwipeAnimation.init();
-    });
-
-    scheduleIdleTask(() => {
-      gBrowserThumbnails.init();
-    });
-
-    scheduleIdleTask(
-      () => {
-        // Initialize the download manager some time after the app starts so that
-        // auto-resume downloads begin (such as after crashing or quitting with
-        // active downloads) and speeds up the first-load of the download manager UI.
-        // If the user manually opens the download manager before the timeout, the
-        // downloads will start right away, and initializing again won't hurt.
-        try {
-          DownloadsCommon.initializeAllDataLinks();
-          ChromeUtils.importESModule(
-            "moz-src:///browser/components/downloads/DownloadsTaskbar.sys.mjs"
-          )
-            .DownloadsTaskbar.registerIndicator(window)
-            .catch(ex => {
-              console.error(ex);
-            });
-          if (AppConstants.platform == "macosx") {
-            ChromeUtils.importESModule(
-              "moz-src:///browser/components/downloads/DownloadsMacFinderProgress.sys.mjs"
-            ).DownloadsMacFinderProgress.register();
-          }
-        } catch (ex) {
-          console.error(ex);
-        }
+    BrowserUtils.callModulesFromCategory(
+      {
+        categoryName: "browser-window-idle-tasks",
+        profilerMarker: "perWindowIdleTask",
+        idleDispatch: true,
+        jsGlobal: globalThis,
       },
-      { timeout: 10000 }
+      window
     );
 
-    if (Win7Features) {
-      scheduleIdleTask(() => Win7Features.onOpenWindow());
-    }
-
-    scheduleIdleTask(async () => {
-      NewTabPagePreloading.maybeCreatePreloadedBrowser(window);
-    });
-
-    scheduleIdleTask(() => {
-      gGfxUtils.init();
-    });
-
-    scheduleIdleTask(async () => {
-      await gProfiles.init();
-    });
-
-    // This should always go last, since the idle tasks (except for the ones with
-    // timeouts) should execute in order. Note that this observer notification is
-    // not guaranteed to fire, since the window could close before we get here.
-    scheduleIdleTask(() => {
+    // This should always go last, since the idle tasks above execute in order.
+    // Dispatch it on the same idle queue as the consumers above (via
+    // ChromeUtils.idleDispatch) so it runs after them. Note that this observer
+    // notification is not guaranteed to fire, since the window could close
+    // before we get here.
+    ChromeUtils.idleDispatch(() => {
+      if (window.closed) {
+        return;
+      }
       this.idleTasksFinished.resolve();
       Services.obs.notifyObservers(
         window,
@@ -1127,12 +1070,6 @@ var gBrowserInit = {
       return;
     }
 
-    gGestureSupport.init(false);
-
-    gHistorySwipeAnimation.uninit();
-
-    gSync.uninit();
-
     try {
       gBrowser.removeProgressListener(window.XULBrowserWindow);
       gBrowser.removeTabsProgressListener(window.TabsProgressListener);
@@ -1153,11 +1090,6 @@ var gBrowserInit = {
     if (this._boundDelayedStartup) {
       this._cancelDelayedStartup();
     } else {
-      if (Win7Features) {
-        Win7Features.onCloseWindow();
-      }
-      gBrowserThumbnails.uninit();
-
       BrowserUtils.callModulesFromCategory(
         {
           categoryName: "browser-window-unload-delayed-startup",

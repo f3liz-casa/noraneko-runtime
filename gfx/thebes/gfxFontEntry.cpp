@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "COLRFonts.h"
+#include "FontPaletteCache.h"
 #include "ThebesRLBox.h"
 #include "gfxContext.h"
 #include "gfxGraphiteShaper.h"
@@ -74,6 +75,8 @@ gfxFontEntry::~gfxFontEntry() {
   hb_blob_destroy(mCOLR.exchange(nullptr));
   hb_blob_destroy(mCPAL.exchange(nullptr));
 
+  delete mPaletteCache.exchange(nullptr);
+
   if (TrakTableInitialized()) {
     // Only if it was initialized, so that we don't try to call hb_blob_destroy
     // on the kTrakTableUninitialized flag value!
@@ -131,26 +134,28 @@ void gfxFontEntry::InitializeFrom(fontlist::Face* aFace,
 }
 
 #ifdef MOZ_FONTATIONS
-void gfxFontEntry::SetSkrifaFont(SkrifaFontRef* aSkrifaFont,
+bool gfxFontEntry::SetSkrifaFont(SkrifaFontRef* aSkrifaFont,
                                  MemoryMappedFile&& aSkrifaFontFile) {
   // If another thread came in and initialized the font face ahead of us,
   // just delete the face this thread constructed.
   if (mSkrifaFontFace.compareExchange(nullptr, aSkrifaFont)) {
     // If we won the race, store our file data to back the font.
     mSkrifaFontFile = std::move(aSkrifaFontFile);
-  } else {
-    // We lost the race, delete the font we just constructed and let the
-    // file mapping be destroyed normally.
-    skrifa_font_delete(aSkrifaFont);
+    return true;
   }
+  // We lost the race, delete the font we just constructed and let the
+  // file mapping be destroyed normally.
+  skrifa_font_delete(aSkrifaFont);
+  return false;
 }
 
-void gfxFontEntry::SetSkrifaFont(SkrifaFontRef* aSkrifaFont) {
+bool gfxFontEntry::SetSkrifaFont(SkrifaFontRef* aSkrifaFont) {
   // If we lose a race to set the Skrifa font, just discard it.
-  MOZ_ASSERT(mIsDataUserFont);
-  if (!mSkrifaFontFace.compareExchange(nullptr, aSkrifaFont)) {
-    skrifa_font_delete(aSkrifaFont);
+  if (mSkrifaFontFace.compareExchange(nullptr, aSkrifaFont)) {
+    return true;
   }
+  skrifa_font_delete(aSkrifaFont);
+  return false;
 }
 #endif
 
@@ -437,6 +442,46 @@ bool gfxFontEntry::TryGetColorGlyphs() {
 
   mCheckedForColorGlyph = true;
   return mCOLR && mCPAL;
+}
+
+already_AddRefed<gfx::FontPalette> gfxFontEntry::GetPalette(
+    nsAtom* aPaletteName, gfx::FontPaletteValueSet* aPaletteValueSet) {
+  // Get the palette cache, creating it if necessary. Note that once the
+  // mPaletteCache has been assigned, it is never modified until font entry
+  // destruction, so there is no risk of the local `cache` pointer here
+  // becoming invalid during this function.
+  gfx::PaletteCache* cache = mPaletteCache;
+  if (!cache) {
+    cache = new gfx::PaletteCache();
+    if (!mPaletteCache.compareExchange(nullptr, cache)) {
+      delete cache;  // Lost a race: use the cache created by the winner.
+      cache = mPaletteCache;
+    }
+  }
+
+  // Reading and modifying the cache is guarded by our RWLock.
+  {
+    // First try to return an existing cached palette.
+    AutoReadLock lock(mLock);
+    RefPtr palette = cache->GetCachedPalette(aPaletteValueSet, aPaletteName);
+    if (palette) {
+      return palette.forget();
+    }
+  }
+
+  // Create a new resolved palette.
+  gfxFontEntry::AutoHBFace face = GetHBFace();
+  RefPtr palette = MakeRefPtr<FontPalette>(gfx::COLRFonts::CreateColorPalette(
+      face, aPaletteValueSet, aPaletteName, FamilyName()));
+
+  // Store it in the cache for future use. This may evict an existing cache
+  // entry, but any caller that retrieved the old entry was given its own
+  // strong reference to the palette it contained, which will remain valid
+  // as long as the caller holds its ref.
+  AutoWriteLock lock(mLock);
+  cache->AddPalette(aPaletteValueSet, aPaletteName, palette);
+
+  return palette.forget();
 }
 
 already_AddRefed<gfxCharacterMap> gfxFontEntry::GetCMAPFromFontInfo(
@@ -1235,7 +1280,6 @@ void gfxFontEntry::CheckForVariationAxes() {
   if (mCheckedForVariationAxes) {
     return;
   }
-  mCheckedForVariationAxes = true;
   if (HasVariations()) {
     AutoTArray<gfxFontVariationAxis, 4> axes;
     GetVariationAxes(axes);
@@ -1252,6 +1296,7 @@ void gfxFontEntry::CheckForVariationAxes() {
       }
     }
   }
+  mCheckedForVariationAxes = true;
 }
 
 bool gfxFontEntry::HasBoldVariableWeight() {
@@ -1333,16 +1378,16 @@ void gfxFontEntry::GetVariationsForStyle(nsTArray<gfxFontVariation>& aResult,
 
   struct TagEquals {
     bool Equals(const gfxFontVariation& aIter, uint32_t aTag) const {
-      return aIter.mTag == aTag;
+      return aIter.tag == aTag;
     }
   };
 
   auto replaceOrAppend = [&aResult](const gfxFontVariation& aSetting) {
-    auto index = aResult.IndexOf(aSetting.mTag, 0, TagEquals());
+    auto index = aResult.IndexOf(aSetting.tag, 0, TagEquals());
     if (index == aResult.NoIndex) {
       aResult.AppendElement(aSetting);
     } else {
-      aResult[index].mValue = aSetting.mValue;
+      aResult[index].value = aSetting.value;
     }
   };
 

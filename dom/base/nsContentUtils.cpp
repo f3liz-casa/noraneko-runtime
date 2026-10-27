@@ -124,6 +124,7 @@
 #ifdef FUZZING
 #  include "mozilla/StaticPrefs_fuzzing.h"
 #endif
+#include "mozilla/StaticPrefs_mathml.h"
 #include "mozilla/StaticPrefs_nglayout.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_test.h"
@@ -204,6 +205,7 @@
 #include "mozilla/dom/PBrowser.h"
 #include "mozilla/dom/PContentChild.h"
 #include "mozilla/dom/PrototypeList.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/ReferrerPolicyBinding.h"
 #include "mozilla/dom/ReportingUtils.h"
 #include "mozilla/dom/Sanitizer.h"
@@ -387,7 +389,6 @@
 #include "nsPresContext.h"
 #include "nsQueryFrame.h"
 #include "nsQueryObject.h"
-#include "nsRange.h"
 #include "nsReadableUtils.h"
 #include "nsRefPtrHashtable.h"
 #include "nsSandboxFlags.h"
@@ -4769,7 +4770,7 @@ void nsContentUtils::GenerateStateKey(nsIContent* aContent, Document* aDocument,
           appendedForm = true;
         } else {
           KeyAppendString("fn"_ns, aKey);
-          int32_t index = htmlForms->IndexOf(formElement, false);
+          int32_t index = htmlForms->IndexOf(formElement);
           if (index <= -1) {
             //
             // XXX HACK this uses some state that was dumped into the document
@@ -4811,7 +4812,7 @@ void nsContentUtils::GenerateStateKey(nsIContent* aContent, Document* aDocument,
           generatedUniqueKey = true;
         } else {
           KeyAppendString("dn"_ns, aKey);
-          int32_t index = htmlFormControls->IndexOf(aContent, true);
+          int32_t index = htmlFormControls->IndexOf(aContent);
           if (index > -1) {
             KeyAppendInt(index, aKey);
             generatedUniqueKey = true;
@@ -6018,8 +6019,8 @@ void nsContentUtils::ReportDeprecation(
       new DeprecationReportBody(aGlobal, type, nullptr /* date */, msg,
                                 sourceFile, lineNumber, columnNumber);
 
-  ReportingUtils::Report(aGlobal, nsGkAtoms::deprecation, u"default"_ns,
-                         NS_ConvertUTF8toUTF16(url), body);
+  ReportingUtils::Report(aGlobal, nsGkAtoms::deprecation, "default"_ns, url,
+                         body);
 }
 
 void nsContentUtils::LogMessageToConsole(const char* aMsg) {
@@ -6900,13 +6901,14 @@ static void SetAndFilterHTML(
 
   // Step 2. Let sanitizer be the result of calling get a sanitizer instance
   // from options with options and safe.
-  nsCOMPtr<nsIGlobalObject> global = aTarget->GetRelevantGlobal();
-  if (!global) {
+  nsCOMPtr<nsPIDOMWindowInner> window =
+      do_QueryInterface(aTarget->GetRelevantGlobal());
+  if (!window) {
     aError.ThrowInvalidStateError("Missing owner global.");
     return;
   }
   RefPtr<Sanitizer> sanitizer =
-      Sanitizer::GetInstance(global, aSanitizerOptions, aSafe, aError);
+      Sanitizer::GetInstance(window, aSanitizerOptions, aSafe, aError);
   if (aError.Failed()) {
     return;
   }
@@ -7640,7 +7642,9 @@ void nsContentUtils::TriggerLinkClick(
     nsAutoString fileName;
     if ((!aContent->IsHTMLElement(nsGkAtoms::a) &&
          !aContent->IsHTMLElement(nsGkAtoms::area) &&
-         !aContent->IsSVGElement(nsGkAtoms::a)) ||
+         !aContent->IsSVGElement(nsGkAtoms::a) &&
+         !(aContent->IsMathMLElement(nsGkAtoms::a) &&
+           StaticPrefs::mathml_a_element_enabled())) ||
         !aContent->AsElement()->GetAttr(nsGkAtoms::download, fileName) ||
         NS_FAILED(aContent->NodePrincipal()->CheckMayLoad(aLinkURI, true))) {
       fileName.SetIsVoid(true);  // No actionable download attribute was found.
@@ -8995,7 +8999,7 @@ bool nsContentUtils::IsPointInSelection(
   const uint32_t rangeCount = aSelection.RangeCount();
   for (const uint32_t i : IntegerRange(rangeCount)) {
     MOZ_ASSERT(aSelection.RangeCount() == rangeCount);
-    RefPtr<const nsRange> range = aSelection.GetRangeAt(i);
+    RefPtr<const dom::Range> range = aSelection.GetRangeAt(i);
     if (NS_WARN_IF(!range)) {
       // Don't bail yet, iterate through them all
       continue;
@@ -9021,7 +9025,7 @@ void nsContentUtils::GetSelectionInTextControl(Selection* aSelection,
   // We don't care which end of this selection is anchor and which is focus.  In
   // fact, we explicitly want to know which is the _start_ and which is the
   // _end_, not anchor vs focus.
-  const nsRange* range = aSelection->GetAnchorFocusRange();
+  const dom::Range* range = aSelection->GetAnchorFocusRange();
   if (!range) {
     // Nothing selected
     aOutStartOffset = aOutEndOffset = 0;
@@ -10236,7 +10240,11 @@ Maybe<BigBuffer> nsContentUtils::GetSurfaceData(DataSourceSurface& aSurface,
     return Nothing();
   }
 
-  BigBuffer surfaceData(maxBufLen);
+  BigBuffer surfaceData = BigBuffer::TryAlloc(maxBufLen);
+  if (surfaceData.Size() != maxBufLen) {
+    aSurface.Unmap();
+    return Nothing();
+  }
   memcpy(surfaceData.Data(), map.mData, bufLen);
   memset(surfaceData.Data() + bufLen, 0, maxBufLen - bufLen);
 
@@ -10460,6 +10468,11 @@ Result<bool, nsresult> nsContentUtils::SynthesizeMouseEvent(
     return Err(NS_ERROR_FAILURE);
   }
 
+  if (aMouseEventData.mMovementX.WasPassed() !=
+      aMouseEventData.mMovementY.WasPassed()) {
+    return Err(NS_ERROR_INVALID_ARG);
+  }
+
   Maybe<WidgetPointerEvent> pointerEvent;
   Maybe<WidgetMouseEvent> mouseEvent;
   if (IsPointerEventMessage(msg)) {
@@ -10523,6 +10536,11 @@ Result<bool, nsresult> nsContentUtils::SynthesizeMouseEvent(
 
   mouseOrPointerEvent.mRefPoint = aRefPoint;
   mouseOrPointerEvent.mIgnoreRootScrollFrame = aOptions.mIgnoreRootScrollFrame;
+  if (aMouseEventData.mMovementX.WasPassed()) {
+    MOZ_ASSERT(aMouseEventData.mMovementY.WasPassed());
+    mouseOrPointerEvent.mMovement.emplace(aMouseEventData.mMovementX.Value(),
+                                          aMouseEventData.mMovementY.Value());
+  }
 
   nsEventStatus status = nsEventStatus_eIgnore;
   if (aOptions.mToWindow) {
@@ -10830,7 +10848,9 @@ bool nsContentUtils::HasRelNoReferrer(const Element& aElement) {
   // rel=noreferrer is only supported in <a>, <area>, and <form>
   if (!aElement.IsAnyOfHTMLElements(nsGkAtoms::a, nsGkAtoms::area,
                                     nsGkAtoms::form) &&
-      !aElement.IsSVGElement(nsGkAtoms::a)) {
+      !aElement.IsSVGElement(nsGkAtoms::a) &&
+      !(aElement.IsMathMLElement(nsGkAtoms::a) &&
+        StaticPrefs::mathml_a_element_enabled())) {
     return false;
   }
 
@@ -13009,11 +13029,7 @@ static constexpr uint64_t kIdBits = kIdTotalBits - kIdProcessBits;
 
 /* static */
 uint64_t nsContentUtils::GenerateProcessSpecificId(uint64_t aId) {
-  uint64_t processId = 0;
-  if (XRE_IsContentProcess()) {
-    ContentChild* cc = ContentChild::GetSingleton();
-    processId = cc->GetID();
-  }
+  uint64_t processId = XRE_GetChildID();
 
   MOZ_RELEASE_ASSERT(processId < (uint64_t(1) << kIdProcessBits));
   uint64_t processBits = processId & ((uint64_t(1) << kIdProcessBits) - 1);
@@ -13026,9 +13042,15 @@ uint64_t nsContentUtils::GenerateProcessSpecificId(uint64_t aId) {
 }
 
 /* static */
-std::tuple<uint64_t, uint64_t> nsContentUtils::SplitProcessSpecificId(
+std::tuple<GeckoChildID, uint64_t> nsContentUtils::SplitProcessSpecificId(
     uint64_t aId) {
-  return {aId >> kIdBits, aId & ((uint64_t(1) << kIdBits) - 1)};
+  return {GeckoChildID(aId >> kIdBits), aId & ((uint64_t(1) << kIdBits) - 1)};
+}
+
+/* static */
+bool nsContentUtils::IsProcessSpecificIdFrom(uint64_t aId,
+                                             GeckoChildID aChildID) {
+  return (aId >> kIdBits) == static_cast<uint64_t>(aChildID);
 }
 
 // Next process-local Tab ID.

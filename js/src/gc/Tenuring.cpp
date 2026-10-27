@@ -12,6 +12,7 @@
 
 #include <bit>
 
+#include "gc/BufferAllocator.h"
 #include "gc/Cell.h"
 #include "gc/GCInternals.h"
 #include "gc/GCProbes.h"
@@ -84,12 +85,6 @@ class js::gc::PromotionStats {
                                  const JS::AutoRequireNoGC& nogc);
 };
 #endif  // JS_GC_ZEAL
-
-/* static */
-TenuringTracer* TenuringTracer::From(JSTracer* trc) {
-  MOZ_ASSERT(trc->isTenuringTracer());
-  return static_cast<TenuringTracer*>(trc);
-}
 
 TenuringTracer::TenuringTracer(JSRuntime* rt, Nursery* nursery,
                                bool tenureEverything)
@@ -262,6 +257,10 @@ bool TenuringTracer::onJitCodeEdge(jit::JitCode** codep, const char* name) {
 }
 bool TenuringTracer::onScopeEdge(Scope** scopep, const char* name) {
   return true;
+}
+
+bool TenuringTracer::onBufferEdge(void** bufferp, const char* name) {
+  return BufferAllocator::PromoteBuffer(this, bufferp, name, sourceIsInNursery);
 }
 
 void TenuringTracer::traverse(JS::Value* thingp) {
@@ -1295,11 +1294,13 @@ JSString* js::gc::TenuringTracer::promoteString(JSString* src) {
     JSLinearString* base = src->asDependent().rootBaseDuringMinorGC();
 
     // Limited recursion: the root base cannot be dependent, so this will not
-    // recurse again.
+    // recurse again. Preserve the value of |promotedToNursery|.
+    bool promotedToNurseryPrev = promotedToNursery;
     JSString* promotedBase =
         InCollectedNurseryRegion(base) ? promoteOrForward(base) : base;
-    MOZ_ASSERT(!promotedBase->isDependent());
+    promotedToNursery = promotedToNurseryPrev;
 
+    MOZ_ASSERT(!promotedBase->isDependent());
     dst->asDependent().setBase(&promotedBase->asLinear());
     if (base != promotedBase) {
       dst->asDependent().updateToPromotedBase(base);

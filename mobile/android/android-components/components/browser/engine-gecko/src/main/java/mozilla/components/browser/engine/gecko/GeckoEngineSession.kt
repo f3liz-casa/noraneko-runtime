@@ -29,7 +29,6 @@ import mozilla.components.browser.engine.gecko.prompt.GeckoPromptDelegate
 import mozilla.components.browser.engine.gecko.translate.GeckoTranslateSessionDelegate
 import mozilla.components.browser.engine.gecko.translate.GeckoTranslationUtils.intoTranslationError
 import mozilla.components.browser.engine.gecko.window.GeckoWindowRequest
-import mozilla.components.browser.errorpages.ErrorType
 import mozilla.components.concept.engine.DownloadDelegate
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineSession.LoadUrlFlags.Companion.ALLOW_ADDITIONAL_HEADERS
@@ -45,6 +44,7 @@ import mozilla.components.concept.engine.manifest.WebAppManifestParser
 import mozilla.components.concept.engine.pageextraction.ContentParams
 import mozilla.components.concept.engine.pageextraction.PageExtractionError
 import mozilla.components.concept.engine.pageextraction.PageMetadata
+import mozilla.components.concept.engine.request.ErrorType
 import mozilla.components.concept.engine.request.RequestInterceptor
 import mozilla.components.concept.engine.request.RequestInterceptor.InterceptionResponse
 import mozilla.components.concept.engine.translate.TranslationError
@@ -68,7 +68,6 @@ import mozilla.components.support.ktx.kotlin.isEmail
 import mozilla.components.support.ktx.kotlin.isExtensionUrl
 import mozilla.components.support.ktx.kotlin.isGeoLocation
 import mozilla.components.support.ktx.kotlin.isPhone
-import mozilla.components.support.ktx.kotlin.sanitizeFileName
 import mozilla.components.support.ktx.kotlin.tryGetHostFromUrl
 import mozilla.components.support.utils.CertificateUtils
 import mozilla.components.support.utils.DownloadUtils
@@ -242,19 +241,20 @@ class GeckoEngineSession(
 
     /** See [EngineSession.requestPdfToDownload] */
     override fun requestPdfToDownload() {
-        geckoSession
-            .saveAsPdf()
+        pdfToDownload()
             .then(
-                { inputStream ->
+                { webResponse ->
+                    val inputStream = webResponse?.body
                     if (inputStream == null) {
                         logger.error("No input stream available for Save to PDF.")
                         return@then GeckoResult<Void>()
                     }
 
-                    val url = this.currentUrl ?: ""
+                    val url = webResponse.uri
                     val contentType = "application/pdf"
                     val disposition = currentTitle?.let { makePdfContentDisposition(it) }
-                    // A successful status code suffices because the PDF is generated on device.
+                    // A successful status code suffices because the PDF bytes are either generated
+                    // for the page or directly pulled from the PDF.
                     val responseStatus = RESPONSE_CODE_SUCCESS
                     // We do not know the size at this point; send 0 so consumers do not display it.
                     val contentLength = 0L
@@ -302,6 +302,48 @@ class GeckoEngineSession(
                 },
             )
     }
+
+    /** See [EngineSession.requestPdfToShare] */
+    override fun requestPdfToShare(
+        onResult: (Response) -> Unit,
+        onException: (Throwable) -> Unit,
+    ) {
+        pdfToDownload()
+            .then(
+                { webResponse ->
+                    if (webResponse?.body == null) {
+                        onException(IllegalStateException("No PDF available"))
+                        return@then GeckoResult<Void>()
+                    }
+
+                    onResult(webResponse.toResponse())
+                    GeckoResult()
+                },
+                { throwable ->
+                    onException(throwable)
+                    GeckoResult()
+                },
+            )
+    }
+
+    /**
+     * Determines the correct PDF bytes to download. If the tab is showing a PDF, then the bytes should come directly
+     * from that PDF, else they should be generated for the page.
+     */
+    private fun pdfToDownload(): GeckoResult<WebResponse> =
+        geckoSession.isPdfJs.then(
+            { isPdfJs -> if (isPdfJs == true) visiblePdfDocument() else pageSavedAsPdf() },
+            { pageSavedAsPdf() },
+        )
+
+    /** Method to get the bytes from the shown PDF document. */
+    private fun visiblePdfDocument(): GeckoResult<WebResponse> = geckoSession.pdfFileSaver.save()
+
+    /** Method to generate a PDF from the content. */
+    private fun pageSavedAsPdf(): GeckoResult<WebResponse> =
+        geckoSession.saveAsPdf().map { inputStream ->
+            inputStream?.let { WebResponse.Builder(this.currentUrl ?: "").body(it).build() }
+        }
 
     /** See [EngineSession.requestPrintContent] */
     override fun requestPrintContent() {
@@ -1450,7 +1492,7 @@ class GeckoEngineSession(
                             url = url,
                             contentLength = contentLength,
                             contentType = DownloadUtils.sanitizeMimeType(contentType),
-                            fileName = fileName?.sanitizeFileName(),
+                            fileName = fileName,
                             response = response,
                             isPrivate = privateMode,
                             openInApp = webResponse.requestExternalApp,

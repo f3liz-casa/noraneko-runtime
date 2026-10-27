@@ -16,6 +16,8 @@
   <string name="feedback_erase2">Historique de navigation effacé</string>
   <!-- "Snackbar" shown after the user has pressed the 'erase' button at the end of a custom tab browsing session -->
   <string name="feedback_erase_custom_tab">L’historique de navigation de l’onglet a été effacé.</string>
+  <!-- Content description for the button that opens the menu. -->
+  <string name="content_description_menu">Menu</string>
   <!-- Menu item: Share the currently visible page -->
   <string name="menu_share">Partager…</string>
   <!--
@@ -438,7 +440,7 @@
     text was paraphrased from ETSI TS 119 411-5 V2.1.1 section 6.3 and
     indicates that the website uses a QWAC.
   -->
-  <string name="qualified_text">Qualifié conformément au règlement (UE) n°2024/1183.</string>
+  <string name="qualified_text">Qualifié conformément au règlement (UE) n°\u00a02024/1183.</string>
   <string name="preference_autocomplete_duplicate_url_error">L’adresse existe déjà</string>
   <!-- Label for the Find in page button -->
   <string name="find_in_page">Rechercher dans la page</string>

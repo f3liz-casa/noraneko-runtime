@@ -73,6 +73,7 @@ UNIFIED_SOURCES += [
     "TestThreadPoolListener.cpp",
     "TestThreadUtils.cpp",
     "TestThrottledEventQueue.cpp",
+    "TestTimerThreadMonitor.cpp",
     "TestTimeStamp.cpp",
     "TestTokenizer.cpp",
     "TestUTF.cpp",
@@ -160,6 +161,11 @@ if CONFIG["MOZ_MEMORY"]:
         "TestAllocReplacement.cpp",
     ]
 
+if CONFIG["MOZ_DIAGNOSTIC_ASSERT_ENABLED"]:
+    UNIFIED_SOURCES += [
+        "TestThreadShutdownAnnotations.cpp",
+    ]
+
 SOURCES += [
     "TestAsyncPlatformPipes.cpp",
     "TestCOMArray.cpp",
@@ -173,6 +179,7 @@ SOURCES += [
 
 LOCAL_INCLUDES += [
     "../../base",
+    "../../threads",
     "/toolkit/components/telemetry/tests/gtest",
     "/xpcom/components",
 ]

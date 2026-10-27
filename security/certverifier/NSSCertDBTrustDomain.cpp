@@ -338,6 +338,7 @@ Result NSSCertDBTrustDomain::FindIssuer(Input encodedIssuerName,
         if (AppShutdown::IsInOrBeyond(ShutdownPhase::AppShutdownConfirmed)) {
           return;
         }
+        AutoSearchingForCertificates _;
         // NSS seems not to differentiate between "no potential issuers found"
         // and "there was an error trying to retrieve the potential issuers." We
         // assume there was no error if CERT_CreateSubjectCertList returns
@@ -1628,12 +1629,10 @@ void DisableMD5() {
 }
 
 // Load a given PKCS#11 module located in the given directory. It will be named
-// the given module name. Optionally pass some string parameters to it via
-// 'params'. This argument will be provided to C_Initialize when called on the
-// module.
+// the given module name.
 // |libraryName| and |dir| are encoded in UTF-8.
 bool LoadUserModuleAt(const char* moduleName, const char* libraryName,
-                      const nsCString& dir, /* optional */ const char* params) {
+                      const nsCString& dir) {
   // If a module exists with the same name, make a best effort attempt to delete
   // it. Note that it isn't possible to delete the internal module, so checking
   // the return value would be detrimental in that case.
@@ -1657,11 +1656,6 @@ bool LoadUserModuleAt(const char* moduleName, const char* libraryName,
   pkcs11ModuleSpec.AppendLiteral("\" library=\"");
   pkcs11ModuleSpec.Append(fullLibraryPath);
   pkcs11ModuleSpec.AppendLiteral("\"");
-  if (params) {
-    pkcs11ModuleSpec.AppendLiteral("\" parameters=\"");
-    pkcs11ModuleSpec.Append(params);
-    pkcs11ModuleSpec.AppendLiteral("\"");
-  }
 
   UniqueSECMODModule userModule(SECMOD_LoadUserModule(
       const_cast<char*>(pkcs11ModuleSpec.get()), nullptr, false));
@@ -1747,10 +1741,24 @@ bool LoadOSClientCertsModule() {
 #endif
 }
 
+#if defined(NIGHTLY_BUILD) && !defined(MOZ_NO_SMART_CARDS)
+extern "C" {
+// Extern declaration of the C_GetFunctionList function in the remotecerts
+// module. NSS calls it to obtain the list of functions comprising this module.
+// ppFunctionList must be a valid pointer.
+CK_RV RemoteCerts_C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList);
+}  // extern "C"
+
+bool LoadRemoteCertsModule() {
+  return LoadUserModuleFromXul(kRemoteCertsModuleName.get(),
+                               RemoteCerts_C_GetFunctionList);
+}
+#endif  // NIGHTLY_BUILD && !MOZ_NO_SMART_CARDS
+
 bool LoadLoadableRoots(const nsCString& dir) {
   int unusedModType;
   (void)SECMOD_DeleteModule("Root Certs", &unusedModType);
-  return LoadUserModuleAt(kRootModuleName.get(), "nssckbi", dir, nullptr);
+  return LoadUserModuleAt(kRootModuleName.get(), "nssckbi", dir);
 }
 
 extern "C" {

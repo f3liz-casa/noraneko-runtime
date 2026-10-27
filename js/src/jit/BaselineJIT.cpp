@@ -162,8 +162,7 @@ static JitExecStatus EnterBaseline(JSContext* cx, EnterJitData& data) {
   // Release temporary buffer used for OSR into Ion.
   cx->runtime()->jitRuntime()->freeIonOsrTempData();
 
-  MOZ_ASSERT_IF(data.result.isMagic(), data.result.isMagic(JS_ION_ERROR));
-  return data.result.isMagic() ? JitExec_Error : JitExec_Ok;
+  return data.result.isMagic(JS_ION_ERROR) ? JitExec_Error : JitExec_Ok;
 }
 
 JitExecStatus jit::EnterBaselineInterpreterAtBranch(JSContext* cx,
@@ -280,7 +279,7 @@ static bool DispatchOffThreadBaselineCompile(JSContext* cx,
 // Either through stencil instantiation where we perform eager baseline
 // compilations speculatively based on Jit Hints, or on demand through the JIT.
 static bool DispatchOffThreadBaselineBatchImpl(JSContext* cx, bool isEager) {
-  BaselineCompileQueue& queue = cx->realm()->baselineCompileQueue();
+  BaselineCompileQueue& queue = cx->realm()->jitRealm().baselineCompileQueue();
   MOZ_ASSERT(queue.numQueued() > 0);
 
   // We maintain the invariant that there's always room to push an entry into
@@ -642,6 +641,12 @@ static MethodStatus CanEnterBaselineInterpreter(JSContext* cx,
   AutoKeepJitScripts keepJitScript(cx);
   if (!script->ensureHasJitScript(cx, keepJitScript)) {
     return Method_Error;
+  }
+
+  if (!JitOptions.disableJitHints &&
+      cx->runtime()->jitRuntime()->hasJitHintsMap()) {
+    JitHintsMap* jitHints = cx->runtime()->jitRuntime()->getJitHintsMap();
+    jitHints->setEagerBaselineInterpreterHint(script);
   }
 
   if (JitOptions.emitInterpreterEntryTrampoline) {
@@ -1353,7 +1358,7 @@ void BaselineInterpreter::init(
     uint32_t profilerExitToggleOffset, uint32_t debugTrapHandlerOffset,
     CodeOffsetVector&& debugInstrumentationOffsets,
     CodeOffsetVector&& debugTrapOffsets, CodeOffsetVector&& codeCoverageOffsets,
-    ICReturnOffsetVector&& icReturnOffsets,
+    ICBailoutStubOffsetVector&& icBailoutStubOffsets,
     const CallVMOffsets& callVMOffsets) {
   code_ = code;
   interpretOpOffset_ = interpretOpOffset;
@@ -1366,12 +1371,12 @@ void BaselineInterpreter::init(
   debugInstrumentationOffsets_ = std::move(debugInstrumentationOffsets);
   debugTrapOffsets_ = std::move(debugTrapOffsets);
   codeCoverageOffsets_ = std::move(codeCoverageOffsets);
-  icReturnOffsets_ = std::move(icReturnOffsets);
+  icBailoutStubOffsets_ = std::move(icBailoutStubOffsets);
   callVMOffsets_ = callVMOffsets;
 }
 
-uint8_t* BaselineInterpreter::retAddrForIC(JSOp op) const {
-  for (const ICReturnOffset& entry : icReturnOffsets_) {
+uint8_t* BaselineInterpreter::bailoutStubAddrForIC(JSOp op) const {
+  for (const ICBailoutStubOffset& entry : icBailoutStubOffsets_) {
     if (entry.op == op) {
       return codeAtOffset(entry.offset);
     }

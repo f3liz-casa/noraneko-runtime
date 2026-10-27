@@ -154,6 +154,12 @@ namespace webrtc {
 // MediaFactory class definition is not part of the api.
 class MediaFactory;
 
+// Forward-declared so PeerConnectionDependencies can hold a
+// std::unique_ptr<PeerConnectionTracerInterface> without including
+// api/peer_connection_tracer_interface.h (which itself includes this
+// header).
+class PeerConnectionTracerInterface;
+
 // IWYU pragma: end_keep
 // MediaStream container interface.
 class StreamCollectionInterface : public RefCountInterface {
@@ -731,6 +737,11 @@ class RTC_EXPORT PeerConnectionInterface : public RefCountInterface {
 
     bool voice_activity_detection = true;
     bool ice_restart = false;
+
+    // JSEP allows generating an offer in any non-closed signaling state, but
+    // the WebRTC-PC createOffer() API only allows "stable" and
+    // "have-local-offer". Browser implementations should set this to true.
+    bool restrict_offer_to_stable_or_have_local_offer = false;
 
     // If true, will offer to BUNDLE audio/video/data together. Not to be
     // confused with RTCP mux (multiplexing RTP and RTCP together).
@@ -1415,6 +1426,14 @@ struct RTC_EXPORT PeerConnectionDependencies final {
   // Optional field trials to use.
   // Overrides those from PeerConnectionFactoryDependencies.
   std::unique_ptr<FieldTrialsView> trials;
+
+  // Optional passive observer of PeerConnection lifecycle and operation
+  // events, intended for diagnostics / trace surfaces such as
+  // chrome://webrtc-internals. See api/peer_connection_tracer_interface.h.
+  // Convention: set once at construction; the PeerConnection owns the tracer
+  // for its entire lifetime. Not intended to be shared across multiple
+  // PeerConnections.
+  std::unique_ptr<PeerConnectionTracerInterface> tracer;
 };
 
 // PeerConnectionFactoryDependencies holds all of the PeerConnectionFactory
@@ -1438,6 +1457,10 @@ struct RTC_EXPORT PeerConnectionFactoryDependencies final {
 
   // Optional dependencies
   Thread* network_thread = nullptr;
+  // Deprecated: Support for a worker thread that is distinct from the network
+  // thread is being removed. Applications must stop supplying a separate
+  // worker thread. See
+  // https://groups.google.com/g/discuss-webrtc/c/Fs_Hd5XNJh0
   Thread* worker_thread = nullptr;
   Thread* signaling_thread = nullptr;
   SocketFactory* socket_factory = nullptr;

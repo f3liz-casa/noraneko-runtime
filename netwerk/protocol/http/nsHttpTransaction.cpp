@@ -16,6 +16,7 @@
 #include "mozilla/AppShutdown.h"
 #include "mozilla/Components.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/SlicedInputStream.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/Tokenizer.h"
 #include "mozilla/glean/NetwerkMetrics.h"
@@ -245,11 +246,11 @@ nsresult nsHttpTransaction::Init(
 
   if (NS_FAILED(rv)) return rv;
 
-  mConnInfo = cinfo->Clone();
+  mConnInfo = cinfo;
   // No lock needed: the transaction is initialized on the main thread only,
   // so there is no possibility of a race at this point.
   MOZ_PUSH_IGNORE_THREAD_SAFETY
-  mFinalizedConnInfo = mConnInfo;
+  mFinalizedConnInfo = cinfo;
   mCallbacks = callbacks;
   mEarlyHintObserver = do_QueryInterface(eventsink);
   MOZ_POP_THREAD_SAFETY
@@ -300,8 +301,37 @@ nsresult nsHttpTransaction::Init(
   if (NS_FAILED(rv)) return rv;
 
   mHasRequestBody = !!requestBody;
-  if (mHasRequestBody && !requestContentLength) {
+  // A streaming upload body has no length known up front, so a zero length
+  // does not mean there is nothing to send.
+  if (mHasRequestBody && !requestContentLength && !mRequestBodyIsStreaming) {
     mHasRequestBody = false;
+  }
+
+  // The originating channel keeps its own reference to this upload stream and
+  // may seek or clone it on the main thread (to rewind for a 307/308 redirect
+  // or an auth retry) while this transaction reads it on the socket thread.
+  // Input streams are not safe for concurrent access from multiple threads, so
+  // read from a private clone and leave the channel's stream untouched by the
+  // socket thread. Parent-process upload streams are normalized to be cloneable
+  // (see HttpBaseChannel's NormalizeUploadStream).
+  nsCOMPtr<nsIInputStream> requestBodyClone;
+  if (mHasRequestBody && NS_SUCCEEDED(NS_CloneInputStream(
+                             requestBody, getter_AddRefs(requestBodyClone)))) {
+    requestBody = requestBodyClone;
+  }
+
+  // Bug 2059211: cap the body stream at the declared Content-Length.  A body
+  // stream whose backing data grew after the size was declared (e.g. a
+  // FileBlobImpl whose file was extended via OPFS) could otherwise push excess
+  // bytes onto a keep-alive connection, enabling HTTP request smuggling.
+  nsCOMPtr<nsIInputStream> cappedRequestBody;
+  if (mHasRequestBody && requestContentLength && !mRequestBodyIsStreaming) {
+    nsCOMPtr<nsIInputStream> bodyToWrap =
+        requestBodyClone ? requestBodyClone.forget()
+                         : nsCOMPtr<nsIInputStream>(requestBody);
+    cappedRequestBody =
+        new SlicedInputStream(bodyToWrap.forget(), 0, requestContentLength);
+    requestBody = cappedRequestBody;
   }
 
   requestContentLength += mReqHeaderBuf.Length();
@@ -429,6 +459,12 @@ void nsHttpTransaction::OnPendingQueueInserted(
     MutexAutoLock lock(mLock);
     mHashKeyOfConnectionEntry.Assign(aConnectionHashKey);
   }
+
+  MaybeStartHttp3BackupTimer();
+}
+
+void nsHttpTransaction::MaybeStartHttp3BackupTimer() {
+  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
   // Don't create mHttp3BackupTimer if HTTPS RR is used or Happy Eyeballs is
   // enabled. The Happy Eyeballs state machine will handle fallback to h2.
@@ -771,8 +807,9 @@ void nsHttpTransaction::OnTransportStatus(nsITransport* transport,
     }
 
     // when uploading, we include the request headers in the progress
-    // notifications.
-    progressMax = mRequestSize;
+    // notifications. A streaming body has no length, so mRequestSize only
+    // covers the headers and the total has to be reported as unknown.
+    progressMax = mRequestBodyIsStreaming ? -1 : mRequestSize;
   } else {
     progress = 0;
     progressMax = 0;
@@ -822,6 +859,18 @@ nsresult nsHttpTransaction::ReadSegments(nsAHttpSegmentReader* reader,
   if (mTransactionDone) {
     *countRead = 0;
     return mStatus;
+  }
+
+  // A length-less body cannot be framed on HTTP/1.x. Fail here, before any of
+  // it is written, rather than after the whole upload has gone out.
+  if (mRequestBodyIsStreaming && mConnection &&
+      mConnection->Version() < HttpVersion::v2_0) {
+    LOG(
+        ("nsHttpTransaction::ReadSegments %p streaming upload needs HTTP/2 or "
+         "HTTP/3, got version %u\n",
+         this, static_cast<uint32_t>(mConnection->Version())));
+    *countRead = 0;
+    return NS_ERROR_NET_BODY_NOT_REPLAYABLE;
   }
 
   if (!m0RTTInProgress) {
@@ -1101,7 +1150,11 @@ bool nsHttpTransaction::Http3Disabled() const {
 }
 
 already_AddRefed<nsHttpConnectionInfo> nsHttpTransaction::GetConnInfo() const {
-  RefPtr<nsHttpConnectionInfo> connInfo = mConnInfo->Clone();
+  RefPtr<nsHttpConnectionInfo> connInfo;
+  {
+    MutexAutoLock lock(mLock);
+    connInfo = mConnInfo;
+  }
   return connInfo.forget();
 }
 
@@ -1227,8 +1280,11 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
   LOG(("nsHttpTransaction::PrepareConnInfoForRetry [this=%p reason=%" PRIx32
        "]",
        this, static_cast<uint32_t>(aReason)));
-  RefPtr<nsHttpConnectionInfo> failedConnInfo = mConnInfo->Clone();
-  mConnInfo = nullptr;
+  RefPtr<nsHttpConnectionInfo> failedConnInfo = mConnInfo;
+  {
+    MutexAutoLock lock(mLock);
+    mConnInfo = nullptr;
+  }
   bool echConfigUsed =
       nsHttpHandler::EchConfigEnabled(failedConnInfo->IsHttp3()) &&
       !failedConnInfo->GetEchConfig().IsEmpty();
@@ -1236,12 +1292,18 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
   if (mFastFallbackTriggered) {
     mFastFallbackTriggered = false;
     MOZ_ASSERT(mBackupConnInfo);
-    mConnInfo.swap(mBackupConnInfo);
+    {
+      MutexAutoLock lock(mLock);
+      mConnInfo.swap(mBackupConnInfo);
+    }
     return;
   }
 
   auto useOrigConnInfoToRetry = [&]() {
-    mOrigConnInfo.swap(mConnInfo);
+    {
+      MutexAutoLock lock(mLock);
+      mOrigConnInfo.swap(mConnInfo);
+    }
     if (mConnInfo->IsHttp3() &&
         ((mCaps & NS_HTTP_DISALLOW_HTTP3) ||
          gHttpHandler->IsHttp3Excluded(mConnInfo->GetRoutedHost().IsEmpty()
@@ -1249,7 +1311,10 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
                                            : mConnInfo->GetRoutedHost()))) {
       RefPtr<nsHttpConnectionInfo> ci;
       mConnInfo->CloneAsDirectRoute(getter_AddRefs(ci));
-      mConnInfo = ci;
+      {
+        MutexAutoLock lock(mLock);
+        mConnInfo = ci;
+      }
     }
   };
 
@@ -1270,8 +1335,11 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
 
   if (aReason == psm::GetXPCOMFromNSSError(SSL_ERROR_ECH_RETRY_WITHOUT_ECH)) {
     LOG((" Got SSL_ERROR_ECH_RETRY_WITHOUT_ECH, use empty echConfig to retry"));
-    failedConnInfo->SetEchConfig(EmptyCString());
-    failedConnInfo.swap(mConnInfo);
+    {
+      MutexAutoLock lock(mLock);
+      mConnInfo =
+          failedConnInfo->Mutate().SetEchConfig(EmptyCString()).Finalize();
+    }
     id = TRANSACTION_ECH_RETRY_WITHOUT_ECH_COUNT;
     return;
   }
@@ -1291,8 +1359,11 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
         NS_SUCCEEDED(socketControl->GetRetryEchConfig(retryEchConfig))) {
       MOZ_ASSERT(!retryEchConfig.IsEmpty());
 
-      failedConnInfo->SetEchConfig(retryEchConfig);
-      failedConnInfo.swap(mConnInfo);
+      {
+        MutexAutoLock lock(mLock);
+        mConnInfo =
+            failedConnInfo->Mutate().SetEchConfig(retryEchConfig).Finalize();
+      }
     }
     id = TRANSACTION_ECH_RETRY_WITH_ECH_COUNT;
     return;
@@ -1345,7 +1416,10 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
 
     RefPtr<nsISVCBRecord> recordsForRetry =
         mRecordsForRetry.PopLastElement().forget();
-    mConnInfo = mOrigConnInfo->CloneAndAdoptHTTPSSVCRecord(recordsForRetry);
+    {
+      MutexAutoLock lock(mLock);
+      mConnInfo = mOrigConnInfo->CloneAndAdoptHTTPSSVCRecord(recordsForRetry);
+    }
   }
 }
 
@@ -1515,6 +1589,11 @@ void nsHttpTransaction::Close(nsresult reason) {
     mDontRetryWithDirectRoute = true;
   }
 
+  const bool restartForHttp3ProtocolError =
+      reason == NS_ERROR_NET_HTTP3_PROTOCOL_ERROR && !mReceivedData &&
+      !mConnInfo->IsHttp3ProxyConnection() &&
+      StaticPrefs::network_http_http3_fallback_to_h2_on_protocol_error();
+
   //
   // if the connection was reset or closed before we wrote any part of the
   // request or if we wrote the request but didn't receive any part of the
@@ -1543,12 +1622,13 @@ void nsHttpTransaction::Close(nsresult reason) {
   // connection.  It will break that connection and also confuse the channel's
   // auth provider, beliving the cached credentials are wrong and asking for
   // the password mistakenly again from the user.
-  if ((reason == NS_ERROR_NET_RESET || reason == NS_OK ||
+  if ((reason == NS_ERROR_NET_RESET ||
+       reason == NS_ERROR_NET_UNCLEAN_SHUTDOWN || reason == NS_OK ||
        reason ==
            psm::GetXPCOMFromNSSError(SSL_ERROR_DOWNGRADE_WITH_EARLY_DATA) ||
        reason == NS_ERROR_HTTP2_FALLBACK_TO_HTTP1 ||
        ShouldRestartOnResumptionError(reason) ||
-       shouldRestartTransactionForHTTPSRR) &&
+       shouldRestartTransactionForHTTPSRR || restartForHttp3ProtocolError) &&
       (!(mCaps & NS_HTTP_STICKY_CONNECTION) ||
        (mCaps & NS_HTTP_CONNECTION_RESTARTABLE) ||
        (mEarlyDataDisposition == EARLY_425))) {
@@ -1593,7 +1673,15 @@ void nsHttpTransaction::Close(nsresult reason) {
             psm::GetXPCOMFromNSSError(SSL_ERROR_DOWNGRADE_WITH_EARLY_DATA) ||
         (!mReceivedData && ((mRequestHead && mRequestHead->IsSafeMethod()) ||
                             !reallySentData || connReused)) ||
-        shouldRestartTransactionForHTTPSRR) {
+        shouldRestartTransactionForHTTPSRR || restartForHttp3ProtocolError) {
+      if (restartForHttp3ProtocolError) {
+        DisableHttp3ForRestart();
+        LOG(
+            ("transaction will be restarted without HTTP/3 after a protocol "
+             "error key=%s",
+             mConnInfo->HashKey().get()));
+      }
+
       if (shouldRestartTransactionForHTTPSRR) {
         MaybeReportFailedSVCDomain(reason, mConnInfo);
         PrepareConnInfoForRetry(reason);
@@ -1652,7 +1740,10 @@ void nsHttpTransaction::Close(nsresult reason) {
       // back to mOrigConnInfo to make sure no crash when mConnInfo being
       // accessed again.
       if (!mConnInfo) {
-        mConnInfo.swap(mOrigConnInfo);
+        {
+          MutexAutoLock lock(mLock);
+          mConnInfo.swap(mOrigConnInfo);
+        }
         MOZ_ASSERT(mConnInfo);
       }
     }
@@ -1947,11 +2038,8 @@ static inline void RemoveAlternateServiceUsedHeader(
 }
 
 void nsHttpTransaction::FinalizeConnInfo() {
-  RefPtr<nsHttpConnectionInfo> cloned = mConnInfo->Clone();
-  {
-    MutexAutoLock lock(mLock);
-    mFinalizedConnInfo.swap(cloned);
-  }
+  MutexAutoLock lock(mLock);
+  mFinalizedConnInfo = mConnInfo;
 }
 
 void nsHttpTransaction::SetRestartReason(TRANSACTION_RESTART_REASON aReason) {
@@ -1962,6 +2050,20 @@ void nsHttpTransaction::SetRestartReason(TRANSACTION_RESTART_REASON aReason) {
 
 nsresult nsHttpTransaction::Restart() {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+
+  // The pipe backing a streaming body cannot be rewound, so replaying it
+  // after anything has been read would re-send from mid-request.
+  if (mRequestBodyIsStreaming) {
+    int64_t position = 0;
+    nsCOMPtr<nsITellableStream> tellable = do_QueryInterface(mRequestStream);
+    if (!tellable || NS_FAILED(tellable->Tell(&position)) || position != 0) {
+      LOG(
+          ("nsHttpTransaction::Restart %p streaming request body already "
+           "started, cannot replay it; failing transaction\n",
+           this));
+      return NS_ERROR_NET_RESET;
+    }
+  }
 
   // limit the number of restart attempts - bug 92224
   if (++mRestartCount >= gHttpHandler->MaxRequestAttempts()) {
@@ -2020,12 +2122,18 @@ nsresult nsHttpTransaction::Restart() {
     if (mConnInfo->IsHttp3ProxyConnection()) {
       RefPtr<nsHttpConnectionInfo> ci =
           mConnInfo->CreateConnectUDPFallbackConnInfo();
-      mConnInfo = ci;
+      {
+        MutexAutoLock lock(mLock);
+        mConnInfo = ci;
+      }
       RemoveAlternateServiceUsedHeader(mRequestHead);
     } else if (!mConnInfo->GetRoutedHost().IsEmpty() || mConnInfo->IsHttp3()) {
       RefPtr<nsHttpConnectionInfo> ci;
       mConnInfo->CloneAsDirectRoute(getter_AddRefs(ci));
-      mConnInfo = ci;
+      {
+        MutexAutoLock lock(mLock);
+        mConnInfo = ci;
+      }
       RemoveAlternateServiceUsedHeader(mRequestHead);
     }
   }
@@ -2575,7 +2683,13 @@ nsresult nsHttpTransaction::HandleContentStart() {
           // NS_HTTP_STICKY_CONNECTION is set. In the case that a connection
           // already passed NTLM authentication, restarting the transaction will
           // cause the connection to be closed.
-          if (!mRestartCount && !(mCaps & NS_HTTP_STICKY_CONNECTION)) {
+          // Also skip the restart when the request body is a non-replayable
+          // streaming upload: the retry is only permitted when the body's
+          // source is non-null, so a 421 must be surfaced as-is. See
+          // https://fetch.spec.whatwg.org/#concept-http-network-or-cache-fetch
+          // step 17.
+          if (!mRestartCount && !(mCaps & NS_HTTP_STICKY_CONNECTION) &&
+              !mRequestBodyIsStreaming) {
             mCaps &= ~NS_HTTP_ALLOW_KEEPALIVE;
             mForceRestart = true;  // force restart has built in loop protection
             return NS_ERROR_NET_RESET;
@@ -2902,10 +3016,9 @@ void nsHttpTransaction::ReleaseBlockingTransaction() {
 
 void nsHttpTransaction::DisableSpdy() {
   mCaps |= NS_HTTP_DISALLOW_SPDY;
+  MutexAutoLock lock(mLock);
   if (mConnInfo) {
-    // This is our clone of the connection info, not the persistent one that
-    // is owned by the connection manager, so we're safe to change this here
-    mConnInfo->SetNoSpdy(true);
+    mConnInfo = mConnInfo->Mutate().SetNoSpdy(true).Finalize();
   }
 }
 
@@ -2940,6 +3053,27 @@ void nsHttpTransaction::DisableHttp3(bool aAllowRetryHTTPSRR) {
     mConnInfo->CloneAsDirectRoute(getter_AddRefs(connInfo));
     RemoveAlternateServiceUsedHeader(mRequestHead);
     MOZ_ASSERT(!connInfo->IsHttp3());
+    {
+      MutexAutoLock lock(mLock);
+      mConnInfo.swap(connInfo);
+    }
+  }
+}
+
+void nsHttpTransaction::DisableHttp3ForRestart() {
+  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+
+  mCaps |= NS_HTTP_DISALLOW_HTTP3;
+
+  RefPtr<nsHttpConnectionInfo> connInfo;
+  mConnInfo->CloneAsDirectRoute(getter_AddRefs(connInfo));
+  // Use a separate connection entry, so the restarted transaction can't be
+  // dispatched to an HTTP/3 connection or an attempt that may still race one.
+  connInfo =
+      connInfo->Mutate().SetHttp3Policy(Http3Policy::Disabled).Finalize();
+  RemoveAlternateServiceUsedHeader(mRequestHead);
+  {
+    MutexAutoLock lock(mLock);
     mConnInfo.swap(connInfo);
   }
 }
@@ -3033,11 +3167,17 @@ TimingStruct nsHttpTransaction::Timings() {
 
 void nsHttpTransaction::BootstrapTimings(TimingStruct times) {
   mozilla::MutexAutoLock lock(mLock);
-  TimeStamp savedRequestStart = mTimings.requestStart;
-  mTimings = times;
-  if (!savedRequestStart.IsNull() && mTimings.requestStart.IsNull()) {
-    mTimings.requestStart = savedRequestStart;
-  }
+  // Only the connection phase is bootstrapped: it is owned by whoever
+  // established the connection this transaction runs on. The request and
+  // response timings are recorded by the transaction itself and must survive,
+  // because the connection phase can be reported after the request was already
+  // sent (a handshake finishing after 0-RTT data went out, for example).
+  mTimings.domainLookupStart = times.domainLookupStart;
+  mTimings.domainLookupEnd = times.domainLookupEnd;
+  mTimings.connectStart = times.connectStart;
+  mTimings.tcpConnectEnd = times.tcpConnectEnd;
+  mTimings.secureConnectionStart = times.secureConnectionStart;
+  mTimings.connectEnd = times.connectEnd;
 
   // Clamp connectStart to domainLookupEnd: with HE the state machine can start
   // a connection attempt as soon as one address family (A or AAAA) resolves
@@ -3079,17 +3219,18 @@ void nsHttpTransaction::Apply0RTTTimingOverride() {
   mLock.AssertCurrentThreadOwns();
   // Only when this request's early data (0-RTT) was accepted; otherwise
   // connectEnd keeps the full-handshake time set elsewhere.
-  if (mEarlyDataDisposition != EARLY_ACCEPTED || mEarlyDataSentTime.IsNull()) {
+  // Without a connect phase there is nothing to override: a transaction on a
+  // reused connection reports none, and a connectEnd on its own would be
+  // incoherent.
+  if (mEarlyDataDisposition != EARLY_ACCEPTED || mEarlyDataSentTime.IsNull() ||
+      mTimings.connectStart.IsNull()) {
     return;
   }
   // The request went out as early data, so connectEnd must exclude the
   // ServerHello round trip: report it (and requestStart) at the early-data
   // send. See "record connection timing info":
   // https://fetch.spec.whatwg.org/#record-connection-timing-info
-  TimeStamp early = mEarlyDataSentTime;
-  if (!mTimings.connectStart.IsNull() && early < mTimings.connectStart) {
-    early = mTimings.connectStart;
-  }
+  TimeStamp early = std::max(mEarlyDataSentTime, mTimings.connectStart);
   mTimings.connectEnd = early;
   mTimings.requestStart = early;
 }
@@ -3624,8 +3765,11 @@ void nsHttpTransaction::UpdateConnectionInfo(nsHttpConnectionInfo* aConnInfo) {
     return;
   }
 
-  mOrigConnInfo = mConnInfo->Clone();
-  mConnInfo = aConnInfo;
+  {
+    MutexAutoLock lock(mLock);
+    mOrigConnInfo = mConnInfo;
+    mConnInfo = aConnInfo;
+  }
 }
 
 nsresult nsHttpTransaction::OnHTTPSRRAvailable(
@@ -3841,7 +3985,6 @@ void nsHttpTransaction::OnBackupConnectionReady(bool aTriggeredByHTTPSRR) {
 static void CreateBackupConnection(
     nsHttpConnectionInfo* aBackupConnInfo, nsIInterfaceRequestor* aCallbacks,
     uint32_t aCaps, std::function<void(nsresult)>&& aResultCallback) {
-  aBackupConnInfo->SetFallbackConnection(true);
   RefPtr<SpeculativeTransaction> trans = new FallbackTransaction(
       aBackupConnInfo, aCallbacks, aCaps | NS_HTTP_DISALLOW_HTTP3,
       std::move(aResultCallback));
@@ -3867,6 +4010,8 @@ void nsHttpTransaction::OnHttp3BackupTimer() {
     mConnInfo->CloneAsDirectRoute(getter_AddRefs(mBackupConnInfo));
     MOZ_ASSERT(!mBackupConnInfo->IsHttp3());
   }
+  mBackupConnInfo =
+      mBackupConnInfo->Mutate().SetFallbackConnection(true).Finalize();
 
   RefPtr<nsHttpTransaction> self = this;
   auto callback = [self](nsresult aResult) {
@@ -3900,6 +4045,7 @@ void nsHttpTransaction::OnHttp3TunnelFallbackTimer() {
   if (fallbackCI) {
     mCaps |= NS_HTTP_DISALLOW_HTTP3;
     RemoveAlternateServiceUsedHeader(mRequestHead);
+    MutexAutoLock lock(mLock);
     mConnInfo.swap(fallbackCI);
   } else {
     DisableHttp3(false);
@@ -3931,6 +4077,8 @@ void nsHttpTransaction::OnFastFallbackTimer() {
   }
 
   MOZ_ASSERT(!mBackupConnInfo->IsHttp3());
+  mBackupConnInfo =
+      mBackupConnInfo->Mutate().SetFallbackConnection(true).Finalize();
 
   RefPtr<nsHttpTransaction> self = this;
   auto callback = [self](nsresult aResult) {

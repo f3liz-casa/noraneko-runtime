@@ -86,8 +86,9 @@ CodeGeneratorShared::CodeGeneratorShared(MIRGenerator* gen, LIRGraph* graph,
 
 #ifdef ENABLE_JIT_SIMD
 #  if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86) || \
-      defined(JS_CODEGEN_ARM64)
-    // On X64/x86 and ARM64, we don't need alignment for Wasm SIMD at this time.
+      defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_LOONG64)
+    // On X64/x86, ARM64 and loong64, we don't need alignment for Wasm SIMD at
+    // this time.
 #  else
 #    error \
         "we may need padding so that local slots are SIMD-aligned and the stack must be kept SIMD-aligned too."
@@ -143,11 +144,12 @@ bool CodeGeneratorShared::generatePrologue() {
   MOZ_ASSERT(!gen->compilingWasm());
 
 #ifdef JS_USE_LINK_REGISTER
-  masm.pushReturnAddress();
-#endif
-
+  // LR, then FP for frame prologue.
+  masm.pushRegs(LinkRegister, FramePointer);
+#else
   // Frame prologue.
   masm.push(FramePointer);
+#endif
   masm.moveStackPtrTo(FramePointer);
 
   // Ensure that the Ion frame is properly aligned.
@@ -200,6 +202,11 @@ bool CodeGeneratorShared::generateOutOfLineCode() {
       return false;
     }
 
+    if (deoptJumpPending_) {
+      masm.jump(&deoptLabel_);
+      deoptJumpPending_ = false;
+    }
+
     // Add native => bytecode mapping entries for OOL->sites.
     // Not enabled on wasm yet since it doesn't contain bytecode mappings.
     if (!gen->compilingWasm()) {
@@ -221,6 +228,32 @@ bool CodeGeneratorShared::generateOutOfLineCode() {
   }
 
   return !masm.oom();
+}
+
+void CodeGeneratorShared::bailoutFrom(Label* label, LSnapshot* snapshot) {
+  MOZ_ASSERT_IF(!masm.oom(), label->used());
+  MOZ_ASSERT_IF(!masm.oom(), !label->bound());
+
+  encode(snapshot);
+
+  InlineScriptTree* tree = snapshot->mir()->block()->trackedTree();
+  auto* ool = new (alloc()) LambdaOutOfLineCode([=, this](OutOfLineCode& ool) {
+    masm.push(Imm32(snapshot->snapshotOffset()));
+    jumpToDeoptLabel();
+  });
+
+  // All bailout code is associated with the bytecodeSite of the block we are
+  // bailing out from.
+  addOutOfLineCode(ool,
+                   new (alloc()) BytecodeSite(tree, tree->script()->code()));
+
+  masm.retarget(label, ool->entry());
+}
+
+void CodeGeneratorShared::bailout(LSnapshot* snapshot) {
+  Label label;
+  masm.jump(&label);
+  bailoutFrom(&label, snapshot);
 }
 
 void CodeGeneratorShared::addOutOfLineCode(OutOfLineCode* code,

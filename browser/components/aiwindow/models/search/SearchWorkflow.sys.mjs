@@ -5,20 +5,23 @@
  */
 
 /**
- * Self-contained flow backing the search_the_web tool. Two paths, selected by
- * SEARCH_THE_WEB_FAST_PREF:
+ * Self-contained flow backing the search_the_web tool. Three paths:
  *
- * - Grounded (pref off, the default): one Exa retrieval, an on-demand page-read
- *   loop (bounded), grounded answer generation on a pinned model, and a non-LLM
- *   schema validation.
- * - Fast (pref on): one Exa retrieval whose sanitized snippets go straight back
- *   to the main assistant, which answers from them or reads a page itself.
+ * - Answers (SEARCH_THE_WEB_ANSWERS_PREF on and no custom endpoint, checked
+ *   first): one call to Exa's /answers service, which does the retrieval and
+ *   the writing itself and returns the answer plus the sources it cited.
+ * - Grounded (both prefs off, the default): one Exa retrieval, an on-demand
+ *   page-read loop (bounded), grounded answer generation on a pinned model, and
+ *   a non-LLM schema validation.
+ * - Fast (SEARCH_THE_WEB_FAST_PREF on): one Exa retrieval whose sanitized
+ *   snippets go straight back to the main assistant, which answers from them or
+ *   reads a page itself.
  *
- * Either way the main assistant uses the result to decide whether to answer in
- * chat or fall back to a Google handoff. The two paths are deliberately kept as
- * separate entrypoints so that whichever one loses can be deleted whole. All
- * the logic lives here as functions — there is no separate agent object because
- * there is no state to carry between calls.
+ * Whichever runs, the main assistant uses the result to decide whether to
+ * answer in chat or fall back to a Google handoff. The paths are deliberately
+ * kept as separate entrypoints so that whichever ones lose can be deleted
+ * whole. All the logic lives here as functions — there is no separate agent
+ * object because there is no state to carry between calls.
  */
 
 /**
@@ -29,6 +32,7 @@ import {
   renderPrompt,
   MODEL_FEATURES,
   parseAndExtractJSON,
+  SERVICE_TYPES,
 } from "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs";
 import { sanitizeUntrustedContent } from "moz-src:///browser/components/aiwindow/models/ChatUtils.sys.mjs";
 import { openAIEngine } from "moz-src:///browser/components/aiwindow/models/openAIEngine.sys.mjs";
@@ -36,7 +40,8 @@ import { ExaSearchProvider } from "moz-src:///browser/components/aiwindow/models
 import {
   GetPageContent,
   GET_PAGE_CONTENT,
-  SEARCH_THE_WEB_FAST_PREF,
+  SEARCH_THE_WEB_PATH,
+  selectSearchTheWebPath,
 } from "moz-src:///browser/components/aiwindow/models/Tools.sys.mjs";
 
 const lazy = {};
@@ -84,6 +89,49 @@ const MAX_SNIPPET_LENGTH = 2000;
 // Shorter than this and the snippet is a stub ("Sign in", "404") with nothing
 // for the assistant to answer from, so the result is dropped.
 const MIN_SNIPPET_LENGTH = 25;
+
+// Answers path only. The model name and service type that route an MLPA request
+// to Exa's /answers service instead of chat completion.
+const ANSWERS_MODEL = "exa";
+
+// Answers path only.
+// TODO: move ANSWERS_SYSTEM_PROMPT to remote settings: Bug id=2070307
+const ANSWERS_SYSTEM_PROMPT =
+  "Return only the answer text. Do not include inline citations, footnote " +
+  "markers, bracketed reference numbers, or a list of sources: the sources " +
+  "are shown separately. When asked for recommendations, give several examples. " +
+  "format your responses nicely using markdown.";
+
+// Answers path only. Pacing for replaying the buffered answer (answerAsStream).
+// The window is what the whole reply should take to appear, and the step cap
+// keeps a short answer from crawling out a few characters at a time. Chunks are
+// deliberately coarser than a token: the text is already in hand, so the replay
+// is there to avoid a wall of text appearing at once, not to imitate typing.
+const ANSWER_REPLAY_CHUNK_RE = /[\s\S]{1,64}/g;
+const ANSWER_REPLAY_TOTAL_MS = 500;
+const ANSWER_REPLAY_MAX_STEP_MS = 40;
+
+// Answers path only. The answer is model-written prose over untrusted web
+// content, so it follows the get_page_content model rather than the metadata
+// one: bound the length and rely on the security flags this flow sets. It is
+// not whitespace-collapsed the way a snippet is, because it is rendered to the
+// user as markdown; links inside it that the conversation has not seen still
+// get the untrusted-link treatment in ai-chat-message.
+const MAX_ANSWER_LENGTH = 8000;
+
+/**
+ * Canonical values for the `error` extra on the search_the_web Glean event
+ * that the fast path decides for itself. A retrieval failure instead reports
+ * the provider's `searchErrorCategory`, falling back to RETRIEVAL_FAILED.
+ *
+ * @type {object}
+ */
+const SEARCH_TELEMETRY_ERRORS = {
+  INVALID_QUERY: "invalid_query",
+  RETRIEVAL_FAILED: "retrieval_failed",
+  NO_RESULTS: "no_results",
+  INTERNAL_ERROR: "internal_error",
+};
 
 /**
  * JSON schema describing the structured answer the model emits. Used both as
@@ -174,6 +222,45 @@ const GET_PAGE_CONTENT_TOOL = {
  */
 
 /**
+ * Stage measurements for one run of the fast path, accumulated in a single
+ * mutable object so whatever completed before a failure is still reported.
+ *
+ * @typedef {object} FastSearchStats
+ * @property {number} retrieval - Provider call to results returned, in ms.
+ * @property {number} processing - Filtering, sanitizing and bookkeeping, in ms.
+ * @property {number} retrieved - Usable results the provider returned.
+ * @property {number} returned - Results handed to the assistant.
+ * @property {number} snippetChars - Snippet characters handed to the assistant.
+ * @property {number} snippetCharsDropped - Snippet characters cut by the cap.
+ * @property {number} httpStatus - Exa HTTP status, 0 when no response arrived.
+ * @property {string} error - Canonical failure reason, empty on success.
+ */
+
+/**
+ * The result returned by the answers path. Unlike the other two paths this one
+ * is not something the assistant answers *from*: /answers writes the reply
+ * itself, so `directAnswerStream` is delivered to the user as the assistant
+ * turn (see Chat.sys.mjs). It is absent on failure, which puts the model back
+ * in charge so it can fall back to search handoff.
+ *
+ * @typedef {object} AnswersSearchWorkflowResult
+ * @property {AsyncGenerator<object>} [directAnswerStream] - Reply to deliver.
+ * @property {string[]} read_urls - URLs /answers cited (code-tracked).
+ * @property {boolean} requiresSearchHandoff - Whether to route to search handoff.
+ * @property {string} [error] - Present when the flow could not run.
+ */
+
+/**
+ * One entry of the `citations` array Exa returns in
+ * `provider_specific_fields`. Only `url` and `title` are consumed; the rest of
+ * the fields (author, image, favicon, publishedDate) are ignored.
+ *
+ * @typedef {object} AnswerCitation
+ * @property {string} url - Raw url of the citation
+ * @property {string} [title] - Title of the citatation page
+ */
+
+/**
  * Stable id shown to the model for the result at `index` (result_1, …). Shared
  * by the rendered results and the id->URL map so the two stay aligned.
  *
@@ -191,17 +278,24 @@ function resultIdFor(index) {
  * get_page_content model instead — bound the length and rely on the security
  * flags, which this flow always sets.
  *
+ * Reports the characters dropped by the cap alongside the text so the flow can
+ * measure how much snippet content the assistant does not see.
+ *
  * @param {unknown} text
- * @returns {string}
+ * @returns {{text: string, droppedChars: number}}
  */
 function normalizeAndTruncateText(text) {
   if (typeof text !== "string" || !text) {
-    return "";
+    return { text: "", droppedChars: 0 };
   }
   const collapsed = text.replace(/\s+/g, " ").trim();
-  return collapsed.length > MAX_SNIPPET_LENGTH
-    ? collapsed.slice(0, MAX_SNIPPET_LENGTH) + "\u2026"
-    : collapsed;
+  if (collapsed.length <= MAX_SNIPPET_LENGTH) {
+    return { text: collapsed, droppedChars: 0 };
+  }
+  return {
+    text: collapsed.slice(0, MAX_SNIPPET_LENGTH) + "\u2026",
+    droppedChars: collapsed.length - MAX_SNIPPET_LENGTH,
+  };
 }
 
 /**
@@ -453,26 +547,270 @@ function fastFailure(message) {
   };
 }
 
+/**
+ * Builds an answers-path failure result that routes the main assistant to
+ * fallback.
+ *
+ * @param {string} message
+ * @returns {AnswersSearchWorkflowResult}
+ */
+function answersFailure(message) {
+  return {
+    read_urls: [],
+    error: message,
+    requiresSearchHandoff: false,
+  };
+}
+
 function shouldCallSearchHandoff(conversation) {
   return conversation._searchTheWebTurn === conversation.currentTurnIndex();
 }
 
 /**
- * Tool entrypoint for search_the_web. Dispatches to the path selected by
- * SEARCH_THE_WEB_FAST_PREF. The two paths return different shapes, so
- * Chat.sys.mjs offers the model a matching tool config for whichever is on.
+ * Tool entrypoint for search_the_web. Dispatches to the path selected by the
+ * prefs, answers first. The paths return different shapes, so Chat.sys.mjs
+ * offers the model a matching tool config for whichever is on — keep the
+ * precedence here and in its `searchTheWebToolConfig` in step.
  *
  * @param {object} toolParams
  * @param {string} toolParams.query - Search query (may be rewritten by the assistant).
  * @param {string} [toolParams.context] - Optional caller-supplied context.
  * @param {ChatConversation} conversation - Originating conversation.
  * @param {AbortSignal} [signal] - Cancels the in-flight answer generation.
- * @returns {Promise<SearchWorkflowResult|FastSearchWorkflowResult>}
+ * @param {string} [mode] - Surface the tool ran on, for telemetry.
+ * @returns {Promise<SearchWorkflowResult|FastSearchWorkflowResult|AnswersSearchWorkflowResult>}
  */
-export async function runSearchTheWeb(toolParams, conversation, signal) {
-  return Services.prefs.getBoolPref(SEARCH_THE_WEB_FAST_PREF, true)
-    ? runFastSearch(toolParams, conversation)
-    : runGroundedSearch(toolParams, conversation, signal);
+export async function runSearchTheWeb(toolParams, conversation, signal, mode) {
+  // The handoff retrieves nothing of its own and is covered by search_handoff,
+  // so it returns before any path runs and before the flags below are set.
+  if (shouldCallSearchHandoff(conversation)) {
+    return {
+      requiresSearchHandoff: true,
+    };
+  }
+
+  // Every path answers from live web pages, so the conversation has seen
+  // private and untrusted content whatever comes back.
+  conversation.securityProperties.setPrivateData();
+  conversation.securityProperties.setUntrustedInput();
+
+  switch (selectSearchTheWebPath()) {
+    case SEARCH_THE_WEB_PATH.ANSWERS:
+      return runAnswersSearch(toolParams, conversation, signal);
+    case SEARCH_THE_WEB_PATH.FAST:
+      return runFastSearch(toolParams, conversation, mode);
+    default:
+      return runGroundedSearch(toolParams, conversation, signal);
+  }
+}
+
+/**
+ * Records the citations Exa returns alongside an /answers response, in
+ * `provider_specific_fields`.
+ *
+ * Each source is registered the way a page read is on the grounded path: marked
+ * seen, added to the anonymous-fetch ledger so a follow-up get_page_content is
+ * allowed, and added to the conversation's citations so the reply renders its
+ * source chips.
+ *
+ * @param {unknown} citations - Raw `citations` array, when the service sent one.
+ * @param {ChatConversation} conversation
+ * @returns {string[]} The cited URLs, de-duplicated.
+ */
+function recordAnswerCitations(citations, conversation) {
+  if (!Array.isArray(citations)) {
+    return [];
+  }
+
+  const seen = new Set();
+  /** @type {AnswerCitation[]} */
+  const records = [];
+  for (const citation of citations) {
+    if (!isValidHttpUrl(citation?.url) || seen.has(citation.url)) {
+      continue;
+    }
+    seen.add(citation.url);
+    records.push(
+      typeof citation.title === "string" && citation.title
+        ? { url: citation.url, title: citation.title }
+        : { url: citation.url }
+    );
+  }
+
+  if (!records.length) {
+    return [];
+  }
+  const urls = records.map(citation => citation.url);
+  conversation.addSeenUrls(urls);
+  conversation.addSerpUrlsForAnonymousFetch(urls);
+  conversation.addCitations(records);
+  return urls;
+}
+
+/**
+ * Runs one /answers request and returns the answer with the URLs it cited.
+ *
+ * Non-streaming, unlike every other LLM call in this component: MLPA only
+ * populates `provider_specific_fields` on a complete response, so streaming the
+ * request would deliver the answer without the citations that make it useful.
+ * The answer is buffered here and replayed to the UI by answerAsStream.
+ *
+ * @param {object} params
+ * @param {string} params.query
+ * @param {ChatConversation} params.conversation
+ * @param {AbortSignal} [params.signal]
+ * @returns {Promise<{answer: string, readUrls: string[]}>}
+ * @throws {Error} When the request fails, or comes back with no answer.
+ */
+async function requestAnswer({ query, conversation, signal }) {
+  // Built directly rather than through buildConversation: the model and service
+  // type are pinned by this flow.
+  const engine = await openAIEngine.build({
+    model: ANSWERS_MODEL,
+    serviceType: SERVICE_TYPES.SW_ANSWER,
+    feature: MODEL_FEATURES.SEARCH_ANSWERS,
+  });
+
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  const response = await engine.run({
+    args: [
+      { role: "system", content: ANSWERS_SYSTEM_PROMPT },
+      { role: "user", content: query },
+    ],
+    fxAccountToken: await openAIEngine.getFxAccountToken(),
+    chatId: conversation.id,
+  });
+
+  const answer = (response?.finalOutput ?? "").trim();
+  if (!answer) {
+    throw new Error("no answer");
+  }
+
+  return {
+    answer:
+      answer.length > MAX_ANSWER_LENGTH
+        ? answer.slice(0, MAX_ANSWER_LENGTH) + "…"
+        : answer,
+    readUrls: recordAnswerCitations(
+      response?.providerSpecificFields?.citations,
+      conversation
+    ),
+  };
+}
+
+/**
+ * Replays the buffered answer as a stream, the shape
+ * Conversation.receiveResponse consumes. Going through receiveResponse is what
+ * gets this reply the same rendering, persistence and completion handling as
+ * one the model wrote.
+ *
+ * The answer is already complete (see requestAnswer), so this paces the replay:
+ * yielding it in one piece would land in a single tick and appear all at once.
+ * Chunks split mid-word the way a real token stream does.
+ *
+ * @param {string} text
+ * @param {AbortSignal} [signal] - Stops the replay when the turn is cancelled.
+ * @yields {object}
+ */
+async function* answerAsStream(text, signal) {
+  const chunks = text.match(ANSWER_REPLAY_CHUNK_RE) ?? [text];
+  // Scaled to the whole reply rather than fixed per chunk, so a long answer
+  // replays in smaller steps instead of taking proportionally longer.
+  const stepMs = Math.min(
+    ANSWER_REPLAY_MAX_STEP_MS,
+    ANSWER_REPLAY_TOTAL_MS / chunks.length
+  );
+
+  for (const [index, chunk] of chunks.entries()) {
+    if (signal?.aborted) {
+      return;
+    }
+    if (index) {
+      await new Promise(resolve => lazy.setTimeout(resolve, stepMs));
+    }
+    yield { text: chunk, tokens: null, isPrompt: false, toolCalls: null };
+  }
+}
+
+/**
+ * Answers path. Hands the query to Exa's /answers service, which runs its own
+ * retrieval and writes the answer, and returns that answer as a stream for the
+ * chat loop to deliver as the assistant turn. A failed request returns a result
+ * carrying no stream rather than throwing, so the main assistant regains the
+ * turn and can fall back to the Google handoff.
+ *
+ * @param {object} toolParams
+ * @param {string} toolParams.query - Search query (may be rewritten by the assistant).
+ * @param {ChatConversation} conversation - Originating conversation; owns the
+ *   anonymous-fetch ledger and security state a follow-up page read depends on.
+ * @param {AbortSignal} [signal] - Cancels the in-flight request.
+ * @returns {Promise<AnswersSearchWorkflowResult>}
+ */
+async function runAnswersSearch(toolParams, conversation, signal) {
+  const query = toolParams?.query;
+  if (typeof query !== "string" || !query.trim()) {
+    return answersFailure("a non-empty query is required");
+  }
+  conversation._searchTheWebTurn = conversation.currentTurnIndex();
+
+  let answer;
+  let readUrls;
+  try {
+    ({ answer, readUrls } = await requestAnswer({
+      query: query.trim(),
+      conversation,
+      signal,
+    }));
+  } catch (e) {
+    lazy.console.error("answers request failed:", e);
+    return answersFailure(e.message);
+  }
+
+  lazy.console.log("[Tool] searchTheWeb (answers)", {
+    query,
+    cited: readUrls.length,
+  });
+
+  return {
+    directAnswerStream: answerAsStream(answer, signal),
+    read_urls: readUrls,
+    requiresSearchHandoff: false,
+  };
+}
+
+/**
+ * Records the smart_window.search_the_web Glean event once per run of the fast
+ * path, including on failure, so a stage that never ran is reported as 0.
+ *
+ * @param {object} options
+ * @param {ChatConversation} options.conversation
+ * @param {string} [options.mode] - Surface the flow ran on.
+ * @param {FastSearchStats} options.stats
+ * @param {number} options.totalDuration - Whole flow, in ms.
+ */
+function recordFastSearchTelemetry({
+  conversation,
+  mode,
+  stats,
+  totalDuration,
+}) {
+  Glean.smartWindow.searchTheWeb.record({
+    location: mode ?? "",
+    chat_id: conversation.id,
+    message_seq: conversation.messageCount,
+    total_duration: Math.round(totalDuration),
+    retrieval_duration: Math.round(stats.retrieval),
+    processing_duration: Math.round(stats.processing),
+    results_retrieved: stats.retrieved,
+    results_returned: stats.returned,
+    snippet_chars_returned: stats.snippetChars,
+    snippet_chars_truncated: stats.snippetCharsDropped,
+    http_status: stats.httpStatus,
+    error: stats.error,
+  });
 }
 
 /**
@@ -481,79 +819,150 @@ export async function runSearchTheWeb(toolParams, conversation, signal) {
  * results rather than thrown, so the assistant can fall back to the Google
  * handoff.
  *
+ * Telemetry is recorded in a `finally` so every early return in the flow is
+ * covered without repeating the call at each one.
+ *
  * @param {object} toolParams
  * @param {string} toolParams.query - Search query (may be rewritten by the assistant).
  * @param {ChatConversation} conversation - Originating conversation; owns the
  *   anonymous-fetch ledger and security state a follow-up page read depends on.
+ * @param {string} [mode] - Surface the tool ran on, for telemetry.
  * @returns {Promise<FastSearchWorkflowResult>}
  */
-async function runFastSearch(toolParams, conversation) {
-  if (shouldCallSearchHandoff(conversation)) {
-    return {
-      requiresSearchHandoff: true,
-    };
+async function runFastSearch(toolParams, conversation, mode) {
+  /** @type {FastSearchStats} */
+  const stats = {
+    retrieval: 0,
+    processing: 0,
+    retrieved: 0,
+    returned: 0,
+    snippetChars: 0,
+    snippetCharsDropped: 0,
+    httpStatus: 0,
+    error: "",
+  };
+  const flowStart = ChromeUtils.now();
+  try {
+    return await runFastSearchFlow(toolParams, conversation, stats);
+  } catch (e) {
+    // The flow returns its failures, so reaching here is a bug in it. Mark it
+    // rather than let the event record a zero-result success.
+    stats.error = SEARCH_TELEMETRY_ERRORS.INTERNAL_ERROR;
+    throw e;
+  } finally {
+    // These durations are the tool's own cost, not what the user waited for:
+    // the assistant composes the user-facing reply in a later turn.
+    recordFastSearchTelemetry({
+      conversation,
+      mode,
+      stats,
+      totalDuration: ChromeUtils.now() - flowStart,
+    });
   }
+}
 
+/**
+ * Runs the fast path itself, populating `stats` as each stage closes.
+ *
+ * @param {object} toolParams
+ * @param {ChatConversation} conversation
+ * @param {FastSearchStats} stats - Mutated in place as the flow progresses.
+ * @returns {Promise<FastSearchWorkflowResult>}
+ */
+async function runFastSearchFlow(toolParams, conversation, stats) {
   const query = toolParams?.query;
   if (typeof query !== "string" || !query.trim()) {
+    stats.error = SEARCH_TELEMETRY_ERRORS.INVALID_QUERY;
     return fastFailure("a non-empty query is required");
   }
   conversation._searchTheWebTurn = conversation.currentTurnIndex();
 
   let retrieved;
+  const retrievalStart = ChromeUtils.now();
   try {
     const provider = new ExaSearchProvider();
     const response = await provider.search(query.trim(), {
       maxResults: MAX_RESULTS_RETRIEVED,
     });
     retrieved = response.results;
+    stats.httpStatus = response.status;
   } catch (e) {
     lazy.console.error("retrieval failed:", e);
+    // Anything the provider did not categorize falls to the catch-all.
+    stats.error =
+      e?.searchErrorCategory ?? SEARCH_TELEMETRY_ERRORS.RETRIEVAL_FAILED;
+    stats.httpStatus = e?.httpStatus ?? 0;
     return fastFailure(e.message);
+  } finally {
+    stats.retrieval = ChromeUtils.now() - retrievalStart;
+    ChromeUtils.addProfilerMarker(
+      "SmartWindow",
+      { startTime: retrievalStart },
+      "searchTheWeb-retrieval"
+    );
   }
 
-  const kept = retrieved
-    .filter(
-      item =>
-        isValidHttpUrl(item?.url) && item?.snippet?.length > MIN_SNIPPET_LENGTH
-    )
-    .slice(0, MAX_RESULTS_RETURNED);
+  const processingStart = ChromeUtils.now();
+  try {
+    stats.retrieved = retrieved.length;
 
-  if (!kept.length) {
-    return fastFailure("no search results");
+    const kept = retrieved
+      .filter(
+        item =>
+          isValidHttpUrl(item?.url) &&
+          item?.snippet?.length > MIN_SNIPPET_LENGTH
+      )
+      .slice(0, MAX_RESULTS_RETURNED);
+
+    if (!kept.length) {
+      stats.error = SEARCH_TELEMETRY_ERRORS.NO_RESULTS;
+      return fastFailure("no search results");
+    }
+    stats.returned = kept.length;
+
+    const urls = kept.map(item => item.url);
+
+    // Record the results as seen and add them to the anonymous-fetch ledger so a
+    // follow-up get_page_content is allowed.
+    conversation.addSeenUrls(urls);
+    conversation.addSerpUrlsForAnonymousFetch(urls);
+
+    // The snippets are excerpts of these pages, so they ground the answer the
+    // same way a full page read does on the grounded path.
+    conversation.addCitations(
+      kept.map(item =>
+        item.title ? { url: item.url, title: item.title } : { url: item.url }
+      )
+    );
+
+    const results = kept.map(item => {
+      const snippet = normalizeAndTruncateText(item.snippet);
+      stats.snippetChars += snippet.text.length;
+      stats.snippetCharsDropped += snippet.droppedChars;
+      return {
+        title: sanitizeUntrustedContent(item.title || ""),
+        url: item.url,
+        snippet: snippet.text,
+      };
+    });
+
+    lazy.console.log("[Tool] searchTheWeb (fast)", {
+      query,
+      returned: kept.length,
+    });
+
+    return {
+      results,
+      requiresSearchHandoff: false,
+    };
+  } finally {
+    stats.processing = ChromeUtils.now() - processingStart;
+    ChromeUtils.addProfilerMarker(
+      "SmartWindow",
+      { startTime: processingStart },
+      "searchTheWeb-processing"
+    );
   }
-
-  const urls = kept.map(item => item.url);
-
-  // Record the results as seen and add them to the anonymous-fetch ledger so a
-  // follow-up get_page_content is allowed, then mark the conversation as having
-  // seen private + untrusted content.
-  conversation.addSeenUrls(urls);
-  conversation.addSerpUrlsForAnonymousFetch(urls);
-  conversation.securityProperties.setPrivateData();
-  conversation.securityProperties.setUntrustedInput();
-
-  // The snippets are excerpts of these pages, so they ground the answer the
-  // same way a full page read does on the grounded path.
-  conversation.addCitations(
-    kept.map(item =>
-      item.title ? { url: item.url, title: item.title } : { url: item.url }
-    )
-  );
-
-  lazy.console.log("[Tool] searchTheWeb (fast)", {
-    query,
-    returned: kept.length,
-  });
-
-  return {
-    results: kept.map(item => ({
-      title: sanitizeUntrustedContent(item.title || ""),
-      url: item.url,
-      snippet: normalizeAndTruncateText(item.snippet),
-    })),
-    requiresSearchHandoff: false,
-  };
 }
 
 /**
@@ -572,12 +981,6 @@ async function runFastSearch(toolParams, conversation) {
  * @returns {Promise<SearchWorkflowResult>}
  */
 async function runGroundedSearch(toolParams, conversation, signal) {
-  if (shouldCallSearchHandoff(conversation)) {
-    return {
-      requiresSearchHandoff: true,
-    };
-  }
-
   const query = toolParams?.query;
   if (typeof query !== "string" || !query.trim()) {
     return failure([], [], "a non-empty query is required");
@@ -606,13 +1009,10 @@ async function runGroundedSearch(toolParams, conversation, signal) {
     return failure([], [], "no search results");
   }
 
-  // Record all results as seen and add them to the anonymous-fetch ledger,
-  // then mark the conversation as having seen private + untrusted content. The
+  // Record all results as seen and add them to the anonymous-fetch ledger. The
   // per-turn read limit (MAX_PAGES) caps how many are actually read.
   conversation.addSeenUrls(searchedUrls);
   conversation.addSerpUrlsForAnonymousFetch(searchedUrls);
-  conversation.securityProperties.setPrivateData();
-  conversation.securityProperties.setUntrustedInput();
 
   const fetchableSet = new Set(searchedUrls);
   const readUrls = [];
@@ -658,7 +1058,7 @@ async function runGroundedSearch(toolParams, conversation, signal) {
         }, readTimeoutMs);
       });
       try {
-        const fetchPromise = GetPageContent.getPageContent(
+        const fetchPromise = GetPageContent.getPageContentText(
           { url_list: [url], signal: controller.signal },
           conversation
         );

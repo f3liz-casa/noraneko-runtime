@@ -32,6 +32,7 @@ class nsDOMStringMap;
 class nsIURI;
 
 namespace mozilla {
+struct ScrollState;
 struct StyleLockedDeclarationBlock;
 enum class ContentRelevancyReason;
 using ContentRelevancy = EnumSet<ContentRelevancyReason, uint8_t>;
@@ -47,27 +48,6 @@ class StylePropertyMapReadOnly;
 struct CustomElementData;
 }  // namespace dom
 }  // namespace mozilla
-
-/**
- * Tearoff to use for nodes to implement nsISupportsWeakReference
- */
-class nsNodeSupportsWeakRefTearoff final : public nsISupportsWeakReference {
- public:
-  explicit nsNodeSupportsWeakRefTearoff(nsINode* aNode) : mNode(aNode) {}
-
-  // nsISupports
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
-
-  // nsISupportsWeakReference
-  NS_DECL_NSISUPPORTSWEAKREFERENCE
-
-  NS_DECL_CYCLE_COLLECTION_CLASS(nsNodeSupportsWeakRefTearoff)
-
- private:
-  ~nsNodeSupportsWeakRefTearoff() = default;
-
-  nsCOMPtr<nsINode> mNode;
-};
 
 /**
  * A generic base class for DOM elements and document fragments,
@@ -116,7 +96,7 @@ class FragmentOrElement : public nsIContent {
   RadioGroupContainer& OwnedRadioGroupContainer() {
     auto* slots = ExtendedDOMSlots();
     if (!slots->mRadioGroupContainer) {
-      slots->mRadioGroupContainer = MakeUnique<RadioGroupContainer>();
+      slots->mRadioGroupContainer = MakeRefPtr<RadioGroupContainer>();
     }
     return *slots->mRadioGroupContainer;
   }
@@ -223,7 +203,14 @@ class FragmentOrElement : public nsIContent {
      * RadioGroupContainer for radio buttons grouped under this disconnected
      * element.
      */
-    UniquePtr<RadioGroupContainer> mRadioGroupContainer;
+    RefPtr<RadioGroupContainer> mRadioGroupContainer;
+
+    /**
+     * Scroll state of this element's scroll container frame, saved while the
+     * frame is being reconstructed.
+     * @see ScrollContainerFrame::RestoreState
+     */
+    UniquePtr<mozilla::ScrollState> mSavedScrollState;
 
     /**
      * Last remembered size (in CSS pixels) for the element.

@@ -872,12 +872,90 @@ add_task(async function test_resume_prompt_click_injects_context() {
   }
 });
 
+add_task(async function test_resume_prompt_click_marks_memory_applied() {
+  const sb = sinon.createSandbox();
+  const { server, port } = startMockOpenAI({
+    streamChunks: ["Sure, here's an update."],
+  });
+  try {
+    await SpecialPowers.pushPrefEnv({
+      set: [["browser.smartwindow.endpoint", `http://localhost:${port}/v1`]],
+    });
+
+    try {
+      await testResumeActivityClick(
+        sb,
+        async ({ browser, buttons }) => {
+          buttons[0].click();
+
+          const aiWindowEl = browser.contentDocument.querySelector("ai-window");
+          const aichatBrowser = await TestUtils.waitForCondition(
+            () => aiWindowEl.shadowRoot?.querySelector("#aichat-browser"),
+            "Wait for aichat-browser"
+          );
+
+          await SpecialPowers.spawn(aichatBrowser, [], async () => {
+            const chatContent =
+              content.document.querySelector("ai-chat-content");
+
+            await ContentTaskUtils.waitForMutationCondition(
+              chatContent.shadowRoot,
+              { childList: true, subtree: true },
+              () =>
+                chatContent.shadowRoot.querySelector("assistant-message-footer")
+            );
+            let appliedButton;
+            await ContentTaskUtils.waitForCondition(() => {
+              const button = chatContent.shadowRoot
+                .querySelector("assistant-message-footer")
+                ?.shadowRoot?.querySelector("applied-memories-button");
+              // Unwrap the content element so Lit's prototype-backed
+              // properties are visible through SpecialPowers.
+              appliedButton = button?.wrappedJSObject ?? button;
+              return appliedButton?.appliedMemories?.length;
+            }, "Wait for the resume-activity memory to be marked applied");
+
+            Assert.equal(
+              appliedButton.appliedMemories.length,
+              1,
+              "Resume-activity response should have exactly one applied memory"
+            );
+            Assert.equal(
+              appliedButton.appliedMemories[0].memory_summary,
+              "Research project",
+              "Applied memory should be the one that drove the resume-activity conversation"
+            );
+          });
+        },
+        { fxAccountToken: "mock-fxa-token" }
+      );
+    } finally {
+      await SpecialPowers.popPrefEnv();
+    }
+  } finally {
+    sb.restore();
+    await stopMockOpenAI(server);
+  }
+});
+
 add_task(
   async function test_resume_prompt_click_shows_confirmation_card_without_memory_context_when_toggled_off() {
     const sb = sinon.createSandbox();
     try {
-      sb.stub(openAIEngine, "build").resolves({});
+      const engineBuildStub = sb
+        .stub(openAIEngine, "build")
+        .resolves({ model: "stub-resume-model" });
       const fetchWithHistoryStub = sb.stub(Chat, "fetchWithHistory").resolves();
+      // The engine's model drives system prompt assembly, so record which
+      // model each load ran against.
+      const modelsAtPromptLoad = [];
+      const loadSystemPrompt = this.ChatConversation.prototype.loadSystemPrompt;
+      sb.stub(this.ChatConversation.prototype, "loadSystemPrompt").callsFake(
+        function (...args) {
+          modelsAtPromptLoad.push(this.engine?.model ?? null);
+          return loadSystemPrompt.apply(this, args);
+        }
+      );
 
       await testResumeActivityClick(sb, async ({ aiWindow, buttons }) => {
         const memoriesButton = aiWindow.shadowRoot.querySelector(
@@ -896,6 +974,8 @@ add_task(
         );
 
         const conversationIdAtClick = aiWindow.conversationId;
+        engineBuildStub.resetHistory();
+        modelsAtPromptLoad.length = 0;
         buttons[0].click();
 
         await TestUtils.waitForCondition(
@@ -907,6 +987,22 @@ add_task(
           aiWindow.conversationId,
           conversationIdAtClick,
           "Should resume in the conversation the pill was clicked in on the memory-free path"
+        );
+
+        Assert.equal(
+          engineBuildStub.callCount,
+          1,
+          "Should build the engine once, in the response path, not in the conversation builder"
+        );
+        Assert.equal(
+          aiWindow.conversation.engine.model,
+          "stub-resume-model",
+          "Should run the memory-free conversation on the engine the response path built"
+        );
+        Assert.equal(
+          modelsAtPromptLoad.at(-1),
+          "stub-resume-model",
+          "Should assemble the final system prompt for the built engine's model"
         );
 
         const assistantMessage = aiWindow.conversation.messages.at(-1);
@@ -989,6 +1085,68 @@ add_task(
 );
 
 add_task(
+  async function test_fullpage_resume_starters_disabled_by_feature_pref() {
+    const sb = sinon.createSandbox();
+    let win;
+
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        // Memories on, so the gate under test is the only thing holding back
+        // resume generation.
+        ["browser.smartwindow.memories.generateFromConversation", true],
+        ["browser.smartwindow.memories.generateFromHistory", true],
+        ["browser.smartwindow.resumeActivity.enabled", false],
+        // Cards are the other resume surface; leave it on to prove the section
+        // stays empty rather than relying on its own pref being off.
+        ["browser.smartwindow.resumeCards.enabled", true],
+      ],
+    });
+
+    let resumeActivityStubs;
+    try {
+      resumeActivityStubs = await stubResumeActivityGeneration(sb);
+      win = await openAIWindow();
+      const browser = win.gBrowser.selectedBrowser;
+      const buttons = await getPromptButtons(browser);
+      const aiWindow = browser.contentDocument.querySelector("ai-window");
+      const promptsEl = aiWindow.shadowRoot.querySelector(
+        "smartwindow-prompts"
+      );
+
+      Assert.ok(
+        resumeActivityStubs.getMemoriesStub.notCalled,
+        "Resume generation should not run when the feature is disabled"
+      );
+      Assert.deepEqual(
+        promptsEl.prompts.map(prompt => prompt.type),
+        ["chat", "chat", "chat"],
+        "Only the static starters should render: no skeletons and no resume pills"
+      );
+      Assert.equal(
+        buttons.length,
+        3,
+        "Static starters should still be clickable"
+      );
+      Assert.deepEqual(aiWindow.resumeCards, [], "No resume cards should load");
+      Assert.equal(
+        aiWindow.shadowRoot
+          .querySelector("smartwindow-resume-section")
+          .shadowRoot.querySelector(".resume-section-grid"),
+        null,
+        "The resume section should render nothing"
+      );
+    } finally {
+      if (win) {
+        await BrowserTestUtils.closeWindow(win);
+      }
+      sb.restore();
+      await resumeActivityStubs?.cleanup();
+      await SpecialPowers.popPrefEnv();
+    }
+  }
+);
+
+add_task(
   async function test_fullpage_resume_starters_disabled_without_existing_memories() {
     const sb = sinon.createSandbox();
     let win;
@@ -1059,41 +1217,6 @@ add_task(async function test_starter_prompts_click_triggers_chat_on_new_tab() {
       userMessage.content,
       firstPromptText,
       "Should submit starter prompt text as user message on New Tab"
-    );
-
-    await BrowserTestUtils.closeWindow(win);
-  } finally {
-    sb.restore();
-  }
-});
-
-add_task(async function test_starter_prompts_click_triggers_chat_in_sidebar() {
-  const sb = sinon.createSandbox();
-
-  try {
-    const fetchWithHistoryStub = sb.stub(Chat, "fetchWithHistory");
-    sb.stub(openAIEngine, "build").resolves({});
-
-    const win = await openAIWindow();
-    const browser = win.gBrowser.selectedBrowser;
-
-    const buttons = await getPromptButtons(browser);
-    const firstPromptText = buttons[0].ariaLabel;
-    buttons[0].click();
-
-    await TestUtils.waitForCondition(
-      () => fetchWithHistoryStub.calledOnce,
-      "fetchWithHistory should be called after clicking prompt"
-    );
-
-    const conversation = fetchWithHistoryStub.firstCall.args[0].conversation;
-    const messages = conversation.getMessagesInChatCompletionsFormat();
-    const userMessage = messages.findLast(m => m.role === "user");
-
-    Assert.equal(
-      userMessage.content,
-      firstPromptText,
-      "Should submit starter prompt text as user message in the sidebar"
     );
 
     await BrowserTestUtils.closeWindow(win);
@@ -1185,33 +1308,6 @@ add_task(
 );
 
 add_task(async function test_starter_prompts_hidden_after_click_on_new_tab() {
-  const sb = sinon.createSandbox();
-
-  try {
-    sb.stub(Chat, "fetchWithHistory");
-    sb.stub(openAIEngine, "build").resolves({});
-
-    const win = await openAIWindow();
-    const browser = win.gBrowser.selectedBrowser;
-
-    (await getPromptButtons(browser))[0].click();
-
-    await SpecialPowers.spawn(browser, [], async () => {
-      const aiWindowElement = content.document.querySelector("ai-window");
-      await ContentTaskUtils.waitForMutationCondition(
-        aiWindowElement.shadowRoot,
-        { childList: true, subtree: true },
-        () => !aiWindowElement.shadowRoot.querySelector("smartwindow-prompts")
-      );
-    });
-
-    await BrowserTestUtils.closeWindow(win);
-  } finally {
-    sb.restore();
-  }
-});
-
-add_task(async function test_starter_prompts_hidden_after_click_in_sidebar() {
   const sb = sinon.createSandbox();
 
   try {

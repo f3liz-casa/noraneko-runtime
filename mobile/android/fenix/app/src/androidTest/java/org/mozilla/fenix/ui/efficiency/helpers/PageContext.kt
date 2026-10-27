@@ -32,6 +32,8 @@ import org.mozilla.fenix.ui.efficiency.pageObjects.SearchBarComponent
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsAboutPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsAccessibilityPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsAddonsManagerPage
+import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsAdvancedDownloadSettingsPage
+import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsAdvancedRemoteImprovementsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsAppIconPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsAutofillPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsCustomizePage
@@ -44,6 +46,7 @@ import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsExperimentsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsHTTPSOnlyModePage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsHomepagePage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsLanguagePage
+import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsLoginExceptionsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsOpenLinksInAppsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsPageSummariesPage
@@ -63,6 +66,7 @@ import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsTabsPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.SettingsTurnOnSyncPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.ShareOverlayPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.ShortcutsPage
+import org.mozilla.fenix.ui.efficiency.pageObjects.StoriesPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.TabDrawerPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.TabHistoryPage
 import org.mozilla.fenix.ui.efficiency.pageObjects.ToolbarComponent
@@ -97,6 +101,8 @@ class PageContext(val composeRule: AndroidComposeTestRule<HomeActivityIntentTest
     val settingsAbout = SettingsAboutPage(composeRule)
     val settingsAccessibility = SettingsAccessibilityPage(composeRule)
     val settingsAddonsManager = SettingsAddonsManagerPage(composeRule)
+    val settingsAdvancedDownloadSettings = SettingsAdvancedDownloadSettingsPage(composeRule)
+    val settingsAdvancedRemoteImprovements = SettingsAdvancedRemoteImprovementsPage(composeRule)
     val settingsAppIcon = SettingsAppIconPage(composeRule)
     val settingsAutofill = SettingsAutofillPage(composeRule)
     val settingsCustomize = SettingsCustomizePage(composeRule)
@@ -109,6 +115,7 @@ class PageContext(val composeRule: AndroidComposeTestRule<HomeActivityIntentTest
     val settingsHomepage = SettingsHomepagePage(composeRule)
     val settingsHTTPSOnlyMode = SettingsHTTPSOnlyModePage(composeRule)
     val settingsLanguage = SettingsLanguagePage(composeRule)
+    val settingsLoginExceptions = SettingsLoginExceptionsPage(composeRule)
     val settingsOpenLinksInApps = SettingsOpenLinksInAppsPage(composeRule)
     val settingsPageSummaries = SettingsPageSummariesPage(composeRule)
     val settingsPasswords = SettingsPasswordsPage(composeRule)
@@ -127,6 +134,7 @@ class PageContext(val composeRule: AndroidComposeTestRule<HomeActivityIntentTest
     val settingsTurnOnSync = SettingsTurnOnSyncPage(composeRule)
     val shareOverlay = ShareOverlayPage(composeRule)
     val shortcuts = ShortcutsPage(composeRule)
+    val stories = StoriesPage(composeRule)
     val tabDrawer = TabDrawerPage(composeRule)
     val tabHistory = TabHistoryPage(composeRule)
     val toolbar = ToolbarComponent(composeRule)

@@ -25,7 +25,6 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
 #include "mozilla/gfx/Point.h"
-#include "mozilla/layers/GpuFence.h"
 
 class nsIThread;
 
@@ -156,10 +155,9 @@ class SharedSurface {
 
   // Returns true if the surface is still valid to use. If false, the underlying
   // resource has been released and we must allocate a new surface instead.
-  virtual bool IsValid() const { return true; };
+  virtual bool IsValid() const { return bool(mDesc.gl); };
 
   virtual Maybe<layers::SurfaceDescriptor> ToSurfaceDescriptor() = 0;
-  virtual RefPtr<layers::GpuFence> TakeGpuFence() { return nullptr; }
 
   void BeginWrite() {
     WaitForBufferOwnership();

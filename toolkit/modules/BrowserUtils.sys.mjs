@@ -194,6 +194,21 @@ export var BrowserUtils = {
   },
 
   /**
+   * Escapes a string for safe use in HTML text content or attribute values.
+   *
+   * @param {string} text
+   * @returns {string}
+   */
+  escapeHtmlEntities(text) {
+    return (text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  },
+
+  /**
    * Copy multiple links to the clipboard. Writes three clipboard flavors:
    *   text/x-moz-url  — "url\ntitle" pairs separated by newlines
    *   text/html       — "<A HREF="url">title</A>" anchors separated by <BR>
@@ -202,19 +217,14 @@ export var BrowserUtils = {
    * @param {Array<{url: string, title: string}>} links
    */
   copyLinks(links) {
-    let htmlEscape = s =>
-      s
-        .replace(/&/g, "&amp;")
-        .replace(/>/g, "&gt;")
-        .replace(/</g, "&lt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&apos;");
-
     let mozURLData = links
       .map(({ url, title }) => `${url}\n${title}`)
       .join("\n");
     let htmlData = links
-      .map(({ url, title }) => `<A HREF="${url}">${htmlEscape(title)}</A>`)
+      .map(
+        ({ url, title }) =>
+          `<A HREF="${this.escapeHtmlEntities(url)}">${this.escapeHtmlEntities(title)}</A>`
+      )
       .join("<BR>\n");
     let textData = links.map(({ url }) => url).join("\n");
 
@@ -732,7 +742,9 @@ export var BrowserUtils = {
    * @param {string} options.categoryName
    *        What category's consumers to call.
    * @param {boolean} [options.idleDispatch=false]
-   *        If set to true, call each consumer in an idle task.
+   *        If set to true, call each consumer in an idle task. If jsGlobal is a
+   *        window that has closed by the time the idle task runs, the consumer
+   *        is dropped, so we don't initialize (and leak) a closing window.
    * @param {string} [options.profilerMarker=""]
    *        If specified, will create a profiler marker with the provided
    *        identifier for each consumer.
@@ -803,6 +815,12 @@ export var BrowserUtils = {
         allTasks.push(
           new Promise(resolve => {
             ChromeUtils.idleDispatch(() => {
+              // Drop the task if it targets a window that has closed in the
+              // meantime, to avoid initializing (and leaking) a closing window.
+              if (jsGlobal?.closed) {
+                resolve();
+                return;
+              }
               resolve(callSingleListener(listener));
             });
           })
@@ -946,6 +964,7 @@ let PromoInfo = {
     illegalRegions: [],
   },
   [BrowserUtils.PromoType.RELAY]: {
+    enabledPref: "browser.promo.relay.enabled",
     lazyStringSetPrefs: {},
     illegalRegions: [],
     // Returns true if user is using the FxA "production" instance, or returns

@@ -147,6 +147,11 @@ add_task(async function basic() {
   );
 
   info("Press on the bing menu button and enter search mode");
+  let viewOpened = false;
+  let observer = new MutationObserver(() => {
+    viewOpened ||= gURLBar.view.isOpen;
+  });
+  observer.observe(gURLBar, { attributeFilter: ["open"] });
   let popupHidden = UrlbarTestUtils.searchModeSwitcherPopupClosed(window);
   popup.querySelector("panel-item[data-engine-id=bing]").click();
   await popupHidden;
@@ -156,10 +161,16 @@ add_task(async function basic() {
     entry: "searchbutton",
     source: 3,
   });
+  await gURLBar.lastQueryContextPromise;
 
   info("Press the close button and escape search mode");
   gURLBar.querySelector(".searchmode-switcher-close").click();
   await UrlbarTestUtils.assertSearchMode(window, null);
+  observer.disconnect();
+  Assert.ok(
+    !viewOpened,
+    "The view never opened, since the engine had no results to show"
+  );
 });
 
 add_task(async function privileged_chicklet() {
@@ -301,12 +312,7 @@ add_task(async function test_icon_new_window() {
 
 add_task(async function test_search_icon_change() {
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["keyword.enabled", false],
-      // This test also asserts the switcher's icon as a fresh window opens; see
-      // test_icon_new_window.
-      ["browser.urlbar.ipc.chromeMessagePassing", false],
-    ],
+    set: [["keyword.enabled", false]],
   });
 
   let newWin = await BrowserTestUtils.openNewBrowserWindow();
@@ -736,7 +742,7 @@ add_task(async function nimbusScotchBonnetEnableOverride() {
   info("Setup Numbus value");
   const cleanUpNimbusEnable = await UrlbarTestUtils.initNimbusFeature(
     { scotchBonnetEnableOverride: true },
-    "search"
+    { featureId: "search" }
   );
   await TestUtils.waitForCondition(() => {
     return BrowserTestUtils.isVisible(
@@ -836,11 +842,65 @@ add_task(async function test_search_service_fail() {
   popup.querySelector(`.search-button-${localSearchModes[0]}`).click();
   await popupHidden;
 
+  await UrlbarTestUtils.assertSearchMode(newWin, {
+    source: UrlbarShared.RESULT_SOURCE.BOOKMARKS,
+    entry: "searchbutton",
+  });
+  await UrlbarTestUtils.assertSearchModeSwitcherIcon(
+    newWin,
+    UrlbarShared.LOCAL_SEARCH_MODES.find(
+      m => m.source == UrlbarShared.RESULT_SOURCE.BOOKMARKS
+    ).icon,
+    "The search mode switcher should have the bookmarks icon."
+  );
+
+  info("Press the close button and exit search mode");
+  newWin.gURLBar.querySelector(".searchmode-switcher-close").click();
+  await UrlbarTestUtils.assertSearchMode(newWin, null);
+
+  await UrlbarTestUtils.assertSearchModeSwitcherIcon(
+    newWin,
+    UrlbarShared.ICON.GLOBE,
+    "The search mode switcher should have the globe icon again."
+  );
+
+  await SpecialPowers.popPrefEnv();
+  await TestUtils.waitForCondition(
+    () =>
+      UrlbarTestUtils.searchModeSwitcherIconIs(
+        newWin,
+        UrlbarShared.ICON.SEARCH_GLASS
+      ),
+    "Should have the search glass icon again."
+  );
+
   stub.restore();
   SearchService.forceInitializationStatusForTests("success");
 
   await BrowserTestUtils.closeWindow(newWin);
+});
+
+add_task(async function test_globe_does_not_wait_for_engine_store() {
+  let defaultEngineIcon = UrlbarTestUtils.getSearchModeSwitcherIcon(window);
+  let { promise, resolve } = Promise.withResolvers();
+  let stub = sinon
+    .stub(gURLBar.controller.engineStore, "init")
+    .returns(promise);
+
+  await SpecialPowers.pushPrefEnv({ set: [["keyword.enabled", false]] });
+  await TestUtils.waitForCondition(
+    () =>
+      UrlbarTestUtils.searchModeSwitcherIconIs(window, UrlbarShared.ICON.GLOBE),
+    "Globe is shown while the engine store is still initializing."
+  );
+
+  resolve();
+  stub.restore();
   await SpecialPowers.popPrefEnv();
+  await TestUtils.waitForCondition(
+    () => UrlbarTestUtils.searchModeSwitcherIconIs(window, defaultEngineIcon),
+    "Default engine icon is shown again."
+  );
 });
 
 add_task(async function test_search_mode_switcher_engine_no_icon() {
@@ -1187,4 +1247,28 @@ add_task(async function hideLocalSearchModes() {
   await popupHidden;
 
   await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_local_search_mode_shortcuts() {
+  let popup = await UrlbarTestUtils.openSearchModeSwitcher(window);
+
+  let tabsItem = popup.querySelector("panel-item.search-button-tabs");
+  Assert.equal(
+    tabsItem.getAttribute("shortcut"),
+    ShortcutUtils.prettifyShortcut(document.getElementById("key_searchTabs")),
+    "The Tabs item shows the Search Tabs shortcut"
+  );
+
+  for (let item of popup.querySelectorAll(
+    "panel-item.searchmode-switcher-local:not(.search-button-tabs)"
+  )) {
+    Assert.ok(
+      !item.hasAttribute("shortcut"),
+      `${item.className} has no shortcut`
+    );
+  }
+
+  let popupHidden = UrlbarTestUtils.searchModeSwitcherPopupClosed(window);
+  popup.hide();
+  await popupHidden;
 });

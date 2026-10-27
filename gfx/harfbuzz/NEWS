@@ -1,3 +1,71 @@
+Overview of changes leading to 14.5.1
+Thursday, October 1, 2026
+=====================================
+- Map the `fonupa` (Uralic Phonetic Alphabet) BCP 47 variant to the `UPPH`
+  OpenType language system tag.
+- Produce smaller `cmap` subtables and drop no-op variation device tables when
+  subsetting.
+- Fix possible deadlock in `hb_font_destroy()` after `hb_ft_font_set_funcs()`,
+  a regression from 14.5.0.
+- Fix signed integer overflows when scaling glyph extents and applying
+  synthetic slant and emboldening.
+- Fix float-to-int overflow in `VARC` component axis coordinates with
+  malformed fonts.
+- Fix a memory leak in the experimental WebAssembly shaper when shaping with
+  features.
+- Fix accumulator overflows in the experimental raster library when rendering
+  glyphs with very many overlapping edges.
+- Fix heap buffer overflow in the experimental GPU library with malicious
+  `COLR` fonts.
+- Various build and CI fixes.
+
+
+Overview of changes leading to 14.5.0
+Monday, September 21, 2026
+=====================================
+- Update Unicode 18.0 data and script support, including script values for
+  Jurchen, Proto-Cuneiform, and Seal, and the corresponding shaping support.
+- Add support for VARC table subsetting, including pruning auxiliary data,
+  remapping glyph IDs, and guarding the feature in lean builds.
+- Add rendering work budgets to the draw and paint APIs and share them across
+  the raster, vector, GPU, and Cairo renderers so nested outline work remains
+  bounded.
+- Improve performance in set iteration, lookup traversal, and the repacker, and
+  add coverage for new benchmarks and fuzzing seeds.
+- Fix various correctness and robustness issues across the CFF, Graphite,
+  DirectWrite, and repacker code paths, including memory leaks, overflow checks,
+  bounds issues, and malformed-font handling.
+- Various build, portability, and CI fixes.
+
+- New API:
+  * Common:
+    +HB_BUDGET_DEFAULT
+    +HB_BUDGET_UNLIMITED
+    +HB_SCRIPT_JURCHEN
+    +HB_SCRIPT_PROTO_CUNEIFORM
+    +HB_SCRIPT_SEAL
+  * Draw:
+    +hb_draw_set_budget_func_t
+    +hb_draw_get_budget_func_t
+    +hb_draw_get_budget_remaining_func_t
+    +hb_draw_funcs_set_set_budget_func()
+    +hb_draw_funcs_set_get_budget_func()
+    +hb_draw_funcs_set_get_budget_remaining_func()
+    +hb_draw_set_budget()
+    +hb_draw_get_budget()
+    +hb_draw_get_budget_remaining()
+  * Paint:
+    +hb_paint_set_budget_func_t
+    +hb_paint_get_budget_func_t
+    +hb_paint_get_budget_remaining_func_t
+    +hb_paint_funcs_set_set_budget_func()
+    +hb_paint_funcs_set_get_budget_func()
+    +hb_paint_funcs_set_get_budget_remaining_func()
+    +hb_paint_set_budget()
+    +hb_paint_get_budget()
+    +hb_paint_get_budget_remaining()
+
+
 Overview of changes leading to 14.4.0
 Wednesday, August 26, 2026
 =====================================
@@ -4611,5 +4679,4 @@ Summary of API changes follows.
     hb_version()
     hb_version_string()
     hb_version_check()
-
 

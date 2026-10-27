@@ -2,8 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { IPPAuthProvider } from "moz-src:///toolkit/components/ipprotection/IPPAuthProvider.sys.mjs";
+import {
+  AUTH_ERRORS,
+  IPPAuthProvider,
+} from "moz-src:///toolkit/components/ipprotection/IPPAuthProvider.sys.mjs";
 import { GuardianClient } from "moz-src:///toolkit/components/ipprotection/fxa/GuardianClient.sys.mjs";
+
+/**
+ * Type Imports
+ *
+ * @typedef {import("../GuardianTypes.sys.mjs").TokenHandle} TokenHandle
+ */
 
 const lazy = {};
 
@@ -23,7 +32,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
 
 ChromeUtils.defineLazyGetter(lazy, "logConsole", () =>
   console.createInstance({
-    prefix: "IPPFxaActivateAuthProvider",
+    prefix: "IPP_FxaActivateAuthProvider",
     maxLogLevel: Services.prefs.getBoolPref("browser.ipProtection.log", false)
       ? "Debug"
       : "Warn",
@@ -122,7 +131,7 @@ class IPPFxaActivateAuthProviderSingleton extends IPPAuthProvider {
 
   async getEntitlement() {
     try {
-      using tokenHandle = await this.getToken();
+      const tokenHandle = await this.getToken();
       const { status, entitlement, error } =
         await this.guardian.fetchUserInfo(tokenHandle);
       if (error || status != 200) {
@@ -159,7 +168,7 @@ class IPPFxaActivateAuthProviderSingleton extends IPPAuthProvider {
   }
 
   async checkForUpgrade() {
-    using tokenHandle = await this.getToken();
+    const tokenHandle = await this.getToken();
     const { entitlement } = await this.guardian.fetchUserInfo(tokenHandle);
     if (entitlement) {
       this._setEntitlement(entitlement);
@@ -185,7 +194,7 @@ class IPPFxaActivateAuthProviderSingleton extends IPPAuthProvider {
     this.#isEnrolling = true;
     this.dispatchEvent(new CustomEvent("IPPAuthProvider:StateChanged"));
     try {
-      using tokenHandle = await this.getToken();
+      const tokenHandle = await this.getToken();
       const { ok, entitlement, error } =
         await this.guardian.activate(tokenHandle);
       if (!ok) {
@@ -194,7 +203,11 @@ class IPPFxaActivateAuthProviderSingleton extends IPPAuthProvider {
       this._setEntitlement(entitlement ?? null);
       return { isEnrolledAndEntitled: true, error: null };
     } catch (error) {
-      return { isEnrolledAndEntitled: false, error: error?.message ?? error };
+      lazy.logConsole.error("Enrollment failed:", error);
+      return {
+        isEnrolledAndEntitled: false,
+        error: AUTH_ERRORS.ENROLLMENT_FAILED,
+      };
     } finally {
       this.#isEnrolling = false;
       lazy.IPProtectionService.updateState();
@@ -203,11 +216,11 @@ class IPPFxaActivateAuthProviderSingleton extends IPPAuthProvider {
   }
 
   /**
-   * Retrieves an FxA OAuth token and returns a disposable handle that revokes
-   * it on disposal.
+   * Retrieves an FxA OAuth token and returns a handle that revokes it if
+   * Guardian rejects it.
    *
    * @param {AbortSignal} [abortSignal]
-   * @returns {Promise<{token: string} & Disposable>}
+   * @returns {Promise<TokenHandle|null>}
    */
   async getToken(abortSignal = null) {
     let tasks = [
@@ -219,7 +232,11 @@ class IPPFxaActivateAuthProviderSingleton extends IPPAuthProvider {
       abortSignal.throwIfAborted();
       tasks.push(
         new Promise((_, rej) => {
-          abortSignal?.addEventListener("abort", rej, { once: true });
+          abortSignal?.addEventListener(
+            "abort",
+            () => rej(abortSignal.reason),
+            { once: true }
+          );
         })
       );
     }
@@ -229,19 +246,18 @@ class IPPFxaActivateAuthProviderSingleton extends IPPAuthProvider {
     }
     return {
       token,
-      [Symbol.dispose]: () => {
-        lazy.fxAccounts.removeCachedOAuthToken({ token });
-      },
+      // Evicts our cache entry and revokes the token server side.
+      onTokenRejected: () => lazy.fxAccounts.removeCachedOAuthToken({ token }),
     };
   }
 
   async fetchProxyPass(abortSignal = null) {
-    using tokenHandle = await this.getToken(abortSignal);
+    const tokenHandle = await this.getToken(abortSignal);
     return await this.#guardian.fetchProxyPass(tokenHandle, abortSignal);
   }
 
   async fetchProxyUsage(abortSignal = null) {
-    using tokenHandle = await this.getToken(abortSignal);
+    const tokenHandle = await this.getToken(abortSignal);
     return await this.#guardian.fetchProxyUsage(tokenHandle, abortSignal);
   }
 

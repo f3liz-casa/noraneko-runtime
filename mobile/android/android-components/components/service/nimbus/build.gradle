@@ -48,6 +48,7 @@ dependencies {
     implementation project(':components:support-ktx')
     implementation project(':components:support-locale')
     implementation project(':components:support-utils')
+    implementation project(':components:ui-icons')
 
     implementation ComponentsDependencies.mozilla_appservices_nimbus
     implementation libs.androidx.constraintlayout
@@ -78,14 +79,6 @@ ext.configurePublish(config.componentsGroupId, project.name, project.ext.descrip
 nimbus {
     // The path to the Nimbus feature manifest file
     manifestFile = "messaging.fml.yaml"
-
-    // Map from the variant name to the channel as experimenter and nimbus understand it.
-    // If nimbus's channels were accurately set up well for this project, then this
-    // shouldn't be needed.
-    channels = [
-            debug: "debug",
-            release: "release",
-    ]
 
     // This is an optional value, and updates the plugin to use a copy of application
     // services. The path should be relative to the root project directory.

@@ -12,9 +12,6 @@ tags = "os_integration"
 # Privacy relevant
 
 ["test_bug343416.xhtml"]
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && opt", # Bug 1962438
-]
 
 ["test_bug428405.xhtml"]
 run-if = [
@@ -194,10 +191,16 @@ support-files = [
 run-if = [
   "os == 'mac'", # Cocoa widget test
 ]
+skip-if = [
+  "headless", # Native menus are disabled in headless mode
+]
 
 ["test_native_context_menus.xhtml"]
 run-if = [
   "os == 'mac'", # Cocoa widget test
+]
+skip-if = [
+  "headless", # Native menus are disabled in headless mode
 ]
 
 ["test_native_key_bindings_mac.html"]

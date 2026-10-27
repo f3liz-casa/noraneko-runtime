@@ -90,6 +90,7 @@ treeherder:
         'DTbc': 'DevTools remote debugging backward compatibility tests'
         'Fetch': 'Fetch and store content'
         'Fxfn': 'Firefox functional tests'
+        'gv-junit': 'GeckoView junit tests'
         'l10n-bump': 'L10n Bumper'
         'M': 'Mochitests'
         'M-f': 'Mochitest failures'
@@ -163,10 +164,11 @@ treeherder:
         'TLA64': 'Toolchain builds for Linux AArch64'
         'TM': 'Toolchain builds for OSX'
         'TMA64': 'Toolchain builds for OSX Aarch64'
-        'TMW': 'Toolchain builds for Windows MinGW'
         'TW32': 'Toolchain builds for Windows 32-bits'
         'TW64': 'Toolchain builds for Windows 64-bits'
         'TWA64': 'Toolchain builds for Windows AArch64'
+        'TWM': 'Toolchain builds for Windows MinGW'
+        'WASI': 'Toolchain builds for WASI'
         'WMC32': 'MinGW-Clang builds for Windows 32-bits'
         'WMC64': 'MinGW-Clang builds for Windows 64-bits'
         'Searchfox': 'Searchfox builds'
@@ -203,6 +205,7 @@ treeherder:
         'Wgpu': 'WebGPU standalone'
         'cpp': 'C/C++ checks'
         'pedantic': 'pedantic checks'
+        'legal': 'Licensing and legal checks'
         'text': 'Check on texts'
         'misc': 'Misc checks'
         'js': 'JavaScript checks'
@@ -256,6 +259,7 @@ treeherder:
         'fenix-nightly': 'Fenix nightly-related tasks'
         'fenix-nightly-nobp': 'Fenix nightly builds without baseline profiles'
         'fenix-nightlySim': 'Nightly-related tasks that run on each github push'
+        'fenix-nightlyAsReleaseSim': 'Fenix nightly-as-release performance tasks (nightly built against release-milestone GeckoView)'
         'fenix-release': 'Fenix production-related tasks'
 
         # This list is based on mobile/android/android-components/.buildconfig.yml except the exceptions down below
@@ -335,6 +339,7 @@ treeherder:
         'feature-summarize': 'feature-summarize'
         'feature-syncedtabs': 'feature-syncedtabs'
         'feature-tab-collections': 'feature-tab-collections'
+        'feature-tabgroups-storage': 'feature-tabgroups-storage'
         'feature-tabs': 'feature-tabs'
         'feature-toolbar': 'feature-toolbar'
         'feature-top-sites': 'feature-top-sites'
@@ -422,6 +427,7 @@ treeherder:
         'lib-fetch-httpurlconnecti': 'lib-fetch-httpurlconnection'
         'feature-webcompat-reporte': 'feature-webcompat-reporter'
         'feature-protection-dashbo': 'feature-protection-dashboard'
+        'feature-tabdata-coordinat': 'feature-tabdata-coordinator'
 
         # Groups aren't generated off buildconfig.yml:
         'samples-browser': 'samples-browser'
@@ -610,7 +616,7 @@ taskgraph:
 
 workers:
     aliases:
-        b-linux(|-docker(|-x?large|-updatebot)-amd|-medium|-aarch64|-xlarge|-kvm):
+        b-linux(|-docker(|-x?large|-updatebot)-amd|-medium|-aarch64|-x?large|-kvm):
             provisioner: '{trust-domain}-{level}'
             implementation: docker-worker
             os: linux
@@ -804,7 +810,7 @@ workers:
             implementation: docker-worker
             os: linux
             worker-type: 't-linux-docker-kvm'
-        t-linux-(talos|netperf)(-1804|-2404)?:
+        t-linux-(talos|netperf)-2404:
             provisioner: releng-hardware
             implementation: generic-worker
             os: linux
@@ -850,6 +856,11 @@ workers:
             os: macosx
             worker-type: 'gecko-{alias}'
         t-osx-1500-m-vms:
+            provisioner: releng-hardware
+            implementation: generic-worker
+            os: macosx
+            worker-type: 'gecko-{alias}'
+        t-osx-2700-m4:
             provisioner: releng-hardware
             implementation: generic-worker
             os: macosx

@@ -19,11 +19,6 @@
 
   --categories-width: var(--size-sidebar);
   --dialog-warning-text-color: var(--text-color-error);
-  --message-bar-button-background-color: oklch(from var(--color-gray-100) l c h / 10%);
-  --message-bar-button-background-color-hover: oklch(from var(--color-gray-100) l c h / 20%);
-  --message-bar-button-background-color-active: oklch(from var(--color-gray-100) l c h / 30%);
-  --message-bar-background-color-warning: var(--color-yellow-20);
-  --message-bar-text-color-warning: var(--color-yellow-100);
   --input-border-color-warning: var(--color-yellow-30);
   --input-box-shadow-color-warning: oklch(from var(--color-yellow-30) l c h / 30%);
   --card-padding: var(--space-large);
@@ -419,7 +414,7 @@ html|textarea {
   font-size: inherit;
   padding: var(--space-small);
   margin: var(--space-xxsmall) var(--space-xsmall);
-  min-height: var(--input-text-min-height);
+  min-height: var(--input-min-height);
 }
 
 html|textarea {
@@ -482,7 +477,7 @@ html|a:focus-visible,
 ::part(support-link):focus-visible {
   outline: var(--focus-outline);
   outline-offset: var(--link-focus-outline-offset);
-  border-radius: var(--border-radius-small);
+  border-radius: var(--link-border-radius-focus);
 }
 
 button.text-link {
@@ -896,64 +891,6 @@ xul|treechildren::-moz-tree-image(selected) {
   color: var(--text-color-accent-primary-selected);
 }
 
-/* Message bars */
-.message-bar {
-  background-color: var(--background-color-box-info);
-  border-radius: var(--border-radius-small);
-  min-height: var(--size-item-large);
-  align-items: center;
-  padding: var(--space-xsmall);
-}
-
-.message-bar-description {
-  margin: var(--space-xxsmall) 0;
-  line-height: 1.25;
-}
-
-.message-bar-description.rtl-locale {
-  direction: rtl;
-  text-align: match-parent;
-}
-
-/* The message-bar-button styles have extra specificity to override
- * the defaults for buttons. */
-.message-bar-content > .message-bar-button {
-  background-color: var(--message-bar-button-background-color);
-  border: none;
-  border-radius: var(--border-radius-xsmall);
-  height: var(--size-item-medium);
-  margin-inline-start: var(--space-small);
-  padding: 0 var(--space-small);
-}
-
-.message-bar-content > .message-bar-button:hover {
-  background-color: var(--message-bar-button-background-color-hover);
-}
-
-.message-bar-content > .message-bar-button:hover:active {
-  background-color: var(--message-bar-button-background-color-active);
-}
-
-.message-bar-icon {
-  content: url("chrome://global/skin/icons/info.svg");
-  width: var(--icon-size-large);
-  height: var(--icon-size-large);
-  padding: var(--space-xsmall);
-  margin-inline-end: var(--space-xsmall);
-  -moz-context-properties: fill;
-  fill: currentColor;
-}
-
-/* Warning styles */
-.message-bar-warning {
-  background-color: var(--message-bar-background-color-warning);
-  color: var(--message-bar-text-color-warning);
-}
-
-.message-bar-warning > .message-bar-icon {
-  content: url("chrome://global/skin/icons/warning.svg");
-}
-
 input[type="text"][warning]:enabled:not(:focus) {
   border-color: var(--input-border-color-warning);
   /* Custom box shadow for the warning outline. */
@@ -961,35 +898,6 @@ input[type="text"][warning]:enabled:not(:focus) {
   box-shadow:
     0 0 0 1px var(--input-border-color-warning),
     0 0 0 4px var(--input-box-shadow-color-warning);
-}
-
-/* Cards */
-
-.card {
-  background: var(--background-color-box);
-  /* Needed for high-contrast where the border will appear. */
-  border: 1px solid var(--card-border-color);
-  border-radius: var(--card-border-radius);
-  box-shadow: var(--card-box-shadow);
-  margin: 0 0 var(--space-small);
-  /* Remove the border from the overall padding. */
-  padding: calc(var(--card-padding) - 1px);
-  transition: box-shadow 150ms;
-}
-
-.card:not(.card-no-hover):hover {
-  box-shadow: var(--card-box-shadow-hover);
-}
-
-.card-heading-image {
-  border-top-left-radius: var(--border-radius-small);
-  border-top-right-radius: var(--border-radius-small);
-  margin-block: calc(var(--card-padding) * -1) var(--card-padding);
-  margin-inline: calc(var(--card-padding) * -1);
-}
-
-.card-heading-image:dir(rtl) {
-  transform: scaleX(-1);
 }
 
 /* Sidebar footer links */

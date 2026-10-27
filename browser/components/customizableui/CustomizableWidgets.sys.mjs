@@ -17,6 +17,10 @@ ChromeUtils.defineESModuleGetters(lazy, {
   RecentlyClosedTabsAndWindowsMenuUtils:
     "moz-src:///browser/components/sessionstore/RecentlyClosedTabsAndWindowsMenuUtils.sys.mjs",
   Sanitizer: "resource:///modules/Sanitizer.sys.mjs",
+  ScreenshotsUtils:
+    "moz-src:///browser/components/screenshots/ScreenshotsUtils.sys.mjs",
+  SELECTION_MODES:
+    "moz-src:///browser/components/screenshots/ScreenshotsSelectionModes.sys.mjs",
   SessionStore:
     "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
   SharingUtils: "moz-src:///browser/components/sharing/SharingUtils.sys.mjs",
@@ -499,14 +503,28 @@ if (
       node.setAttribute("id", "share-tab-button");
       aDocument.l10n.setAttributes(node, "toolbar-button-share-tab");
 
-      // share-tab-url-item is needed so BrowserUsageTelemetry can find the
-      // node carrying browsersToShare via .closest(".share-tab-url-item").
-      node.classList.add("toolbarbutton-1", "share-tab-url-item");
+      node.classList.add("toolbarbutton-1");
 
+      if (AppConstants.platform == "macosx") {
+        node.classList.add("share-toolbar-picker");
+        node.addEventListener("command", () => {
+          let browser = aDocument.defaultView.gBrowser.selectedBrowser;
+          node.contextBrowserToShare = Cu.getWeakReference(browser);
+          node.browsersToShare = null;
+          lazy.SharingUtils.shareOnMacPicker(node, { injectQR: true });
+        });
+        return node;
+      }
+
+      // share-tab-url-item lets BrowserUsageTelemetry find the node carrying
+      // browsersToShare via .closest(".share-tab-url-item") when a
+      // .share-copy-link item inside the popup is clicked.
+      node.classList.add("share-tab-url-item");
       node.setAttribute("type", "menu");
 
       let popup = aDocument.createXULElement("menupopup");
       popup.setAttribute("id", "share-tab-popup");
+      popup.setAttribute("accesskey-conflicts-bug", "2073899");
       popup.addEventListener("popupshowing", () => {
         let browser = aDocument.defaultView.gBrowser.selectedBrowser;
         node.contextBrowserToShare = Cu.getWeakReference(browser);
@@ -804,9 +822,24 @@ if (Services.prefs.getBoolPref("browser.tabs.groups.alternateMenu", false)) {
 
 CustomizableWidgets.push({
   id: "firefox-view-button",
-  l10nId: "toolbar-button-firefox-view-2",
+  l10nId: "toolbar-button-firefox-view-3",
   onCreated(node) {
     node.setAttribute("role", "button");
     node.setAttribute("aria-pressed", "false");
   },
 });
+
+if (Services.prefs.getBoolPref("browser.mini-window.enabled", false)) {
+  CustomizableWidgets.push({
+    id: "mini-window-button",
+    l10nId: "toolbar-button-mini-window",
+    onCommand(aEvent) {
+      let win = aEvent.currentTarget.documentGlobal;
+      lazy.ScreenshotsUtils.toggle(
+        win.gBrowser.selectedBrowser,
+        "MiniWindowToolbarButton",
+        { mode: lazy.SELECTION_MODES.MINI_WINDOW }
+      );
+    },
+  });
+}

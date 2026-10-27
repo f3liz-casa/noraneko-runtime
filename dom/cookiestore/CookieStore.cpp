@@ -254,6 +254,10 @@ bool ValidateCookiePath(nsIURI* aURI, const nsAString& aPath,
       directory.Truncate(directory.Length() - 1);
     }
 
+    if (directory.IsEmpty()) {
+      directory.AssignLiteral("/");
+    }
+
     CopyUTF8toUTF16(directory, aRetPath);
   }
 
@@ -417,6 +421,11 @@ CookieStore::CookieStore(nsIGlobalObject* aGlobal)
 }
 
 CookieStore::~CookieStore() { Shutdown(); }
+
+void CookieStore::DisconnectFromOwner() {
+  Shutdown();
+  DOMEventTargetHelper::DisconnectFromOwner();
+}
 
 JSObject* CookieStore::WrapObject(JSContext* aCx,
                                   JS::Handle<JSObject*> aGivenProto) {

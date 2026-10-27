@@ -185,6 +185,7 @@ if (rtc_include_tests) {
       "../api:rtc_error_matchers",
       "../api:rtp_header_extension_id",
       "../api:rtp_headers",
+      "../api:rtp_packet_info",
       "../api:rtp_parameters",
       "../api:scoped_refptr",
       "../api:simulated_network_api",
@@ -255,8 +256,10 @@ if (rtc_include_tests) {
     sources = [ "channel_receive_unittest.cc" ]
     deps = [
       ":audio",
+      "../api:call_api",
       "../api:make_ref_counted",
       "../api:mock_frame_transformer",
+      "../api:rtp_packet_info",
       "../api:scoped_refptr",
       "../api:transport_api",
       "../api/audio:audio_frame_api",
@@ -265,6 +268,7 @@ if (rtc_include_tests) {
       "../api/crypto:options",
       "../api/units:time_delta",
       "../api/units:timestamp",
+      "../call:call_interfaces",
       "../logging:mocks",
       "../modules/audio_device:mock_audio_device",
       "../modules/pacing",

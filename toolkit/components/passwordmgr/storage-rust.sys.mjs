@@ -27,10 +27,16 @@ import {
   LoginMeta,
   LoginEntryWithMeta,
   BulkResultEntry,
-  PrimaryPasswordAuthenticator,
   createLoginStoreWithNssKeymanager,
-  AuthenticationCanceled,
 } from "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustLogins.sys.mjs";
+
+// AuthenticationCanceled must come from db_crypto, not logins: it is the error
+// PrimaryPasswordAuthenticator declares, and the two namespaces export unrelated
+// classes under that name.
+import {
+  PrimaryPasswordAuthenticator,
+  AuthenticationCanceled,
+} from "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustDbCrypto.sys.mjs";
 
 const LoginInfo = Components.Constructor(
   "@mozilla.org/login-manager/loginInfo;1",
@@ -133,6 +139,114 @@ const CANDIDATE_MATCH_FIELDS = new Set([
   "timesUsed",
 ]);
 
+// The origins and domains for listCandidatesByOrigin() to return every login
+// LoginHelper.isOriginMatching() can accept for `origin` with `options`. The
+// result may hold more, which matchLogin() then drops.
+const originPrefilter = (origin, options) => {
+  const origins = [origin];
+  if (options.schemeUpgrades && origin.startsWith("https://")) {
+    origins.push("http://" + origin.slice("https://".length));
+  }
+  const domains = [];
+  if (options.acceptDifferentSubdomains) {
+    try {
+      domains.push(Services.eTLD.getBaseDomain(Services.io.newURI(origin)));
+    } catch {
+      // isOriginMatching() accepts no other subdomain for this origin either.
+    }
+    if (options.acceptRelatedRealms && options.relatedRealms) {
+      domains.push(...options.relatedRealms);
+    }
+  }
+  return [origins, domains];
+};
+
+// Whether aLoginItem, a LoginInfo or the result of candidateToMatchable(),
+// matches matchData under the options of LoginHelper.isOriginMatching().
+const matchLogin = (aLoginItem, matchData, aOptions) => {
+  for (const field in matchData) {
+    const wantedValue = matchData[field];
+
+    // Override the storage field name for some fields due to backwards
+    // compatibility with Sync/storage.
+    let storageFieldName = field;
+    switch (field) {
+      case "formActionOrigin": {
+        storageFieldName = "formSubmitURL";
+        break;
+      }
+      case "origin": {
+        storageFieldName = "hostname";
+        break;
+      }
+    }
+
+    switch (field) {
+      case "formActionOrigin":
+        if (wantedValue != null) {
+          // Historical compatibility requires this special case
+          if (
+            aLoginItem.formSubmitURL == "" ||
+            (wantedValue == "" && Object.keys(matchData).length != 1)
+          ) {
+            break;
+          }
+          if (
+            !lazy.LoginHelper.isOriginMatching(
+              aLoginItem[storageFieldName],
+              wantedValue,
+              aOptions
+            )
+          ) {
+            return false;
+          }
+          break;
+        }
+      // fall through
+      case "origin":
+        if (wantedValue != null) {
+          // needed for formActionOrigin fall through
+          if (
+            !lazy.LoginHelper.isOriginMatching(
+              aLoginItem[storageFieldName],
+              wantedValue,
+              aOptions
+            )
+          ) {
+            return false;
+          }
+          break;
+        }
+      // Normal cases.
+      // fall through
+      case "httpRealm":
+      case "id":
+      case "usernameField":
+      case "passwordField":
+      case "encryptedUsername":
+      case "encryptedPassword":
+      case "guid":
+      case "encType":
+      case "timeCreated":
+      case "timeLastUsed":
+      case "timePasswordChanged":
+      case "timesUsed":
+      case "syncCounter":
+      case "everSynced":
+        if (wantedValue == null && aLoginItem[storageFieldName]) {
+          return false;
+        } else if (aLoginItem[storageFieldName] != wantedValue) {
+          return false;
+        }
+        break;
+      // Fail if caller requests an unknown property.
+      default:
+        throw new Error("Unexpected field: " + field);
+    }
+  }
+  return true;
+};
+
 // Build a bare LoginInfo carrying only the given guid. Used to report the ids
 // of removed logins in "removeAllLogins" notifications, since the bulk deletion
 // APIs only return guids rather than full logins.
@@ -163,6 +277,10 @@ class RustLoginsStoreAdapter {
 
   async listCandidates() {
     return this.#store.listCandidates();
+  }
+
+  async listCandidatesByOrigin(origins, domains) {
+    return this.#store.listCandidatesByOrigin(origins, domains);
   }
 
   // getMany() returns the rows in whatever order the query gives it, so sort
@@ -361,24 +479,40 @@ class RustLoginStorageAuthenticator extends PrimaryPasswordAuthenticator {
 
       if (!result.getProperty("ok")) {
         this.authCanceled = true;
+        this.#recordPrompt("cancel");
         Services.obs.notifyObservers(null, "passwordmgr-crypto-loginCanceled");
         throw new AuthenticationCanceled("User cancelled");
       }
 
       this.#logger.log("got a password");
       return result.getProperty("pass");
+    } catch (e) {
+      if (!(e instanceof AuthenticationCanceled)) {
+        this.#recordPrompt("error");
+      }
+      throw e;
     } finally {
       this.uiBusy = false;
     }
   }
 
   async onAuthenticationSuccess() {
+    this.#recordPrompt("success");
     Services.obs.notifyObservers(null, "passwordmgr-crypto-login");
     this.#logger.log("authenticated with success");
   }
 
+  // Rust prompts again after a failure, so every attempt gets its own event.
   async onAuthenticationFailure() {
+    this.#recordPrompt("wrong_password");
     this.#logger.log("failed to authenticate");
+  }
+
+  #recordPrompt(result) {
+    Glean.pwmgr.primaryPasswordPrompt.record({
+      source: "rust_storage",
+      result,
+    });
   }
 }
 
@@ -386,12 +520,21 @@ export class LoginManagerRustStorage {
   #storageAdapter = null;
   #authenticator = null;
   #initializationPromise = null;
+  #initTimings = null;
   // Only the active backend fires storage-changed events to avoid duplicates
   // when both JSON and Rust stores are initialized.
   // Default is false (json is active)
   #isActive = false;
   set isActive(v) {
     this.#isActive = v;
+  }
+
+  get backendName() {
+    return "rust";
+  }
+
+  get initTimings() {
+    return this.#initTimings;
   }
 
   // have it a singleton
@@ -407,35 +550,59 @@ export class LoginManagerRustStorage {
     if (this.#initializationPromise) {
       this.log("rust storage already initialized");
     } else {
-      try {
-        const profilePath = Services.dirsvc.get("ProfD", Ci.nsIFile).path;
-        const path = `${profilePath}/logins.db`;
-
-        this.#initializationPromise = new Promise(resolve => {
-          this.log(`Initializing Rust login storage at ${path}`);
-
-          initRustComponents(profilePath).then(() => {
-            const authenticator = new RustLoginStorageAuthenticator();
-            this.#authenticator = authenticator;
-            const store = createLoginStoreWithNssKeymanager(
-              path,
-              authenticator
-            );
-
-            this.#storageAdapter = new RustLoginsStoreAdapter(store);
-            this.log("Rust login storage ready.");
-
-            this._registerShutdownBlocker().then(() => resolve(this));
-          });
-        });
-      } catch (e) {
-        this.log(`Initialization failed ${e.name}.`);
-        this.log(e);
-        throw new Error("Initialization failed");
-      }
+      this.#initializationPromise = this.#doInitialize();
     }
 
     return this.#initializationPromise;
+  }
+
+  async #doInitialize() {
+    try {
+      // If we are already in the “Profile-Change-Teardown” phase or have
+      // already completed it, “false” is returned and initialization is
+      // aborted.
+      if (!(await this._registerShutdownBlocker())) {
+        throw new Error(
+          "Shutdown is past profile-change-teardown, not opening the store"
+        );
+      }
+
+      const profilePath = Services.dirsvc.get("ProfD", Ci.nsIFile).path;
+      const path = `${profilePath}/logins.db`;
+      this.log(`Initializing Rust login storage at ${path}`);
+
+      const startedAt = ChromeUtils.now();
+      await initRustComponents(profilePath);
+      const componentsReadyAt = ChromeUtils.now();
+
+      this.#authenticator = new RustLoginStorageAuthenticator();
+      const store = await createLoginStoreWithNssKeymanager(
+        path,
+        this.#authenticator
+      );
+      this.#initTimings = {
+        initRustComponentsMs: Math.round(componentsReadyAt - startedAt),
+        createRustStoreMs: Math.round(ChromeUtils.now() - componentsReadyAt),
+      };
+      this.#storageAdapter = new RustLoginsStoreAdapter(store);
+
+      this.log("Rust login storage ready.");
+      return this;
+    } catch (e) {
+      this.log(`Initialization failed: ${e}`);
+      // Failing after the store was created leaves it holding the only
+      // reference to the authenticator, and UniFFI asserts at xpcom-shutdown
+      // that no callback object is still registered. Let it go, and report the
+      // original failure rather than anything shutdown runs into.
+      try {
+        await this.#storageAdapter?.shutdown();
+      } catch (shutdownError) {
+        this.log(`Shutdown after failed initialization: ${shutdownError}`);
+      }
+      this.#storageAdapter = null;
+      this.#authenticator = null;
+      throw e;
+    }
   }
 
   /**
@@ -445,29 +612,42 @@ export class LoginManagerRustStorage {
     // TODO: Currently we do not mark the instance as closed, not sure if later
     // calls would be rejected elsewhere.
 
-    await this.#storageAdapter.shutdown();
+    // Null when initialization failed, which shuts the store down itself.
+    await this.#storageAdapter?.shutdown();
   }
 
   /**
    * Ensure the storage is finalized at shutdown. All LoginManager storage
    * backends must have their own shutdown blocker to finalize properly.
    *
+   * Called before the store is opened, so the blocker waits for
+   * initialization to settle before finalizing: the store holds the only
+   * reference to the authenticator, and UniFFI asserts at `xpcom-shutdown`
+   * that no callback object is still registered.
+   *
    * In the corner case where the shutdown phase has already passed by the time
    * we get here, registering a blocker would throw, so we call `finalize()`
-   * immediately instead.
+   * immediately instead and report that nothing is in place to close a store.
    *
    * @param {object} phase An `AsyncShutdown` phase object. Exposed as a
    *   parameter for testing.
+   * @returns {Promise<boolean>} Whether a blocker was registered.
    */
-  _registerShutdownBlocker(phase = lazy.AsyncShutdown.profileChangeTeardown) {
+  async _registerShutdownBlocker(
+    phase = lazy.AsyncShutdown.profileChangeTeardown
+  ) {
     if (phase.isClosed) {
-      return this.finalize();
+      await this.finalize();
+      return false;
     }
     phase.addBlocker(
       "LoginManagerRustStorage: Interrupt IO operations on login store",
-      async () => this.finalize()
+      async () => {
+        await this.initialize().catch(() => {});
+        await this.finalize();
+      }
     );
-    return Promise.resolve();
+    return true;
   }
 
   /**
@@ -824,6 +1004,24 @@ export class LoginManagerRustStorage {
     }
   }
 
+  /**
+   * The ids of the logins matching matchData, which may only name
+   * CANDIDATE_MATCH_FIELDS. Never needs the encryption key.
+   */
+  async #findCandidateIds(matchData, aOptions) {
+    const candidates =
+      typeof matchData.origin == "string" && matchData.origin
+        ? await this.#storageAdapter.listCandidatesByOrigin(
+            ...originPrefilter(matchData.origin, aOptions)
+          )
+        : await this.#storageAdapter.listCandidates();
+    return candidates
+      .filter(candidate =>
+        matchLogin(candidateToMatchable(candidate), matchData, aOptions)
+      )
+      .map(candidate => candidate.id);
+  }
+
   async #searchLogins(
     matchData,
     includeDeleted = false,
@@ -834,100 +1032,23 @@ export class LoginManagerRustStorage {
       relatedRealms: [],
     }
   ) {
-    function match(aLoginItem) {
-      for (const field in matchData) {
-        const wantedValue = matchData[field];
-
-        // Override the storage field name for some fields due to backwards
-        // compatibility with Sync/storage.
-        let storageFieldName = field;
-        switch (field) {
-          case "formActionOrigin": {
-            storageFieldName = "formSubmitURL";
-            break;
-          }
-          case "origin": {
-            storageFieldName = "hostname";
-            break;
-          }
-        }
-
-        switch (field) {
-          case "formActionOrigin":
-            if (wantedValue != null) {
-              // Historical compatibility requires this special case
-              if (
-                aLoginItem.formSubmitURL == "" ||
-                (wantedValue == "" && Object.keys(matchData).length != 1)
-              ) {
-                break;
-              }
-              if (
-                !lazy.LoginHelper.isOriginMatching(
-                  aLoginItem[storageFieldName],
-                  wantedValue,
-                  aOptions
-                )
-              ) {
-                return false;
-              }
-              break;
-            }
-          // fall through
-          case "origin":
-            if (wantedValue != null) {
-              // needed for formActionOrigin fall through
-              if (
-                !lazy.LoginHelper.isOriginMatching(
-                  aLoginItem[storageFieldName],
-                  wantedValue,
-                  aOptions
-                )
-              ) {
-                return false;
-              }
-              break;
-            }
-          // Normal cases.
-          // fall through
-          case "httpRealm":
-          case "id":
-          case "usernameField":
-          case "passwordField":
-          case "encryptedUsername":
-          case "encryptedPassword":
-          case "guid":
-          case "encType":
-          case "timeCreated":
-          case "timeLastUsed":
-          case "timePasswordChanged":
-          case "timesUsed":
-          case "syncCounter":
-          case "everSynced":
-            if (wantedValue == null && aLoginItem[storageFieldName]) {
-              return false;
-            } else if (aLoginItem[storageFieldName] != wantedValue) {
-              return false;
-            }
-            break;
-          // Fail if caller requests an unknown property.
-          default:
-            throw new Error("Unexpected field: " + field);
-        }
-      }
-      return true;
-    }
-
+    const fields = Object.keys(matchData);
     let candidateLogins;
     if (
-      Object.keys(matchData).every(field => CANDIDATE_MATCH_FIELDS.has(field))
+      fields.length == 1 &&
+      fields[0] == "guid" &&
+      typeof matchData.guid == "string"
     ) {
+      // searchLoginsAsync() drops every other field when given a guid, so a
+      // guid search arrives here alone. Other callers fall through, so that
+      // their other fields are matched before anything is decrypted.
+      // matchLogin() keeps a login on guid only on equality, and guid is unique.
+      candidateLogins = await this.#storageAdapter.getMany([matchData.guid]);
+    } else if (fields.every(field => CANDIDATE_MATCH_FIELDS.has(field))) {
       // Matching the cleartext fields first means that a search without a hit
       // never needs the encryption key, and so never prompts for the primary
       // password. Only the logins that are actually returned get decrypted.
-      const ids = (await this.#storageAdapter.listCandidates())
-        .filter(candidate => match(candidateToMatchable(candidate)))
-        .map(candidate => candidate.id);
+      const ids = await this.#findCandidateIds(matchData, aOptions);
       candidateLogins = ids.length
         ? await this.#storageAdapter.getMany(ids)
         : [];
@@ -944,7 +1065,7 @@ export class LoginManagerRustStorage {
         continue; // skip deleted items
       }
 
-      if (match(login)) {
+      if (matchLogin(login, matchData, aOptions)) {
         foundLogins.push(login);
         foundIds.push(login.guid);
       }
@@ -1040,10 +1161,13 @@ export class LoginManagerRustStorage {
         matchData[field] = loginData[field];
       }
     }
-    const [logins] = await this.#searchLogins(matchData);
+    // Counting the matching candidates, rather than the logins #searchLogins
+    // returns, spares decrypting them, and so prompting for the primary
+    // password.
+    const ids = await this.#findCandidateIds(matchData, {});
 
-    this.log(`Counted ${logins.length} logins.`);
-    return logins.length;
+    this.log(`Counted ${ids.length} logins.`);
+    return ids.length;
   }
 
   async addPotentiallyVulnerablePassword(login) {

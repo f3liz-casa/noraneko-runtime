@@ -75,6 +75,15 @@ class AndroidEmulatorTest(
                 },
             ],
             [
+                ["--max-time"],
+                {
+                    "action": "store",
+                    "dest": "max_time",
+                    "default": None,
+                    "help": "Max time in seconds to wait for the test suite (runjunit only)",
+                },
+            ],
+            [
                 ["--enable-xorigin-tests"],
                 {
                     "action": "store_true",
@@ -149,6 +158,15 @@ class AndroidEmulatorTest(
                 },
             ],
             [
+                ["--enable-isolated-process"],
+                {
+                    "action": "store_true",
+                    "dest": "isolated_process",
+                    "default": False,
+                    "help": "Run the tests with content service isolated process enabled.",
+                },
+            ],
+            [
                 ["--repeat"],
                 {
                     "action": "store",
@@ -216,6 +234,7 @@ class AndroidEmulatorTest(
         self.this_chunk = c.get("this_chunk")
         self.total_chunks = c.get("total_chunks")
         self.timeout_factor = c.get("timeout_factor")
+        self.max_time = c.get("max_time")
         self.xre_path = None
         self.device_serial = "emulator-5554"
         self.log_raw_level = c.get("log_raw_level")
@@ -229,6 +248,7 @@ class AndroidEmulatorTest(
         self.enable_isolated_zygote_process = c.get("enable_isolated_zygote_process")
         self.extra_prefs = c.get("extra_prefs")
         self.test_tags = c.get("test_tags")
+        self.isolated_process = c.get("isolated_process")
 
     def query_abs_dirs(self):
         if self.abs_dirs:
@@ -379,6 +399,9 @@ class AndroidEmulatorTest(
             )
         cmd.extend([f"--setpref={p}" for p in self.extra_prefs])
 
+        if c["isolated_process"]:
+            cmd.append("--enable-isolated-process")
+
         if not (self.verify_enabled or self.per_test_coverage):
             if user_paths or self.test_tags:
                 if user_paths:
@@ -393,6 +416,8 @@ class AndroidEmulatorTest(
 
         if self.timeout_factor is not None:
             cmd.extend(["--timeout-factor", self.timeout_factor])
+        if self.max_time is not None:
+            cmd.extend(["--max-time", self.max_time])
 
         if category not in SUITE_NO_E10S:
             if category in SUITE_DEFAULT_E10S and not c["e10s"]:

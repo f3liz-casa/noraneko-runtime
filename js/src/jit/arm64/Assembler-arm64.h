@@ -90,6 +90,7 @@ static constexpr Register ReturnReg{Registers::x0};
 static constexpr Register64 ReturnReg64(ReturnReg);
 static constexpr Register JSReturnReg{Registers::x2};
 static constexpr Register FramePointer{Registers::fp};
+static constexpr Register LinkRegister{Registers::x30};
 static constexpr ARMRegister FramePointer64{FramePointer, 64};
 static constexpr Register ZeroRegister{Registers::sp};
 static constexpr ARMRegister ZeroRegister64{Registers::sp, 64};
@@ -402,6 +403,10 @@ static constexpr Register RegExpSearcherRegExpReg = CallTempReg0;
 static constexpr Register RegExpSearcherStringReg = CallTempReg1;
 static constexpr Register RegExpSearcherLastIndexReg = CallTempReg2;
 
+// Register used by the bailout tail and bailout stubs during stack
+// reconstruction.
+static constexpr Register BailoutStubHandlerReg = CallTempReg0;
+
 static constexpr Register JSReturnReg_Type = r3;
 static constexpr Register JSReturnReg_Data = r2;
 
@@ -461,6 +466,7 @@ class Assembler : public vixl::Assembler {
                         vixl::LoadLiteralOp op, const LiteralDoc& doc);
   BufferOffset fImmPool64(ARMFPRegister dest, double value);
   BufferOffset fImmPool32(ARMFPRegister dest, float value);
+  BufferOffset fImmPool128(ARMFPRegister dest, const uint8_t* value);
 
   uint32_t currentOffset() const { return nextOffset().getOffset(); }
 

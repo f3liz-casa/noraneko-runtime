@@ -47,6 +47,7 @@ import org.mozilla.fenix.ui.efficiency.core.VerbHost
 import org.mozilla.fenix.ui.efficiency.core.WaitPolicy
 import org.mozilla.fenix.ui.efficiency.core.driveUntil
 import org.mozilla.fenix.ui.efficiency.core.facts
+import org.mozilla.fenix.ui.efficiency.core.groupAbsent
 import org.mozilla.fenix.ui.efficiency.core.groupPresent
 import org.mozilla.fenix.ui.efficiency.core.pageReady
 import org.mozilla.fenix.ui.efficiency.core.reportAround
@@ -387,6 +388,23 @@ abstract class BasePage(protected val composeRule: AndroidComposeTestRule<HomeAc
         return this
     }
 
+    fun mozVerifyElementsByGroupAbsent(group: SelectorGroup): BasePage {
+        val groupLabel = group.toString()
+        val absent =
+            groupAbsent(
+                verb = "verify_group_absent",
+                label = "${pageName}_$groupLabel",
+                selectors = selectorCatalog.selectorsIn(group),
+                policy = WaitPolicy.Poll(),
+                applyPreconditions = false,
+            )
+        if (!absent) {
+            dumpFailure("mozVerifyElementsByGroupAbsent failed: $pageName group '$groupLabel'")
+            assertionFailure("Not all elements in group '$groupLabel' are absent")
+        }
+        return this
+    }
+
     // --- Resolution: selector -> element -----------------------------------------
 
     /**
@@ -587,6 +605,78 @@ abstract class BasePage(protected val composeRule: AndroidComposeTestRule<HomeAc
             dumpOnFailure = false,
             predicate = { Relations.hasCheckedSiblingNamed(it, siblingResName) },
         )
+
+    /**
+     * Assert the switch belonging to a preference row is on/off. [optionSelector] must name the row's title (unique by
+     * text); the row's switch is reached as its cousin, so this addresses one row's toggle even though every row shares
+     * the `switchWidget` id. Toggle a row by clicking the same title selector.
+     */
+    fun mozVerifyOptionSwitchIsChecked(optionSelector: Selector) =
+        require(
+            verb = "verify_option_switch_checked",
+            selector = optionSelector,
+            expectation = "has a checked switch",
+            dumpOnFailure = false,
+            predicate = { Relations.hasCousinSwitch(it, checked = true) },
+        )
+
+    fun mozVerifyOptionSwitchIsNotChecked(optionSelector: Selector) =
+        require(
+            verb = "verify_option_switch_not_checked",
+            selector = optionSelector,
+            expectation = "has an unchecked switch",
+            dumpOnFailure = false,
+            predicate = { Relations.hasCousinSwitch(it, checked = false) },
+        )
+
+    /**
+     * Assert the check box belonging to a preference row is on/off. [optionSelector] must name the row's title (unique
+     * by text); the check box is reached as the title's sibling's child. Use for a `CheckBoxPreference` row (e.g. "Show
+     * in private sessions"), where the control is a check box rather than the switch [mozVerifyOptionSwitchIsChecked]
+     * expects.
+     */
+    fun mozVerifyOptionCheckBoxIsChecked(optionSelector: Selector) =
+        require(
+            verb = "verify_option_checkbox_checked",
+            selector = optionSelector,
+            expectation = "has a checked check box",
+            dumpOnFailure = false,
+            predicate = { Relations.hasSiblingCheckBox(it, checked = true) },
+        )
+
+    fun mozVerifyOptionCheckBoxIsNotChecked(optionSelector: Selector) =
+        require(
+            verb = "verify_option_checkbox_not_checked",
+            selector = optionSelector,
+            expectation = "has an unchecked check box",
+            dumpOnFailure = false,
+            predicate = { Relations.hasSiblingCheckBox(it, checked = false) },
+        )
+
+    /**
+     * Assert [upper] renders above [lower] on screen, comparing their vertical positions. For ordered lists whose rows
+     * are not one queryable collection - the History screen's UiAutomator RecyclerView - where the collection verbs
+     * cannot express "A comes before B". Both elements must be present first; this waits for each before comparing.
+     */
+    fun mozVerifyElementIsAbove(upper: Selector, lower: Selector): BasePage {
+        mozVerify(upper)
+        mozVerify(lower)
+        return reportAround(
+            "verify_element_is_above",
+            "Verifying '${upper.description}' is above '${lower.description}'",
+            dumpOnFailure = true,
+        ) {
+            val upperElement = resolveForOrdering(upper)
+            val lowerElement = resolveForOrdering(lower)
+            if (!Relations.isAbove(upperElement, lowerElement)) {
+                assertionFailure("'${upper.description}' is not above '${lower.description}'")
+            }
+        }
+    }
+
+    private fun resolveForOrdering(selector: Selector): UiElement =
+        (locate(selector, applyPreconditions = false) as? ElementResolution.Found)?.element
+            ?: assertionFailure("'${selector.description}' not found for vertical-order comparison")
 
     // --- Verbs: all the matches at once ------------------------------------------
 

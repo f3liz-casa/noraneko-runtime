@@ -41,7 +41,8 @@ use neqo_http3::{
 use neqo_transport::{
     stream_id::StreamType, streams::SendGroupId, CongestionControl, Connection,
     ConnectionParameters, Error as TransportError, HyStartCssBaseline, Output, OutputBatch,
-    RandomConnectionIdGenerator, SlowStart, StreamId, Version,
+    RandomConnectionIdGenerator, SlowStart, Stats as TransportStats, StreamDataLimit, StreamId,
+    Version,
 };
 use nserror::{
     nsresult, NS_BASE_STREAM_WOULD_BLOCK, NS_ERROR_CONNECTION_REFUSED,
@@ -50,7 +51,7 @@ use nserror::{
     NS_ERROR_NET_RESET, NS_ERROR_NET_TIMEOUT, NS_ERROR_NOT_AVAILABLE, NS_ERROR_NOT_CONNECTED,
     NS_ERROR_OUT_OF_MEMORY, NS_ERROR_SOCKET_ADDRESS_IN_USE, NS_ERROR_UNEXPECTED, NS_OK,
 };
-use nss_rs::{agent::CertificateCompressor, init, PRErrorCode};
+use nss_rs::{cert::CertificateCompressor, init, PRErrorCode};
 use nsstring::{nsACString, nsCString};
 use thin_vec::ThinVec;
 use uuid::Uuid;
@@ -167,6 +168,26 @@ extern "C" {
     pub fn moz_netaddr_get_network_order_ip(arg: *const NetAddr) -> u32;
     pub fn moz_netaddr_get_ipv6(arg: *const NetAddr) -> *const u8;
     pub fn moz_netaddr_get_network_order_port(arg: *const NetAddr) -> u16;
+}
+
+extern "C" {
+    fn moz_mock_network_udp_send_would_block(family: u16, addr: *const u8, port: u16) -> bool;
+}
+
+fn mock_udp_send_would_block(dest: SocketAddr) -> bool {
+    if !static_prefs::pref!("network.socket.attach_mock_network_layer") {
+        return false;
+    }
+    unsafe {
+        match dest.ip() {
+            IpAddr::V4(v4) => {
+                moz_mock_network_udp_send_would_block(AF_INET_U16, v4.octets().as_ptr(), dest.port())
+            }
+            IpAddr::V6(v6) => {
+                moz_mock_network_udp_send_would_block(AF_INET6_U16, v6.octets().as_ptr(), dest.port())
+            }
+        }
+    }
 }
 
 fn netaddr_to_socket_addr(arg: *const NetAddr) -> Result<SocketAddr, nsresult> {
@@ -490,7 +511,7 @@ impl NeqoHttp3Conn {
             .congestion_control(cc_algorithm)
             .slow_start(slow_start)
             .max_data(max_data)
-            .max_stream_data(StreamType::BiDi, false, max_stream_data)
+            .max_stream_data(StreamDataLimit::BiDiLocal, max_stream_data)
             .grease(static_prefs::pref!("security.tls.grease_http3_enable"))
             .sni_slicing(static_prefs::pref!("network.http.http3.sni-slicing"))
             .idle_timeout(Duration::from_secs(idle_timeout.into()))
@@ -1396,7 +1417,12 @@ pub extern "C" fn neqo_http3conn_process_output_and_send(
                     };
                 }
 
-                match conn.socket.as_mut().expect("non NSPR IO").send(&dg) {
+                let send_result = if mock_udp_send_would_block(dg.destination()) {
+                    Err(io::Error::from(io::ErrorKind::WouldBlock))
+                } else {
+                    conn.socket.as_mut().expect("non NSPR IO").send(&dg)
+                };
+                match send_result {
                     Ok(()) => {}
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         conn.increment_would_block_tx();
@@ -1706,7 +1732,6 @@ const fn crypto_error_code(err: &nss_rs::Error) -> u64 {
         nss_rs::Error::Aead => 1,
         nss_rs::Error::CertificateLoading => 2,
         nss_rs::Error::CreateSslSocket => 3,
-        nss_rs::Error::Hkdf => 4,
         nss_rs::Error::Internal => 5,
         nss_rs::Error::IntegerOverflow => 6,
         nss_rs::Error::InvalidEpoch => 7,
@@ -2215,6 +2240,7 @@ pub extern "C" fn neqo_http3conn_event(
             Http3ClientEvent::DataWritable { stream_id } => Http3Event::DataWritable {
                 stream_id: stream_id.as_u64(),
             },
+            Http3ClientEvent::OutgoingDatagramSpaceAvailable => Http3Event::NoEvent,
             Http3ClientEvent::StopSending { stream_id, error } => Http3Event::StopSending {
                 stream_id: stream_id.as_u64(),
                 error,
@@ -2587,12 +2613,17 @@ pub extern "C" fn neqo_http3conn_connect_udp_create_session(
     }
 }
 
+/// # Safety
+///
+/// `stats` must be either null or point to a valid, writable
+/// `WebTransportSessionStats`.
 #[no_mangle]
-pub extern "C" fn neqo_http3conn_webtransport_close_session(
+pub unsafe extern "C" fn neqo_http3conn_webtransport_close_session(
     conn: &mut NeqoHttp3Conn,
     session_id: u64,
     error: u32,
     message: &nsACString,
+    stats: *mut WebTransportSessionStats,
 ) -> nsresult {
     let Ok(message_tmp) = str::from_utf8(message) else {
         return NS_ERROR_INVALID_ARG;
@@ -2603,7 +2634,17 @@ pub extern "C" fn neqo_http3conn_webtransport_close_session(
         message_tmp,
         Instant::now(),
     ) {
-        Ok(_) => NS_OK,
+        Ok(session_stats) => {
+            if !stats.is_null() {
+                unsafe {
+                    let transport_stats = conn.conn.transport_stats();
+                    populate_transport_stats(&mut *stats, &transport_stats);
+
+                    (*stats).datagrams_expired_outgoing = session_stats.datagrams_expired_outgoing;
+                }
+            }
+            NS_OK
+        }
         Err(_) => NS_ERROR_INVALID_ARG,
     }
 }
@@ -2861,6 +2902,99 @@ pub unsafe extern "C" fn neqo_http3conn_export_keying_material(
         Ok(()) => NS_OK,
         Err(_) => NS_ERROR_NOT_CONNECTED,
     }
+}
+
+#[repr(C)]
+pub struct WebTransportSessionStats {
+    // Total bytes sent/received at QUIC transport level (includes framing and
+    // retransmissions; neqo does not expose payload-only byte counts separately).
+    pub bytes_sent_total: u64,
+    pub bytes_received_total: u64,
+    // Transport-level details
+    pub bytes_acked: u64,
+    pub packets_sent: u64,
+    pub bytes_lost: u64,
+    pub packets_lost: u64,
+    pub packets_received: u64,
+    // RTT
+    pub smoothed_rtt: f64,
+    pub rtt_variation: f64,
+    pub min_rtt: f64,
+    // Congestion-derived
+    pub estimated_send_rate: i64,  // bits/sec, -1 means null/unknown
+    pub at_send_capacity: bool,
+    // Datagram stats
+    pub datagrams_expired_outgoing: u64,
+    // Firefox does not support WebTransport connection pooling, so this
+    // connection-level counter is a valid per-session stand-in.
+    pub datagrams_lost_outgoing: u64,
+}
+
+// Shared by neqo_http3conn_webtransport_close_session and
+// neqo_http3conn_webtransport_session_stats, which both need to translate
+// the same connection-level TransportStats into a WebTransportSessionStats.
+fn populate_transport_stats(dst: &mut WebTransportSessionStats, transport_stats: &TransportStats) {
+    // Transport-level totals (for spec)
+    dst.bytes_sent_total = (transport_stats.bytes_acked
+        + transport_stats.cc.bytes_in_flight
+        + transport_stats.bytes_lost) as u64;
+    dst.bytes_received_total = transport_stats.bytes_rx as u64;
+
+    // Transport-level details
+    dst.bytes_acked = transport_stats.bytes_acked as u64;
+    dst.packets_sent = transport_stats.packets_tx as u64;
+    dst.bytes_lost = transport_stats.bytes_lost as u64;
+    dst.packets_lost = transport_stats.lost as u64;
+    dst.packets_received = transport_stats.packets_rx as u64;
+
+    // RTT stats (convert from Duration to milliseconds)
+    dst.smoothed_rtt = transport_stats.rtt.as_secs_f64() * 1000.0;
+    dst.rtt_variation = transport_stats.rttvar.as_secs_f64() * 1000.0;
+    dst.min_rtt = transport_stats.min_rtt.as_secs_f64() * 1000.0;
+
+    // Congestion-derived stats
+    if transport_stats.rtt.as_secs_f64() > 0.0 {
+        // estimated_send_rate in bits/sec = (cwnd * 8) / rtt_seconds
+        let rtt_seconds = transport_stats.rtt.as_secs_f64();
+        dst.estimated_send_rate = ((transport_stats.cc.cwnd as f64 * 8.0) / rtt_seconds) as i64;
+    } else {
+        dst.estimated_send_rate = -1; // null/unknown
+    }
+    dst.at_send_capacity = transport_stats.cc.bytes_in_flight >= transport_stats.cc.cwnd;
+
+    dst.datagrams_lost_outgoing = transport_stats.datagram_tx.lost as u64;
+}
+
+#[no_mangle]
+pub extern "C" fn neqo_http3conn_webtransport_session_stats(
+    conn: &NeqoHttp3Conn,
+    session_id: u64,
+    stats: &mut WebTransportSessionStats,
+) -> nsresult {
+    match conn.conn.webtransport_session_stats(StreamId::from(session_id)) {
+        Ok(session_stats) => {
+            let transport_stats = conn.conn.transport_stats();
+            populate_transport_stats(stats, &transport_stats);
+
+            stats.datagrams_expired_outgoing = session_stats.datagrams_expired_outgoing;
+
+            NS_OK
+        }
+        Err(_) => NS_ERROR_UNEXPECTED,
+    }
+}
+
+/// Fill in only the connection-level part of the stats.
+///
+/// Used when the session is already gone (neqo tears it down before the
+/// close event is drained), so the session-scoped datagram counters are
+/// unavailable.
+#[no_mangle]
+pub extern "C" fn neqo_http3conn_webtransport_transport_stats(
+    conn: &NeqoHttp3Conn,
+    stats: &mut WebTransportSessionStats,
+) {
+    populate_transport_stats(stats, &conn.conn.transport_stats());
 }
 
 /// Convert a [`std::io::Error`] into a [`nsresult`].

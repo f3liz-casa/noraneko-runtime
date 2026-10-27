@@ -7,6 +7,8 @@ subsuite = "taskgraph"
 
 ["test_actions_util.py"]
 
+["test_android_taskgraph.py"]
+
 ["test_decision.py"]
 
 ["test_files_changed.py"]
@@ -25,11 +27,17 @@ subsuite = "taskgraph"
 
 ["test_transforms_build_schedules.py"]
 
+["test_transforms_duplicate.py"]
+
 ["test_transforms_job.py"]
 
 ["test_transforms_job_common.py"]
 
+["test_transforms_mozconfig.py"]
+
 ["test_transforms_perftest.py"]
+
+["test_transforms_source_test.py"]
 
 ["test_transforms_task.py"]
 
@@ -46,6 +54,8 @@ subsuite = "taskgraph"
 ["test_util_partials.py"]
 
 ["test_util_runnable_jobs.py"]
+
+["test_util_sparse_profiles.py"]
 
 ["test_util_templates.py"]
 

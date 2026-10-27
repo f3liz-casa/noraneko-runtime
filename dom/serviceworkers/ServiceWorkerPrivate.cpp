@@ -63,6 +63,7 @@
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/net/CookieJarSettings.h"
 #include "mozilla/net/CookieService.h"
+#include "mozilla/net/HttpBaseChannel.h"
 #include "mozilla/net/NeckoChannelParams.h"
 #include "nsContentUtils.h"
 #include "nsDebug.h"
@@ -82,6 +83,7 @@
 #include "nsISupportsImpl.h"
 #include "nsISupportsPriority.h"
 #include "nsIURI.h"
+#include "nsIUploadChannel.h"
 #include "nsIUploadChannel2.h"
 #include "nsNetUtil.h"
 #include "nsPrintfCString.h"
@@ -212,13 +214,22 @@ ServiceWorkerPrivate::PendingPushEvent::PendingPushEvent(
   AssertIsOnMainThread();
 }
 
+ServiceWorkerPrivate::PendingPushEvent::~PendingPushEvent() {
+  mPromiseHolder.RejectIfExists(NS_ERROR_DOM_ABORT_ERR, __func__);
+}
+
 nsresult ServiceWorkerPrivate::PendingPushEvent::Send() {
   AssertIsOnMainThread();
   MOZ_ASSERT(mOwner);
   MOZ_ASSERT(mOwner->mInfo);
 
-  return mOwner->SendPushEventInternal(std::move(mRegistration),
-                                       std::move(mArgs));
+  mOwner->SendPushEventInternal(std::move(mRegistration), std::move(mArgs))
+      ->ChainTo(mPromiseHolder.Steal(), __func__);
+  return NS_OK;
+}
+
+RefPtr<PushHandledPromise> ServiceWorkerPrivate::PendingPushEvent::Promise() {
+  return mPromiseHolder.Ensure(__func__);
 }
 
 ServiceWorkerPrivate::PendingFetchEvent::PendingFetchEvent(
@@ -428,8 +439,9 @@ Result<IPCInternalRequest, nsresult> GetIPCInternalRequest(
       Nothing(), -1, alternativeDataType, contentPolicyType, internalPriority,
       referrer, referrerPolicy, environmentReferrerPolicy, requestMode,
       requestCredentials, cacheMode, requestRedirect, requestPriority,
-      integrity, false, fragment, principalInfo, interceptionPrincipalInfo,
-      contentPolicyType, redirectChain, isThirdPartyChannel, embedderPolicy);
+      integrity, /* keepalive */ false, /* hasStreamBody */ false, fragment,
+      principalInfo, interceptionPrincipalInfo, contentPolicyType,
+      redirectChain, isThirdPartyChannel, embedderPolicy);
 }
 
 nsresult MaybeStoreStreamForBackgroundThread(nsIInterceptedChannel* aChannel,
@@ -442,8 +454,20 @@ nsresult MaybeStoreStreamForBackgroundThread(nsIInterceptedChannel* aChannel,
 
   if (uploadChannel) {
     nsCOMPtr<nsIInputStream> uploadStream;
-    MOZ_TRY(uploadChannel->CloneUploadStream(&aIPCRequest.bodySize(),
-                                             getter_AddRefs(uploadStream)));
+    RefPtr<net::HttpBaseChannel> httpBase = do_QueryObject(channel);
+    if (httpBase && httpBase->UploadStreamIsStreaming()) {
+      // Transfer streaming uploads to the worker; fallback returns its unread
+      // body instead of replaying a clone. The channel gives up its reference
+      // so that the stream, which serialization may drain and close
+      // It is only restored if the worker returns it.
+      uploadStream = httpBase->TakeUploadStream();
+      // The length is only known once the stream ends.
+      aIPCRequest.bodySize() = -1;
+      aIPCRequest.hasStreamBody() = !!uploadStream;
+    } else {
+      MOZ_TRY(uploadChannel->CloneUploadStream(&aIPCRequest.bodySize(),
+                                               getter_AddRefs(uploadStream)));
+    }
 
     if (uploadStream) {
       Maybe<BodyStreamVariant>& body = aIPCRequest.body();
@@ -792,7 +816,7 @@ nsresult ServiceWorkerPrivate::Initialize() {
 
       cjsData, domain,
       /* isSecureContext */ true,
-      /* clientInfo*/ Some(ipcClientInfo.ToIPC()),
+      /* clientInfo */ ipcClientInfo.ToIPC(),
 
       // The RemoteWorkerData CTOR doesn't allow to set the referrerInfo via
       // already_AddRefed<>. Let's set it to null.
@@ -829,11 +853,9 @@ void ServiceWorkerPrivate::RegenerateClientInfo() {
   // subsequent spawns. mClientInfo itself must not carry policyContainerArgs
   // (see Initialize() comment), so we apply it only to the IPC copy.
   nsILoadInfo::IPAddressSpace ipAddressSpace = nsILoadInfo::Unknown;
-  if (mRemoteWorkerData.clientInfo().isSome()) {
-    ClientInfo current(mRemoteWorkerData.clientInfo().ref());
-    if (const auto& args = current.GetPolicyContainerArgs()) {
-      ipAddressSpace = args->ipAddressSpace();
-    }
+  ClientInfo current(mRemoteWorkerData.clientInfo());
+  if (const auto& args = current.GetPolicyContainerArgs()) {
+    ipAddressSpace = args->ipAddressSpace();
   }
 
   mClientInfo = ClientManager::CreateInfo(
@@ -844,9 +866,9 @@ void ServiceWorkerPrivate::RegenerateClientInfo() {
     mozilla::ipc::PolicyContainerArgs policyContainerArgs;
     policyContainerArgs.ipAddressSpace() = ipAddressSpace;
     ipcClientInfo.SetPolicyContainerArgs(policyContainerArgs);
-    mRemoteWorkerData.clientInfo().ref() = ipcClientInfo.ToIPC();
+    mRemoteWorkerData.clientInfo() = ipcClientInfo.ToIPC();
   } else {
-    mRemoteWorkerData.clientInfo().ref() = mClientInfo.ref().ToIPC();
+    mRemoteWorkerData.clientInfo() = mClientInfo.ref().ToIPC();
   }
 }
 
@@ -875,8 +897,10 @@ nsresult ServiceWorkerPrivate::CheckScriptEvaluation(
 
   RefPtr<RAIIActorPtrHolder> holder = mControllerChild;
 
-  return ExecServiceWorkerOp(
-      ServiceWorkerCheckScriptEvaluationOpArgs(), aLifetimeExtension,
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
+      ServiceWorkerCheckScriptEvaluationOpArgs(), aLifetimeExtension);
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [self = std::move(self), holder = std::move(holder),
        callback = aCallback](ServiceWorkerOpResult&& aResult) mutable {
         if (aResult.type() == ServiceWorkerOpResult::
@@ -944,6 +968,8 @@ nsresult ServiceWorkerPrivate::CheckScriptEvaluation(
         callback->SetResult(false);
         callback->Run();
       });
+
+  return NS_OK;
 }
 
 nsresult ServiceWorkerPrivate::SendMessageEvent(
@@ -966,10 +992,16 @@ nsresult ServiceWorkerPrivate::SendMessageEvent(
 
   scopeExit.release();
 
-  return ExecServiceWorkerOp(
-      std::move(args), aLifetimeExtension, [](ServiceWorkerOpResult&& aResult) {
+  RefPtr<ServiceWorkerOpPromise> opPromise =
+      ExecServiceWorkerOp(std::move(args), aLifetimeExtension);
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
+      [](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
-      });
+      },
+      [] {});
+
+  return NS_OK;
 }
 
 nsresult ServiceWorkerPrivate::SendLifeCycleEvent(
@@ -979,9 +1011,11 @@ nsresult ServiceWorkerPrivate::SendLifeCycleEvent(
   AssertIsOnMainThread();
   MOZ_ASSERT(aCallback);
 
-  return ExecServiceWorkerOp(
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
       ServiceWorkerLifeCycleEventOpArgs(nsString(aEventType)),
-      aLifetimeExtension,
+      aLifetimeExtension);
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [callback = aCallback](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
 
@@ -992,6 +1026,8 @@ nsresult ServiceWorkerPrivate::SendLifeCycleEvent(
         callback->SetResult(false);
         callback->Run();
       });
+
+  return NS_OK;
 }
 
 nsresult ServiceWorkerPrivate::SendCookieChangeEvent(
@@ -1032,8 +1068,11 @@ nsresult ServiceWorkerPrivate::SendCookieChangeEventInternal(
     ServiceWorkerCookieChangeEventOpArgs&& aArgs) {
   MOZ_ASSERT(aRegistration);
 
-  return ExecServiceWorkerOp(
-      std::move(aArgs), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}),
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
+      std::move(aArgs),
+      ServiceWorkerLifetimeExtension(FullLifetimeExtension{}));
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [registration = aRegistration](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
 
@@ -1042,9 +1081,11 @@ nsresult ServiceWorkerPrivate::SendCookieChangeEventInternal(
       [registration = aRegistration]() {
         registration->MaybeScheduleTimeCheckAndUpdate();
       });
+
+  return NS_OK;
 }
 
-nsresult ServiceWorkerPrivate::SendPushEvent(
+RefPtr<PushHandledPromise> ServiceWorkerPrivate::SendPushEvent(
     const nsAString& aMessageId, const Maybe<nsTArray<uint8_t>>& aData,
     RefPtr<ServiceWorkerRegistrationInfo> aRegistration) {
   AssertIsOnMainThread();
@@ -1054,7 +1095,8 @@ nsresult ServiceWorkerPrivate::SendPushEvent(
   // failed, and unlike the ops below we dereference it before delegating to
   // SpawnWorkerIfNeeded(), which is where that is normally caught.
   if (NS_WARN_IF(!mInfo)) {
-    return NS_ERROR_DOM_INVALID_STATE_ERR;
+    return PushHandledPromise::CreateAndReject(NS_ERROR_DOM_INVALID_STATE_ERR,
+                                               __func__);
   }
 
   ServiceWorkerPushEventOpArgs args;
@@ -1067,13 +1109,13 @@ nsresult ServiceWorkerPrivate::SendPushEvent(
   }
 
   if (mInfo->State() == ServiceWorkerState::Activating) {
-    UniquePtr<PendingFunctionalEvent> pendingEvent =
-        MakeUnique<PendingPushEvent>(this, std::move(aRegistration),
-                                     std::move(args));
+    UniquePtr<PendingPushEvent> pendingEvent = MakeUnique<PendingPushEvent>(
+        this, std::move(aRegistration), std::move(args));
+    RefPtr<PushHandledPromise> promise = pendingEvent->Promise();
 
     mPendingFunctionalEvents.AppendElement(std::move(pendingEvent));
 
-    return NS_OK;
+    return promise;
   }
 
   MOZ_ASSERT(mInfo->State() == ServiceWorkerState::Activated);
@@ -1081,20 +1123,31 @@ nsresult ServiceWorkerPrivate::SendPushEvent(
   return SendPushEventInternal(std::move(aRegistration), std::move(args));
 }
 
-nsresult ServiceWorkerPrivate::SendPushEventInternal(
+RefPtr<PushHandledPromise> ServiceWorkerPrivate::SendPushEventInternal(
     RefPtr<ServiceWorkerRegistrationInfo>&& aRegistration,
     ServiceWorkerPushEventOpArgs&& aArgs) {
   MOZ_ASSERT(aRegistration);
 
-  return ExecServiceWorkerOp(
-      std::move(aArgs), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}),
-      [registration = aRegistration](ServiceWorkerOpResult&& aResult) {
-        MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
+      std::move(aArgs),
+      ServiceWorkerLifetimeExtension(FullLifetimeExtension{}));
 
+  return opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
+      [registration = std::move(aRegistration)](
+          ServiceWorkerOpPromise::ResolveOrRejectValue&& aResult)
+          -> RefPtr<PushHandledPromise> {
         registration->MaybeScheduleTimeCheckAndUpdate();
-      },
-      [registration = aRegistration]() {
-        registration->MaybeScheduleTimeCheckAndUpdate();
+
+        if (aResult.IsReject()) {
+          return PushHandledPromise::CreateAndReject(aResult.RejectValue(),
+                                                     __func__);
+        }
+
+        MOZ_ASSERT(aResult.ResolveValue().type() ==
+                   ServiceWorkerOpResult::Tnsresult);
+
+        return PushHandledPromise::CreateAndResolve(Ok(), __func__);
       });
 }
 
@@ -1112,11 +1165,16 @@ nsresult ServiceWorkerPrivate::SendPushSubscriptionChangeEvent(
     args.oldSubscription().emplace(oldSubscription);
   }
 
-  return ExecServiceWorkerOp(
-      std::move(args), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}),
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
+      std::move(args), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}));
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
-      });
+      },
+      [] {});
+
+  return NS_OK;
 }
 
 nsresult ServiceWorkerPrivate::SendNotificationClickEvent(
@@ -1129,11 +1187,16 @@ nsresult ServiceWorkerPrivate::SendNotificationClickEvent(
 
   ServiceWorkerNotificationEventOpArgs args(std::move(clickArgs));
 
-  return ExecServiceWorkerOp(
-      std::move(args), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}),
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
+      std::move(args), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}));
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
-      });
+      },
+      [] {});
+
+  return NS_OK;
 }
 
 nsresult ServiceWorkerPrivate::SendNotificationCloseEvent(
@@ -1145,11 +1208,16 @@ nsresult ServiceWorkerPrivate::SendNotificationCloseEvent(
 
   ServiceWorkerNotificationEventOpArgs args(std::move(closeArgs));
 
-  return ExecServiceWorkerOp(
-      std::move(args), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}),
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
+      std::move(args), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}));
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
-      });
+      },
+      [] {});
+
+  return NS_OK;
 }
 
 nsresult ServiceWorkerPrivate::SendFetchEvent(
@@ -1304,8 +1372,10 @@ ServiceWorkerPrivate::WakeForExtensionAPIEvent(
   auto promise =
       MakeRefPtr<PromiseExtensionWorkerHasListener::Private>(__func__);
 
-  nsresult rv = ExecServiceWorkerOp(
-      std::move(args), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}),
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
+      std::move(args), ServiceWorkerLifetimeExtension(FullLifetimeExtension{}));
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [promise](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(
             aResult.type() ==
@@ -1314,10 +1384,6 @@ ServiceWorkerPrivate::WakeForExtensionAPIEvent(
         promise->Resolve(result.extensionAPIEventListenerWasAdded(), __func__);
       },
       [promise]() { promise->Reject(NS_ERROR_FAILURE, __func__); });
-
-  if (NS_FAILED(rv)) {
-    promise->Reject(rv, __func__);
-  }
 
   RefPtr<PromiseExtensionWorkerHasListener> outPromise(promise);
   return outPromise;
@@ -1445,20 +1511,18 @@ void ServiceWorkerPrivate::UpdateState(ServiceWorkerState aState) {
     return;
   }
 
-  nsresult rv = ExecServiceWorkerOp(
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
       ServiceWorkerUpdateStateOpArgs(aState),
       // Lifecycle events potentially update the lifetime for ServiceWorkers
       // controlling a page, but there's no need to update the lifetime to tell
       // a SW that its state has changed.
-      ServiceWorkerLifetimeExtension(NoLifetimeExtension{}),
+      ServiceWorkerLifetimeExtension(NoLifetimeExtension{}));
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
-      });
-
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    Shutdown();
-    return;
-  }
+      },
+      [] {});
 
   if (aState != ServiceWorkerState::Activated) {
     return;
@@ -1479,13 +1543,17 @@ void ServiceWorkerPrivate::UpdateIsOnContentBlockingAllowList(
     return;
   }
 
-  ExecServiceWorkerOp(
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
       ServiceWorkerUpdateIsOnContentBlockingAllowListOpArgs(
           aOnContentBlockingAllowList),
-      ServiceWorkerLifetimeExtension(NoLifetimeExtension{}),
+      ServiceWorkerLifetimeExtension(NoLifetimeExtension{}));
+
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
-      });
+      },
+      [] {});
 }
 
 nsresult ServiceWorkerPrivate::GetDebugger(nsIWorkerDebugger** aResult) {
@@ -2031,13 +2099,16 @@ RefPtr<GenericNonExclusivePromise> ServiceWorkerPrivate::ShutdownInternal(
   RefPtr<GenericNonExclusivePromise::Private> promise =
       new GenericNonExclusivePromise::Private(__func__);
 
-  (void)ExecServiceWorkerOp(
+  RefPtr<ServiceWorkerOpPromise> opPromise = ExecServiceWorkerOp(
       ServiceWorkerTerminateWorkerOpArgs(aShutdownStateId),
       // It doesn't make sense to extend the lifetime in this case.  This will
       // also ensure that we don't try and spawn the ServiceWorker, but as our
       // assert at the top of this method makes clear, we don't expect to be in
       // that situation.
-      ServiceWorkerLifetimeExtension(NoLifetimeExtension{}),
+      ServiceWorkerLifetimeExtension(NoLifetimeExtension{}));
+
+  opPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
       [promise](ServiceWorkerOpResult&& aResult) {
         MOZ_ASSERT(aResult.type() == ServiceWorkerOpResult::Tnsresult);
         promise->Resolve(true, __func__);
@@ -2063,24 +2134,20 @@ RefPtr<GenericNonExclusivePromise> ServiceWorkerPrivate::ShutdownInternal(
   return promise;
 }
 
-nsresult ServiceWorkerPrivate::ExecServiceWorkerOp(
+RefPtr<ServiceWorkerOpPromise> ServiceWorkerPrivate::ExecServiceWorkerOp(
     ServiceWorkerOpArgs&& aArgs,
-    const ServiceWorkerLifetimeExtension& aLifetimeExtension,
-    std::function<void(ServiceWorkerOpResult&&)>&& aSuccessCallback,
-    std::function<void()>&& aFailureCallback) {
+    const ServiceWorkerLifetimeExtension& aLifetimeExtension) {
   AssertIsOnMainThread();
   MOZ_ASSERT(
       aArgs.type() !=
           ServiceWorkerOpArgs::TParentToChildServiceWorkerFetchEventOpArgs,
       "FetchEvent operations should be sent through FetchEventOp(Proxy) "
       "actors!");
-  MOZ_ASSERT(aSuccessCallback);
 
   nsresult rv = SpawnWorkerIfNeeded(aLifetimeExtension);
 
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    aFailureCallback();
-    return rv;
+    return ServiceWorkerOpPromise::CreateAndReject(rv, __func__);
   }
 
   MOZ_ASSERT(mControllerChild);
@@ -2096,22 +2163,15 @@ nsresult ServiceWorkerPrivate::ExecServiceWorkerOp(
    * NOTE: moving `aArgs` won't do anything until IPDL `SendMethod()` methods
    * can accept rvalue references rather than just const references.
    */
-  mControllerChild->get()->SendExecServiceWorkerOp(aArgs)->Then(
-      GetCurrentSerialEventTarget(), __func__,
-      [self = std::move(self), holder = std::move(holder),
-       token = std::move(token), onSuccess = std::move(aSuccessCallback),
-       onFailure = std::move(aFailureCallback)](
-          PRemoteWorkerControllerChild::ExecServiceWorkerOpPromise::
-              ResolveOrRejectValue&& aResult) {
-        if (NS_WARN_IF(aResult.IsReject())) {
-          onFailure();
-          return;
-        }
+  RefPtr<ServiceWorkerOpPromise> result =
+      mControllerChild->get()->SendExecServiceWorkerOp(aArgs)->MapErr(
+          GetCurrentSerialEventTarget(), __func__,
+          [self = std::move(self), holder = std::move(holder),
+           token = std::move(token)](
+              PRemoteWorkerControllerChild::ExecServiceWorkerOpPromise::
+                  RejectValueType&& aResult) { return NS_ERROR_FAILURE; });
 
-        onSuccess(std::move(aResult.ResolveValue()));
-      });
-
-  return NS_OK;
+  return result;
 }
 
 }  // namespace mozilla::dom

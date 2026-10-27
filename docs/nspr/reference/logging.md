@@ -14,10 +14,10 @@ NSPR also provides "assert"-style macros and functions to aid in
 application debugging.
 
 - [Conditional Compilation and
-  Execution](#Conditional_Compilation_and_Execution)
-- [Log Types and Variables](#Log_Types_and_Variables)
-- [Logging Functions and Macros](#Logging_Functions_and_Macros)
-- [Use Example](#Use_Example)
+  Execution](#conditional-compilation-and-execution)
+- [Log Types and Variables](#log-types-and-variables)
+- [Logging Functions and Macros](#logging-functions-and-macros)
+- [Use Example](#use-example)
 
 (conditional-compilation-and-execution)=
 
@@ -46,13 +46,13 @@ execution time.
 Two types supporting NSPR logging are exposed in the API:
 
 > - `PRLogModuleInfo`
-> - {ref}`PRLogModuleLevel`
+> - {doc}`prlogmodulelevel`
 
 Two environment variables control the behavior of logging at execution
 time:
 
-> - {ref}`NSPR_LOG_MODULES`
-> - {ref}`NSPR_LOG_FILE`
+> - {doc}`nspr_log_modules`
+> - {doc}`nspr_log_file`
 
 (logging-functions-and-macros)=
 
@@ -60,15 +60,15 @@ time:
 
 The functions and macros for logging are:
 
-> - {ref}`PR_NewLogModule`
+> - {doc}`prlogmoduleinfo`
 > - `PR_SetLogFile`
 > - `PR_SetLogBuffering`
 > - `PR_LogPrint`
 > - `PR_LogFlush`
 > - `PR_LOG_TEST`
 > - `PR_LOG`
-> - {ref}`PR_Assert`
-> - {ref}`PR_STATIC_ASSERT` (new in NSPR 4.6.6XXX this hasn't been released
+> - {doc}`pr_assert`
+> - {doc}`pr_static_assert` (new in NSPR 4.6.6XXX this hasn't been released
 >   yet; the number is a logical guess)
 > - `PR_NOT_REACHED`
 

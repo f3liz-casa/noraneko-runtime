@@ -44,91 +44,108 @@ function getL10n() {
 }
 
 const FIREFOX_REFRESH_MIGRATOR_KEYS = new Set([
-  "firefox",
-  "firefox-selectable-profile",
+  AppConstants.MOZ_APP_NAME,
+  AppConstants.MOZ_APP_NAME + "-selectable-profile",
 ]);
 
 const MIGRATOR_MODULES = Object.freeze({
   EdgeProfileMigrator: {
-    moduleURI: "resource:///modules/EdgeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/EdgeProfileMigrator.sys.mjs",
     platforms: ["win"],
   },
   FirefoxProfileMigrator: {
-    moduleURI: "resource:///modules/FirefoxProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/FirefoxProfileMigrator.sys.mjs",
     platforms: ["linux", "macosx", "win"],
   },
   FirefoxSelectableProfileMigrator: {
-    moduleURI: "resource:///modules/FirefoxSelectableProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/FirefoxSelectableProfileMigrator.sys.mjs",
     platforms: ["linux", "macosx", "win"],
   },
   SafariProfileMigrator: {
-    moduleURI: "resource:///modules/SafariProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/SafariProfileMigrator.sys.mjs",
     platforms: ["macosx"],
   },
 
   // The following migrators are all variants of the ChromeProfileMigrator
 
   BraveProfileMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["linux", "macosx", "win"],
   },
   CanaryProfileMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["macosx", "win"],
   },
   ChromeProfileMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["linux", "macosx", "win"],
   },
   ChromeBetaMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["linux", "win"],
   },
   ChromeDevMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["linux"],
   },
   ChromiumProfileMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["linux", "macosx", "win"],
   },
   Chromium360seMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["win"],
   },
   ChromiumEdgeMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["linux", "macosx", "win"],
   },
   ChromiumEdgeBetaMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["macosx", "win"],
   },
   OperaProfileMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["linux", "macosx", "win"],
   },
   VivaldiProfileMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["linux", "macosx", "win"],
   },
   OperaGXProfileMigrator: {
-    moduleURI: "resource:///modules/ChromeProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/ChromeProfileMigrator.sys.mjs",
     platforms: ["macosx", "win"],
   },
 
   InternalTestingProfileMigrator: {
-    moduleURI: "resource:///modules/InternalTestingProfileMigrator.sys.mjs",
+    moduleURI:
+      "moz-src:///browser/components/migration/InternalTestingProfileMigrator.sys.mjs",
     platforms: ["linux", "macosx", "win"],
   },
 });
 
 const FILE_MIGRATOR_MODULES = Object.freeze({
   PasswordFileMigrator: {
-    moduleURI: "resource:///modules/FileMigrators.sys.mjs",
+    moduleURI: "moz-src:///browser/components/migration/FileMigrators.sys.mjs",
   },
   BookmarksFileMigrator: {
-    moduleURI: "resource:///modules/FileMigrators.sys.mjs",
+    moduleURI: "moz-src:///browser/components/migration/FileMigrators.sys.mjs",
   },
 });
 
@@ -148,11 +165,13 @@ class MigrationUtils {
 
     ChromeUtils.registerWindowActor("MigrationWizard", {
       parent: {
-        esModuleURI: "resource:///actors/MigrationWizardParent.sys.mjs",
+        esModuleURI:
+          "moz-src:///browser/components/migration/MigrationWizardParent.sys.mjs",
       },
 
       child: {
-        esModuleURI: "resource:///actors/MigrationWizardChild.sys.mjs",
+        esModuleURI:
+          "moz-src:///browser/components/migration/MigrationWizardChild.sys.mjs",
         events: {
           "MigrationWizard:RequestState": { wantUntrusted: true },
           "MigrationWizard:BeginMigration": { wantUntrusted: true },
@@ -509,8 +528,8 @@ class MigrationUtils {
       "Internet Explorer": "ie",
       "Microsoft Edge": "edge",
       Safari: "safari",
-      Firefox: "firefox",
-      Nightly: "firefox",
+      [AppConstants.MOZ_APP_BASENAME]: AppConstants.MOZ_APP_NAME,
+      Nightly: AppConstants.MOZ_APP_NAME,
       Opera: "opera",
       Vivaldi: "vivaldi",
       "Opera GX": "opera-gx",
@@ -530,8 +549,8 @@ class MigrationUtils {
         .getApplicationDescription("http");
       key = APP_DESC_TO_KEY[browserDesc] || "";
       // Handle devedition, as well as "FirefoxNightly" on OS X.
-      if (!key && browserDesc.startsWith("Firefox")) {
-        key = "firefox";
+      if (!key && browserDesc.startsWith(AppConstants.MOZ_APP_BASENAME)) {
+        key = AppConstants.MOZ_APP_NAME;
       }
     } catch (ex) {
       console.error("Could not detect default browser: ", ex);

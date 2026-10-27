@@ -1369,7 +1369,8 @@ tls13_HandleKeyUpdate(sslSocket *ss, PRUint8 *b, unsigned int length)
     }
     if (!(update == update_requested ||
           update == update_not_requested)) {
-        FATAL_ERROR(ss, SSL_ERROR_RX_MALFORMED_KEY_UPDATE, decode_error);
+        /* See RFC 9846, Section 4.7.3. */
+        FATAL_ERROR(ss, SSL_ERROR_RX_MALFORMED_KEY_UPDATE, illegal_parameter);
         return SECFailure;
     }
 
@@ -2550,8 +2551,12 @@ tls13_HandleClientHelloPart2(sslSocket *ss,
 
             PORT_Assert(!ss->sec.localCert);
             ss->sec.localCert = CERT_DupCertificate(ss->sec.serverCert->serverCert);
-            if (sid->peerCert != NULL) {
-                ss->sec.peerCert = CERT_DupCertificate(sid->peerCert);
+            if (sid->peerCertDER.data != NULL) {
+                rv = ssl_SetPeerCertificate(&ss->sec, &sid->peerCertDER);
+                if (rv != SECSuccess) {
+                    FATAL_ERROR(ss, PORT_GetError(), internal_error);
+                    goto loser;
+                }
             }
         } else if (sid) {
             /* We should never have a SID in the non-resumption case. */
@@ -3310,7 +3315,11 @@ tls13_HandleCertificateRequest(sslSocket *ss, PRUint8 *b, PRUint32 length)
     }
 
     /* Client */
-    if (ss->opt.enablePostHandshakeAuth) {
+    /* Post-handshake authentication is never negotiated for DTLS: the client
+     * does not send the post_handshake_auth extension (see
+     * tls13_ClientSendPostHandshakeAuthXtn), so a CertificateRequest is only
+     * acceptable in idle_handshake for stream TLS. */
+    if (ss->opt.enablePostHandshakeAuth && !IS_DTLS(ss)) {
         rv = TLS13_CHECK_HS_STATE(ss, SSL_ERROR_RX_UNEXPECTED_CERT_REQUEST,
                                   wait_cert_request, idle_handshake);
     } else {
@@ -3663,8 +3672,12 @@ tls13_HandleServerHelloPart2(sslSocket *ss, const PRUint8 *savedMsg, PRUint32 sa
         ss->ssl3.hs.kea_def_mutable.authKeyType = ssl_auth_psk;
         if (ss->statelessResume) {
             tls13_RestoreCipherInfo(ss, sid);
-            if (sid->peerCert) {
-                ss->sec.peerCert = CERT_DupCertificate(sid->peerCert);
+            if (sid->peerCertDER.data) {
+                rv = ssl_SetPeerCertificate(&ss->sec, &sid->peerCertDER);
+                if (rv != SECSuccess) {
+                    FATAL_ERROR(ss, PORT_GetError(), internal_error);
+                    return SECFailure;
+                }
             }
 
             SSL_AtomicIncrementLong(&ssl3stats->hsh_sid_cache_hits);
@@ -3693,8 +3706,12 @@ tls13_HandleServerHelloPart2(sslSocket *ss, const PRUint8 *savedMsg, PRUint32 sa
         return SECFailure;
     }
     if (ss->statelessResume) {
-        PORT_Assert(ss->sec.peerCert);
-        sid->peerCert = CERT_DupCertificate(ss->sec.peerCert);
+        PORT_Assert(ss->sec.peerCertDER.data);
+        rv = SECITEM_CopyItem(NULL, &sid->peerCertDER, &ss->sec.peerCertDER);
+        if (rv != SECSuccess) {
+            FATAL_ERROR(ss, SEC_ERROR_NO_MEMORY, internal_error);
+            return SECFailure;
+        }
     }
     sid->version = ss->version;
 
@@ -4446,9 +4463,9 @@ tls13_HandleCertificate(sslSocket *ss, PRUint8 *b, PRUint32 length, PRBool alrea
         }
 
         if (first) {
-            ss->sec.peerCert = CERT_NewTempCertificate(ss->dbHandle, &derCert,
-                                                       NULL, PR_FALSE, PR_TRUE);
-            if (!ss->sec.peerCert) {
+            /* This keeps the DER and the subjectPublicKeyInfo parsed out of
+             * it; nothing is added to any certificate database here. */
+            if (ssl_SetPeerCertificate(&ss->sec, &derCert) != SECSuccess) {
                 PRErrorCode errCode = PORT_GetError();
                 switch (errCode) {
                     case PR_OUT_OF_MEMORY_ERROR:
@@ -4493,7 +4510,6 @@ tls13_HandleCertificate(sslSocket *ss, PRUint8 *b, PRUint32 length, PRBool alrea
 
         first = PR_FALSE;
     }
-    SECKEY_UpdateCertPQG(ss->sec.peerCert);
 
     return ssl3_AuthCertificate(ss); /* sets ss->ssl3.hs.ws */
 }
@@ -5531,7 +5547,7 @@ tls13_HandleCertificateVerify(sslSocket *ss, PRUint8 *b, PRUint32 length)
                     SSL_GETPID(), ss->fd));
         spki = dc->spki;
     } else {
-        spki = &ss->sec.peerCert->subjectPublicKeyInfo;
+        spki = ss->sec.peerCertSPKI;
     }
 
     rv = ssl_CheckSignatureSchemeConsistency(ss, sigScheme, spki);
@@ -6072,6 +6088,23 @@ tls13_FinishHandshake(sslSocket *ss)
     return ssl_FinishHandshake(ss);
 }
 
+/* Hash the handshake messages appended to sendBuf since `offset`.  The caller
+ * captures `offset` before appending, so anything that drains sendBuf in
+ * between leaves it stale; rather than compute a bogus length, fail. */
+static SECStatus
+tls13_UpdatePostHandshakeHashesFrom(sslSocket *ss, unsigned int offset)
+{
+    unsigned int len = SSL_BUFFER_LEN(&ss->sec.ci.sendBuf);
+
+    if (len < offset) {
+        PORT_Assert(0);
+        PORT_SetError(SEC_ERROR_LIBRARY_FAILURE);
+        return SECFailure;
+    }
+    return ssl3_UpdatePostHandshakeHashes(
+        ss, SSL_BUFFER_BASE(&ss->sec.ci.sendBuf) + offset, len - offset);
+}
+
 /* Do the parts of sending the client's second round that require
  * the XmitBuf lock. */
 static SECStatus
@@ -6106,9 +6139,7 @@ tls13_SendClientSecondFlight(sslSocket *ss)
     }
 
     if (ss->firstHsDone) {
-        rv = ssl3_UpdatePostHandshakeHashes(ss,
-                                            SSL_BUFFER_BASE(&ss->sec.ci.sendBuf) + offset,
-                                            SSL_BUFFER_LEN(&ss->sec.ci.sendBuf) - offset);
+        rv = tls13_UpdatePostHandshakeHashesFrom(ss, offset);
         if (rv != SECSuccess) {
             goto alert_error; /* err code was set. */
         }
@@ -6138,9 +6169,7 @@ tls13_SendClientSecondFlight(sslSocket *ss)
         }
 
         if (ss->firstHsDone) {
-            rv = ssl3_UpdatePostHandshakeHashes(ss,
-                                                SSL_BUFFER_BASE(&ss->sec.ci.sendBuf) + offset,
-                                                SSL_BUFFER_LEN(&ss->sec.ci.sendBuf) - offset);
+            rv = tls13_UpdatePostHandshakeHashesFrom(ss, offset);
             if (rv != SECSuccess) {
                 goto alert_error; /* err code was set. */
             }
@@ -6562,10 +6591,10 @@ tls13_HandleNewSessionTicket(sslSocket *ss, PRUint8 *b, PRUint32 length)
                 return SECFailure;
             }
 
-            /* Copy over the peerCert. */
-            PORT_Assert(ss->sec.ci.sid->peerCert);
-            sid->peerCert = CERT_DupCertificate(ss->sec.ci.sid->peerCert);
-            if (!sid->peerCert) {
+            /* Copy over the peer certificate. */
+            PORT_Assert(ss->sec.ci.sid->peerCertDER.data);
+            if (SECITEM_CopyItem(NULL, &sid->peerCertDER,
+                                 &ss->sec.ci.sid->peerCertDER) != SECSuccess) {
                 ssl_FreeSID(sid);
                 return SECFailure;
             }

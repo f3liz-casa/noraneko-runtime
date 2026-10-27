@@ -41,9 +41,8 @@
 
 namespace mozilla {
 
-using namespace mozilla::dom;
-using namespace mozilla::gfx;
-using namespace mozilla::gl;
+using namespace gfx;
+using namespace gl;
 
 //
 //  WebGL API
@@ -902,7 +901,7 @@ bool WebGLContext::DoReadPixelsAndConvert(
 }
 
 webgl::ReadPixelsResult WebGLContext::ReadPixelsInto(
-    const webgl::ReadPixelsDesc& desc, const Range<uint8_t>& dest) {
+    const webgl::ReadPixelsDesc& desc, const mozilla::Range<uint8_t>& dest) {
   const FuncScope funcScope(*this, "readPixels");
   if (IsContextLost()) return {};
 
@@ -1567,6 +1566,17 @@ void WebGLContext::PolygonOffset(GLfloat factor, GLfloat units) {
   gl->fPolygonOffset(factor, units);
 }
 
+void WebGLContext::PolygonOffsetClampEXT(const GLfloat factor,
+                                         const GLfloat units,
+                                         const GLfloat clamp) {
+  const FuncScope funcScope(*this, "polygonOffsetClampEXT");
+  if (IsContextLost()) return;
+  MOZ_RELEASE_ASSERT(
+      IsExtensionEnabled(WebGLExtensionID::EXT_polygon_offset_clamp));
+
+  gl->fPolygonOffsetClamp(factor, units, clamp);
+}
+
 void WebGLContext::ProvokingVertex(const webgl::ProvokingVertex mode) const {
   const FuncScope funcScope(*this, "provokingVertex");
   if (IsContextLost()) return;
@@ -1581,6 +1591,23 @@ void WebGLContext::SampleCoverage(GLclampf value, WebGLboolean invert) {
   if (IsContextLost()) return;
 
   gl->fSampleCoverage(value, invert);
+}
+
+void WebGLContext::ClipControlEXT(const GLenum origin, const GLenum depth) {
+  const FuncScope funcScope(*this, "clipControlEXT");
+  if (IsContextLost()) return;
+  MOZ_RELEASE_ASSERT(IsExtensionEnabled(WebGLExtensionID::EXT_clip_control));
+
+  if (origin != LOCAL_GL_LOWER_LEFT && origin != LOCAL_GL_UPPER_LEFT) {
+    ErrorInvalidEnumArg("origin", origin);
+    return;
+  }
+  if (depth != LOCAL_GL_NEGATIVE_ONE_TO_ONE && depth != LOCAL_GL_ZERO_TO_ONE) {
+    ErrorInvalidEnumArg("depth", depth);
+    return;
+  }
+
+  gl->fClipControl(origin, depth);
 }
 
 }  // namespace mozilla

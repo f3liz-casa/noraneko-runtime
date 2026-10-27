@@ -20,14 +20,18 @@
 #include "mozilla/gfx/BuildConstants.h"
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/gfx/Matrix.h"
+#include "mozilla/layers/CompositeProcessFencesHolderMap.h"
 #include "mozilla/layers/GpuFence.h"
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/LayersSurfaces.h"
 
 #ifdef MOZ_WIDGET_ANDROID
 #  include "AndroidSurfaceTexture.h"
+#  include "GLContextEGL.h"
 #  include "GLImages.h"
 #  include "GLLibraryEGL.h"
+#  include "mozilla/layers/AndroidHardwareBuffer.h"
+#  include "mozilla/layers/AndroidImageReader.h"
 #endif
 
 #ifdef XP_MACOSX
@@ -201,6 +205,15 @@ const char* const kFragConvert_ColorMatrix = R"(
     return (uColorMatrix * vec4(src, 1)).rgb;
   }
 )";
+#ifdef MOZ_WIDGET_GTK
+const char* const kFragConvert_ColorMatrixBGR = R"(
+  uniform mediump MAT4X3 uColorMatrix;
+
+  vec3 metaConvert(vec3 src) {
+    return (uColorMatrix * vec4(src, 1)).bgr;
+  }
+)";
+#endif
 const char* const kFragConvert_ColorLut3d = R"(
   uniform PRECISION sampler3D uColorLut;
 
@@ -440,19 +453,6 @@ class ScopedShader final {
 
 // --
 
-class SaveRestoreCurrentProgram final {
-  GLContext& mGL;
-  const GLuint mOld;
-
- public:
-  explicit SaveRestoreCurrentProgram(GLContext* const gl)
-      : mGL(*gl), mOld(mGL.GetIntAs<GLuint>(LOCAL_GL_CURRENT_PROGRAM)) {}
-
-  ~SaveRestoreCurrentProgram() { mGL.fUseProgram(mOld); }
-};
-
-// --
-
 class ScopedDrawBlitState final {
   GLContext& mGL;
 
@@ -469,6 +469,8 @@ class ScopedDrawBlitState final {
 
   realGLboolean colorMask[4];
   GLint viewport[4];
+  GLint clipOrigin = LOCAL_GL_LOWER_LEFT;
+  GLint clipDepthMode = LOCAL_GL_NEGATIVE_ONE_TO_ONE;
 
  public:
   ScopedDrawBlitState(GLContext* const gl, const gfx::IntSize& fbSize)
@@ -482,6 +484,12 @@ class ScopedDrawBlitState final {
         sampleCover(mGL.PushEnabled(LOCAL_GL_SAMPLE_COVERAGE, false)),
         scissor(mGL.PushEnabled(LOCAL_GL_SCISSOR_TEST, false)),
         stencil(mGL.PushEnabled(LOCAL_GL_STENCIL_TEST, false)) {
+    if (mGL.IsSupported(GLFeature::clip_control)) {
+      mGL.fGetIntegerv(LOCAL_GL_CLIP_ORIGIN, &clipOrigin);
+      mGL.fGetIntegerv(LOCAL_GL_CLIP_DEPTH_MODE, &clipDepthMode);
+      mGL.fClipControl(LOCAL_GL_LOWER_LEFT, LOCAL_GL_NEGATIVE_ONE_TO_ONE);
+    }
+
     if (mGL.IsSupported(GLFeature::transform_feedback2)) {
       // Technically transform_feedback2 requires transform_feedback, which
       // actually adds RASTERIZER_DISCARD.
@@ -511,6 +519,9 @@ class ScopedDrawBlitState final {
     mGL.SetEnabled(LOCAL_GL_SAMPLE_COVERAGE, sampleCover);
     mGL.SetEnabled(LOCAL_GL_SCISSOR_TEST, scissor);
     mGL.SetEnabled(LOCAL_GL_STENCIL_TEST, stencil);
+    if (mGL.IsSupported(GLFeature::clip_control)) {
+      mGL.fClipControl(clipOrigin, clipDepthMode);
+    }
     if (rasterizerDiscard) {
       mGL.SetEnabled(LOCAL_GL_RASTERIZER_DISCARD, rasterizerDiscard.value());
     }
@@ -572,7 +583,7 @@ void DrawBlitProg::Draw(const BaseArgs& args,
                         const YUVArgs* const argsYUV) const {
   const auto& gl = mParent.mGL;
 
-  const SaveRestoreCurrentProgram oldProg(gl);
+  const ScopedBindProgram oldProg(gl);
   gl->fUseProgram(mProg);
 
   // --
@@ -868,7 +879,7 @@ std::unique_ptr<const DrawBlitProg> GLBlitHelper::CreateDrawBlitProg(
   GLenum status = 0;
   mGL->fGetProgramiv(prog, LOCAL_GL_LINK_STATUS, (GLint*)&status);
   if (status == LOCAL_GL_TRUE || mGL->CheckContextLost()) {
-    const SaveRestoreCurrentProgram oldProg(mGL);
+    const ScopedBindProgram oldProg(mGL);
     mGL->fUseProgram(prog);
     const char* samplerNames[] = {"uTex0", "uTex1", "uTex2"};
     for (int i = 0; i < 3; i++) {
@@ -926,7 +937,8 @@ bool GLBlitHelper::BlitSdToFramebuffer(const layers::SurfaceDescriptor& asd,
                                        const gfx::IntRect& destRect,
                                        const OriginPos destOrigin,
                                        const gfx::IntSize& fbSize,
-                                       Maybe<gfxAlphaType> convertAlpha) {
+                                       Maybe<gfxAlphaType> convertAlpha,
+                                       gfx::SurfaceFormat aDestFormat) {
   const auto sdType = asd.type();
   switch (sdType) {
     case layers::SurfaceDescriptor::TSurfaceDescriptorBuffer: {
@@ -953,9 +965,15 @@ bool GLBlitHelper::BlitSdToFramebuffer(const layers::SurfaceDescriptor& asd,
 #ifdef XP_MACOSX
     case layers::SurfaceDescriptor::TSurfaceDescriptorMacIOSurface: {
       const auto& sd = asd.get_SurfaceDescriptorMacIOSurface();
-      if (sd.gpuFence() &&
-          !sd.gpuFence()->ServerWait(mGL, TimeDuration::Forever())) {
-        return false;
+      if (sd.fencesHolderId().isSome()) {
+        auto* fencesHolderMap = layers::CompositeProcessFencesHolderMap::Get();
+        RefPtr<layers::Fence> fence =
+            fencesHolderMap->GetWriteFence(sd.fencesHolderId().ref());
+        RefPtr<layers::GpuFence> gpuFence =
+            fence ? fence->AsGpuFence() : nullptr;
+        if (gpuFence && gpuFence->ServerWait(mGL, TimeDuration::Forever())) {
+          return false;
+        }
       }
       const auto surf = LookupSurface(sd);
       if (!surf) {
@@ -968,6 +986,39 @@ bool GLBlitHelper::BlitSdToFramebuffer(const layers::SurfaceDescriptor& asd,
     }
 #endif
 #ifdef MOZ_WIDGET_ANDROID
+    case layers::SurfaceDescriptor::TSurfaceDescriptorAndroidHardwareBuffer: {
+      const auto& sd = asd.get_SurfaceDescriptorAndroidHardwareBuffer();
+
+      auto* manager = layers::AndroidHardwareBufferManager::Get();
+      if (!manager) {
+        return false;
+      }
+
+      RefPtr<layers::AndroidHardwareBuffer> buffer =
+          manager->GetBuffer(sd.bufferId());
+      if (!buffer) {
+        return false;
+      }
+
+      return Blit(buffer, destRect, destOrigin, fbSize, convertAlpha);
+    }
+    case layers::SurfaceDescriptor::TAndroidImageReaderImageDescriptor: {
+      const auto& sd = asd.get_AndroidImageReaderImageDescriptor();
+
+      auto* imageReaderMap = layers::GpuProcessAndroidImageReaderMap::Get();
+      if (!imageReaderMap) {
+        return false;
+      }
+
+      RefPtr<layers::AndroidImageReader> imageReader =
+          imageReaderMap->GetImageReader(sd.imageReaderId());
+      if (!imageReader) {
+        return false;
+      }
+
+      return Blit(imageReader, sd.frameId(), sd.size(), destRect, destOrigin,
+                  fbSize, convertAlpha);
+    }
     case layers::SurfaceDescriptor::TSurfaceTextureDescriptor: {
       const auto& sd = asd.get_SurfaceTextureDescriptor();
       auto surfaceTexture = java::GeckoSurfaceTexture::Lookup(sd.handle());
@@ -987,7 +1038,8 @@ bool GLBlitHelper::BlitSdToFramebuffer(const layers::SurfaceDescriptor& asd,
       if (!surface) {
         return false;
       }
-      return Blit(surface, destRect, destOrigin, fbSize, convertAlpha);
+      return Blit(surface, destRect, destOrigin, fbSize, convertAlpha,
+                  aDestFormat);
     }
 #endif
     default:
@@ -1015,6 +1067,117 @@ const char* GLBlitHelper::GetAlphaMixin(
 }
 
 #ifdef MOZ_WIDGET_ANDROID
+bool GLBlitHelper::Blit(layers::AndroidHardwareBuffer* const buffer,
+                        const gfx::IntRect& destRect,
+                        const OriginPos destOrigin, const gfx::IntSize& fbSize,
+                        const Maybe<gfxAlphaType> convertAlpha) const {
+  MOZ_ASSERT(buffer);
+
+  if (!buffer) {
+    return false;
+  }
+
+  if (!mGL->MakeCurrent()) {
+    return false;
+  }
+
+  const auto& gle = GLContextEGL::Cast(mGL);
+  const auto& egl = gle->mEgl;
+
+  auto fenceFd = buffer->GetAcquireFence();
+  if (fenceFd) {
+    const EGLint attribs[] = {
+        LOCAL_EGL_SYNC_NATIVE_FENCE_FD_ANDROID,
+        fenceFd.get(),
+        LOCAL_EGL_NONE,
+    };
+
+    EGLSync sync =
+        egl->fCreateSyncKHR(LOCAL_EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
+    if (!sync) {
+      gfxCriticalNote
+          << "GLBlitHelper::Blit: Failed to create EGLSync from acquire fence";
+      return false;
+    }
+
+    // EGL owns the fd after a successful eglCreateSyncKHR().
+    (void)fenceFd.release();
+
+    if (egl->IsExtensionSupported(EGLExtension::KHR_wait_sync)) {
+      egl->fWaitSync(sync, 0);
+    } else {
+      egl->fClientWaitSync(sync, 0, LOCAL_EGL_FOREVER);
+    }
+    egl->fDestroySync(sync);
+  }
+
+  EGLClientBuffer clientBuffer =
+      egl->mLib->fGetNativeClientBufferANDROID(buffer->GetNativeBuffer());
+  if (!clientBuffer) {
+    gfxCriticalNote
+        << "GLBlitHelper::Blit: eglGetNativeClientBufferANDROID failed";
+    return false;
+  }
+
+  const EGLint attrs[] = {
+      LOCAL_EGL_IMAGE_PRESERVED,
+      LOCAL_EGL_TRUE,
+      LOCAL_EGL_NONE,
+  };
+
+  const EGLImage image = egl->fCreateImage(
+      EGL_NO_CONTEXT, LOCAL_EGL_NATIVE_BUFFER_ANDROID, clientBuffer, attrs);
+  if (!image) {
+    gfxCriticalNote << "GLBlitHelper::Blit: eglCreateImage failed";
+    return false;
+  }
+
+  const bool ret = Blit(image, EGL_NO_SYNC, buffer->mSize, destRect, destOrigin,
+                        fbSize, convertAlpha);
+
+  egl->fDestroyImage(image);
+
+  return ret;
+}
+
+bool GLBlitHelper::Blit(layers::AndroidImageReader* imageReader,
+                        const layers::AndroidMediaCodecFrameId frameId,
+                        const gfx::IntSize& texSize,
+                        const gfx::IntRect& destRect, OriginPos destOrigin,
+                        const gfx::IntSize& fbSize,
+                        Maybe<gfxAlphaType> convertAlpha) const {
+  MOZ_ASSERT(imageReader);
+
+  if (!mGL->MakeCurrent()) {
+    return false;
+  }
+
+  const ScopedBindTextureUnit boundTU(mGL, LOCAL_GL_TEXTURE0);
+  ScopedTexture tex(mGL);
+  ScopedBindTexture bindTex(mGL, tex.Texture(), LOCAL_GL_TEXTURE_EXTERNAL);
+
+  mGL->TexParams_SetClampNoMips(LOCAL_GL_TEXTURE_EXTERNAL);
+
+  RefPtr<layers::AndroidImageWrapper> image;
+  if (!imageReader->UpdateTexImage(frameId, mGL, tex.Texture(),
+                                   getter_AddRefs(image))) {
+    return false;
+  }
+
+  const auto srcOrigin = OriginPos::BottomLeft;
+  const bool yFlip = (srcOrigin != destOrigin);
+
+  const auto& prog = GetDrawBlitProg(
+      {kFragHeader_TexExt,
+       {kFragSample_OnePlane, kFragConvert_None, GetAlphaMixin(convertAlpha)}});
+
+  const DrawBlitProg::BaseArgs baseArgs = {SubRectMat3(0, 0, 1, 1), yFlip,
+                                           fbSize, destRect, texSize};
+  prog.Draw(baseArgs);
+
+  return true;
+}
+
 bool GLBlitHelper::Blit(const java::GeckoSurfaceTexture::Ref& surfaceTexture,
                         const gfx::IntSize& texSize,
                         const gfx::IntRect& destRect,
@@ -1502,7 +1665,8 @@ void GLBlitHelper::BlitTextureToTexture(GLuint srcTex, GLuint destTex,
 #ifdef MOZ_WIDGET_GTK
 bool GLBlitHelper::Blit(DMABufSurface* surface, const gfx::IntRect& destRect,
                         OriginPos destOrigin, const gfx::IntSize& fbSize,
-                        Maybe<gfxAlphaType> convertAlpha) const {
+                        Maybe<gfxAlphaType> convertAlpha,
+                        gfx::SurfaceFormat aDestFormat) const {
   const auto& srcOrigin = OriginPos::BottomLeft;
 
   DrawBlitProg::BaseArgs baseArgs;
@@ -1544,16 +1708,11 @@ bool GLBlitHelper::Blit(DMABufSurface* surface, const gfx::IntRect& destRect,
   });
 
   if (createTextures) {
-    for (int i = 0; i < planes; i++) {
-      if (surface->GetTexture(i)) {
-        continue;
-      }
-      if (!surface->CreateTexture(mGL, i)) {
-        LOGDMABUF(("GLBlitHelper::Blit(): Failed to create DMABuf textures."));
-        return false;
-      }
-      didCreateTexture = true;
+    if (!surface->CreateTextures(mGL)) {
+      LOGDMABUF(("GLBlitHelper::Blit(): Failed to create DMABuf textures."));
+      return false;
     }
+    didCreateTexture = true;
   }
 
   // -
@@ -1565,9 +1724,21 @@ bool GLBlitHelper::Blit(DMABufSurface* surface, const gfx::IntRect& destRect,
 
   const char* fragSample = nullptr;
   auto fragConvert = kFragConvert_None;
+  // Determine the reorder from source and destination formats. The blit
+  // output is RGBA-ordered for every source shape (the YUV color matrix and
+  // EGL named-channel imports expose RGB in .rgb), while the destination
+  // may store the opposite, BGRA order (e.g. canvas2d); swap R/B exactly
+  // when the two orders differ.
+  const bool srcIsBGRA = false;
+  const bool dstIsBGRA = aDestFormat == gfx::SurfaceFormat::B8G8R8A8 ||
+                         aDestFormat == gfx::SurfaceFormat::B8G8R8X8;
+  const bool swapRB = srcIsBGRA != dstIsBGRA;
   switch (pixelFormat) {
     case DMABufSurface::SURFACE_RGBA:
       fragSample = kFragSample_OnePlane;
+      if (swapRB) {
+        fragConvert = kFragConvert_BGR;
+      }
       break;
     case DMABufSurface::SURFACE_YUV:
       if (surface->GetTextureCount() == 2) {
@@ -1580,7 +1751,8 @@ bool GLBlitHelper::Blit(DMABufSurface* surface, const gfx::IntRect& destRect,
         return false;
       }
       pYuvArgs = &yuvArgs;
-      fragConvert = kFragConvert_ColorMatrix;
+      fragConvert =
+          swapRB ? kFragConvert_ColorMatrixBGR : kFragConvert_ColorMatrix;
       break;
     default:
       return false;
@@ -1610,128 +1782,39 @@ bool GLBlitHelper::Blit(DMABufSurface* surface, const gfx::IntRect& destRect,
   return true;
 }
 
-bool GLBlitHelper::BlitYCbCrImageToDMABuf(const PlanarYCbCrData& yuvData,
-                                          DMABufSurface* surface) {
-  if ((!mGL->IsAtLeast(gl::ContextProfile::OpenGLCore, 300) &&
-       !mGL->IsAtLeast(gl::ContextProfile::OpenGLES, 300)) ||
-      !mGL->HasPBOState()) {
-    gfxCriticalError() << "BlitYCbCrImageToDMABuf: old GL version";
+bool GLBlitHelper::BlitYCbCrTexturesToDMABuf(BufferSurface* aSource,
+                                             DMABufSurface* aDest) {
+  if (aSource->GetTextureCount() != 3) {
+    gfxCriticalError() << "BlitYCbCrTexturesToDMABuf: unexpected source planes "
+                       << aSource->GetTextureCount();
     return false;
   }
-
-  auto ySize = yuvData.YDataSize();
-  auto cbcrSize = yuvData.CbCrDataSize();
-  if (yuvData.mYSkip || yuvData.mCbSkip || yuvData.mCrSkip || ySize.width < 0 ||
-      ySize.height < 0 || cbcrSize.width < 0 || cbcrSize.height < 0 ||
-      yuvData.mYStride < 0 || yuvData.mCbCrStride < 0) {
-    gfxCriticalError() << "Unusual PlanarYCbCrData: " << yuvData.mYSkip << ","
-                       << yuvData.mCbSkip << "," << yuvData.mCrSkip << ", "
-                       << ySize.width << "," << ySize.height << ", "
-                       << cbcrSize.width << "," << cbcrSize.height << ", "
-                       << yuvData.mYStride << "," << yuvData.mCbCrStride;
-    return false;
-  }
-
-  GLenum internalFormat;
-  GLenum unpackFormat;
-  GLenum sizeFormat;
-  switch (yuvData.mColorDepth) {
-    case gfx::ColorDepth::COLOR_8:
-      internalFormat = LOCAL_GL_R8;
-      unpackFormat = LOCAL_GL_RED;
-      sizeFormat = LOCAL_GL_UNSIGNED_BYTE;
-      break;
-    case gfx::ColorDepth::COLOR_10:
-      internalFormat = LOCAL_GL_R16;
-      unpackFormat = LOCAL_GL_RED;
-      sizeFormat = LOCAL_GL_UNSIGNED_SHORT;
-      break;
-    default:
-      gfxCriticalError() << "BlitYCbCrImageToDMABuf: Unsupported color depth";
-      return false;
-  }
-
-  if (!mYuvUploads[0]) {
-    mGL->fGenTextures(3, mYuvUploads);
-    const ScopedBindTexture bindTex(mGL, mYuvUploads[0], LOCAL_GL_TEXTURE_2D);
-    mGL->TexParams_SetClampNoMips(LOCAL_GL_TEXTURE_2D);
-    mGL->fBindTexture(LOCAL_GL_TEXTURE_2D, mYuvUploads[1]);
-    mGL->TexParams_SetClampNoMips(LOCAL_GL_TEXTURE_2D);
-    mGL->fBindTexture(LOCAL_GL_TEXTURE_2D, mYuvUploads[2]);
-    mGL->TexParams_SetClampNoMips(LOCAL_GL_TEXTURE_2D);
-  }
-
-  // --
 
   const ScopedSaveMultiTex saveTex(mGL, 3, LOCAL_GL_TEXTURE_2D);
-  const ResetUnpackState reset(mGL);
-
-  gfx::IntSize yTexSize(yuvData.mYStride, yuvData.YDataSize().height);
-  gfx::IntSize uvTexSize(yuvData.mCbCrStride, yuvData.CbCrDataSize().height);
-
-  // If we upload short integer type (16bit per pixel),
-  // we need to divide texture width as it's derived from stride in bytes.
-  if (sizeFormat == LOCAL_GL_UNSIGNED_SHORT) {
-    yTexSize.width >>= 1;
-    uvTexSize.width >>= 1;
+  for (int i = 0; i < 3; i++) {
+    mGL->fActiveTexture(LOCAL_GL_TEXTURE0 + i);
+    mGL->fBindTexture(LOCAL_GL_TEXTURE_2D, aSource->GetTexture(i));
   }
-
-  if (yTexSize != mYuvUploads_YSize || uvTexSize != mYuvUploads_UVSize) {
-    mYuvUploads_YSize = yTexSize;
-    mYuvUploads_UVSize = uvTexSize;
-
-    mGL->fActiveTexture(LOCAL_GL_TEXTURE0);
-    mGL->fBindTexture(LOCAL_GL_TEXTURE_2D, mYuvUploads[0]);
-    mGL->fTexImage2D(LOCAL_GL_TEXTURE_2D, 0, internalFormat, yTexSize.width,
-                     yTexSize.height, 0, unpackFormat, sizeFormat, nullptr);
-    for (int i = 1; i < 3; i++) {
-      mGL->fActiveTexture(LOCAL_GL_TEXTURE0 + i);
-      mGL->fBindTexture(LOCAL_GL_TEXTURE_2D, mYuvUploads[i]);
-      mGL->fTexImage2D(LOCAL_GL_TEXTURE_2D, 0, internalFormat, uvTexSize.width,
-                       uvTexSize.height, 0, unpackFormat, sizeFormat, nullptr);
-    }
-  }
-
-  // --
-
-  mGL->fActiveTexture(LOCAL_GL_TEXTURE0);
-  mGL->fBindTexture(LOCAL_GL_TEXTURE_2D, mYuvUploads[0]);
-  mGL->fTexSubImage2D(LOCAL_GL_TEXTURE_2D, 0, 0, 0, yTexSize.width,
-                      yTexSize.height, unpackFormat, sizeFormat,
-                      yuvData.mYChannel);
-  mGL->fActiveTexture(LOCAL_GL_TEXTURE1);
-  mGL->fBindTexture(LOCAL_GL_TEXTURE_2D, mYuvUploads[1]);
-  mGL->fTexSubImage2D(LOCAL_GL_TEXTURE_2D, 0, 0, 0, uvTexSize.width,
-                      uvTexSize.height, unpackFormat, sizeFormat,
-                      yuvData.mCbChannel);
-  mGL->fActiveTexture(LOCAL_GL_TEXTURE2);
-  mGL->fBindTexture(LOCAL_GL_TEXTURE_2D, mYuvUploads[2]);
-  mGL->fTexSubImage2D(LOCAL_GL_TEXTURE_2D, 0, 0, 0, uvTexSize.width,
-                      uvTexSize.height, unpackFormat, sizeFormat,
-                      yuvData.mCrChannel);
-
-  // --
 
   DrawBlitProg::BaseArgs baseArgs;
   baseArgs.yFlip = false;
-  const auto& clipRect = yuvData.mPictureRect;
-  baseArgs.texMatrix0 = SubRectMat3(clipRect, yTexSize);
+  // Source plane textures hold the picture only, there's nothing to crop.
+  baseArgs.texMatrix0 = SubRectMat3(0, 0, 1, 1);
 
-  const char* fragConvert = yuvData.mColorDepth == gfx::ColorDepth::COLOR_10
-                                ? kFragConvertYUVP010
-                                : kFragConvert_None;
+  const bool is10Bit = aSource->GetColorDepth() == gfx::ColorDepth::COLOR_10;
+  const char* fragConvert = is10Bit ? kFragConvertYUVP010 : kFragConvert_None;
 
   // Blit Y plane
   {
-    ScopedFramebufferForTexture autoFBForTex(mGL, surface->GetTexture(0));
+    ScopedFramebufferForTexture autoFBForTex(mGL, aDest->GetTexture(0));
     if (!autoFBForTex.IsComplete()) {
-      gfxCriticalError() << "GLBlitHelper::BlitYCbCrImageToDMABuf: "
+      gfxCriticalError() << "GLBlitHelper::BlitYCbCrTexturesToDMABuf: "
                             "ScopedFramebufferForTexture failed.";
       return false;
     }
     const ScopedBindFramebuffer bindFB(mGL, autoFBForTex.FB());
 
-    baseArgs.fbSize = gfx::IntSize(surface->GetWidth(), surface->GetHeight());
+    baseArgs.fbSize = gfx::IntSize(aDest->GetWidth(), aDest->GetHeight());
     const auto& prog = GetDrawBlitProg(
         {kFragHeader_Tex2D, {kFragSample_OnePlane, fragConvert}});
     prog.Draw(baseArgs);
@@ -1739,15 +1822,15 @@ bool GLBlitHelper::BlitYCbCrImageToDMABuf(const PlanarYCbCrData& yuvData,
 
   // Blit UV planes
   {
-    ScopedFramebufferForTexture autoFBForTex(mGL, surface->GetTexture(1));
+    ScopedFramebufferForTexture autoFBForTex(mGL, aDest->GetTexture(1));
     if (!autoFBForTex.IsComplete()) {
-      gfxCriticalError() << "GLBlitHelper::BlitYCbCrImageToDMABuf: "
+      gfxCriticalError() << "GLBlitHelper::BlitYCbCrTexturesToDMABuf: "
                             "ScopedFramebufferForTexture failed.";
       return false;
     }
     const ScopedBindFramebuffer bindFB(mGL, autoFBForTex.FB());
 
-    baseArgs.fbSize = gfx::IntSize(surface->GetWidth(1), surface->GetHeight(1));
+    baseArgs.fbSize = gfx::IntSize(aDest->GetWidth(1), aDest->GetHeight(1));
     const auto& prog = GetDrawBlitProg(
         {kFragHeader_Tex2D, {kFragSample_TwoPlaneUV, fragConvert}});
     prog.Draw(baseArgs);

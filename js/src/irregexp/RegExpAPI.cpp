@@ -303,14 +303,20 @@ static void ReportSyntaxError(TokenStreamAnyChars& ts,
 template <typename CharT>
 static bool CheckPatternSyntaxImpl(js::LifoAlloc& alloc,
                                    JS::NativeStackLimit stackLimit,
-                                   const CharT* input, uint32_t inputLength,
+                                   const CharT* input, size_t inputLength,
                                    JS::RegExpFlags flags,
                                    RegExpCompileData* result,
                                    JS::AutoAssertNoGC& nogc) {
   Zone zone(&alloc);
-
-  return RegExpParser::VerifyRegExpSyntax(&zone, stackLimit, input, inputLength,
-                                          flags, result, nogc);
+  static_assert(JSString::MAX_LENGTH < INT_MAX);
+  if (inputLength > JSString::MAX_LENGTH) {
+    result->error = RegExpError::kTooLarge;
+    result->error_pos = 0;
+    return false;
+  }
+  return RegExpParser::VerifyRegExpSyntax(&zone, stackLimit, input,
+                                          AssertedCast<int>(inputLength), flags,
+                                          result, nogc);
 }
 
 bool CheckPatternSyntax(js::LifoAlloc& alloc, JS::NativeStackLimit stackLimit,
@@ -842,7 +848,7 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
     cx->reportResourceExhaustion();
     return false;
   }
-  data.error = AnalyzeRegExp(cx->isolate, isLatin1, flags, data.node);
+  data.error = AnalyzeRegExp(cx->isolate, isLatin1, data.node);
   if (data.error != RegExpError::kNone) {
     MOZ_ASSERT(data.error == RegExpError::kAnalysisStackOverflow);
     ReportOverRecursed(cx);
@@ -867,11 +873,10 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
   return true;
 }
 
-template <typename CharT>
-RegExpRunStatus ExecuteRaw(jit::JitCode* code, const CharT* chars,
-                           size_t length, size_t startIndex,
-                           VectorMatchPairs* matches) {
-  InputOutputData data(chars, chars + length, startIndex, matches);
+RegExpRunStatus ExecuteRaw(jit::JitCode* code, Handle<JSLinearString*> input,
+                           size_t startIndex, VectorMatchPairs* matches) {
+  bool canResume = true;
+  InputOutputData data(input, startIndex, matches, canResume);
 
   static_assert(static_cast<int32_t>(RegExpRunStatus::Error) ==
                 v8::internal::RegExp::kInternalRegExpException);
@@ -882,10 +887,7 @@ RegExpRunStatus ExecuteRaw(jit::JitCode* code, const CharT* chars,
 
   using RegExpCodeSignature = int (*)(InputOutputData*);
   auto function = reinterpret_cast<RegExpCodeSignature>(code->raw());
-  {
-    JS::AutoSuppressGCAnalysis nogc;
-    return (RegExpRunStatus)CALL_GENERATED_1(function, &data);
-  }
+  return (RegExpRunStatus)CALL_GENERATED_1(function, &data);
 }
 
 RegExpRunStatus Interpret(JSContext* cx, MutableHandleRegExpShared re,
@@ -927,13 +929,7 @@ RegExpRunStatus Execute(JSContext* cx, MutableHandleRegExpShared re,
   irregexp::RegExpStackScope stackScope(cx->isolate);
 
   if (isCompiled) {
-    JS::AutoCheckCannotGC nogc;
-    if (latin1) {
-      return ExecuteRaw(jitCode, input->latin1Chars(nogc), input->length(),
-                        startIndex, matches);
-    }
-    return ExecuteRaw(jitCode, input->twoByteChars(nogc), input->length(),
-                      startIndex, matches);
+    return ExecuteRaw(jitCode, input, startIndex, matches);
   }
 
   return Interpret(cx, re, input, startIndex, matches);

@@ -709,6 +709,14 @@
   <string name="search_widget_text_long">Søk på nettet</string>
   <!-- Content description (not visible, for screen readers etc.): Voice search -->
   <string name="search_widget_voice">Stemmesøk</string>
+  <!-- Content description (not visible, for screen readers etc.): Button in the search widget that starts a search in a private tab -->
+  <string name="search_widget_private_search">Privat søk</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for private search and for voice search -->
+  <string name="search_bar_widget_description">Søkjefelt med privat søking og stemmesøk</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for image search, private search and voice search -->
+  <string name="search_bar_with_lens_widget_description">Søkjefelt med bildesøk, privatsøk og stemmesøk</string>
+  <!-- Widget description in the widget picker screen for the compact search bar widget -->
+  <string name="compact_search_bar_widget_description">Kompakt søkjelinje</string>
   <!--
     Preferences
 
@@ -1147,6 +1155,10 @@
   <string name="preferences_sync_category">Vel kva som skal synkroniserast</string>
   <!-- Preference category for sync controls -->
   <string name="preferences_category_sync">Synkroniserte data</string>
+  <!-- Summary for the sync preference category. -->
+  <string name="preferences_sync_category_summary">Handsam kva som skal synkroniserast på dei tilkopla einingane dine</string>
+  <!-- Summary for the sync preference category, when user has disabled all synchronisation items. -->
+  <string name="preferences_sync_category_no_engine_selected_summary">Du synkroniserer ingenting. Vel kva som skal synkroniserast på tvers av einingane dine.</string>
   <!-- Preference for syncing history -->
   <string name="preferences_sync_history">Historikk</string>
   <!-- Preference for syncing bookmarks -->
@@ -1282,8 +1294,6 @@
   <string name="preference_simple_toolbar">Enkel</string>
   <!-- Preference for using expanded toolbar -->
   <string name="preference_expanded_toolbar">Utvida</string>
-  <!-- Preference description indicating the toolbar location preference is disabled when the tab strip is enabled -->
-  <string name="preference_toolbar_pref_disabled_explanation">Adresselinja må vere øvst når fanelinja vert vist.</string>
   <!-- New tab shortcut in toolbar customization -->
   <string name="toolbar_customize_shortcut_new_tab">Opne ei ny fane</string>
   <!-- Share shortcut in toolbar customization -->
@@ -1365,6 +1375,8 @@
   <string name="library_desktop_bookmarks_unfiled">Andre bokmerke</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">Historikk</string>
+  <!-- Content description (not visible, for screen readers etc.) for the check mark that replaces a site's icon in History and Recently closed tabs when the item is selected -->
+  <string name="library_item_selected_content_description">Markert</string>
   <!-- Settings Page Title -->
   <string name="settings_title">Innstillingar</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -1417,8 +1429,6 @@
   <string name="preferences_tabs">Faner</string>
   <!-- Title of preference that allows a user to specify the tab layout -->
   <string name="preferences_tab_layout">Faneoppsett</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">Fanevising</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">Liste</string>
   <!-- Option for a grid tab view -->
@@ -1473,18 +1483,12 @@
   <string name="preferences_tab_organization">Faneorganisering</string>
   <!-- Title of the preference that allows a user to enable or disable the inactive tabs feature -->
   <string name="preferences_inactive_tabs_toggle_title">Uverksame faner</string>
-  <!--
-    Inactive tabs
-
-    Category header of a preference that allows a user to enable or disable the inactive tabs feature
-  -->
-  <string name="preferences_inactive_tabs">Flytt gamle faner til uverksame</string>
   <!-- Summary of the preference that allows a user to enable or disable the inactive tabs feature. -->
   <string name="preferences_inactive_tabs_title">Faner du ikkje har vist på to veker, vert flytta til den uverksame delen.</string>
   <!-- Title of the preference that allows a user to enable or disable the tab groups feature -->
   <string name="preferences_tab_groups_title">Fanegrupper</string>
-  <!-- Title for the preference to enable or disable the tab groups feature -->
-  <string name="preferences_tab_groups_feature">Aktiver fanegrupper</string>
+  <!-- Summary of the preference that allows a user to enable or disable the tab groups feature -->
+  <string name="preferences_tab_groups_description">Organiser fanene dine i grupper du kan namngi og lagre.</string>
   <!--
     Privacy report
 
@@ -1700,6 +1704,11 @@
   <string name="close_tab_and_delete_group_confirmation_dialog_cancel">Avbryt</string>
   <!-- Content description for the three dot button next to a tab group" -->
   <string name="tab_group_three_dot_button_content_description">Fleire innstillingar</string>
+  <!--
+    Content description for the Expand button on the contracted menu for a tab group:
+    when tapped, tabs are displayed in an expanded grid or list view, taking up the full screen.
+  -->
+  <string name="tab_groups_strip_expand_group_content_description">Utvid for å vise faner i fullskjerm</string>
   <!-- Text shown on the edit button for a tab group on the three dot menu -->
   <string name="tab_group_three_dot_menu_edit">Rediger</string>
   <!-- Text shown on the ungroup button for a tab group on the three dot menu -->
@@ -2392,7 +2401,7 @@
   <!-- Toast shown after copying link to clipboard -->
   <string name="toast_copy_link_to_clipboard">Kopier til utklippstavla</string>
   <!-- An option from the share dialog to sign into sync -->
-  <string name="sync_sign_in">Logg inn på Sync</string>
+  <string name="sync_sign_in">Logg inn for å synkronisere</string>
   <!-- An option from the share dialog to send link to all other sync devices -->
   <string name="sync_send_to_all">Send til alle einingar</string>
   <!-- An option from the share dialog to reconnect to sync -->
@@ -2433,6 +2442,8 @@
   <string name="sync_send_tab_empty_state_title">Ingen einingar tilkopla</string>
   <!-- Send tab to synced devices: Empty state message - Displayed when the user has no synced devices -->
   <string name="sync_send_tab_empty_state_description" tools:ignore="BrandUsage">For å sende ei fane, logg deg inn på Firefox på minst ei anna eining.</string>
+  <!-- Send tab to synced devices: Empty state link - Displayed when the user has no synced devices -->
+  <string name="sync_send_tab_empty_state_link">Finn ut korleis du koplar til ei eining</string>
   <!-- Send tab to synced devices: Connectivity Error title -->
   <string name="sync_send_tab_error_connection_title">Sjekk internettilkoplinga di</string>
   <!-- Send tab to synced devices: Connectivity Error message - Suggested user action after internet connection has been established -->
@@ -2623,6 +2634,8 @@
   <string name="sign_out_confirmation_message_2">%s vil stoppe synkroniseringa med kontoen din, men vil ikkje slette nettlesardataa dine på denne eiinga.</string>
   <!-- Title of the confirmation dialog shown when the user signs out of their account -->
   <string name="sign_out_dialog_title">Logge ut av kontoen din?</string>
+  <!-- Body of the confirmation dialog shown when the user signs out of their account -->
+  <string name="sign_out_dialog_message">Synkroniserte data held fram med å vere lagra på kontoen din.</string>
   <!-- Text for the primary action button of the confirmation dialog shown when the user signs out of their account -->
   <string name="sign_out_dialog_confirm_button">Logg ut</string>
   <!-- Option to continue signing out of account shown in confirmation dialog to sign out of account -->
@@ -4512,6 +4525,16 @@
   <string name="lens_camera_mode_qr">QR-skannar</string>
   <!-- Toast shown when the user picks an image from the gallery in QR mode but no QR code is found in it -->
   <string name="lens_camera_qr_no_code_found">Fann ingen QR-kode i bildet</string>
+  <!-- Status shown under an image picked from the gallery while it is being sent to Google Lens for a visual search -->
+  <string name="lens_camera_loading_status">Slår opp dette</string>
+  <!-- Button shown under an image picked from the gallery while it is being sent to Google Lens. Tapping it stops the search and returns to the camera. -->
+  <string name="lens_camera_loading_cancel_button">Avbryt</string>
+  <!-- Snackbar message shown when an image picked from the gallery could not be opened or read, so it was never sent to Google Lens. Shown after returning to the camera. -->
+  <string name="lens_camera_image_load_failed">Klarte ikkje å laste inn dette bildet. Prøv eit anna.</string>
+  <!-- Snackbar message shown when an image picked from the gallery could not be searched because of a network problem or an error from Google Lens. Shown after returning to the camera, next to the lens_camera_upload_failed_retry_button action. -->
+  <string name="lens_camera_upload_failed">Klarte ikkje å hente resultat frå Google Lens</string>
+  <!-- Action in the snackbar shown when an image picked from the gallery could not be searched with Google Lens. Tapping it searches the same image again. -->
+  <string name="lens_camera_upload_failed_retry_button">Prøv igjen</string>
   <!-- Title of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
   <string name="lens_opt_out_title">Finn det med Google Lens</string>
   <!-- Description of the bottom sheet shown the first time the user opens the Google Lens camera screen -->

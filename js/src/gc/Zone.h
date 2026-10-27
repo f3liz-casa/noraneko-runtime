@@ -68,6 +68,18 @@ struct UniqueIdGCPolicy {
 using UniqueIdMap = GCHashMap<Cell*, uint64_t, PointerHasher<Cell*>,
                               SystemAllocPolicy, UniqueIdGCPolicy>;
 
+// For unique symbols, a map from shared symbols in the atoms zone to their
+// corresponding local symbol. Owned by a zone. The keys are weak and entries
+// are removed if the zone's local symbol dies. Local symbols hold the shared
+// symbol alive through its header pointer.
+//
+// This is used to get the existing local symbol when a unique symbol is wrapped
+// into a zone. For non-unique symbols the atom reference bitmap is used to
+// track zones' references to shared symbols.
+using LocalSymbolMap =
+    GCHashMap<HeapPtr<JS::Symbol*>, HeapPtr<JS::Symbol*>,
+              DefaultHasher<HeapPtr<JS::Symbol*>>, ZoneAllocPolicy>;
+
 template <typename T>
 class ZoneAllCellIter;
 
@@ -535,6 +547,9 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   // Set of atoms recently used by this Zone. Purged on GC.
   js::MainThreadOrGCTaskData<js::UniquePtr<js::AtomCacheHashTable>> atomCache_;
 
+  // Set of local symbols used by this Zone.
+  js::MainThreadOrGCTaskData<js::gc::LocalSymbolMap> localSymbolMap_;
+
   // Cache storing allocated external strings. Purged on GC.
   js::MainThreadOrGCTaskData<js::ExternalStringCache> externalStringCache_;
 
@@ -561,13 +576,8 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   // metadata builder.
   js::MainThreadOrIonCompileData<size_t> numRealmsWithAllocMetadataBuilder_{0};
 
-  // Last time at which JIT code was discarded for this zone. This is only set
-  // when JitScripts and Baseline code are discarded as well.
-  js::MainThreadData<mozilla::TimeStamp> lastDiscardedCodeTime_;
-
   js::MainThreadData<bool> gcScheduled_;
   js::MainThreadData<bool> gcScheduledSaved_;
-  js::MainThreadData<bool> gcPreserveCode_;
   js::MainThreadData<bool> keepPropMapTables_;
   js::MainThreadData<bool> wasCollected_;
 
@@ -641,31 +651,25 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   // Circumvent https://github.com/llvm/llvm-project/issues/36032
   static constexpr JitDiscardOptions DefaultJitDiscardOptions() { return {}; }
 
-  void maybeDiscardJitCode(JS::GCContext* gcx);
+  // Discard JIT code, except for realms we're preserving JIT code for.
+  // See GCRuntime::maybeDiscardJitCodeForGC.
+  void discardJitCode(JS::GCContext* gcx, const JitDiscardOptions& options =
+                                              DefaultJitDiscardOptions());
 
-  // Discard JIT code regardless of isPreservingCode().
-  void forceDiscardJitCode(
-      JS::GCContext* gcx,
-      const JitDiscardOptions& options = DefaultJitDiscardOptions());
-
-  void resetAllocSitesAndInvalidate(bool resetNurserySites,
-                                    bool resetPretenuredSites);
+  void discardJitCodeForAllRealms(JS::GCContext* gcx);
 
   void traceWeakJitScripts(JSTracer* trc);
 
   bool registerObjectWithWeakPointers(JSObject* obj);
   void sweepObjectsWithWeakPointers(JSTracer* trc);
 
-  void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
-                              size_t* zoneObject, JS::CodeSizes* code,
-                              size_t* regexpZone, size_t* jitZone,
-                              size_t* cacheIRStubs, size_t* objectFusesArg,
-                              size_t* uniqueIdMap, size_t* initialPropMapTable,
-                              size_t* shapeTables, size_t* atomReferenceBitmaps,
-                              size_t* compartmentObjects,
-                              size_t* crossCompartmentWrappersTables,
-                              size_t* compartmentsPrivateData,
-                              size_t* scriptCountsMapArg);
+  void addSizeOfIncludingThis(
+      mozilla::MallocSizeOf mallocSizeOf, size_t* zoneObject,
+      JS::CodeSizes* code, size_t* regexpZone, size_t* jitZone,
+      size_t* objectFusesArg, size_t* uniqueIdMap, size_t* initialPropMapTable,
+      size_t* shapeTables, size_t* atomReferenceBitmaps,
+      size_t* compartmentObjects, size_t* crossCompartmentWrappersTables,
+      size_t* compartmentsPrivateData, size_t* scriptCountsMapArg);
 
   // Iterate over all cells in the zone. See the definition of ZoneCellIter
   // in gc/GC-inl.h for the possible arguments and documentation.
@@ -691,12 +695,9 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   void unscheduleGC() { gcScheduled_ = false; }
   bool isGCScheduled() { return gcScheduled_; }
 
-  void setPreservingCode(bool preserving) { gcPreserveCode_ = preserving; }
-  bool isPreservingCode() const { return gcPreserveCode_; }
-
-  mozilla::TimeStamp lastDiscardedCodeTime() const {
-    return lastDiscardedCodeTime_;
-  }
+#ifdef DEBUG
+  bool isAnyRealmPreservingCode();
+#endif
 
   void changeGCState(js::gc::GCRuntime* gc, GCState prev, GCState next);
 
@@ -879,6 +880,14 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   }
 
   void dropStringWrappersOnGC();
+
+  js::gc::LocalSymbolMap& localSymbolMap() { return localSymbolMap_.ref(); }
+  void traceIncomingSymbolEdgesForZoneGC(JSTracer* trc,
+                                         js::gc::EdgeSelector whichEdges);
+  void traceWeakLocalSymbolEdges(JSTracer* trc);
+#ifdef DEBUG
+  bool hasLocalSymbol(JS::Symbol* symbol);
+#endif
 
   void traceWeakCCWEdges(JSTracer* trc);
   static void fixupAllCrossCompartmentWrappersAfterMovingGC(JSTracer* trc);

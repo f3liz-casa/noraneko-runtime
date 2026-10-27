@@ -1717,8 +1717,17 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::GetGridTemplateColumnsRows(
 }
 
 already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetGridTemplateColumns() {
+  AutoWeakFrame weakFrameRef(mInnerFrame);
+
   nsGridContainerFrame* gridFrame =
       nsGridContainerFrame::GetGridFrameWithComputedInfo(mInnerFrame);
+
+  if (mInnerFrame && !weakFrameRef.IsAlive()) {
+    // We had a non-null frame, but GetGridFrameWithComputedInfo's
+    // layout-flush seems to have destroyed it. Bail out.
+    return nullptr;
+  }
+
   if (!gridFrame) {
     // The element doesn't have a box - return the computed value.
     // https://drafts.csswg.org/css-grid/#resolved-track-list
@@ -1737,8 +1746,17 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetGridTemplateColumns() {
 }
 
 already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetGridTemplateRows() {
+  AutoWeakFrame weakFrameRef(mInnerFrame);
+
   nsGridContainerFrame* gridFrame =
       nsGridContainerFrame::GetGridFrameWithComputedInfo(mInnerFrame);
+
+  if (mInnerFrame && !weakFrameRef.IsAlive()) {
+    // We had a non-null frame, but GetGridFrameWithComputedInfo's
+    // layout-flush seems to have destroyed it. Bail out.
+    return nullptr;
+  }
+
   if (!gridFrame) {
     // The element doesn't have a box - return the computed value.
     // https://drafts.csswg.org/css-grid/#resolved-track-list
@@ -2368,14 +2386,14 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::GetTransformValue(
    * using the named transforms.  Until a real solution is found, we'll just
    * use this approach.
    */
+
+  // The zoomed refbox is used so we can resolve the percentages with the
+  // already zoomed lengths, and then unzoom everything together.
   nsStyleTransformMatrix::TransformReferenceBox refBox(mInnerFrame, nsRect());
   gfx::Matrix4x4 matrix = nsStyleTransformMatrix::ReadTransforms(
       aTransform, refBox, float(mozilla::AppUnitsPerCSSPixel()),
-      mozilla::StyleZoom::ONE);  // One is passed in, as computed value does not
-                                 // need zooming
-  // TODO(salipov, bug 2045846): Fix zooming for transforms other than matrix.
-  // Note that unzooming may be neded here for transforms using lengths as
-  // opposed to numbers.
+      nsStyleTransformMatrix::Zoomed::
+          No);  // We need to unzoom the translations for GetComputedStyle().
 
   return MatrixToCSSValue(matrix);
 }

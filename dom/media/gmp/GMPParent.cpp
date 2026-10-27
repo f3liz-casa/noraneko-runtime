@@ -16,7 +16,6 @@
 #include "mozilla/FOGIPC.h"
 #include "mozilla/dom/KeySystemNames.h"
 #include "mozilla/dom/WidevineCDMManifestBinding.h"
-#include "mozilla/ipc/CrashReporterHost.h"
 #include "mozilla/ipc/Endpoint.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX)
@@ -497,21 +496,22 @@ mozilla::ipc::IPCResult GMPParent::RecvFOGData(ByteBuf&& aBuf) {
 
 #if defined(XP_WIN)
 mozilla::ipc::IPCResult GMPParent::RecvGetModulesTrust(
-    ModulePaths&& aModPaths, bool aRunAtNormalPriority,
+    ModuleIdentifiers&& aModIdents, bool aRunAtNormalPriority,
     GetModulesTrustResolver&& aResolver) {
   class ModulesTrustRunnable final : public Runnable {
    public:
-    ModulesTrustRunnable(ModulePaths&& aModPaths, bool aRunAtNormalPriority,
+    ModulesTrustRunnable(ModuleIdentifiers&& aModIdents,
+                         bool aRunAtNormalPriority,
                          GetModulesTrustResolver&& aResolver)
         : Runnable("GMPParent::RecvGetModulesTrust::ModulesTrustRunnable"),
-          mModPaths(std::move(aModPaths)),
+          mModIdents(std::move(aModIdents)),
           mResolver(std::move(aResolver)),
           mEventTarget(GetCurrentSerialEventTarget()),
           mRunAtNormalPriority(aRunAtNormalPriority) {}
 
     NS_IMETHOD Run() override {
       RefPtr<DllServices> dllSvc(DllServices::Get());
-      dllSvc->GetModulesTrust(std::move(mModPaths), mRunAtNormalPriority)
+      dllSvc->GetModulesTrust(std::move(mModIdents), mRunAtNormalPriority)
           ->Then(
               mEventTarget, __func__,
               [self = RefPtr{this}](ModulesMapResult&& aResult) {
@@ -526,14 +526,14 @@ mozilla::ipc::IPCResult GMPParent::RecvGetModulesTrust(
    private:
     ~ModulesTrustRunnable() override = default;
 
-    ModulePaths mModPaths;
+    ModuleIdentifiers mModIdents;
     GetModulesTrustResolver mResolver;
     nsCOMPtr<nsISerialEventTarget> mEventTarget;
     bool mRunAtNormalPriority;
   };
 
   NS_DispatchToMainThread(MakeAndAddRef<ModulesTrustRunnable>(
-      std::move(aModPaths), aRunAtNormalPriority, std::move(aResolver)));
+      std::move(aModIdents), aRunAtNormalPriority, std::move(aResolver)));
   return IPC_OK();
 }
 #endif  // defined(XP_WIN)

@@ -23,15 +23,16 @@
 #include <string>
 #include <vector>
 
+#include "absl/functional/any_invocable.h"
 #include "api/crypto/frame_decryptor_interface.h"
 #include "api/environment/environment.h"
 #include "api/frame_transformer_interface.h"
 #include "api/rtp_headers.h"
+#include "api/rtp_packet_infos.h"
 #include "api/scoped_refptr.h"
 #include "api/sequence_checker.h"
 #include "api/task_queue/pending_task_safety_flag.h"
 #include "api/task_queue/task_queue_base.h"
-#include "api/transport/rtp/rtp_source.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
 #include "api/video/corruption_detection/frame_instrumentation_data.h"
@@ -47,7 +48,6 @@
 #include "call/video_receive_stream.h"
 #include "common_video/include/corruption_score_calculator.h"
 #include "modules/include/module_common_types.h"
-#include "modules/rtp_rtcp/source/source_tracker.h"
 #include "modules/video_coding/nack_requester.h"
 #include "modules/video_coding/video_receiver2.h"
 #include "rtc_base/race_checker.h"
@@ -139,12 +139,12 @@ class VideoReceiveStream2
   void UnregisterFromTransport();
 
   // Accessor for the a/v sync group. This value may change and the caller
-  // must be on the packet delivery thread.
+  // must be on the worker thread.
   const std::string& sync_group() const;
 
   // Getters for const remote SSRC values that won't change throughout the
   // object's lifetime.
-  uint32_t remote_ssrc() const { return config_.rtp.remote_ssrc; }
+  uint32_t remote_ssrc() const { return remote_ssrc_; }
   // RTX ssrc can be updated.
   uint32_t rtx_ssrc() const {
     RTC_DCHECK_RUN_ON(&worker_sequence_checker_);
@@ -170,6 +170,7 @@ class VideoReceiveStream2
   void SetAssociatedPayloadTypes(
       std::map<int, int> associated_payload_types) override;
   void SetRawPayloadTypes(std::set<int> raw_payload_types) override;
+  void SetDecoders(std::vector<Decoder> decoders) override;
 
   webrtc::VideoReceiveStreamInterface::Stats GetStats() const override;
 
@@ -202,8 +203,6 @@ class VideoReceiveStream2
 
   // SetMinimumPlayoutDelay is only called by A/V sync.
   bool SetMinimumPlayoutDelay(TimeDelta delay) override;
-
-  std::vector<webrtc::RtpSource> GetSources() const override;
 
   RecordingState SetAndGetRecordingState(RecordingState state,
                                          bool generate_key_frame) override;
@@ -255,6 +254,14 @@ class VideoReceiveStream2
       RTC_RUN_ON(decode_sequence_checker_);
 
   void UpdateHistograms();
+  void ConfigureCodecs() RTC_RUN_ON(worker_sequence_checker_);
+  // Registers new decoders with the internal VideoReceiver2 database and
+  // deregisters any external decoder instances from `old_decoders` whose
+  // payload type or video format is no longer present in `new_decoders`.
+  void RegisterCodecsOnReceiver(const std::vector<Decoder>& old_decoders,
+                                const std::vector<Decoder>& new_decoders);
+  std::vector<RtpVideoStreamReceiver2::ReceiveCodec> GetReceiveCodecConfig()
+      const RTC_RUN_ON(worker_sequence_checker_);
   void CalculateCorruptionScore(
       const VideoFrame& frame,
       FrameInstrumentationData frame_instrumentation_data,
@@ -270,7 +277,14 @@ class VideoReceiveStream2
   RaceChecker decode_callback_race_checker_;
 
   TransportAdapter transport_adapter_;
-  const VideoReceiveStreamInterface::Config config_;
+  VideoReceiveStreamInterface::Config config_
+      RTC_GUARDED_BY(worker_sequence_checker_);
+  const uint32_t remote_ssrc_;
+  VideoSinkInterface<VideoFrame>* const renderer_;
+  const absl::AnyInvocable<void(const RtpPacketInfos&, Timestamp) const>
+      on_frame_delivered_callback_;
+  VideoDecoderFactory* const decoder_factory_;
+  const bool require_frame_encryption_;
   const int num_cpu_cores_;
   Call* const call_;
 
@@ -279,7 +293,6 @@ class VideoReceiveStream2
   bool decoder_running_ RTC_GUARDED_BY(worker_sequence_checker_) = false;
   bool decoder_stopped_ RTC_GUARDED_BY(decode_sequence_checker_) = true;
 
-  SourceTracker source_tracker_ RTC_GUARDED_BY(worker_sequence_checker_);
   ReceiveStatisticsProxy stats_proxy_;
   // Shared by media and rtx stream receivers, since the latter has no RtpRtcp
   // module of its own.
@@ -288,16 +301,20 @@ class VideoReceiveStream2
   const std::unique_ptr<VCMTiming> timing_;  // Jitter buffer experiment.
   VideoReceiver2 video_receiver_;
   std::unique_ptr<VideoSinkInterface<VideoFrame>> incoming_video_stream_;
-  RtpVideoStreamReceiver2 rtp_video_stream_receiver_;
-  std::unique_ptr<VideoStreamDecoder> video_stream_decoder_;
-  RtpStreamsSynchronizer rtp_stream_sync_;
 
   // Maximum wait times for keyframes and frames. Configurable through field
   // trials and may be adjusted dynamically (see `DetermineMaxWaitForFrame`).
   TimeDelta max_wait_for_keyframe_ RTC_GUARDED_BY(worker_sequence_checker_);
   TimeDelta max_wait_for_frame_ RTC_GUARDED_BY(worker_sequence_checker_);
 
-  const std::unique_ptr<VideoStreamBufferController> buffer_;
+  RtpVideoStreamReceiver2 rtp_video_stream_receiver_;
+  std::unique_ptr<VideoStreamDecoder> video_stream_decoder_;
+  RtpStreamsSynchronizer rtp_stream_sync_;
+
+  DecodeSynchronizer* const decode_sync_;
+
+  std::unique_ptr<VideoStreamBufferController> buffer_
+      RTC_GUARDED_BY(worker_sequence_checker_);
 
   // `receiver_controller_` is valid from when RegisterWithTransport is invoked
   //  until UnregisterFromTransport.
@@ -344,6 +361,8 @@ class VideoReceiveStream2
   // Function that is triggered with encoded frames, if not empty.
   std::function<void(const RecordableEncodedFrame&)>
       encoded_frame_buffer_function_ RTC_GUARDED_BY(decode_sequence_checker_);
+  std::vector<VideoReceiveStreamInterface::Decoder> active_decoders_
+      RTC_GUARDED_BY(decode_sequence_checker_);
   // Set to true while we're requesting keyframes but not yet received one.
   bool keyframe_generation_requested_ RTC_GUARDED_BY(worker_sequence_checker_) =
       false;

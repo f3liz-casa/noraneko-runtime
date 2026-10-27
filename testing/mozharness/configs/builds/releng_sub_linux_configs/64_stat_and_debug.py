@@ -7,7 +7,6 @@ import os
 config = {
     # note: overridden by MOZHARNESS_ACTIONS in TaskCluster tasks
     "default_actions": [
-        "clobber",
         "build",
     ],
     "vcs_share_base": "/builds/hg-shared",
@@ -18,7 +17,6 @@ config = {
     #########################################################################
     ###### 64 bit specific ######
     "platform": "linux64",
-    "stage_platform": "linux64-st-an-opt",
     "env": {
         "MOZBUILD_STATE_PATH": os.path.join(os.getcwd(), ".mozbuild"),
         "DISPLAY": ":2",
@@ -32,7 +30,4 @@ config = {
         "PATH": "/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin",
         ##
     },
-    # This doesn't actually inherit from anything.
-    "mozconfig_platform": "linux64",
-    "mozconfig_variant": "debug-static-analysis-clang",
 }

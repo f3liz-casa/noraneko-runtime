@@ -375,7 +375,8 @@ class BaselineCompilerHandler {
 
   Label* labelOf(jsbytecode* pc) { return &labels_[script_->pcToOffset(pc)]; }
 
-  bool isDefinitelyLastOp() const { return pc_ == script_->lastPC(); }
+  // No code is emitted for the ops after the last reachable one.
+  bool isLastReachableOp() const { return pc_ == analysis_.lastReachablePC(); }
 
   bool shouldEmitDebugEpilogueAtReturnOp() const {
     // The JIT uses the return address -> pc mapping and bakes in the pc
@@ -523,8 +524,12 @@ class BaselineInterpreterHandler {
   NonAssertingLabel codeCoverageAtPrologueLabel_;
   NonAssertingLabel codeCoverageAtPCLabel_;
 
-  // Offsets of IC calls for IsIonInlinableOp ops, for Ion bailouts.
-  BaselineInterpreter::ICReturnOffsetVector icReturnOffsets_;
+  // Offsets of bailout stubs for IsIonInlinableOp IC ops, for Ion bailouts.
+  BaselineInterpreter::ICBailoutStubOffsetVector icBailoutStubOffsets_;
+
+  // Return offset of a call to an IsIonInlinableOp IC op. This is populated by
+  // emitNextIC and cleared by the corresponding call to emitICBailoutStub.
+  mozilla::Maybe<uint32_t> icReturnOffset_;
 
   // Offsets of some callVMs for BaselineDebugModeOSR.
   BaselineInterpreter::CallVMOffsets callVMOffsets_;
@@ -551,8 +556,19 @@ class BaselineInterpreterHandler {
   }
   CodeOffsetVector& codeCoverageOffsets() { return codeCoverageOffsets_; }
 
-  BaselineInterpreter::ICReturnOffsetVector& icReturnOffsets() {
-    return icReturnOffsets_;
+  BaselineInterpreter::ICBailoutStubOffsetVector& icBailoutStubOffsets() {
+    return icBailoutStubOffsets_;
+  }
+
+  void setICReturnOffset(uint32_t offset) {
+    MOZ_ASSERT(icReturnOffset_.isNothing());
+    icReturnOffset_.emplace(offset);
+  }
+  uint32_t takeICReturnOffset() {
+    MOZ_ASSERT(icReturnOffset_.isSome());
+    uint32_t offset = *icReturnOffset_;
+    icReturnOffset_.reset();
+    return offset;
   }
 
   void setCurrentOp(JSOp op) { currentOp_.emplace(op); }
@@ -561,7 +577,7 @@ class BaselineInterpreterHandler {
 
   // Interpreter doesn't know the script and pc statically.
   jsbytecode* maybePC() const { return nullptr; }
-  bool isDefinitelyLastOp() const { return false; }
+  bool isLastReachableOp() const { return false; }
   JSScript* maybeScript() const { return nullptr; }
 
   bool shouldEmitDebugEpilogueAtReturnOp() const {
@@ -629,6 +645,7 @@ class BaselineInterpreterGenerator final : private BaselineInterpreterCodeGen {
  private:
   [[nodiscard]] bool emitInterpreterLoop();
   [[nodiscard]] bool emitDebugTrap();
+  [[nodiscard]] bool emitICBailoutStub();
 
   void emitOutOfLineCodeCoverageInstrumentation();
   [[nodiscard]] bool emitOutOfLineGeneratorResumePrologue();

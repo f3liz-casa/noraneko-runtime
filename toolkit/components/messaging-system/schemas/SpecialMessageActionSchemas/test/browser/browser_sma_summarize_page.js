@@ -4,7 +4,7 @@
 "use strict";
 
 const { GenAI } = ChromeUtils.importESModule(
-  "resource:///modules/GenAI.sys.mjs"
+  "moz-src:///browser/components/genai/GenAI.sys.mjs"
 );
 
 const SIDEBAR_REVAMP_PREF = "sidebar.revamp";
@@ -23,20 +23,22 @@ add_task(async function test_SUMMARIZE_PAGE() {
     ],
   });
 
-  await SMATestUtils.executeAndValidateAction({
-    type: "SUMMARIZE_PAGE",
-    data: "callout",
+  await BrowserTestUtils.withNewTab("https://example.com", async () => {
+    await SMATestUtils.executeAndValidateAction({
+      type: "SUMMARIZE_PAGE",
+      data: "callout",
+    });
+
+    Assert.equal(stub.firstCall.args[1].entry, "callout", "passed along entry");
+
+    await SMATestUtils.executeAndValidateAction({ type: "SUMMARIZE_PAGE" });
+
+    Assert.equal(
+      stub.secondCall.args[1].entry,
+      "message",
+      "default message entry"
+    );
   });
-
-  Assert.equal(stub.firstCall.args[1].entry, "callout", "passed along entry");
-
-  await SMATestUtils.executeAndValidateAction({ type: "SUMMARIZE_PAGE" });
-
-  Assert.equal(
-    stub.secondCall.args[1].entry,
-    "message",
-    "default message entry"
-  );
 
   await SpecialPowers.popPrefEnv();
   stub.restore();

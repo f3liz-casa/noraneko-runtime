@@ -4,35 +4,38 @@
 
 import { html, nothing } from "chrome://global/content/vendor/lit.all.mjs";
 import { MozLitElement } from "chrome://global/content/lit-utils.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://browser/content/aiwindow/components/aitab-header.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://browser/content/aiwindow/components/aitab-list.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://browser/content/aiwindow/components/aitab-timeline.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://browser/content/aiwindow/components/aitab-table.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://browser/content/aiwindow/components/aitab-highlights.mjs";
 
-const REQUEST_PAGE_EVENT = "AITab:RequestPage";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://browser/content/aiwindow/components/aitab-error.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://browser/content/aiwindow/components/aitab-text-block.mjs";
+
+// The same names the child and parent actors use, so a message can be traced
+// straight through without a translation table.
+const GET_PAGE_EVENT = "AITab:GetPage";
+const DELETE_PAGE_EVENT = "AITab:DeletePage";
 
 /**
- * Returns the href as an http(s) URL, or null for anything else. Footer button
- * hrefs can also be in-app route ids, which must not become links.
- *
- * @param {string} href
- * @returns {?string}
- */
-function httpUrl(href) {
-  const parsed = URL.parse(String(href ?? "").trim());
-  return parsed?.protocol == "http:" || parsed?.protocol == "https:"
-    ? parsed.href
-    : null;
-}
-
-/**
- * Root component for about:aitab. Looks up the page config for the generated
- * page named in the page URL and renders it.
- *
- * Body blocks render as placeholders for now; the text, table, cards, list and
- * timeline components land separately.
+ * Root component for about:smartpage. Looks up the page config for the
+ * generated page named in the page URL and renders it.
  *
  * @property {?object} page - Page config to render, or null when there is none.
  * @property {string} status - One of "loading", "unavailable", "error" or
  *   "ready". Drives which of the states below is rendered.
  */
 export class AITabPage extends MozLitElement {
+  #renderers;
+
   static properties = {
     page: { type: Object },
     status: { type: String },
@@ -42,6 +45,15 @@ export class AITabPage extends MozLitElement {
     super();
     this.page = null;
     this.status = "loading";
+
+    this.#renderers = new Map();
+    this.#renderers.set("highlights", this.#renderHighlights.bind(this));
+    this.#renderers.set("sourcelinks", this.#renderSourceLinks.bind(this));
+    this.#renderers.set("textblock", this.#renderTextBlock.bind(this));
+    this.#renderers.set("rankedtable", this.#renderRankedTable.bind(this));
+    this.#renderers.set("cards", this.#renderCards.bind(this));
+    this.#renderers.set("timeline", this.#renderTimeline.bind(this));
+    this.#renderers.set("list", this.#renderList.bind(this));
   }
 
   connectedCallback() {
@@ -63,13 +75,12 @@ export class AITabPage extends MozLitElement {
   }
 
   async #loadPage() {
-    const pageName = this.pageName;
-    if (!pageName) {
+    if (!this.pageName) {
       this.status = "unavailable";
       return;
     }
 
-    const response = await this.#requestPage(pageName);
+    const response = await this.#request(GET_PAGE_EVENT);
     if (!response?.success) {
       throw new Error(response?.error ?? "No response from the parent process");
     }
@@ -79,123 +90,170 @@ export class AITabPage extends MozLitElement {
   }
 
   /**
-   * Asks the AITab actor for a stored page config.
+   * Deletes this page, and with it the conversation that produced it. The
+   * page stays open showing the unavailable state rather than closing the
+   * tab, so the deletion is visible.
+   */
+  async #deletePage() {
+    const response = await this.#request(DELETE_PAGE_EVENT);
+    if (!response?.success) {
+      throw new Error(response?.error ?? "No response from the parent process");
+    }
+
+    this.page = null;
+    this.status = "unavailable";
+  }
+
+  /**
+   * Sends a request to the AITab actor and waits for its answer.
    *
-   * @param {string} pageName
+   * @param {string} eventType - Request event the child actor listens for.
+   * @param {object} [detail] - Payload forwarded to the parent actor.
    * @returns {Promise<object>} Resolves with the parent actor's response.
    */
-  #requestPage(pageName) {
+  #request(eventType, detail = null) {
     return new Promise((resolve, reject) => {
       const onResponse = event => {
-        this.removeEventListener(`${REQUEST_PAGE_EVENT}:Error`, onError);
+        this.removeEventListener(`${eventType}:Error`, onError);
         resolve(event.detail);
       };
       const onError = event => {
-        this.removeEventListener(`${REQUEST_PAGE_EVENT}:Response`, onResponse);
-        reject(new Error(event.detail?.error || "Failed to load the page"));
+        this.removeEventListener(`${eventType}:Response`, onResponse);
+        reject(new Error(event.detail?.error || "The request failed"));
       };
 
-      this.addEventListener(`${REQUEST_PAGE_EVENT}:Response`, onResponse, {
+      this.addEventListener(`${eventType}:Response`, onResponse, {
         once: true,
       });
-      this.addEventListener(`${REQUEST_PAGE_EVENT}:Error`, onError, {
-        once: true,
-      });
+      this.addEventListener(`${eventType}:Error`, onError, { once: true });
 
-      this.dispatchEvent(
-        new CustomEvent(REQUEST_PAGE_EVENT, {
-          bubbles: true,
-          detail: { pageName },
-        })
-      );
+      this.dispatchEvent(new CustomEvent(eventType, { bubbles: true, detail }));
     });
   }
 
-  updated(changedProperties) {
-    if (!changedProperties.has("page")) {
-      return;
-    }
+  #renderHeader(header) {
     // The title is what shows up for this page in history and in the tab strip.
-    const title = this.page?.header?.title;
-    if (title) {
-      document.title = title;
+    if (header.title) {
+      document.title = header.title;
     }
+
+    // The header block leaves `eyebrow` blank; the run date comes from the
+    // stored page, already formatted and localized by AITabParent.
+    return html`
+      <aitab-header
+        .createdAt=${this.page?.createdAtLabel ?? ""}
+        .title=${header.title ?? ""}
+        .subhead=${header.subhead ?? ""}
+        .references=${header.references?.items ?? []}
+        @aitab-page-actions:delete=${() => {
+          this.#deletePage().catch(error => {
+            console.error("Failed to delete AI Tab page:", error);
+            this.status = "error";
+          });
+        }}
+      ></aitab-header>
+    `;
   }
 
-  #renderHeader(header) {
-    if (!header) {
-      return nothing;
-    }
-    return html`
-      <header class="aitab-header">
-        ${header.eyebrow
-          ? html`<p class="aitab-eyebrow">${header.eyebrow}</p>`
-          : nothing}
-        <h1 class="aitab-title">${header.title}</h1>
-        ${header.subhead
-          ? html`<p class="aitab-subhead">${header.subhead}</p>`
-          : nothing}
-      </header>
-    `;
+  #renderHighlights(highlights) {
+    const markup = html`<aitab-highlights
+      .title=${highlights.title}
+      .items=${highlights.items}
+    ></aitab-highlights>`;
+
+    return this.#renderBlock({
+      type: highlights.component.toLowerCase(),
+      html: markup,
+    });
+  }
+
+  // TODO: Bug 2075400 - SourceLinks appear in multiple components
+  // and can also appear as a child based on the schema
+  // we should extract these as a component
+  #renderSourceLinks(_sourceLinks) {
+    return nothing;
+  }
+
+  #renderTextBlock(textBlock) {
+    const markup = html`<aitab-text-block
+      .heading=${textBlock.lead ?? ""}
+      .paragraphs=${textBlock.paragraphs ?? []}
+      .references=${textBlock.references ?? []}
+    ></aitab-text-block>`;
+
+    return this.#renderBlock({
+      type: textBlock.component.toLowerCase(),
+      html: markup,
+    });
+  }
+
+  #renderRankedTable(rankedTable) {
+    const markup = html`<aitab-table
+      .heading=${rankedTable.title}
+      .description=${rankedTable.description}
+      .columns=${rankedTable.columns}
+      .rows=${rankedTable.rows}
+    ></aitab-table>`;
+
+    return this.#renderBlock({
+      type: rankedTable.component.toLowerCase(),
+      html: markup,
+    });
+  }
+
+  #renderCards(_cards) {
+    return nothing;
+  }
+
+  #renderTimeline(timeline) {
+    const markup = html`<aitab-timeline
+      .title=${timeline.title ?? ""}
+      description=${timeline.description ?? ""}
+      .items=${timeline.items ?? []}
+    ></aitab-timeline>`;
+
+    return this.#renderBlock({
+      type: timeline.component.toLowerCase(),
+      html: markup,
+    });
+  }
+
+  #renderList(list) {
+    const markup = html`<aitab-list
+      .title=${list.title ?? ""}
+      description=${list.description ?? ""}
+      .groups=${list.groups ?? []}
+      layout=${list.layout ?? "column"}
+    ></aitab-list>`;
+
+    return this.#renderBlock({
+      type: list.component.toLowerCase(),
+      html: markup,
+    });
   }
 
   #renderBlock(block) {
     if (!block?.type) {
       return nothing;
     }
+
     return html`
       <section class="aitab-block" data-block-type=${block.type}>
-        ${block.title ? html`<h2>${block.title}</h2>` : nothing}
+        ${block.html}
       </section>
     `;
   }
 
-  #renderFooterButton(button) {
-    const url = httpUrl(button.href);
-    const variant = button.variant ?? "secondary";
-    return url
-      ? html`<a
-          class="aitab-chip"
-          data-variant=${variant}
-          href=${url}
-          target="_blank"
-          rel="noopener noreferrer"
-          >${button.text}</a
-        >`
-      : html`<span class="aitab-chip" data-variant=${variant}
-          >${button.text}</span
-        >`;
-  }
-
-  #renderFooter(footer) {
-    if (!footer) {
-      return nothing;
-    }
-    return html`
-      <footer class="aitab-footer">
-        ${footer.text
-          ? html`<p class="aitab-footer-text">${footer.text}</p>`
-          : nothing}
-        <div class="aitab-chips">
-          ${(footer.buttons ?? []).map(button =>
-            this.#renderFooterButton(button)
-          )}
-        </div>
-      </footer>
-    `;
+  #renderFooter(_footer) {
+    return nothing;
   }
 
   #renderStatus() {
     if (this.status == "loading") {
       return nothing;
     }
-    return html`<p
-      class="aitab-status"
-      role="alert"
-      data-l10n-id=${this.status == "error"
-        ? "ai-tab-page-error"
-        : "ai-tab-page-unavailable"}
-    ></p>`;
+
+    return html`<aitab-error></aitab-error>`;
   }
 
   render() {
@@ -204,15 +262,30 @@ export class AITabPage extends MozLitElement {
         rel="stylesheet"
         href="chrome://browser/content/aiwindow/components/aitab-page.css"
       />
-      ${this.status == "ready"
-        ? html`<main class="aitab-sheet">
-            ${this.#renderHeader(this.page.header)}
-            <div class="aitab-blocks">
-              ${(this.page.blocks ?? []).map(block => this.#renderBlock(block))}
-            </div>
-            ${this.#renderFooter(this.page.footer)}
-          </main>`
-        : this.#renderStatus()}
+      ${this.status == "ready" ? this.#renderPage() : this.#renderStatus()}
+    `;
+  }
+
+  #renderPage() {
+    const children = this.page.children ?? [];
+    const hasHeader = children[0]?.component === "Header";
+
+    return html`<main class="aitab-sheet">
+      ${hasHeader ? this.#renderHeader(children[0]) : nothing}
+      ${this.#renderBlocks(hasHeader ? children.slice(1) : children)}
+      ${this.#renderFooter()}
+    </main>`;
+  }
+
+  #renderBlocks(blocks) {
+    return html`
+      <div class="aitab-blocks">
+        ${blocks.map(block => {
+          const componentKey = block.component?.toLowerCase?.();
+          const renderer = this.#renderers.get(componentKey);
+          return renderer ? renderer(block) : nothing;
+        })}
+      </div>
     `;
   }
 }

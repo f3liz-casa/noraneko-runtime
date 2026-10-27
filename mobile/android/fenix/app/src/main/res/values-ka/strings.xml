@@ -313,8 +313,6 @@
   <string name="browser_menu_default_banner_title">გახადეთ %1$s ნაგულისხმევი</string>
   <!-- Label text within the set as default banner -->
   <string name="browser_menu_default_banner_subtitle_2">სწრაფი, პირადი და თქვენთვის შექმნილი.</string>
-  <!-- Content description (not visible, for screen readers etc.) for the button that dismisses the set as default banner in the menu -->
-  <string name="browser_menu_default_banner_dismiss_promotion">დამკვეთისგან მოწოდებულის არიდება</string>
   <!-- Content description (not visible, for screen readers etc.) for recommended extensions in main menu -->
   <string name="browser_menu_recommended_extensions_content_description">დამატებით</string>
   <!--
@@ -1286,8 +1284,6 @@
   <string name="preference_simple_toolbar">მარტივი</string>
   <!-- Preference for using expanded toolbar -->
   <string name="preference_expanded_toolbar">ჩამოშლილი</string>
-  <!-- Preference description indicating the toolbar location preference is disabled when the tab strip is enabled -->
-  <string name="preference_toolbar_pref_disabled_explanation">მისამართების ველი უნდა იყოს ზემოთ, როცა ჩანართის ზოლი გამოჩენილია.</string>
   <!-- New tab shortcut in toolbar customization -->
   <string name="toolbar_customize_shortcut_new_tab">ახალი ჩანართის გახსნა</string>
   <!-- Share shortcut in toolbar customization -->
@@ -1369,6 +1365,8 @@
   <string name="library_desktop_bookmarks_unfiled">სხვა სანიშნები</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">ისტორია</string>
+  <!-- Content description (not visible, for screen readers etc.) for the check mark that replaces a site's icon in History and Recently closed tabs when the item is selected -->
+  <string name="library_item_selected_content_description">არჩეული</string>
   <!-- Settings Page Title -->
   <string name="settings_title">პარამეტრები</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -1421,8 +1419,6 @@
   <string name="preferences_tabs">ჩანართები</string>
   <!-- Title of preference that allows a user to specify the tab layout -->
   <string name="preferences_tab_layout">ჩანართების განლაგება</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">ჩანართის ხედი</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">სია</string>
   <!-- Option for a grid tab view -->
@@ -1477,20 +1473,12 @@
   <string name="preferences_tab_organization">ჩანართების მოწყობა</string>
   <!-- Title of the preference that allows a user to enable or disable the inactive tabs feature -->
   <string name="preferences_inactive_tabs_toggle_title">უქმი ჩანართები</string>
-  <!--
-    Inactive tabs
-
-    Category header of a preference that allows a user to enable or disable the inactive tabs feature
-  -->
-  <string name="preferences_inactive_tabs">ძველი ჩანართების უქმებში გადატანა</string>
   <!-- Summary of the preference that allows a user to enable or disable the inactive tabs feature. -->
   <string name="preferences_inactive_tabs_title">ორი კვირის მოუნახულებელი ჩანართები გადავა უქმეთა არეში.</string>
   <!-- Title of the preference that allows a user to enable or disable the tab groups feature -->
   <string name="preferences_tab_groups_title">ჩანართის ჯგუფები</string>
   <!-- Summary of the preference that allows a user to enable or disable the tab groups feature -->
   <string name="preferences_tab_groups_description">დაალაგეთ თქვენი ჩანართები ჯგუფებად სახელის დარქმევითა და დამახსოვრებით.</string>
-  <!-- Title for the preference to enable or disable the tab groups feature -->
-  <string name="preferences_tab_groups_feature">ჩანართების ჯგუფების ჩართვა</string>
   <!--
     Privacy report
 
@@ -2439,6 +2427,8 @@
   <string name="sync_send_tab_empty_state_title">მოწყობილობები არაა დაკავშირებული</string>
   <!-- Send tab to synced devices: Empty state message - Displayed when the user has no synced devices -->
   <string name="sync_send_tab_empty_state_description" tools:ignore="BrandUsage">ჩანართის გასაგზავნად, შედით Firefox-ში, სულ მცირე, კიდევ ერთი სხვა მოწყობილობიდან.</string>
+  <!-- Send tab to synced devices: Empty state link - Displayed when the user has no synced devices -->
+  <string name="sync_send_tab_empty_state_link">იხილეთ, როგორ უნდა დააერთოთ მოწყობილობა</string>
   <!-- Send tab to synced devices: Connectivity Error title -->
   <string name="sync_send_tab_error_connection_title">შეამოწმეთ ქსელთან კავშირი</string>
   <!-- Send tab to synced devices: Connectivity Error message - Suggested user action after internet connection has been established -->
@@ -2531,7 +2521,7 @@
   <!-- Title for Accessibility Text Automatic Size Scaling Preference -->
   <string name="preference_accessibility_auto_size_2">შრიფტის ავტომატური ზომა</string>
   <!-- Summary for Accessibility Text Automatic Size Scaling Preference -->
-  <string name="preference_accessibility_auto_size_summary">შრიფტის ზომის განსაზღვრა Android-პარამეტრებით. გათიშეთ ზომის შესაცვლელად.</string>
+  <string name="preference_accessibility_auto_size_summary">შრიფტის ზომას განსაზღვრავს Android პარამეტრებიდან. გათიშეთ ზომის შესაცვლელად.</string>
   <!-- Title for the Delete browsing data preference -->
   <string name="preferences_delete_browsing_data">დათვალიერების მონაცემების წაშლა</string>
   <!-- Title for the tabs item in Delete browsing data -->
@@ -3224,7 +3214,7 @@
   <!-- The label for the expiration date month of a credit card to be used by a11y services -->
   <string name="credit_cards_expiration_date_month">ვადის გასვლის თვე</string>
   <!-- The label for the expiration date year of a credit card to be used by a11y services -->
-  <string name="credit_cards_expiration_date_year">ვადის გასვლის წელიწადი</string>
+  <string name="credit_cards_expiration_date_year">ვადის გასვლის წელი</string>
   <!-- The header for the name on the credit card -->
   <string name="credit_cards_name_on_card">მფლობელის სახელი</string>
   <!-- The text for the "Delete card" menu item for deleting a credit card -->
@@ -4520,6 +4510,16 @@
   <string name="lens_camera_mode_qr">QR-წამკითხველი</string>
   <!-- Toast shown when the user picks an image from the gallery in QR mode but no QR code is found in it -->
   <string name="lens_camera_qr_no_code_found">QR-კოდი ვერ მოიძებნა სურათზე</string>
+  <!-- Status shown under an image picked from the gallery while it is being sent to Google Lens for a visual search -->
+  <string name="lens_camera_loading_status">მოძიება</string>
+  <!-- Button shown under an image picked from the gallery while it is being sent to Google Lens. Tapping it stops the search and returns to the camera. -->
+  <string name="lens_camera_loading_cancel_button">გაუქმება</string>
+  <!-- Snackbar message shown when an image picked from the gallery could not be opened or read, so it was never sent to Google Lens. Shown after returning to the camera. -->
+  <string name="lens_camera_image_load_failed">ეს სურათი ვერ ჩაიტვირთა. სცადეთ სხვა.</string>
+  <!-- Snackbar message shown when an image picked from the gallery could not be searched because of a network problem or an error from Google Lens. Shown after returning to the camera, next to the lens_camera_upload_failed_retry_button action. -->
+  <string name="lens_camera_upload_failed">შედეგებს ვერ აბრუნებს Google Lens</string>
+  <!-- Action in the snackbar shown when an image picked from the gallery could not be searched with Google Lens. Tapping it searches the same image again. -->
+  <string name="lens_camera_upload_failed_retry_button">ხელახლა ცდა</string>
   <!-- Title of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
   <string name="lens_opt_out_title">მოსაძებნად Google Lens</string>
   <!-- Description of the bottom sheet shown the first time the user opens the Google Lens camera screen -->

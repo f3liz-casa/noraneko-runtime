@@ -46,14 +46,12 @@ import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.NavigationUI
 import java.util.Locale
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.parcelize.Parcelize
 import mozilla.appservices.places.BookmarkRoot
 import mozilla.components.browser.state.action.MediaSessionAction
@@ -110,6 +108,7 @@ import org.mozilla.fenix.bindings.HomepageTabBinding
 import org.mozilla.fenix.bindings.SummarizeToolbarHighlightBinding
 import org.mozilla.fenix.bookmarks.DesktopFolders
 import org.mozilla.fenix.browser.BrowserFragment
+import org.mozilla.fenix.browser.BrowserFragmentDirections
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
 import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
 import org.mozilla.fenix.browser.browsingmode.DefaultBrowsingModeManager
@@ -157,6 +156,7 @@ import org.mozilla.fenix.ext.recordEventInNimbus
 import org.mozilla.fenix.ext.setNavigationIcon
 import org.mozilla.fenix.extension.WebExtensionPromptFeature
 import org.mozilla.fenix.home.HomeFragment
+import org.mozilla.fenix.home.HomeFragmentDirections
 import org.mozilla.fenix.home.TopSitesRefresher
 import org.mozilla.fenix.home.intent.AssistIntentProcessor
 import org.mozilla.fenix.home.intent.CrashReporterIntentProcessor
@@ -169,7 +169,7 @@ import org.mozilla.fenix.home.intent.OpenRecentlyClosedIntentProcessor
 import org.mozilla.fenix.home.intent.OpenSpecificTabIntentProcessor
 import org.mozilla.fenix.home.intent.SpeechProcessingIntentProcessor
 import org.mozilla.fenix.home.intent.StartSearchIntentProcessor
-import org.mozilla.fenix.home.topsites.DefaultTopSitesBinding
+import org.mozilla.fenix.home.topsites.DefaultPinnedSitesBinding
 import org.mozilla.fenix.messaging.FenixMessageSurfaceId
 import org.mozilla.fenix.messaging.MessageNotificationWorker
 import org.mozilla.fenix.nimbus.FxNimbus
@@ -284,8 +284,8 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity, Crash
         }
     }
 
-    private val defaultTopSitesBinding by lazy {
-        DefaultTopSitesBinding(
+    private val defaultPinnedSitesBinding by lazy {
+        DefaultPinnedSitesBinding(
             browserStore = components.core.store,
             topSitesStorage = components.core.topSitesStorage,
             settings = components.settings,
@@ -384,7 +384,11 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity, Crash
             ),
             SpeechProcessingIntentProcessor(this, components.core.store),
             AssistIntentProcessor(),
-            StartSearchIntentProcessor { components.fenixOnboarding.userHasBeenOnboarded() },
+            StartSearchIntentProcessor(
+                fenixBrowserUseCases = components.useCases.fenixBrowserUseCases,
+                browsingModeManager = browsingModeManager,
+                userHasBeenOnboarded = { components.fenixOnboarding.userHasBeenOnboarded() },
+            ),
             LensResultIntentProcessor(this),
             OpenHomeIntentProcessor(
                 fenixBrowserUseCases = components.useCases.fenixBrowserUseCases,
@@ -593,7 +597,9 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity, Crash
             }
 
             if (shouldNavigateToBrowserOnColdStart(savedInstanceState)) {
-                if (!shouldStartOnHome()) {
+                if (shouldStartOnHome() && components.settings.enableHomepageAsNewTab) {
+                    components.useCases.fenixBrowserUseCases.addNewHomepageTab()
+                } else if (!shouldStartOnHome()) {
                     navigateToBrowserOnColdStart()
                 }
                 maybeShowSetAsDefaultBrowserPrompt()
@@ -631,7 +637,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity, Crash
             extensionsProcessDisabledBackgroundController,
             serviceWorkerSupport,
             crashReporterBinding,
-            defaultTopSitesBinding,
+            defaultPinnedSitesBinding,
             TopSitesRefresher(
                 settings = components.settings,
                 topSitesProvider = components.core.macTopSitesProvider,
@@ -1330,13 +1336,22 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity, Crash
             val currentFragment = navHostFragment?.childFragmentManager?.primaryNavigationFragment
             when (currentFragment) {
                 is HomeFragment -> {
-                    val action = NavGraphDirections.actionGlobalMenuDialogFragment(MenuAccessPoint.Home)
+                    val action =
+                        when (getSettings().isMenuCustomizationEnabled) {
+                            true -> HomeFragmentDirections.actionHomeFragmentToMenuFragment(MenuAccessPoint.Home)
+                            else -> NavGraphDirections.actionGlobalMenuDialogFragment(MenuAccessPoint.Home)
+                        }
                     navHost.navController.navigate(action)
                     return true
                 }
 
                 is BrowserFragment -> {
-                    val action = NavGraphDirections.actionGlobalMenuDialogFragment(MenuAccessPoint.Browser)
+                    val action =
+                        when (getSettings().isMenuCustomizationEnabled) {
+                            true ->
+                                BrowserFragmentDirections.actionBrowserFragmentToMenuFragment(MenuAccessPoint.Browser)
+                            else -> NavGraphDirections.actionGlobalMenuDialogFragment(MenuAccessPoint.Browser)
+                        }
                     navHost.navController.navigate(action)
                     return true
                 }
@@ -1712,11 +1727,10 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity, Crash
     private fun captureSnapshotTelemetryMetrics() {
         lifecycleScope.launch {
             val recentlyUsedPwaCount =
-                withContext(Dispatchers.IO) {
-                    components.core.webAppShortcutManager.recentlyUsedWebAppsCount(
-                        activeThresholdMs = PWA_RECENTLY_USED_THRESHOLD
-                    )
-                }
+                components.core.webAppShortcutManager.recentlyUsedWebAppsCount(
+                    activeThresholdMs = PWA_RECENTLY_USED_THRESHOLD
+                )
+
             if (recentlyUsedPwaCount == 0) {
                 Metrics.hasRecentPwas.set(false)
             } else {

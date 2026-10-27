@@ -9,8 +9,8 @@ use wgpu_core_remote_types::encoders::{
 };
 use wgpu_core_remote_types::pipelines::{ComputePipelineDescriptor, RenderPipelineDescriptor};
 use wgpu_core_remote_types::{
-    BufferDescriptor, DeviceDescriptor, Label, PipelineLayoutDescriptor, QuerySetDescriptor,
-    RequestAdapterOptions, SamplerDescriptor, TextureDescriptor, TextureViewDescriptor, id,
+    id, BufferDescriptor, DeviceDescriptor, Label, PipelineLayoutDescriptor, QuerySetDescriptor,
+    RequestAdapterOptions, SamplerDescriptor, TextureDescriptor, TextureViewDescriptor,
 };
 
 pub mod client;
@@ -262,7 +262,7 @@ pub(crate) enum Message<'a> {
         desc: DeviceDescriptor<'a>,
     },
     Device(id::DeviceId, DeviceAction<'a>),
-    Texture(id::DeviceId, id::TextureId, TextureAction<'a>),
+    Texture(id::TextureId, TextureAction<'a>),
     RenderBundleEncoder(id::RenderBundleEncoderId, RenderBundleEncoderCommand<'a>),
     CommandEncoder(id::CommandEncoderId, CommandEncoderCommand<'a>),
     RenderPassEncoder(id::RenderPassEncoderId, RenderPassEncoderCommand),
@@ -281,7 +281,6 @@ pub(crate) enum Message<'a> {
     },
     BufferUnmap(id::DeviceId, id::BufferId, bool),
     QueueSubmit(
-        id::DeviceId,
         id::QueueId,
         Cow<'a, [id::CommandBufferId]>,
         Cow<'a, [id::TextureId]>,
@@ -407,6 +406,7 @@ pub struct ShaderModuleCompilationMessage {
     pub utf16_offset: u64,
     pub utf16_length: u64,
     pub message: String,
+    pub message_type: wgt::CompilationMessageType,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -422,7 +422,7 @@ pub enum BufferMapResult<'a> {
 #[derive(serde::Serialize, serde::Deserialize)]
 enum ServerMessage<'a> {
     RequestAdapterResponse(id::AdapterId, Option<AdapterInformation<Cow<'a, str>>>),
-    RequestDeviceResponse(id::DeviceId, id::QueueId, Option<String>),
+    RequestDeviceResponse(id::DeviceId, id::QueueId, Result<wgt::Limits, String>),
     PopErrorScopeResponse(id::DeviceId, FfiPopErrorScopeResultType, Cow<'a, str>),
     CreateRenderPipelineResponse {
         pipeline_id: id::RenderPipelineId,

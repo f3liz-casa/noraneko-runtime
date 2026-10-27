@@ -16,7 +16,6 @@ browser/components/storybook/storybook-static/
 browser/extensions/newtab/data/content/activity-stream.bundle.js
 browser/extensions/newtab/data/content/bundled-renderer-index.js
 browser/extensions/newtab/data/content/vendor.bundle.js
-browser/extensions/newtab/test/vendor/react-dom-test-utils.js
 browser/extensions/newtab/logs/
 browser/extensions/newtab/node_modules/
 browser/extensions/newtab/prerendered/
@@ -42,7 +41,6 @@ mobile/android/**/bin
 mobile/android/**/generated
 mobile/android/**/local.properties
 mobile/android/**/manifest.json
-mobile/android/android-components/components/feature/search/src/main/assets/search/search_telemetry_v2.json
 mobile/android/android-components/components/browser/engine-system/src/main/res/
 mobile/android/android-components/components/browser/errorpages/src/main/res/
 mobile/android/android-components/components/browser/menu/src/main/res/

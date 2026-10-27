@@ -49,6 +49,8 @@ policy-CaptivePortal = Enable or disable captive portal support.
 
 policy-CertificatesDescription = Add certificates or use built-in certificates.
 
+policy-ClearOnShutdown = Clear browsing data when { -brand-short-name } closes.
+
 # CNSA 2.0 is the United States National Security Agency's Commercial National
 # Security Algorithm Suite 2.0. ML-KEM-1024 is a post-quantum key agreement
 # algorithm. Neither should be translated.
@@ -99,7 +101,7 @@ policy-DisableLaunchOnLogin = Prevent { -brand-short-name } from launching autom
 
 policy-DisablePrimaryPasswordCreation = If true, a Primary Password can’t be created.
 
-policy-DisablePasswordReveal = Do not allow passwords to be revealed in saved logins.
+policy-DisablePasswordReveal2 = Do not allow passwords to be revealed in saved logins or password fields.
 
 policy-DisablePrivateBrowsing = Disable Private Browsing.
 

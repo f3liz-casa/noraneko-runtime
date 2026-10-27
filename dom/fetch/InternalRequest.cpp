@@ -52,6 +52,7 @@ SafeRefPtr<InternalRequest> InternalRequest::GetRequestConstructorCopy(
   copy->mCacheMode = mCacheMode;
   copy->mRedirectMode = mRedirectMode;
   copy->mPriorityMode = mPriorityMode;
+  copy->mHasStreamBody = mHasStreamBody;
   copy->mContentPolicyTypeOverridden = mContentPolicyTypeOverridden;
 
   copy->mPreferredAlternativeDataType = mPreferredAlternativeDataType;
@@ -123,6 +124,7 @@ InternalRequest::InternalRequest(const InternalRequest& aOther,
       mIntegrity(aOther.mIntegrity),
       mKeepalive(aOther.mKeepalive),
       mMozErrors(aOther.mMozErrors),
+      mHasStreamBody(aOther.mHasStreamBody),
       mFragment(aOther.mFragment),
       mSkipServiceWorker(aOther.mSkipServiceWorker),
       mSkipWasmCaching(aOther.mSkipWasmCaching),
@@ -161,6 +163,7 @@ InternalRequest::InternalRequest(const IPCInternalRequest& aIPCRequest)
       mPriorityMode(aIPCRequest.requestPriority()),
       mIntegrity(aIPCRequest.integrity()),
       mKeepalive(aIPCRequest.keepalive()),
+      mHasStreamBody(aIPCRequest.hasStreamBody()),
       mFragment(aIPCRequest.fragment()),
       mEmbedderPolicy(aIPCRequest.embedderPolicy()),
       mInterceptionContentPolicyType(
@@ -182,7 +185,12 @@ InternalRequest::InternalRequest(const IPCInternalRequest& aIPCRequest)
 
   if (body) {
     if (body->type() == BodyStreamVariant::TParentToChildStream) {
-      mBodyStream = body->get_ParentToChildStream().get_RemoteLazyInputStream();
+      const auto& stream = body->get_ParentToChildStream();
+      if (stream.type() == ParentToChildStream::TIPCStream) {
+        mBodyStream = DeserializeIPCStream(stream.get_IPCStream());
+      } else {
+        mBodyStream = stream.get_RemoteLazyInputStream();
+      }
     }
     if (body->type() == BodyStreamVariant::TChildToParentStream) {
       mBodyStream =
@@ -210,6 +218,7 @@ void InternalRequest::ToIPCInternalRequest(
   aIPCRequest->requestPriority() = mPriorityMode;
   aIPCRequest->integrity() = mIntegrity;
   aIPCRequest->keepalive() = mKeepalive;
+  aIPCRequest->hasStreamBody() = mHasStreamBody;
   aIPCRequest->fragment() = mFragment;
   aIPCRequest->embedderPolicy() = mEmbedderPolicy;
 

@@ -336,8 +336,8 @@ export class UrlbarParentControllerProxy {
    * Loads a URL in the embedder browser. The params are structured-cloned to
    * the parent; the target browser is resolved there from `loadData.browserId`.
    *
-   * @param {object} loadData The serializable load parameters.
-   * @returns {Promise<{reverted: boolean}>} Whether the input should revert.
+   * @param {Parameters<UrlbarParentController["loadURL"]>[0]} loadData
+   * @returns {Promise<ReturnType<UrlbarParentController["loadURL"]>>}
    */
   loadURL(loadData) {
     return this.#port.sendQuery("LoadURL", {
@@ -496,10 +496,19 @@ export class UrlbarParentControllerProxy {
   }
 
   /** @type {UrlbarParentController["openPreferences"]} */
-  openPreferences(paneID) {
+  openPreferences(paneID, extraArgs) {
     this.#port.sendAsyncMessage("OpenPreferences", {
       instanceId: this.#instanceId,
       paneID,
+      extraArgs,
+    });
+  }
+
+  /** @type {UrlbarParentController["openContainerCreationPanel"]} */
+  openContainerCreationPanel(entrypoint) {
+    this.#port.sendAsyncMessage("OpenContainerCreationPanel", {
+      instanceId: this.#instanceId,
+      entrypoint,
     });
   }
 }

@@ -43,6 +43,8 @@ skip-if = [
 
 ["browser_privatebrowsing_about_default_promo.js"]
 
+["browser_privatebrowsing_about_kit_intro.js"]
+
 ["browser_privatebrowsing_about_nimbus_dismiss.js"]
 
 ["browser_privatebrowsing_about_nimbus_impressions.js"]
@@ -108,6 +110,8 @@ skip-if = [
 ["browser_privatebrowsing_placestitle.js"]
 
 ["browser_privatebrowsing_protocolhandler.js"]
+
+["browser_privatebrowsing_redesign_telemetry.js"]
 
 ["browser_privatebrowsing_rememberprompt.js"]
 tags = "geolocation xr"

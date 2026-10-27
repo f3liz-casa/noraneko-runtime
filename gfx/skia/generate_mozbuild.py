@@ -119,7 +119,7 @@ if CONFIG['TARGET_CPU'] in ('mips32', 'mips64', 'ppc64'):
 if CONFIG['TARGET_CPU'] == 'loongarch64':
     # In ABI1.0, the compilers disable 128bit SIMD defautly; in ABI2.0, it
     # enable defaultly. The below flags can maintain compatibility.
-    CXXFLAGS += ['-mlsx']
+    CXXFLAGS += CONFIG['LSX_FLAGS']
     if (
         CONFIG['CC_TYPE'] == 'clang'
         and int(CONFIG["CC_VERSION"].split(".")[0]) >= 18
@@ -131,10 +131,10 @@ if CONFIG['TARGET_CPU'] == 'loongarch64':
 
     SOURCES += ['skia/src/opts/SkOpts_lasx.cpp']
     SOURCES['skia/src/opts/SkOpts_lasx.cpp'].flags += skia_opt_flags
-    SOURCES['skia/src/core/SkBitmapProcState_opts_lasx.cpp'].flags += ['-mlasx']
-    SOURCES['skia/src/core/SkBlitRow_opts_lasx.cpp'].flags += ['-mlasx']
-    SOURCES['skia/src/core/SkSwizzler_opts_lasx.cpp'].flags += ['-mlasx']
-    SOURCES['skia/src/opts/SkOpts_lasx.cpp'].flags += ['-mlasx']
+    SOURCES['skia/src/core/SkBitmapProcState_opts_lasx.cpp'].flags += CONFIG['LASX_FLAGS']
+    SOURCES['skia/src/core/SkBlitRow_opts_lasx.cpp'].flags += CONFIG['LASX_FLAGS']
+    SOURCES['skia/src/core/SkSwizzler_opts_lasx.cpp'].flags += CONFIG['LASX_FLAGS']
+    SOURCES['skia/src/opts/SkOpts_lasx.cpp'].flags += CONFIG['LASX_FLAGS']
 """
 
 import json
@@ -188,11 +188,11 @@ def generate_platform_sources():
     if output:
       sources[key].update(parse_sources(output))
 
-  deps = {':pdf' : 'pdf'}
+  deps = {':pdf' : 'common'}
   for dep, key in deps.items():
     output = subprocess.check_output('cd skia && bin/gn desc out/linux {} sources'.format(dep), shell=True)
     if output:
-      sources[key] = parse_sources(output)
+      sources[key].update(parse_sources(output))
 
   sources.update(generate_opt_sources())
   return sources
@@ -280,7 +280,6 @@ def generate_separated_sources(platform_sources):
     'arm': set(),
     'arm64': set(),
     'none': set(),
-    'pdf': set()
   })
 
   for plat in platform_sources.keys():
@@ -419,9 +418,6 @@ def write_mozbuild(sources):
 
   write_sources(f, sources['common'], 0)
   write_cflags(f, sources['common'], opt_allowlist, 'skia_opt_flags', 0)
-
-  f.write("if CONFIG['MOZ_ENABLE_SKIA_PDF']:\n")
-  write_sources(f, sources['pdf'], 4)
 
   f.write("if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android':\n")
   write_sources(f, sources['android'], 4)

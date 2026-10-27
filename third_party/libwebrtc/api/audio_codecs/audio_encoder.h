@@ -93,6 +93,13 @@ class AudioEncoder {
     bool send_even_if_empty = false;
     bool speech = true;
     CodecType encoder_type = CodecType::kOther;
+
+    // Used by EncodedAudioFrameInjector to set metadata that override
+    // values used in the default case. Internal encoders do not set these
+    // values.
+    std::optional<uint8_t> audio_level_dbov_override;
+    std::optional<int64_t> absolute_capture_timestamp_ms_override;
+    std::optional<std::vector<uint32_t>> csrcs_override;
   };
 
   // This is the main struct for auxiliary encoding information. Each encoded
@@ -215,12 +222,6 @@ class AudioEncoder {
 
   // Provides target audio bitrate to this encoder to allow it to adapt.
   virtual void OnReceivedTargetAudioBitrate(int target_bps);
-
-  // Provides target audio bitrate and corresponding probing interval of
-  // the bandwidth estimator to this encoder to allow it to adapt.
-  ABSL_DEPRECATED("Use OnReceivedUplinkAllocation instead")
-  virtual void OnReceivedUplinkBandwidth(int target_audio_bitrate_bps,
-                                         std::optional<int64_t> bwe_period_ms);
 
   // Provides target audio bitrate and corresponding probing interval of
   // the bandwidth estimator to this encoder to allow it to adapt.

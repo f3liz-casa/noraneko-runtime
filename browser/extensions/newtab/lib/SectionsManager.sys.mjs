@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/** @import {Store} from "resource://newtab/lib/Store.sys.mjs" */
+
 // We use importESModule here instead of static import so that
 // the Karma test environment won't choke on this module. This
 // is because the Karma test environment already stubs out
@@ -33,38 +35,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
 const BUILT_IN_SECTIONS = () => ({
   "feeds.section.topstories": options => ({
     id: "topstories",
-    // Remove this `pref:` block when removing legacy settings.
-    pref: {
-      titleString: {
-        id: "home-prefs-recommended-by-header-generic",
-      },
-      descString: {
-        id: "home-prefs-recommended-by-description-generic",
-      },
-      nestedPrefs: [
-        ...(Services.prefs.getBoolPref(
-          "browser.newtabpage.activity-stream.system.showSponsored",
-          true
-        )
-          ? [
-              {
-                name: "showSponsored",
-                titleString:
-                  "home-prefs-recommended-by-option-sponsored-stories",
-                icon: "icon-info",
-                eventSource: "POCKET_SPOCS",
-              },
-            ]
-          : []),
-      ],
-      learnMore: {
-        link: {
-          href: "https://getpocket.com/firefox/new_tab_learn_more",
-          id: "home-prefs-recommended-by-learn-more",
-        },
-      },
-    },
-    shouldHidePref: options.hidden,
     eventSource: "TOP_STORIES",
     icon: options.provider_icon,
     title: {
@@ -98,30 +68,6 @@ const BUILT_IN_SECTIONS = () => ({
   }),
   "feeds.section.highlights": () => ({
     id: "highlights",
-    // Remove this `pref:` block when removing legacy settings.
-    pref: {
-      titleString: {
-        id: "home-prefs-recent-activity-header",
-      },
-      descString: {
-        id: "home-prefs-recent-activity-description",
-      },
-      nestedPrefs: [
-        {
-          name: "section.highlights.includeVisited",
-          titleString: "home-prefs-highlights-option-visited-pages",
-        },
-        {
-          name: "section.highlights.includeBookmarks",
-          titleString: "home-prefs-highlights-options-bookmarks",
-        },
-        {
-          name: "section.highlights.includeDownloads",
-          titleString: "home-prefs-highlights-option-most-recent-download",
-        },
-      ],
-    },
-    shouldHidePref: false,
     eventSource: "HIGHLIGHTS",
     icon: "chrome://global/skin/icons/highlights.svg",
     title: {
@@ -439,6 +385,9 @@ for (const action of [
 EventEmitter.decorate(SectionsManager);
 
 export class SectionsFeed {
+  /** @type {Store} */
+  store = null;
+
   constructor() {
     this.init = this.init.bind(this);
     this.onAddSection = this.onAddSection.bind(this);

@@ -2,10 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/** @import MozBoxItem from 'moz-src:///toolkit/content/widgets/moz-box-item/moz-box-item.mjs';*/
+/** @import { MozBoxItem } from 'moz-src:///toolkit/content/widgets/moz-box-item/moz-box-item.mjs';*/
 /** @import { MozOption } from 'moz-src:///toolkit/content/widgets/moz-select/moz-select.mjs';*/
-/** @import MozSelect from 'moz-src:///toolkit/content/widgets/moz-select/moz-select.mjs';*/
-/** @import MozBoxGroup from 'chrome://global/content/elements/moz-box-group.mjs'; */
+/** @import { MozSelect } from 'moz-src:///toolkit/content/widgets/moz-select/moz-select.mjs';*/
+/** @import { MozBoxGroup } from 'chrome://global/content/elements/moz-box-group.mjs'; */
 /** @import { AsyncSettingHandler } from 'chrome://global/content/preferences/AsyncSetting.mjs'; */
 /** @import { HandlerInfoWrapper, ApplicationListItem } from './config/downloads.mjs';*/
 
@@ -49,7 +49,8 @@ ChromeUtils.defineESModuleGetters(this, {
   BackgroundUpdate: "resource://gre/modules/BackgroundUpdate.sys.mjs",
   UpdateListener: "resource://gre/modules/UpdateListener.sys.mjs",
   LinkPreview: "moz-src:///browser/components/genai/LinkPreview.sys.mjs",
-  MigrationUtils: "resource:///modules/MigrationUtils.sys.mjs",
+  MigrationUtils:
+    "moz-src:///browser/components/migration/MigrationUtils.sys.mjs",
   TranslationsParent: "resource://gre/actors/TranslationsParent.sys.mjs",
   TranslationsUtils:
     "chrome://global/content/translations/TranslationsUtils.mjs",
@@ -121,6 +122,7 @@ Preferences.addAll([
   { id: "browser.ai.control.speechRecognition", type: "string" },
   { id: "browser.ai.control.sidebarChatbot", type: "string" },
   { id: "browser.ai.control.smartWindow", type: "string" },
+  { id: "browser.ml.chat.provider", type: "string" },
 
   // Update
   { id: "browser.preferences.advanced.selectedTabIndex", type: "int" },
@@ -454,6 +456,10 @@ Preferences.addSetting({
 Preferences.addSetting({
   id: "aiControlSmartWindow",
   pref: "browser.ai.control.smartWindow",
+});
+Preferences.addSetting({
+  id: "chatbotProvider",
+  pref: "browser.ml.chat.provider",
 });
 
 function createDefaultBrowserConfig({
@@ -1297,7 +1303,7 @@ var gMainPane = {
 
   /* Show the confirmation message bar to allow a restart into the new locales. */
   async showConfirmLanguageChangeMessageBar(locales) {
-    let messageBar = document.getElementById("confirmBrowserLanguage");
+    let messageBarContainer = document.getElementById("confirmBrowserLanguage");
 
     // Get the bundle for the new locale.
     let newBundle = getBundleForLocales(locales);
@@ -1320,51 +1326,38 @@ var gMainPane = {
       buttonLabels.pop();
     }
 
-    let contentContainer = messageBar.querySelector(
-      ".message-bar-content-container"
-    );
-    contentContainer.textContent = "";
+    messageBarContainer.textContent = "";
 
     for (let i = 0; i < messages.length; i++) {
-      let messageContainer = document.createXULElement("hbox");
-      messageContainer.classList.add("message-bar-content");
-      messageContainer.style.flex = "1 50%";
-      messageContainer.setAttribute("align", "center");
-
-      let description = document.createXULElement("description");
-      description.classList.add("message-bar-description");
-
+      let messageBar = document.createElement("moz-message-bar");
+      messageBar.setAttribute("type", "info");
+      messageBar.setAttribute("data-l10n-attrs", "message");
+      messageBar.setAttribute("message", messages[i]);
       if (i == 0 && Services.intl.getScriptDirection(locales[0]) === "rtl") {
-        description.classList.add("rtl-locale");
+        messageBar.setAttribute("dir", "rtl");
       }
-      description.setAttribute("flex", "1");
-      description.textContent = messages[i];
-      messageContainer.appendChild(description);
 
       let button = document.createXULElement("button");
       button.addEventListener(
         "command",
         gMainPane.confirmBrowserLanguageChange
       );
-      button.classList.add("message-bar-button");
       button.setAttribute("locales", locales.join(","));
       button.setAttribute("label", buttonLabels[i]);
-      messageContainer.appendChild(button);
+      button.setAttribute("slot", "actions");
+      messageBar.appendChild(button);
 
-      contentContainer.appendChild(messageContainer);
+      messageBarContainer.appendChild(messageBar);
     }
 
-    messageBar.hidden = false;
+    messageBarContainer.hidden = false;
     gMainPane.selectedLocalesForRestart = locales;
   },
 
   hideConfirmLanguageChangeMessageBar() {
-    let messageBar = document.getElementById("confirmBrowserLanguage");
-    messageBar.hidden = true;
-    let contentContainer = messageBar.querySelector(
-      ".message-bar-content-container"
-    );
-    contentContainer.textContent = "";
+    let messageBarContainer = document.getElementById("confirmBrowserLanguage");
+    messageBarContainer.hidden = true;
+    messageBarContainer.textContent = "";
     gMainPane.requestingLocales = null;
   },
 
@@ -2118,9 +2111,7 @@ let AppFileHandler = (function () {
      * @return {MozBoxItem}
      */
     _buildHeader() {
-      const headerElement = /** @type {MozBoxItem} */ (
-        document.createElement("moz-box-item")
-      );
+      const headerElement = document.createElement("moz-box-item");
       headerElement.slot = "header";
       this.typeColumn = document.createElement("label");
       this.typeColumn.setAttribute("data-l10n-id", "applications-type-heading");

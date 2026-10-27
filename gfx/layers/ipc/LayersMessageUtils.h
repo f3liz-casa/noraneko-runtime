@@ -21,7 +21,7 @@
 #include "mozilla/ipc/ByteBuf.h"
 #include "mozilla/ipc/ProtocolMessageUtils.h"
 #include "mozilla/ipc/RustMessageUtils.h"
-#include "mozilla/layers/APZInputBridge.h"
+#include "mozilla/layers/APZBridge.h"
 #include "mozilla/layers/AsyncDragMetrics.h"
 #include "mozilla/layers/CompositorOptions.h"
 #include "mozilla/layers/CompositorScrollUpdate.h"
@@ -142,11 +142,11 @@ struct ParamTraits<mozilla::layers::RepaintRequest::ScrollOffsetUpdateType>
           mozilla::layers::RepaintRequest::sHighestScrollOffsetUpdateType> {};
 
 template <>
-struct ParamTraits<mozilla::layers::OverscrollBehavior>
+struct ParamTraits<mozilla::StyleOverscrollBehavior>
     : public ContiguousEnumSerializerInclusive<
-          mozilla::layers::OverscrollBehavior,
-          mozilla::layers::OverscrollBehavior::Auto,
-          mozilla::layers::kHighestOverscrollBehavior> {};
+          mozilla::StyleOverscrollBehavior,
+          mozilla::StyleOverscrollBehavior::Auto,
+          mozilla::StyleOverscrollBehavior::None> {};
 
 template <>
 struct ParamTraits<mozilla::StyleOverflow>

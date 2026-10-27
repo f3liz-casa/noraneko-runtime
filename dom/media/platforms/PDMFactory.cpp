@@ -6,6 +6,7 @@
 
 #include "AOMDecoder.h"
 #include "AgnosticDecoderModule.h"
+#include "AllocationPolicy.h"
 #include "AudioTrimmer.h"
 #include "BlankDecoderModule.h"
 #include "DecoderDoctorDiagnostics.h"
@@ -519,6 +520,43 @@ RefPtr<PDMSupportsDecoderPromise> PDMFactory::SupportsAsync(
 }
 
 /* static */
+RefPtr<PDMSupportsDecoderPromise> PDMFactory::StrictSupportsAsync(
+    const CreateDecoderParams& aParams, AllocPolicy* aPolicy) {
+  return AllocationWrapper::CreateDecoder(aParams, aPolicy)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [](AllocationWrapper::AllocateDecoderPromise::ResolveOrRejectValue&&
+                 aValue) -> RefPtr<PDMSupportsDecoderPromise> {
+            if (aValue.IsReject()) {
+              // The decoder could not be created: report unsupported.
+              return PDMSupportsDecoderPromise::CreateAndResolve(
+                  DecodeSupportSet{}, __func__);
+            }
+            RefPtr<MediaDataDecoder> decoder = std::move(aValue.ResolveValue());
+            return decoder->Init()->Then(
+                GetCurrentSerialEventTarget(), __func__,
+                [decoder](
+                    MediaDataDecoder::InitPromise::ResolveOrRejectValue&& aInit)
+                    -> RefPtr<PDMSupportsDecoderPromise> {
+                  DecodeSupportSet support{};
+                  if (aInit.IsResolve()) {
+                    nsAutoCString reason;
+                    support += decoder->IsHardwareAccelerated(reason)
+                                   ? DecodeSupport::HardwareDecode
+                                   : DecodeSupport::SoftwareDecode;
+                  }
+                  // Keep the decoder alive until its shutdown completes.
+                  decoder->Shutdown()->Then(
+                      GetCurrentSerialEventTarget(), __func__,
+                      [decoder](const ShutdownPromise::ResolveOrRejectValue&) {
+                      });
+                  return PDMSupportsDecoderPromise::CreateAndResolve(support,
+                                                                     __func__);
+                });
+          });
+}
+
+/* static */
 void PDMFactory::ForcePDM(PlatformDecoderModule* aPDM) {
   auto forced = sForcedPDM.Lock();
   *forced = aPDM;
@@ -608,7 +646,8 @@ void PDMFactory::CreateRddPDMs() {
   if (StaticPrefs::media_ffmpeg_enabled() &&
       StaticPrefs::media_rdd_ffmpeg_enabled()) {
     // Prefer system FFmpeg first only when Vulkan is wanted and
-    // PreferSystemFFmpegForVulkan() is true; otherwise leave ffvpx first.
+    // media.hardware-video-decoding-vulkan.prefer-system-ffmpeg is true;
+    // otherwise leave ffvpx first.
     const bool preferSystemForVulkan =
         gfx::gfxVars::CanUseVulkanHardwareVideoDecoding() &&
         FFmpegRuntimeLinker::PreferSystemFFmpegForVulkan();

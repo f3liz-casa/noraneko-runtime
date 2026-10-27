@@ -255,6 +255,8 @@ typedef struct sec_asn1d_state_struct {
         optional,      /* the template says this field may be omitted */
         substring;     /* this is a substring of a constructed string */
 
+    unsigned long num_children; /* count of group elements decoded so far */
+
 } sec_asn1d_state;
 
 #define IS_HIGH_TAG_NUMBER(n) ((n) == SEC_ASN1_HIGH_TAG_NUMBER)
@@ -302,6 +304,10 @@ struct sec_DecoderContext_struct {
      * size of the top-level element.
      */
     unsigned long max_element_size;
+    unsigned long max_elements;   /* max items in any one group (0 = unlimited) */
+    unsigned long max_input_size; /* max total bytes fed (0 = unlimited) */
+    unsigned long total_consumed;
+    unsigned int update_depth;
 
     SEC_ASN1NotifyProc notify_proc; /* call before/after handling field */
     void *notify_arg;               /* argument to notify_proc */
@@ -417,6 +423,7 @@ sec_asn1d_scrub_state(sec_asn1d_state *state)
     state->endofcontents = PR_FALSE;
     state->indefinite = PR_FALSE;
     state->missing = PR_FALSE;
+    state->num_children = 0;
     PORT_Assert(state->consumed == 0);
 }
 
@@ -1274,6 +1281,22 @@ sec_asn1d_prepare_for_contents(sec_asn1d_state *state)
                  */
                 if (item->data == NULL) {
                     PORT_Assert(item->len == 0);
+                    /*
+                     * The allocation below comes from our_pool, which is freed
+                     * when decoding finishes.  Our destination is shared with
+                     * our parent and may be the caller's SECItem, which the
+                     * caller frees itself when decoding without an arena, so
+                     * give ourselves a private one to hold the substring.
+                     */
+                    if (state->parent != NULL && item == state->parent->dest) {
+                        item = (SECItem *)sec_asn1d_zalloc(state->top->our_pool,
+                                                           sizeof(*item));
+                        if (item == NULL) {
+                            state->top->status = decodeError;
+                            break;
+                        }
+                        state->dest = item;
+                    }
                     poolp = state->top->our_pool;
                 } else {
                     alloc_len = 0;
@@ -1309,7 +1332,7 @@ sec_asn1d_prepare_for_contents(sec_asn1d_state *state)
 
                 if (state->top->max_element_size > 0 &&
                     alloc_len > state->top->max_element_size) {
-                    PORT_SetError(SEC_ERROR_OUTPUT_LEN);
+                    PORT_SetError(SEC_ERROR_BAD_DER);
                     state->top->status = decodeError;
                     return;
                 }
@@ -1424,7 +1447,7 @@ sec_asn1d_prepare_for_contents(sec_asn1d_state *state)
                     item->len = 0;
                     if (state->top->max_element_size > 0 &&
                         state->contents_length > state->top->max_element_size) {
-                        PORT_SetError(SEC_ERROR_OUTPUT_LEN);
+                        PORT_SetError(SEC_ERROR_BAD_DER);
                         state->top->status = decodeError;
                         return;
                     }
@@ -2026,6 +2049,14 @@ sec_asn1d_next_in_group(sec_asn1d_state *state)
         child->dest = NULL;
     }
 
+    state->num_children++;
+    if (state->top->max_elements > 0 &&
+        state->num_children > state->top->max_elements) {
+        PORT_SetError(SEC_ERROR_BAD_DER);
+        state->top->status = decodeError;
+        return;
+    }
+
     /*
      * Account for those bytes; see if we are done.
      */
@@ -2232,6 +2263,7 @@ sec_asn1d_concat_substrings(sec_asn1d_state *state)
         unsigned long alloc_len, item_len;
         unsigned char *where;
         SECItem *item;
+        PLArenaPool *poolp;
         PRBool is_bit_string;
 
         item_len = 0;
@@ -2269,16 +2301,31 @@ sec_asn1d_concat_substrings(sec_asn1d_state *state)
 
         if (state->top->max_element_size > 0 &&
             alloc_len > state->top->max_element_size) {
-            PORT_SetError(SEC_ERROR_OUTPUT_LEN);
+            PORT_SetError(SEC_ERROR_BAD_DER);
             state->top->status = decodeError;
             return;
+        }
+
+        poolp = state->top->their_pool;
+        if (state->substring) {
+            /*
+             * Our parent copies this into its own result, so allocate it from
+             * our_pool rather than leaking it when decoding without an arena.
+             * It lands above our mark, so drop the mark instead of releasing
+             * it when we pop; our parent's mark still covers everything.
+             */
+            if (state->child != NULL) {
+                PORT_ArenaUnmark(state->top->our_pool, state->our_mark);
+                state->child = NULL;
+                state->our_mark = NULL;
+            }
+            poolp = state->top->our_pool;
         }
 
         item = (SECItem *)(state->dest);
         PORT_Assert(item != NULL);
         PORT_Assert(item->data == NULL);
-        item->data = (unsigned char *)sec_asn1d_zalloc(state->top->their_pool,
-                                                       alloc_len);
+        item->data = (unsigned char *)sec_asn1d_zalloc(poolp, alloc_len);
         if (item->data == NULL) {
             state->top->status = decodeError;
             return;
@@ -2767,6 +2814,17 @@ SEC_ASN1DecoderUpdate(SEC_ASN1DecoderContext *cx,
         return SECFailure;
     }
 
+    if (cx->update_depth == 0 && cx->max_input_size > 0) {
+        if (len > cx->max_input_size - cx->total_consumed ||
+            cx->total_consumed > cx->max_input_size) {
+            PORT_SetError(SEC_ERROR_BAD_DER);
+            cx->status = decodeError;
+            return SECFailure;
+        }
+        cx->total_consumed += len;
+    }
+    cx->update_depth++;
+
     if (cx->status == needBytes)
         cx->status = keepGoing;
 
@@ -2825,6 +2883,7 @@ SEC_ASN1DecoderUpdate(SEC_ASN1DecoderContext *cx,
                     /* recursive call has already popped all states from stack.
                     ** Bail out quickly.
                     */
+                    cx->update_depth--;
                     return SECFailure;
                 }
                 if (cx->status == needBytes) {
@@ -2853,6 +2912,7 @@ SEC_ASN1DecoderUpdate(SEC_ASN1DecoderContext *cx,
                 ** decode SAVEd encoded data, and now is done decoding that.
                 ** Return to the calling copy of SEC_ASN1DecoderUpdate.
                 */
+                cx->update_depth--;
                 return SECSuccess;
             case beforeEndOfContents:
                 sec_asn1d_prepare_for_end_of_contents(state);
@@ -2973,6 +3033,7 @@ SEC_ASN1DecoderUpdate(SEC_ASN1DecoderContext *cx,
             cx->their_mark = NULL;
         }
 #endif
+        cx->update_depth--;
         return SECFailure;
     }
 
@@ -2989,6 +3050,7 @@ SEC_ASN1DecoderUpdate(SEC_ASN1DecoderContext *cx,
 #else
     PORT_Assert((len == 0 && cx->status == needBytes) || cx->status == allDone);
 #endif
+    cx->update_depth--;
     return SECSuccess;
 }
 
@@ -3045,6 +3107,9 @@ SEC_ASN1DecoderStart(PLArenaPool *their_pool, void *dest,
     }
 
     cx->status = needBytes;
+    cx->max_element_size = SEC_ASN1D_MAX_INPUT_SIZE;
+    cx->max_elements = SEC_ASN1D_MAX_ELEMENTS;
+    cx->max_input_size = SEC_ASN1D_MAX_INPUT_SIZE;
 
     if (sec_asn1d_push_state(cx, theTemplate, dest, PR_FALSE) == NULL || sec_asn1d_init_state_based_on_template(cx->current) == NULL) {
         /*
@@ -3105,6 +3170,20 @@ SEC_ASN1DecoderSetMaximumElementSize(SEC_ASN1DecoderContext *cx,
 }
 
 void
+SEC_ASN1DecoderSetMaximumNumberOfElements(SEC_ASN1DecoderContext *cx,
+                                          unsigned long max_elements)
+{
+    cx->max_elements = max_elements;
+}
+
+void
+SEC_ASN1DecoderSetMaximumInputSize(SEC_ASN1DecoderContext *cx,
+                                   unsigned long max_input_size)
+{
+    cx->max_input_size = max_input_size;
+}
+
+void
 SEC_ASN1DecoderAbort(SEC_ASN1DecoderContext *cx, int error)
 {
     PORT_Assert(cx);
@@ -3119,6 +3198,11 @@ SEC_ASN1Decode(PLArenaPool *poolp, void *dest,
 {
     SEC_ASN1DecoderContext *dcx;
     SECStatus urv, frv;
+
+    if (len < 0 || (unsigned long)len > SEC_ASN1D_MAX_INPUT_SIZE) {
+        PORT_SetError(SEC_ERROR_BAD_DER);
+        return SECFailure;
+    }
 
     dcx = SEC_ASN1DecoderStart(poolp, dest, theTemplate);
     if (dcx == NULL)

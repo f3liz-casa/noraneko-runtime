@@ -16,13 +16,13 @@ from mozlog.formatters import TestSummaryFormatter
         ),
         pytest.param(
             {"action": "log", "level": "ERROR", "message": "boom"},
-            False,
-            id="log_error_dropped",
+            True,
+            id="log_error_kept",
         ),
         pytest.param(
             {"action": "log", "level": "CRITICAL", "message": "crit"},
-            False,
-            id="log_critical_dropped",
+            True,
+            id="log_critical_kept",
         ),
         pytest.param(
             {"action": "log", "level": "WARNING", "message": "warn"},
@@ -65,6 +65,16 @@ from mozlog.formatters import TestSummaryFormatter
         ),
         pytest.param(
             {"action": "tsan_error", "stack": "race"}, False, id="tsan_error_dropped"
+        ),
+        pytest.param(
+            {"action": "assertion_failure", "kind": "MOZ_ASSERT", "stack": []},
+            False,
+            id="assertion_failure_dropped",
+        ),
+        pytest.param(
+            {"action": "ubsan_error", "kind": "undefined-behavior", "message": "m"},
+            True,
+            id="ubsan_error_kept",
         ),
         pytest.param(
             {"action": "group_start", "name": "manifestA"}, True, id="group_start_kept"
@@ -131,9 +141,72 @@ from mozlog.formatters import TestSummaryFormatter
             id="process_output_dropped",
         ),
         pytest.param(
-            {"action": "mozleak_total", "leak_total": 123},
+            {
+                "action": "mozleak_total",
+                "process": "default",
+                "bytes": 856,
+                "threshold": 0,
+                "objects": ["CondVar"],
+            },
+            True,
+            id="mozleak_total_over_threshold_kept",
+        ),
+        pytest.param(
+            {
+                "action": "mozleak_total",
+                "process": "tab",
+                "bytes": 0,
+                "threshold": 0,
+                "objects": [],
+            },
             False,
-            id="mozleak_total_dropped",
+            id="mozleak_total_no_leak_dropped",
+        ),
+        pytest.param(
+            {
+                "action": "mozleak_total",
+                "process": "gmplugin",
+                "bytes": 20000,
+                "threshold": 20000,
+                "objects": ["nsFoo"],
+            },
+            False,
+            id="mozleak_total_within_threshold_dropped",
+        ),
+        pytest.param(
+            {
+                "action": "mozleak_total",
+                "process": "default",
+                "bytes": None,
+                "threshold": 0,
+                "objects": [],
+            },
+            True,
+            id="mozleak_total_missing_total_kept",
+        ),
+        pytest.param(
+            {
+                "action": "mozleak_total",
+                "process": "tab",
+                "bytes": None,
+                "threshold": 0,
+                "objects": [],
+                "ignore_missing": True,
+            },
+            False,
+            id="mozleak_total_ignored_missing_total_dropped",
+        ),
+        pytest.param(
+            {
+                "action": "mozleak_total",
+                "process": "tab",
+                "bytes": None,
+                "threshold": 0,
+                "objects": [],
+                "induced_crash": True,
+            },
+            False,
+            id="mozleak_total_induced_crash_dropped",
         ),
     ),
 )
@@ -191,6 +264,64 @@ def test_testsummary_strips_noise_fields():
     assert result["expected"] == "PASS"
 
 
+def test_testsummary_log_error_keeps_only_level_and_message():
+    fmt = TestSummaryFormatter()
+    message = (
+        "TEST-UNEXPECTED-FAIL | LeakSanitizer leak at nsTimer, NS_NewTimer"
+        " | netwerk/test/browser/browser.toml"
+    )
+    record = {
+        "action": "log",
+        "time": 1787844653959,
+        "thread": "MainThread",
+        "pid": 9594,
+        "source": "mochitest",
+        "level": "ERROR",
+        "message": message,
+    }
+    out = fmt(record)
+    result = json.loads(out)
+    assert result == {
+        "action": "log",
+        "time": 1787844653959,
+        "level": "ERROR",
+        "message": message,
+    }
+
+
+def test_testsummary_mozleak_total_keeps_the_leak_fields():
+    fmt = TestSummaryFormatter()
+    objects = ["CondVar", "MozPromiseRefcountable", "Mutex", "nsThread"]
+    scope = "browser/components/aiwindow/ui/test/browser/browser.toml"
+    record = {
+        "action": "mozleak_total",
+        "time": 1789627855830,
+        "thread": "MainThread",
+        "pid": 1517,
+        "source": "mochitest",
+        "process": "default",
+        "bytes": 856,
+        "threshold": 0,
+        "objects": objects,
+        "scope": scope,
+        "induced_crash": False,
+        "ignore_missing": False,
+    }
+    out = fmt(record)
+    result = json.loads(out)
+    assert result == {
+        "action": "mozleak_total",
+        "time": 1789627855830,
+        "process": "default",
+        "bytes": 856,
+        "threshold": 0,
+        "objects": objects,
+        "scope": scope,
+        "induced_crash": False,
+        "ignore_missing": False,
+    }
+
+
 def test_testsummary_crash_keeps_stack():
     fmt = TestSummaryFormatter()
     record = {
@@ -204,6 +335,28 @@ def test_testsummary_crash_keeps_stack():
     out = fmt(record)
     result = json.loads(out)
     assert result["stack"] == "frame1\nframe2"
+    assert "thread" not in result
+    assert "pid" not in result
+
+
+def test_testsummary_ubsan_error_keeps_stack():
+    fmt = TestSummaryFormatter()
+    stack = [{"function": "incr_ptr_aligned", "file": "ggml-c.c", "line": 7106}]
+    record = {
+        "action": "ubsan_error",
+        "kind": "undefined-behavior",
+        "message": "applying non-zero offset 96 to null pointer",
+        "file": "ggml-c.c",
+        "lineno": 7106,
+        "column": 33,
+        "stack": stack,
+        "thread": "main",
+        "pid": 1234,
+    }
+    result = json.loads(fmt(record))
+    assert result["stack"] == stack
+    assert result["message"] == "applying non-zero offset 96 to null pointer"
+    assert result["column"] == 33
     assert "thread" not in result
     assert "pid" not in result
 
@@ -226,6 +379,42 @@ def test_testsummary_emits_test_start_and_end_separately():
     assert result_end["time"] == 2000
     assert result_end["test"] == "test_foo"
     assert result_end["status"] == "OK"
+
+
+def test_testsummary_keeps_a_harness_abort_as_log_and_test_end():
+    """
+    A harness abort reaches the summary as an ERROR log line, but only the
+    test_end RemoteProcessMonitor emits alongside it carries a status and the
+    test it is attributed to.
+    """
+    fmt = TestSummaryFormatter()
+    message = "application timed out after 370 seconds with no output"
+
+    log_record = json.loads(
+        fmt({
+            "action": "log",
+            "level": "ERROR",
+            "message": f"TEST-UNEXPECTED-FAIL | test_foo | {message}",
+        })
+    )
+    assert log_record["level"] == "ERROR"
+    assert "test" not in log_record
+    assert "status" not in log_record
+
+    result = json.loads(
+        fmt({
+            "action": "test_end",
+            "test": "test_foo",
+            "status": "TIMEOUT",
+            "expected": "PASS",
+            "message": message,
+            "source": "mozdevice",
+        })
+    )
+    assert result["status"] == "TIMEOUT"
+    assert result["test"] == "test_foo"
+    assert result["message"] == message
+    assert "source" not in result
 
 
 if __name__ == "__main__":

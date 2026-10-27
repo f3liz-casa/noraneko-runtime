@@ -73,7 +73,6 @@ import org.junit.runner.RunWith
 import org.mozilla.fenix.GleanMetrics.Events
 import org.mozilla.fenix.NavGraphDirections
 import org.mozilla.fenix.R
-import org.mozilla.fenix.browser.BrowserFragmentDirections
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode.Normal
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode.Private
 import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
@@ -94,6 +93,7 @@ import org.mozilla.fenix.components.usecases.FenixBrowserUseCases
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.nav
 import org.mozilla.fenix.helpers.FenixGleanTestRule
+import org.mozilla.fenix.home.HomeFragmentDirections
 import org.mozilla.fenix.home.toolbar.BrowserToolbarMiddleware.HomeToolbarAction
 import org.mozilla.fenix.home.toolbar.DisplayActions.FakeClicked
 import org.mozilla.fenix.home.toolbar.DisplayActions.MenuClicked
@@ -522,16 +522,33 @@ class BrowserToolbarMiddlewareTest {
 
     @Test
     fun `WHEN clicking the menu button THEN open the menu`() {
-        val navController: NavController = mockk(relaxed = true)
+        val navController = navControllerShowingHome()
         val (_, toolbarStore) = buildMiddlewareAndAddToStore(navController = navController)
         val menuButton = toolbarStore.state.displayState.browserActionsEnd[1] as ActionButtonRes
 
         toolbarStore.dispatch(menuButton.onClick as BrowserToolbarEvent)
 
         verify {
-            navController.nav(
-                R.id.homeFragment,
-                BrowserFragmentDirections.actionGlobalMenuDialogFragment(accesspoint = MenuAccessPoint.Browser),
+            navController.navigate(
+                HomeFragmentDirections.actionGlobalMenuDialogFragment(accesspoint = MenuAccessPoint.Home),
+                null,
+            )
+        }
+    }
+
+    @Test
+    fun `GIVEN menu customization is enabled WHEN clicking the menu button THEN open the customizable menu`() {
+        every { testContext.components.settings.isMenuCustomizationEnabled } returns true
+        val navController = navControllerShowingHome()
+        val (_, toolbarStore) = buildMiddlewareAndAddToStore(navController = navController)
+        val menuButton = toolbarStore.state.displayState.browserActionsEnd[1] as ActionButtonRes
+
+        toolbarStore.dispatch(menuButton.onClick as BrowserToolbarEvent)
+
+        verify {
+            navController.navigate(
+                HomeFragmentDirections.actionHomeFragmentToMenuFragment(accessPoint = MenuAccessPoint.Home),
+                null,
             )
         }
     }
@@ -746,7 +763,8 @@ class BrowserToolbarMiddlewareTest {
     }
 
     @Test
-    fun `WHEN choosing to load URL from clipboard THEN start load the URL from clipboard in a new tab`() {
+    fun `GIVEN homepage as new tab is disabled WHEN choosing to load URL from clipboard THEN start load the URL from clipboard in a new tab`() {
+        every { testContext.components.settings.enableHomepageAsNewTab } returns false
         val browsingModeManager = SimpleBrowsingModeManager(Normal)
         val navController: NavController = mockk(relaxed = true)
         val clipboardUrl = "https://www.mozilla.com"
@@ -770,6 +788,39 @@ class BrowserToolbarMiddlewareTest {
             fenixBrowserUseCases.loadUrlOrSearch(
                 searchTermOrURL = clipboardUrl,
                 newTab = true,
+                private = false,
+                searchEngine = selectedSearchEngine,
+            )
+        }
+        verify { navController.navigate(R.id.browserFragment) }
+    }
+
+    @Test
+    fun `GIVEN homepage as new tab is enabled WHEN choosing to load URL from clipboard THEN start load the URL from clipboard in the current tab`() {
+        every { testContext.components.settings.enableHomepageAsNewTab } returns true
+        val browsingModeManager = SimpleBrowsingModeManager(Normal)
+        val navController: NavController = mockk(relaxed = true)
+        val clipboardUrl = "https://www.mozilla.com"
+        val clipboard =
+            ClipboardHandler(testContext).also {
+                it.text = clipboardUrl
+            }
+        val fenixBrowserUseCases: FenixBrowserUseCases = mockk(relaxed = true)
+        val selectedSearchEngine = appStore.state.searchState.selectedSearchEngine?.searchEngine
+        val (_, toolbarStore) =
+            buildMiddlewareAndAddToStore(
+                clipboard = clipboard,
+                fenixBrowserUseCases = fenixBrowserUseCases,
+                navController = navController,
+                browsingModeManager = browsingModeManager,
+            )
+
+        toolbarStore.dispatch(LoadFromClipboardClicked)
+
+        verify {
+            fenixBrowserUseCases.loadUrlOrSearch(
+                searchTermOrURL = clipboardUrl,
+                newTab = false,
                 private = false,
                 searchEngine = selectedSearchEngine,
             )
@@ -1446,6 +1497,9 @@ class BrowserToolbarMiddlewareTest {
             val primaryButton = toolbarStore.state.displayState.navigationActions.first() as ActionButtonRes
             assertEquals(expectedBookmarkButton, primaryButton)
         }
+
+    private fun navControllerShowingHome(): NavController =
+        mockk(relaxed = true) { every { currentDestination } returns mockk { every { id } returns R.id.homeFragment } }
 
     private fun buildMiddlewareAndAddToStore(
         uiContext: Context = testContext,

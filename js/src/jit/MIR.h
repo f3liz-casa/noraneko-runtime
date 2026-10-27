@@ -655,9 +655,29 @@ class MDefinition : public MNode {
   BailoutKind bailoutKind() const { return bailoutKind_; }
   void setBailoutKind(BailoutKind kind) { bailoutKind_ = kind; }
 
-  // Return the range of this value, *before* any bailout checks. Contrast
-  // this with the type() method, and the Range constructor which takes an
-  // MDefinition*, which describe the value *after* any bailout checks.
+  // Return the range of this value, as computed by range analysis. For
+  // instructions that can bail out, this is the range *before* any bailout
+  // checks.
+  //
+  // WARNING: If you're adding a new consumer of range analysis data, this is
+  // probably not the function you want. Code that reasons about the values
+  // an operand can have should use the Range(MDefinition*) constructor
+  // instead. That constructor adjusts Int32 and Boolean ranges so that they
+  // cover every value a consumer could see, taking into account both bailouts
+  // and truncation. Only use this function when you need the range *before*
+  // those adjustments: for example, to decide whether an instruction can
+  // overflow and needs a bailout check in the first place.
+  //
+  // For example, given an Int32 MMul with operand ranges I[0,10000] and
+  // I[1<<29,1<<29], `mul->range()` is `I[0, ?] (< pow(2, 43+1))`, which shows
+  // that the multiplication can overflow. `Range(mul)` is instead
+  // I[INT32_MIN,INT32_MAX]. The upper bound has been reduced to INT32_MAX,
+  // because values above that would have bailed out. Less obviously, the lower
+  // bound is now INT32_MIN. If all consumers of `mul` can ignore overflow
+  // (eg `(x * y) | 0`), then we might truncate the multiplication, eliminating
+  // the bailout. The post-truncation range would include INT32_MIN. Because
+  // we don't recompute ranges after truncation, `Range(mul)` needs to cover
+  // both cases.
   //
   // Warning: Range analysis is removing the bit-operations such as '| 0' at
   // the end of the transformations. Using this function to analyse any
@@ -3824,11 +3844,12 @@ class MToBigInt : public MUnaryInstruction, public ToBigIntPolicy::Data {
 class MToInt64 : public MUnaryInstruction, public ToInt64Policy::Data {
   explicit MToInt64(MDefinition* def) : MUnaryInstruction(classOpcode, def) {
     setResultType(MIRType::Int64);
-    setMovable();
 
-    // Guard unless the conversion is known to be non-effectful & non-throwing.
-    if (!def->typeIsOneOf(
-            {MIRType::Boolean, MIRType::BigInt, MIRType::Int64})) {
+    // Conversions that are known to be non-effectful & non-throwing can move.
+    // All other conversions are guards.
+    if (def->typeIsOneOf({MIRType::Boolean, MIRType::BigInt, MIRType::Int64})) {
+      setMovable();
+    } else {
       setGuard();
     }
   }
@@ -4085,6 +4106,7 @@ class MBitOr : public MBinaryBitwiseInstruction {
   INSTRUCTION_HEADER(BitOr)
   TRIVIAL_NEW_WRAPPERS
 
+  MDefinition* foldsTo(TempAllocator& alloc) override;
   MDefinition* foldIfZero(size_t operand) override {
     return getOperand(1 -
                       operand);  // 0 | x => x, so if ith is 0, return (1-i)th
@@ -6820,13 +6842,19 @@ class MLoadElementHole : public MTernaryInstruction, public NoTypePolicy::Data {
 class MStoreElement : public MTernaryInstruction,
                       public NoFloatPolicy<2>::Data {
   bool needsHoleCheck_;
-  bool needsBarrier_;
+  bool needsPreBarrier_;
+
+  // For the post barrier we can use either MPostWriteBarrier (whole-cell
+  // buffer) or MPostWriteElementBarrier (more efficient if the object has many
+  // dense elements). The element barrier requires `index < initializedLength`
+  // so we default to the whole-cell barrier.
+  bool canUseElementPostBarrier_ = false;
 
   MStoreElement(MDefinition* elements, MDefinition* index, MDefinition* value,
-                bool needsHoleCheck, bool needsBarrier)
+                bool needsHoleCheck, bool needsPreBarrier)
       : MTernaryInstruction(classOpcode, elements, index, value) {
     needsHoleCheck_ = needsHoleCheck;
-    needsBarrier_ = needsBarrier;
+    needsPreBarrier_ = needsPreBarrier;
     MOZ_ASSERT(elements->type() == MIRType::Elements);
     MOZ_ASSERT(index->type() == MIRType::Int32);
     MOZ_ASSERT(value->type() != MIRType::MagicHole);
@@ -6837,10 +6865,10 @@ class MStoreElement : public MTernaryInstruction,
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, elements), (1, index), (2, value))
 
-  static MStoreElement* NewUnbarriered(TempAllocator& alloc,
-                                       MDefinition* elements,
-                                       MDefinition* index, MDefinition* value,
-                                       bool needsHoleCheck) {
+  static MStoreElement* NewNoPreBarrier(TempAllocator& alloc,
+                                        MDefinition* elements,
+                                        MDefinition* index, MDefinition* value,
+                                        bool needsHoleCheck) {
     return new (alloc)
         MStoreElement(elements, index, value, needsHoleCheck, false);
   }
@@ -6855,9 +6883,12 @@ class MStoreElement : public MTernaryInstruction,
   AliasSet getAliasSet() const override {
     return AliasSet::Store(AliasSet::Element);
   }
-  bool needsBarrier() const { return needsBarrier_; }
+  bool needsPreBarrier() const { return needsPreBarrier_; }
   bool needsHoleCheck() const { return needsHoleCheck_; }
   bool fallible() const { return needsHoleCheck(); }
+
+  bool canUseElementPostBarrier() const { return canUseElementPostBarrier_; }
+  void setCanUseElementPostBarrier() { canUseElementPostBarrier_ = true; }
 
   ALLOW_CLONE(MStoreElement)
 };
@@ -7628,21 +7659,23 @@ class MLoadDynamicSlotAndUnbox : public MUnaryInstruction,
 class MStoreFixedSlot
     : public MBinaryInstruction,
       public MixPolicy<SingleObjectPolicy, NoFloatPolicy<1>>::Data {
-  bool needsBarrier_;
+  bool needsPreBarrier_;
+  bool needsPostBarrier_ = true;
   size_t slot_;
 
   MStoreFixedSlot(MDefinition* obj, MDefinition* rval, size_t slot,
-                  bool barrier)
+                  bool needsPreBarrier)
       : MBinaryInstruction(classOpcode, obj, rval),
-        needsBarrier_(barrier),
+        needsPreBarrier_(needsPreBarrier),
         slot_(slot) {}
 
  public:
   INSTRUCTION_HEADER(StoreFixedSlot)
   NAMED_OPERANDS((0, object), (1, value))
 
-  static MStoreFixedSlot* NewUnbarriered(TempAllocator& alloc, MDefinition* obj,
-                                         size_t slot, MDefinition* rval) {
+  static MStoreFixedSlot* NewNoPreBarrier(TempAllocator& alloc,
+                                          MDefinition* obj, size_t slot,
+                                          MDefinition* rval) {
     return new (alloc) MStoreFixedSlot(obj, rval, slot, false);
   }
   static MStoreFixedSlot* NewBarriered(TempAllocator& alloc, MDefinition* obj,
@@ -7655,9 +7688,14 @@ class MStoreFixedSlot
   AliasSet getAliasSet() const override {
     return AliasSet::Store(AliasSet::FixedSlot);
   }
-  bool needsBarrier() const { return needsBarrier_; }
-  void setNeedsBarrier(bool needsBarrier = true) {
-    needsBarrier_ = needsBarrier;
+  bool needsPreBarrier() const { return needsPreBarrier_; }
+  void setNeedsPreBarrier(bool needsPreBarrier = true) {
+    needsPreBarrier_ = needsPreBarrier;
+  }
+
+  bool needsPostBarrier() const { return needsPostBarrier_; }
+  void setNeedsPostBarrier(bool needsPostBarrier) {
+    needsPostBarrier_ = needsPostBarrier;
   }
 
 #ifdef JS_JITSPEW
@@ -7671,12 +7709,12 @@ class MStoreFixedSlotFromOffset
     : public MTernaryInstruction,
       public MixPolicy<ObjectPolicy<0>, UnboxedInt32Policy<1>,
                        NoFloatPolicy<2>>::Data {
-  bool needsBarrier_;
+  bool needsPreBarrier_;
 
   MStoreFixedSlotFromOffset(MDefinition* obj, MDefinition* offset,
-                            MDefinition* rval, bool barrier)
+                            MDefinition* rval, bool needsPreBarrier)
       : MTernaryInstruction(classOpcode, obj, offset, rval),
-        needsBarrier_(barrier) {
+        needsPreBarrier_(needsPreBarrier) {
     MOZ_ASSERT(obj->type() == MIRType::Object);
   }
 
@@ -7694,9 +7732,9 @@ class MStoreFixedSlotFromOffset
   AliasSet getAliasSet() const override {
     return AliasSet::Store(AliasSet::FixedSlot);
   }
-  bool needsBarrier() const { return needsBarrier_; }
-  void setNeedsBarrier(bool needsBarrier = true) {
-    needsBarrier_ = needsBarrier;
+  bool needsPreBarrier() const { return needsPreBarrier_; }
+  void setNeedsPreBarrier(bool needsPreBarrier = true) {
+    needsPreBarrier_ = needsPreBarrier;
   }
 
   ALLOW_CLONE(MStoreFixedSlotFromOffset)
@@ -8096,13 +8134,14 @@ class MAddAndStoreSlot
 class MStoreDynamicSlot : public MBinaryInstruction,
                           public NoFloatPolicy<1>::Data {
   uint32_t slot_;
-  bool needsBarrier_;
+  bool needsPreBarrier_;
+  bool needsPostBarrier_ = true;
 
   MStoreDynamicSlot(MDefinition* slots, uint32_t slot, MDefinition* value,
-                    bool barrier)
+                    bool needsPreBarrier)
       : MBinaryInstruction(classOpcode, slots, value),
         slot_(slot),
-        needsBarrier_(barrier) {
+        needsPreBarrier_(needsPreBarrier) {
     MOZ_ASSERT(slots->type() == MIRType::Slots);
   }
 
@@ -8110,9 +8149,9 @@ class MStoreDynamicSlot : public MBinaryInstruction,
   INSTRUCTION_HEADER(StoreDynamicSlot)
   NAMED_OPERANDS((0, slots), (1, value))
 
-  static MStoreDynamicSlot* NewUnbarriered(TempAllocator& alloc,
-                                           MDefinition* slots, uint32_t slot,
-                                           MDefinition* value) {
+  static MStoreDynamicSlot* NewNoPreBarrier(TempAllocator& alloc,
+                                            MDefinition* slots, uint32_t slot,
+                                            MDefinition* value) {
     return new (alloc) MStoreDynamicSlot(slots, slot, value, false);
   }
   static MStoreDynamicSlot* NewBarriered(TempAllocator& alloc,
@@ -8122,7 +8161,13 @@ class MStoreDynamicSlot : public MBinaryInstruction,
   }
 
   uint32_t slot() const { return slot_; }
-  bool needsBarrier() const { return needsBarrier_; }
+  bool needsPreBarrier() const { return needsPreBarrier_; }
+
+  bool needsPostBarrier() const { return needsPostBarrier_; }
+  void setNeedsPostBarrier(bool needsPostBarrier) {
+    needsPostBarrier_ = needsPostBarrier;
+  }
+
   AliasSet getAliasSet() const override {
     return AliasSet::Store(AliasSet::DynamicSlot);
   }
@@ -8138,7 +8183,7 @@ class MStoreDynamicSlotFromOffset
     : public MTernaryInstruction,
       public MixPolicy<UnboxedInt32Policy<1>, NoFloatPolicy<2>>::Data {
   MStoreDynamicSlotFromOffset(MDefinition* slots, MDefinition* offset,
-                              MDefinition* rval, bool barrier)
+                              MDefinition* rval)
       : MTernaryInstruction(classOpcode, slots, offset, rval) {
     MOZ_ASSERT(slots->type() == MIRType::Slots);
   }
@@ -8151,7 +8196,7 @@ class MStoreDynamicSlotFromOffset
                                           MDefinition* slots,
                                           MDefinition* offset,
                                           MDefinition* rval) {
-    return new (alloc) MStoreDynamicSlotFromOffset(slots, offset, rval, true);
+    return new (alloc) MStoreDynamicSlotFromOffset(slots, offset, rval);
   }
 
   AliasSet getAliasSet() const override {
@@ -8754,14 +8799,6 @@ class MPostWriteBarrier : public MBinaryInstruction,
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 
-#ifdef DEBUG
-  bool isConsistentFloat32Use(MUse* use) const override {
-    // During lowering, values that neither have object nor value MIR type
-    // are ignored, thus Float32 can show up at this point without any issue.
-    return use == getUseFor(1);
-  }
-#endif
-
   ALLOW_CLONE(MPostWriteBarrier)
 };
 
@@ -8783,14 +8820,6 @@ class MPostWriteElementBarrier
   NAMED_OPERANDS((0, object), (1, value), (2, index))
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
-
-#ifdef DEBUG
-  bool isConsistentFloat32Use(MUse* use) const override {
-    // During lowering, values that neither have object nor value MIR type
-    // are ignored, thus Float32 can show up at this point without any issue.
-    return use == getUseFor(1);
-  }
-#endif
 
   ALLOW_CLONE(MPostWriteElementBarrier)
 };
@@ -9480,9 +9509,6 @@ class MRotate : public MBinaryInstruction, public NoTypePolicy::Data {
         isLeftRotate_(isLeftRotate) {
     setMovable();
     setResultType(type);
-    // Prevent reordering.  Although there's no problem eliding call result
-    // definitions, there's also no need, as they cause no codegen.
-    setGuard();
   }
 
  public:
@@ -9497,6 +9523,10 @@ class MRotate : public MBinaryInstruction, public NoTypePolicy::Data {
   }
 
   bool isLeftRotate() const { return isLeftRotate_; }
+
+  [[nodiscard]] bool writeRecoverData(
+      CompactBufferWriter& writer) const override;
+  bool canRecoverOnBailout() const override { return type() == MIRType::Int32; }
 
   ALLOW_CLONE(MRotate)
 };
@@ -9673,6 +9703,23 @@ MConstant* MDefinition::maybeConstantValue() {
     return op->toConstant();
   }
   return nullptr;
+}
+
+// Returns true if storing |value| in an object needs a post write barrier.
+inline bool ValueNeedsPostBarrier(MDefinition* value) {
+  if (value->isBox()) {
+    value = value->toBox()->input();
+  }
+  // MIR can't contain nursery pointers, so constants are always tenured.
+  if (value->isConstant()) {
+    MOZ_ASSERT(
+        JS::GCPolicy<Value>::isTenured(value->toConstant()->toJSValue()));
+    return false;
+  }
+  if (value->type() == MIRType::Value) {
+    return true;
+  }
+  return NeedsPostBarrier(value->type());
 }
 
 }  // namespace jit

@@ -51,6 +51,49 @@ $split-screen-min-height: 280px;
   min-width: var(--size-layout-large);
   margin-inline: auto;
 
+  // The card stack should be as wide as the rest of the New Tab content
+  // (such as the search bar), so it stays in sync across breakpoints
+  &:has(.screen[pos='card-stack']) {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+
+    @media only screen and (width <= 890px) and (width >= 788px) {
+      width: 80%;
+    }
+  }
+
+  // Both classes come from MultistageWithDismiss, which only sets them when
+  // the message opted into transitions. The entrance is excluded while either
+  // exit runs, so the three never depend on source order to resolve.
+  &.card-stack-animated:not(.card-stack-exiting)
+  .onboardingContainer:not(.transition-out)
+  .screen[pos='card-stack'] {
+    animation: card-stack-enter var(--card-stack-duration) ease-out;
+
+    &::before {
+      animation: card-stack-layer-1 var(--card-stack-duration) ease-out reverse;
+    }
+
+    &::after {
+      animation: card-stack-layer-2 var(--card-stack-duration) ease-out reverse;
+    }
+  }
+
+  // Dismissing tears the message down rather than advancing it, so there is
+  // no transition-out class to hook.
+  &.card-stack-exiting .screen[pos='card-stack'] {
+    animation: card-stack-exit var(--card-stack-duration) ease-in forwards;
+
+    &::before {
+      animation: card-stack-layer-1 var(--card-stack-duration) ease-in forwards;
+    }
+
+    &::after {
+      animation: card-stack-layer-2 var(--card-stack-duration) ease-in forwards;
+    }
+  }
+
   > moz-button {
     position: absolute;
     inset-block-start: var(--space-medium);
@@ -89,7 +132,7 @@ $split-screen-min-height: 280px;
         }
 
         .section-secondary {
-          background-color: var(--background-color-dimmed);
+          background-color: var(--background-color-box-info);
           border-radius: 0;
           margin: 0;
         }

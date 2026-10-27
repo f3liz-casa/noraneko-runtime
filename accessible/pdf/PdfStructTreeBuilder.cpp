@@ -90,8 +90,26 @@ void PdfStructTreeBuilder::Done(uint64_t aInnerWindowId) {
 
 /* static */
 int PdfStructTreeBuilder::GetPdfId(uint64_t aInnerWindowId, uint64_t aAccId) {
-  if (!sBuilders) {
-    return 0;
+  if (NS_WARN_IF(!NS_IsMainThread())) {
+    return SkPDF::NodeID::Nothing;
+  }
+  if (!sBuilders || sBuilders->IsEmpty()) {
+    return SkPDF::NodeID::Nothing;
+  }
+  if (aInnerWindowId == 0) {
+    // This indicates that the following drawing instructions are not associated
+    // with anything in the struct tree; e.g. page headers and footers.
+    switch (aAccId) {
+      case SpecialId::Nothing:
+        return SkPDF::NodeID::Nothing;
+      case SpecialId::PageHeader:
+        return SkPDF::NodeID::PaginationHeaderArtifact;
+      case SpecialId::PageFooter:
+        return SkPDF::NodeID::PaginationFooterArtifact;
+      default:
+        MOZ_ASSERT_UNREACHABLE("Invalid special acc id");
+    }
+    return SkPDF::NodeID::Nothing;
   }
   // aInnerWindowId might be a descendant WindowContext. Rather than walking the
   // WindowContext ancestry for each builder, we just ask each builder whether
@@ -170,6 +188,7 @@ void PdfStructTreeBuilder::InitInternal(dom::WindowContext* aWindowContext) {
 }
 
 bool PdfStructTreeBuilder::BuildStructTree(SkPDF::StructureElementNode& aRoot) {
+  MOZ_ASSERT(!mBuilt, "Shouldn't try to build the struct tree more than once");
   RefPtr wgp = dom::WindowGlobalParent::GetByInnerWindowId(mRootInnerWindowId);
   if (!wgp) {
     return false;
@@ -186,6 +205,7 @@ bool PdfStructTreeBuilder::BuildStructTree(SkPDF::StructureElementNode& aRoot) {
     return false;
   }
   BuildStructSubtree(rootAcc, aRoot);
+  mBuilt = true;
   return true;
 }
 
@@ -347,17 +367,11 @@ void PdfStructTreeBuilder::BuildStructSubtree(
 
 int PdfStructTreeBuilder::GetPdfIdInternal(uint64_t aInnerWindowId,
                                            uint64_t aAccId) const {
-  if (aInnerWindowId == 0) {
-    // This indicates that the following drawing instructions are not associated
-    // with anything in the struct tree; e.g. page headers and footers.
-    MOZ_ASSERT(aAccId == 0);
-    return 0;
-  }
   if (auto entry = mAccToPdf.lookup({aInnerWindowId, aAccId})) {
     return entry->value();
   }
-  MOZ_ASSERT_UNREACHABLE(
-      "Display list contains Accessible id which isn't in the map!");
+  MOZ_ASSERT(!mBuilt,
+             "Display list contains Accessible id which isn't in the map!");
   return 0;
 }
 

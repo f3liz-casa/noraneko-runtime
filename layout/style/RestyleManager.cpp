@@ -860,7 +860,8 @@ static bool RecomputePosition(nsIFrame* aFrame) {
   // are dirty (i.e. they will be reflowed), or aren't affected by position
   // styles.
   if (aFrame->HasAnyStateBits(NS_FRAME_FIRST_REFLOW | NS_FRAME_IS_DIRTY |
-                              NS_FRAME_SVG_LAYOUT)) {
+                              NS_FRAME_SVG_LAYOUT) ||
+      aFrame->IsInSVGTextSubtree()) {
     return true;
   }
 
@@ -2274,25 +2275,6 @@ static const nsIFrame* ExpectedOwnerForChild(const nsIFrame* aFrame) {
   return parent;
 }
 
-// FIXME(emilio, bug 1633685): We should ideally figure out how to properly
-// restyle replicated fixed pos frames... We seem to assume everywhere that they
-// can't get restyled at the moment...
-static bool IsInReplicatedFixedPosTree(const nsIFrame* aFrame) {
-  if (!aFrame->PresContext()->IsPaginated()) {
-    return false;
-  }
-
-  for (; aFrame; aFrame = aFrame->GetParent()) {
-    if (aFrame->StyleDisplay()->mPosition == StylePositionProperty::Fixed &&
-        !aFrame->FirstContinuation()->IsPrimaryFrame() &&
-        nsLayoutUtils::IsReallyFixedPos(aFrame)) {
-      return true;
-    }
-  }
-
-  return true;
-}
-
 void ServoRestyleState::AssertOwner(const ServoRestyleState& aParent) const {
   MOZ_ASSERT(mOwner);
   MOZ_ASSERT(CanUseHandledHintsFromAncestors(mOwner));
@@ -2302,7 +2284,7 @@ void ServoRestyleState::AssertOwner(const ServoRestyleState& aParent) const {
   // chains of ServoRestyleStates in some cases where it's just not worth it.
   if (aParent.mOwner) {
     const nsIFrame* owner = ExpectedOwnerForChild(mOwner);
-    if (owner != aParent.mOwner && !IsInReplicatedFixedPosTree(mOwner)) {
+    if (owner != aParent.mOwner && !mOwner->IsInReplicatedFixedPosTree()) {
       MOZ_ASSERT(IsAnonBox(owner),
                  "Should only have expected owner weirdness when anon boxes "
                  "are involved");
@@ -2326,7 +2308,7 @@ nsChangeHint ServoRestyleState::ChangesHandledFor(
   }
 
   MOZ_ASSERT(mOwner == ExpectedOwnerForChild(aFrame) ||
-                 IsInReplicatedFixedPosTree(aFrame),
+                 aFrame->IsInReplicatedFixedPosTree(),
              "Missed some frame in the hierarchy?");
   return mChangesHandled;
 }

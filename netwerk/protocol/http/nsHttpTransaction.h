@@ -9,6 +9,7 @@
 #include "EventTokenBucket.h"
 #include "HttpTransactionShell.h"
 #include "TimingStruct.h"
+#include "gtest/MozGtestFriend.h"
 #include "mozilla/StaticPrefs_security.h"
 #include "mozilla/net/DNS.h"
 #include "mozilla/net/NeckoChannelParams.h"
@@ -150,6 +151,9 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   bool ChannelPipeFull() { return mWaitingOnPipeOut; }
 
   // Locked methods to get and set timing info
+  // Replaces the domainLookup, connect and TLS timings with aTimes, which is
+  // empty for a transaction running on a connection it did not establish, so
+  // that it can't report a connect phase belonging to another connection.
   void BootstrapTimings(TimingStruct times);
   void SetConnectStart(mozilla::TimeStamp timeStamp, bool onlyIfNull = false);
   void SetConnectEnd(mozilla::TimeStamp timeStamp, bool onlyIfNull = false);
@@ -252,6 +256,15 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   void SetIsTRRTransaction() override { mIsTRRTransaction = true; }
   bool IsTRRTransaction() { return mIsTRRTransaction; }
 
+  // Marks this transaction as uploading a non-replayable streaming body,
+  // whose length is not known when the transaction is initialised. Restart
+  // and retry logic must not attempt to re-send it, because the body stream
+  // has already been consumed.
+  void SetRequestBodyIsStreaming(bool aIsStreaming) override {
+    mRequestBodyIsStreaming = aIsStreaming;
+  }
+  bool RequestBodyIsStreaming() const { return mRequestBodyIsStreaming; }
+
   // Used by the HE speculative path to propagate the failed-handshake
   // security info onto the real transaction whose mConnection was never
   // set (so its own MaybeRefreshSecurityInfo skips). Without this the
@@ -269,6 +282,8 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   virtual ~nsHttpTransaction();
 
   [[nodiscard]] nsresult Restart();
+  FRIEND_TEST(HttpTransactionRestart,
+              RestartRefusesStartedStreamingRequestBody);
   // For an accepted 0-RTT request, report connectEnd and requestStart at the
   // early-data send point. Caller must hold mLock.
   void Apply0RTTTimingOverride();
@@ -320,6 +335,9 @@ class nsHttpTransaction final : public nsAHttpTransaction,
                                   bool& aAllRecordsHaveEchConfig);
   // This function setups a new connection info for restarting this transaction.
   void PrepareConnInfoForRetry(nsresult aReason);
+  // Switches to a direct-route connection info with HTTP/3 disabled, so the
+  // transaction is restarted over HTTP/2 or HTTP/1.1.
+  void DisableHttp3ForRestart();
   // This function is used to select the next non http3 record and is only
   // executed when the fast fallback timer is triggered.
   already_AddRefed<nsHttpConnectionInfo> PrepareFastFallbackConnInfo(
@@ -420,7 +438,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // mixed-access patterns (e.g. mConnection is checked without the lock on the
   // socket thread but modified with it; mChunkedDecoder is accessed without the
   // lock except during trailer extraction).
-  Mutex mLock{"transaction lock"};
+  mutable Mutex mLock{"transaction lock"};
 
   nsCOMPtr<nsIInterfaceRequestor> mCallbacks MOZ_GUARDED_BY(mLock);
   nsCOMPtr<nsITransportEventSink> mTransportSink;
@@ -531,6 +549,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   bool mReceivedData{false};
   bool mStatusEventPending{false};
   bool mHasRequestBody{false};
+  bool mRequestBodyIsStreaming{false};
   bool mProxyConnectFailed{false};
   bool mHttpResponseMatched{false};
   bool mPreserveStream{false};
@@ -629,6 +648,9 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   }
   // Called when this transaction is inserted in the pending queue.
   void OnPendingQueueInserted(const nsACString& aConnectionHashKey);
+  // Starts the timer that opens a TCP backup connection if this HTTP/3
+  // transaction is not connected in time. Only the first call has an effect.
+  void MaybeStartHttp3BackupTimer();
 
  private:
   TransactionObserverFunc mTransactionObserver;
@@ -678,7 +700,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   nsCOMPtr<nsITimer> mHttp3BackupTimer;
   nsCOMPtr<nsITimer> mHttp3TunnelFallbackTimer;
   RefPtr<nsHttpConnectionInfo> mBackupConnInfo;
-  // A clone of mConnInfo taken when this transaction is activated.
+  // The value of mConnInfo when this transaction was activated.
   // Describes the server that the associated connection is connected to.
   RefPtr<nsHttpConnectionInfo> mFinalizedConnInfo MOZ_GUARDED_BY(mLock);
   RefPtr<HTTPSRecordResolver> mResolver;

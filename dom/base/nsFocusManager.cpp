@@ -38,6 +38,7 @@
 #include "mozilla/dom/HTMLInputElement.h"
 #include "mozilla/dom/HTMLSlotElement.h"
 #include "mozilla/dom/Navigation.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/Text.h"
 #include "mozilla/dom/WindowGlobalChild.h"
@@ -71,7 +72,6 @@
 #include "nsNetUtil.h"
 #include "nsPIDOMWindow.h"
 #include "nsQueryObject.h"
-#include "nsRange.h"
 #include "nsTextControlFrame.h"
 #include "nsThreadUtils.h"
 #include "nsXULPopupManager.h"
@@ -546,7 +546,8 @@ nsFocusManager::MoveFocus(mozIDOMWindowProxy* aWindow, Element* aStartElement,
   NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
 
   // Flush to ensure that focusability of descendants is computed correctly.
-  if (RefPtr<Document> doc = window->GetExtantDoc()) {
+  RefPtr<Document> doc = window->GetExtantDoc();
+  if (doc) {
     doc->FlushPendingNotifications(FlushType::EnsurePresShellInitAndFrames);
   }
 
@@ -574,6 +575,12 @@ nsFocusManager::MoveFocus(mozIDOMWindowProxy* aWindow, Element* aStartElement,
   } else if (aType == MOVEFOCUS_ROOT || aType == MOVEFOCUS_CARET) {
     // no content was found, so clear the focus for these two types.
     ClearFocus(window);
+    if (aType == MOVEFOCUS_CARET && doc) {
+      // If moving the caret causes the focus to be cleared, don't start focus
+      // navigation from the location of the previously-focused content.
+      // Instead, use the new caret position.
+      doc->SetPreviouslyFocusedContent(nullptr);
+    }
   }
 
   LOGFOCUS(("<<MoveFocus end>>"));
@@ -3404,7 +3411,7 @@ void nsFocusManager::MoveCaretToFocus(PresShell* aPresShell,
   }
 
   ErrorResult rv;
-  RefPtr<nsRange> newRange = doc->CreateRange(rv);
+  RefPtr<dom::Range> newRange = doc->CreateRange(rv);
   if (NS_WARN_IF(rv.Failed())) {
     rv.SuppressException();
     domSelection->RemoveAllRanges(IgnoreErrors());
@@ -3495,7 +3502,7 @@ void nsFocusManager::GetSelectionLocation(Document* aDocument,
       &aPresShell->ConstFrameSelection()->NormalSelection();
   MOZ_ASSERT(domSelection);
 
-  const nsRange* domRange = domSelection->GetRangeAt(0);
+  const dom::Range* domRange = domSelection->GetRangeAt(0);
   if (!domRange || !domRange->IsPositioned()) {
     return;
   }

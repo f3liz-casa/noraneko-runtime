@@ -86,9 +86,19 @@ class SourceSurfaceRecording final : public SourceSurface {
   }
 
   ~SourceSurfaceRecording() {
-    mRecorder->RemoveStoredObject(this);
-    mRecorder->RecordEvent(
-        RecordedSourceSurfaceDestruction(ReferencePtr(this)));
+    ReferencePtr self(this);
+    if (NS_IsMainThread()) {
+      mRecorder->RemoveStoredObject(self);
+      mRecorder->RecordEvent(RecordedSourceSurfaceDestruction(self));
+      return;
+    }
+
+    // The recorder owns the deletion so no need to hold a strong ref to it.
+    mRecorder->AddPendingDeletion(
+        [recorder = MOZ_KnownLive(mRecorder.get()), self]() {
+          recorder->RemoveStoredObject(self);
+          recorder->RecordEvent(RecordedSourceSurfaceDestruction(self));
+        });
   }
 
   SurfaceType GetType() const override { return SurfaceType::RECORDING; }
@@ -304,14 +314,11 @@ void DrawTargetRecording::Fill(const Path* aPath, const Pattern& aPattern,
 
   MarkChanged();
 
-  if (aPath->GetBackendType() == BackendType::RECORDING) {
-    const PathRecording* path = static_cast<const PathRecording*>(aPath);
-    auto circle = path->AsCircle();
-    if (circle) {
-      EnsurePatternDependenciesStored(aPattern);
-      RecordEventSelf(RecordedFillCircle(circle.value(), aPattern, aOptions));
-      return;
-    }
+  auto circle = aPath->AsCircle();
+  if (circle) {
+    EnsurePatternDependenciesStored(aPattern);
+    RecordEventSelf(RecordedFillCircle(circle.value(), aPattern, aOptions));
+    return;
   }
 
   RefPtr<PathRecording> pathRecording = EnsurePathStored(aPath);
@@ -460,23 +467,20 @@ void DrawTargetRecording::Stroke(const Path* aPath, const Pattern& aPattern,
                                  const DrawOptions& aOptions) {
   MarkChanged();
 
-  if (aPath->GetBackendType() == BackendType::RECORDING) {
-    const PathRecording* path = static_cast<const PathRecording*>(aPath);
-    auto circle = path->AsCircle();
-    if (circle && circle->closed) {
-      EnsurePatternDependenciesStored(aPattern);
-      RecordEventSelf(RecordedStrokeCircle(circle.value(), aPattern,
-                                           aStrokeOptions, aOptions));
-      return;
-    }
+  auto circle = aPath->AsCircle();
+  if (circle && circle->closed) {
+    EnsurePatternDependenciesStored(aPattern);
+    RecordEventSelf(RecordedStrokeCircle(circle.value(), aPattern,
+                                         aStrokeOptions, aOptions));
+    return;
+  }
 
-    auto line = path->AsLine();
-    if (line) {
-      EnsurePatternDependenciesStored(aPattern);
-      RecordEventSelf(RecordedStrokeLine(line->origin, line->destination,
-                                         aPattern, aStrokeOptions, aOptions));
-      return;
-    }
+  auto line = aPath->AsLine();
+  if (line) {
+    EnsurePatternDependenciesStored(aPattern);
+    RecordEventSelf(RecordedStrokeLine(line->origin, line->destination,
+                                       aPattern, aStrokeOptions, aOptions));
+    return;
   }
 
   RefPtr<PathRecording> pathRecording = EnsurePathStored(aPath);
@@ -761,6 +765,9 @@ void DrawTargetRecording::PopClip() {
 }
 
 bool DrawTargetRecording::RemoveAllClips() {
+  if (!mPushedLayers.empty()) {
+    return false;
+  }
   RecordEventSelfSkipFlushTransform(RecordedRemoveAllClips());
   return true;
 }

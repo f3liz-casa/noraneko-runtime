@@ -19,7 +19,14 @@ A task's `kind` attribute gives the name of the kind that generated it, e.g.,
 ## run_on_repo_type
 
 The types of repositories where this task should be in the target task set. Typically
-"hg" (the default), "git" or both.
+"hg", "git" or both (the default).
+
+This attribute is temporary and will be used during the transition from hg.mozilla.org
+to Github.
+
+## clone_with
+
+The VCS a task uses to clone the checkout, either "hg" or "git".
 
 This attribute is temporary and will be used during the transition from hg.mozilla.org
 to Github.
@@ -393,8 +400,15 @@ Only used for openh264 plugin builds, used to signify the version (and thus info
 ## code-review
 
 If a task set this boolean attribute to `true`, it will be processed by the code
-review bot, the task will ran for every new Phabricator diff.
+review bot, the task will run for every new Phabricator diff.
 Any supported and detected issue will be automatically reported on the
+Phabricator revision.
+
+## code-review-build-test
+
+If a task set this boolean attribute to `true`, it will be processed by the code
+review bot build & test analysis, and the task will run for every new Phabricator
+diff. Any supported and detected issue will be automatically reported on the
 Phabricator revision.
 
 ## retrigger
@@ -415,6 +429,12 @@ signed. Set this to `true` to disable APK signing.
 ## enable-build-signing
 
 We enable build-signing for `shippable`, `nightly`, and `enable-build-signing` tasks.
+
+## target-store
+
+The Android app store a `push-android` task submits to: `google`, `samsung`,
+`huawei` or `vivo`. Together with `build-type` it identifies a push task, since
+several stores can be fed from the same signed build.
 
 ## run-visual-metrics
 
@@ -578,5 +598,11 @@ name of the built flatpak app (e.g. `org.mozilla.firefox`)
 The human-readable product name for the MSI installer (e.g. `Firefox Nightly`,
 `Firefox Beta`, `Firefox`). Used by downstream signing tasks to construct
 the Authenticode comment embedded in the installer signature.
+
+## duplicate-of
+
+The label of the task this one was copied from by the `duplicate` transforms.
+A downstream kind that names this task's kind in `duplicate.chain-from` makes
+its own copies depend on this task rather than on the one it was copied from.
 
 [primary one]: https://taskcluster-taskgraph.readthedocs.io/en/latest/reference/transforms/from_deps.html#primary-kind

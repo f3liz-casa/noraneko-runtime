@@ -1,0 +1,17 @@
+[DEFAULT]
+support-files = ["head.js"]
+dupe-manifest = true
+prefs = [
+  "sidebar.revamp=true",
+]
+
+["browser_toolbarButtonKeyPress.js"]
+skip-if = [
+  "os == 'linux' && os_version == '22.04' && arch == 'x86_64' && display == 'wayland' && debug", # Bug 1775712
+]
+
+["browser_toolbarKeyNav.js"]
+skip-if = [
+  "true", # Bug 1775713
+]
+support-files = ["!/browser/base/content/test/browser-permissions/permissions.html"]

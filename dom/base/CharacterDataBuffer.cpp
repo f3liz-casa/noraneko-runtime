@@ -14,6 +14,7 @@
 
 #include "CharacterDataBufferImpl.h"
 #include "mozilla/CheckedInt.h"
+#include "mozilla/LSX.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/SSE.h"
 #include "mozilla/ppc.h"
@@ -163,13 +164,18 @@ static inline int32_t FirstNon8BitUnvectorized(const char16_t* str,
 #  include "CharacterDataBufferGenericFwd.h"
 #endif
 
-#ifdef __powerpc__
 namespace mozilla {
+#ifdef __powerpc__
 namespace VMX {
 int32_t FirstNon8Bit(const char16_t* str, const char16_t* end);
 }  // namespace VMX
-}  // namespace mozilla
 #endif
+#ifdef MOZILLA_MAY_SUPPORT_LSX
+namespace LSX {
+int32_t FirstNon8Bit(const char16_t* str, const char16_t* end);
+}  // namespace LSX
+#endif
+}  // namespace mozilla
 
 /*
  * This function returns -1 if all characters in str are 8 bit characters.
@@ -186,6 +192,10 @@ static inline int32_t FirstNon8Bit(const char16_t* str, const char16_t* end) {
 #elif defined(__powerpc__)
   if (mozilla::supports_vmx()) {
     return mozilla::VMX::FirstNon8Bit(str, end);
+  }
+#elif defined(MOZILLA_MAY_SUPPORT_LSX)
+  if (mozilla::supports_lsx()) {
+    return mozilla::LSX::FirstNon8Bit(str, end);
   }
 #endif
 
@@ -541,4 +551,34 @@ bool CharacterDataBuffer::BufferEquals(
   }
 
   return true;
+}
+
+bool CharacterDataBuffer::Equals(const nsAString& aString) const {
+  const uint32_t length = GetLength();
+  if (!length) {
+    return aString.IsEmpty();
+  }
+  if (length != aString.Length()) {
+    return false;
+  }
+  if (Is2b()) {
+    return aString.Equals(nsDependentSubstring(Get2b(), length));
+  }
+  return aString.Equals(
+      NS_ConvertASCIItoUTF16(nsDependentCSubstring(Get1b(), length)));
+}
+
+bool CharacterDataBuffer::Equals(const nsACString& aString) const {
+  const uint32_t length = GetLength();
+  if (!length) {
+    return aString.IsEmpty();
+  }
+  if (length != aString.Length()) {
+    return false;
+  }
+  if (!Is2b()) {
+    return aString.Equals(nsDependentCSubstring(Get1b(), length));
+  }
+  NS_ConvertASCIItoUTF16 string(aString);
+  return string.Equals(nsDependentSubstring(Get2b(), length));
 }

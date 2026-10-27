@@ -805,8 +805,8 @@ bool BaseCompiler::endFunction() {
 
   offsets_.end = masm.currentOffset();
 
-  if (!fr.checkStackHeight()) {
-    return decoder_.fail(decoder_.beginOffset(), "stack frame is too large");
+  if (!checkStackHeight()) {
+    return false;
   }
 
   perfSpewer_.endRecording();
@@ -1714,10 +1714,10 @@ void BaseCompiler::endCall(FunctionCall& call, size_t stackSpace) {
 
   if (call.restoreState == RestoreState::All) {
     fr.loadInstancePtr(InstanceReg);
-    masm.loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+    masm.loadWasmPinnedRegsFromInstance();
     masm.switchToWasmInstanceRealm(ABINonArgReturnReg0, ABINonArgReturnReg1);
   } else if (call.restoreState == RestoreState::PinnedRegs) {
-    masm.loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+    masm.loadWasmPinnedRegsFromInstance();
   }
 }
 
@@ -2138,14 +2138,23 @@ bool BaseCompiler::callIndirect(uint32_t funcTypeIndex, uint32_t tableIndex,
   }
   nullCheckFailed = nullref->entry();
 #endif
+
+  FaultingCodeRange fcr;
   if (!tailCall) {
-    masm.wasmCallIndirect(desc, callee, nullCheckFailed, fastCallOffset,
-                          slowCallOffset);
+    fcr = masm.wasmCallIndirect(desc, callee, nullCheckFailed, fastCallOffset,
+                                slowCallOffset);
   } else {
     ReturnCallAdjustmentInfo retCallInfo = BuildReturnCallAdjustmentInfo(
         this->funcType(), (*codeMeta_.types)[funcTypeIndex].funcType());
-    masm.wasmReturnCallIndirect(desc, callee, nullCheckFailed, retCallInfo);
+    fcr =
+        masm.wasmReturnCallIndirect(desc, callee, nullCheckFailed, retCallInfo);
   }
+  if (compilerEnv_.debugEnabled() && fcr.isValid() &&
+      !createStackMap(Some(Trap::IndirectCallToNull), fcr,
+                      HasDebugFrameWithLiveRefs::Maybe)) {
+    return false;
+  }
+
   return true;
 }
 
@@ -2259,11 +2268,19 @@ bool BaseCompiler::callRef(const Stk& calleeRef, const FunctionCall& call,
     MOZ_ASSERT(callRefIndex.isNothing());
   }
 
-  masm.wasmCallRef(desc, callee, fastCallOffset, slowCallOffset);
+  StackMap* debugStackMap;
+  if (!createDebugOnlyStackMapForNonResumingTrap(&debugStackMap,
+                                                 Trap::IndirectCallToNull)) {
+    return false;
+  }
+  BaselineStackMapRegistry stackMapRegistry(stackMaps_);
+
+  masm.wasmCallRef(desc, callee, fastCallOffset, slowCallOffset, debugStackMap,
+                   debugStackMap ? &stackMapRegistry : nullptr);
   return true;
 }
 
-void BaseCompiler::returnCallRef(const Stk& calleeRef, const FunctionCall& call,
+bool BaseCompiler::returnCallRef(const Stk& calleeRef, const FunctionCall& call,
                                  const FuncType& funcType) {
   CallSiteDesc desc(bytecodeOffset(), CallSiteKind::FuncRef);
   CalleeDesc callee = CalleeDesc::wasmFuncRef();
@@ -2271,7 +2288,17 @@ void BaseCompiler::returnCallRef(const Stk& calleeRef, const FunctionCall& call,
   loadRef(calleeRef, RegRef(WasmCallRefReg));
   ReturnCallAdjustmentInfo retCallInfo =
       BuildReturnCallAdjustmentInfo(this->funcType(), funcType);
-  masm.wasmReturnCallRef(desc, callee, retCallInfo);
+
+  StackMap* debugStackMap;
+  if (!createDebugOnlyStackMapForNonResumingTrap(&debugStackMap,
+                                                 Trap::IndirectCallToNull)) {
+    return false;
+  }
+  BaselineStackMapRegistry stackMapRegistry(stackMaps_);
+
+  masm.wasmReturnCallRef(desc, callee, retCallInfo, debugStackMap,
+                         debugStackMap ? &stackMapRegistry : nullptr);
+  return true;
 }
 
 // Precondition: sync()
@@ -5876,7 +5903,9 @@ bool BaseCompiler::emitReturnCallRef() {
   }
 
   const Stk& callee = peek(0);
-  returnCallRef(callee, baselineCall, funcType);
+  if (!returnCallRef(callee, baselineCall, funcType)) {
+    return false;
+  }
 
   MOZ_ASSERT(stackMapGenerator_.framePushedExcludingOutboundCallArgs.isSome());
   stackMapGenerator_.framePushedExcludingOutboundCallArgs.reset();
@@ -7814,10 +7843,26 @@ void BaseCompiler::SignalNullCheck::emitNullCheck(BaseCompiler* bc, RegRef rp) {
 /* static */
 void BaseCompiler::SignalNullCheck::emitTrapSite(BaseCompiler* bc,
                                                  FaultingCodeRange fcr,
-                                                 TrapMachineInsn tmi) {
+                                                 TrapMachineInsn tmi,
+                                                 StackMap* debugOnlyStackMap) {
   MacroAssembler& masm = bc->masm;
   masm.appendAndVerify(wasm::Trap::NullPointerDereference, tmi, fcr,
                        bc->trapSiteDesc());
+  if (MOZ_UNLIKELY(debugOnlyStackMap) && fcr.isValid()) {
+    MOZ_ASSERT(bc->compilerEnv_.debugEnabled());
+    masm.propagateOOM(
+        bc->stackMaps_->add(fcr.resumeOffset(), debugOnlyStackMap));
+  }
+}
+
+/* static */
+StackMap*
+BaseCompiler::SignalNullCheck::createDebugOnlyStackMapForNonResumingTrap(
+    BaseCompiler* bc, Trap kind) {
+  StackMap* debugOnlyStackMap = nullptr;
+  bc->masm.propagateOOM(
+      bc->createDebugOnlyStackMapForNonResumingTrap(&debugOnlyStackMap, kind));
+  return debugOnlyStackMap;
 }
 
 template <typename NullCheckPolicy>
@@ -7827,7 +7872,8 @@ RegPtr BaseCompiler::emitGcArrayGetData(RegRef rp) {
   RegPtr rdata = needPtr();
   FaultingCodeRange fcr =
       masm.loadPtr(Address(rp, WasmArrayObject::offsetOfData()), rdata);
-  NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsnForLoadWord());
+  NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsnForLoadWord(),
+                                nullptr);
   return rdata;
 }
 
@@ -7835,11 +7881,15 @@ template <typename NullCheckPolicy>
 RegI32 BaseCompiler::emitGcArrayGetNumElements(RegRef rp) {
   // `rp` points at a WasmArrayObject.  Return a reg holding the value of its
   // `numElements_` field.
+  StackMap* debugOnlyStackMap =
+      NullCheckPolicy::createDebugOnlyStackMapForNonResumingTrap(
+          this, Trap::NullPointerDereference);
   STATIC_ASSERT_WASMARRAYELEMENTS_NUMELEMENTS_IS_U32;
   RegI32 numElements = needI32();
   FaultingCodeRange fcr = masm.load32(
       Address(rp, WasmArrayObject::offsetOfNumElements()), numElements);
-  NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load32);
+  NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load32,
+                                debugOnlyStackMap);
   return numElements;
 }
 
@@ -7853,6 +7903,12 @@ void BaseCompiler::emitGcArrayBoundsCheck(RegI32 index, RegI32 numElements) {
 template <typename T, typename NullCheckPolicy>
 void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
                              const T& src) {
+  // Trap::NullPointerDereference needs to match what
+  // NullCheckPolicy::emitTrapSite creates.
+  StackMap* debugOnlyStackMap =
+      NullCheckPolicy::createDebugOnlyStackMapForNonResumingTrap(
+          this, Trap::NullPointerDereference);
+
   switch (type.kind()) {
     case StorageType::I8: {
       MOZ_ASSERT(wideningOp != FieldWideningOp::None);
@@ -7863,7 +7919,8 @@ void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
       } else {
         fcr = masm.load8SignExtend(src, r);
       }
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load8);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load8,
+                                    debugOnlyStackMap);
       pushI32(r);
       break;
     }
@@ -7876,7 +7933,8 @@ void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
       } else {
         fcr = masm.load16SignExtend(src, r);
       }
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load16);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load16,
+                                    debugOnlyStackMap);
       pushI32(r);
       break;
     }
@@ -7884,7 +7942,8 @@ void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
       MOZ_ASSERT(wideningOp == FieldWideningOp::None);
       RegI32 r = needI32();
       FaultingCodeRange fcr = masm.load32(src, r);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load32);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load32,
+                                    debugOnlyStackMap);
       pushI32(r);
       break;
     }
@@ -7893,11 +7952,14 @@ void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
       RegI64 r = needI64();
 #ifdef JS_64BIT
       FaultingCodeRange fcr = masm.load64(src, r);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load64);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load64,
+                                    debugOnlyStackMap);
 #else
       FaultingCodeRangePair fcrp = masm.load64(src, r);
-      NullCheckPolicy::emitTrapSite(this, fcrp.first, TrapMachineInsn::Load32);
-      NullCheckPolicy::emitTrapSite(this, fcrp.second, TrapMachineInsn::Load32);
+      NullCheckPolicy::emitTrapSite(this, fcrp.first, TrapMachineInsn::Load32,
+                                    debugOnlyStackMap);
+      NullCheckPolicy::emitTrapSite(this, fcrp.second, TrapMachineInsn::Load32,
+                                    debugOnlyStackMap);
 #endif
       pushI64(r);
       break;
@@ -7906,7 +7968,8 @@ void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
       MOZ_ASSERT(wideningOp == FieldWideningOp::None);
       RegF32 r = needF32();
       FaultingCodeRange fcr = masm.loadFloat32(src, r);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load32);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load32,
+                                    debugOnlyStackMap);
       pushF32(r);
       break;
     }
@@ -7914,7 +7977,8 @@ void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
       MOZ_ASSERT(wideningOp == FieldWideningOp::None);
       RegF64 r = needF64();
       FaultingCodeRange fcr = masm.loadDouble(src, r);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load64);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load64,
+                                    debugOnlyStackMap);
       pushF64(r);
       break;
     }
@@ -7923,7 +7987,8 @@ void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
       MOZ_ASSERT(wideningOp == FieldWideningOp::None);
       RegV128 r = needV128();
       FaultingCodeRange fcr = masm.loadUnalignedSimd128(src, r);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load128);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Load128,
+                                    debugOnlyStackMap);
       pushV128(r);
       break;
     }
@@ -7932,7 +7997,8 @@ void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
       MOZ_ASSERT(wideningOp == FieldWideningOp::None);
       RegRef r = needRef();
       FaultingCodeRange fcr = masm.loadPtr(src, r);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsnForLoadWord());
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsnForLoadWord(),
+                                    debugOnlyStackMap);
       pushRef(r);
       break;
     }
@@ -7945,48 +8011,62 @@ void BaseCompiler::emitGcGet(StorageType type, FieldWideningOp wideningOp,
 template <typename T, typename NullCheckPolicy>
 void BaseCompiler::emitGcSetScalar(const T& dst, StorageType type,
                                    AnyReg value) {
+  // Trap::NullPointerDereference needs to match what
+  // NullCheckPolicy::emitTrapSite creates.
+  StackMap* debugOnlyStackMap =
+      NullCheckPolicy::createDebugOnlyStackMapForNonResumingTrap(
+          this, Trap::NullPointerDereference);
+
   switch (type.kind()) {
     case StorageType::I8: {
       FaultingCodeRange fcr = masm.store8(value.i32(), dst);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store8);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store8,
+                                    debugOnlyStackMap);
       break;
     }
     case StorageType::I16: {
       FaultingCodeRange fcr = masm.store16(value.i32(), dst);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store16);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store16,
+                                    debugOnlyStackMap);
       break;
     }
     case StorageType::I32: {
       FaultingCodeRange fcr = masm.store32(value.i32(), dst);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store32);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store32,
+                                    debugOnlyStackMap);
       break;
     }
     case StorageType::I64: {
 #ifdef JS_64BIT
       FaultingCodeRange fcr = masm.store64(value.i64(), dst);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store64);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store64,
+                                    debugOnlyStackMap);
 #else
       FaultingCodeRangePair fcrp = masm.store64(value.i64(), dst);
-      NullCheckPolicy::emitTrapSite(this, fcrp.first, TrapMachineInsn::Store32);
-      NullCheckPolicy::emitTrapSite(this, fcrp.second,
-                                    TrapMachineInsn::Store32);
+      NullCheckPolicy::emitTrapSite(this, fcrp.first, TrapMachineInsn::Store32,
+                                    debugOnlyStackMap);
+      NullCheckPolicy::emitTrapSite(this, fcrp.second, TrapMachineInsn::Store32,
+                                    debugOnlyStackMap);
 #endif
       break;
     }
     case StorageType::F32: {
       FaultingCodeRange fcr = masm.storeFloat32(value.f32(), dst);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store32);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store32,
+                                    debugOnlyStackMap);
       break;
     }
     case StorageType::F64: {
       FaultingCodeRange fcr = masm.storeDouble(value.f64(), dst);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store64);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store64,
+                                    debugOnlyStackMap);
       break;
     }
 #ifdef ENABLE_JIT_SIMD
     case StorageType::V128: {
       FaultingCodeRange fcr = masm.storeUnalignedSimd128(value.v128(), dst);
-      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store128);
+      NullCheckPolicy::emitTrapSite(this, fcr, TrapMachineInsn::Store128,
+                                    debugOnlyStackMap);
       break;
     }
 #endif
@@ -8308,7 +8388,13 @@ bool BaseCompiler::emitStructGet(FieldWideningOp wideningOp) {
     RegPtr outlineBase = needPtr();
     FaultingCodeRange fcr =
         masm.loadPtr(Address(object, path.ilOffset()), outlineBase);
-    SignalNullCheck::emitTrapSite(this, fcr, TrapMachineInsnForLoadWord());
+    SignalNullCheck::emitTrapSite(this, fcr, TrapMachineInsnForLoadWord(),
+                                  nullptr);
+    if (compilerEnv_.debugEnabled() && fcr.isValid() &&
+        !createStackMap(Some(Trap::NullPointerDereference), fcr,
+                        HasDebugFrameWithLiveRefs::Maybe)) {
+      return false;
+    }
     // Load the value
     emitGcGet<Address, NoNullCheck>(fieldType, wideningOp,
                                     Address(outlineBase, path.oolOffset()));
@@ -8362,7 +8448,13 @@ bool BaseCompiler::emitStructSet() {
     // the offset where the OOL pointer is stored.  Hence `path.ilOffset()`.
     FaultingCodeRange fcr =
         masm.loadPtr(Address(object, path.ilOffset()), outlineBase);
-    SignalNullCheck::emitTrapSite(this, fcr, TrapMachineInsnForLoadWord());
+    SignalNullCheck::emitTrapSite(this, fcr, TrapMachineInsnForLoadWord(),
+                                  nullptr);
+    if (compilerEnv_.debugEnabled() && fcr.isValid() &&
+        !createStackMap(Some(Trap::NullPointerDereference), fcr,
+                        HasDebugFrameWithLiveRefs::Maybe)) {
+      return false;
+    }
     // Consumes `value`. `object` is unchanged by this call.
     if (!emitGcStructSet<NoNullCheck>(object, outlineBase, path.oolOffset(),
                                       fieldType, value,
@@ -9072,8 +9164,13 @@ bool BaseCompiler::emitArrayFill() {
     MOZ_ASSERT(RegI32(scratch) != arrayNumElements);
     MOZ_ASSERT(RegI32(scratch) != index);
     MOZ_ASSERT(RegI32(scratch) != numElements);
-    masm.wasmBoundsCheckRange32(index, numElements, arrayNumElements, scratch,
-                                trapSiteDesc());
+    FaultingCodeRange fcr = masm.wasmBoundsCheckRange32(
+        index, numElements, arrayNumElements, scratch, trapSiteDesc());
+    if (compilerEnv_.debugEnabled() && fcr.isValid() &&
+        !createStackMap(Some(Trap::OutOfBounds), fcr,
+                        HasDebugFrameWithLiveRefs::Maybe)) {
+      return false;
+    }
   }
   // 3: arrayNumElements index numElements
 
@@ -9552,6 +9649,10 @@ static void MulI64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd,
                      RegV128 temp1, RegV128 temp2) {
   masm.mulInt64x2(rsd, rs, rsd, temp1, temp2);
 }
+#  elif defined(JS_CODEGEN_LOONG64)
+static void MulI64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.mulInt64x2(rsd, rs, rsd);
+}
 #  endif
 
 static void MulF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
@@ -9607,6 +9708,38 @@ static void PMaxF64x2(MacroAssembler& masm, RegV128 rsd, RegV128 rs,
   masm.pseudoMaxFloat64x2(rsd, rs);
 }
 #  elif defined(JS_CODEGEN_ARM64)
+static void MinF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.minFloat32x4(rs, rsd);
+}
+
+static void MinF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.minFloat64x2(rs, rsd);
+}
+
+static void MaxF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.maxFloat32x4(rs, rsd);
+}
+
+static void MaxF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.maxFloat64x2(rs, rsd);
+}
+
+static void PMinF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.pseudoMinFloat32x4(rs, rsd);
+}
+
+static void PMinF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.pseudoMinFloat64x2(rs, rsd);
+}
+
+static void PMaxF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.pseudoMaxFloat32x4(rs, rsd);
+}
+
+static void PMaxF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.pseudoMaxFloat64x2(rs, rsd);
+}
+#  elif defined(JS_CODEGEN_LOONG64)
 static void MinF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
   masm.minFloat32x4(rs, rsd);
 }
@@ -9721,6 +9854,16 @@ static void CmpI64x2ForOrdering(MacroAssembler& masm, Assembler::Condition cond,
                                 RegV128 rs, RegV128 rsd, RegV128 temp1,
                                 RegV128 temp2) {
   masm.compareForOrderingInt64x2(cond, rsd, rs, rsd, temp1, temp2);
+}
+#  elif defined(JS_CODEGEN_LOONG64)
+static void CmpI64x2ForEquality(MacroAssembler& masm, Assembler::Condition cond,
+                                RegV128 rs, RegV128 rsd) {
+  masm.compareInt64x2(cond, rs, rsd);
+}
+
+static void CmpI64x2ForOrdering(MacroAssembler& masm, Assembler::Condition cond,
+                                RegV128 rs, RegV128 rsd) {
+  masm.compareInt64x2(cond, rs, rsd);
 }
 #  else
 static void CmpI64x2ForEquality(MacroAssembler& masm, Assembler::Condition cond,
@@ -9929,7 +10072,7 @@ static void ShiftRightUI64x2(MacroAssembler& masm, RegI32 rs, RegV128 rsd,
   ShiftOpMask(masm, SimdOp::I64x2ShrU, rs, temp);
   masm.unsignedRightShiftInt64x2(temp, rsd);
 }
-#  elif defined(JS_CODEGEN_ARM64)
+#  elif defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_LOONG64)
 static void ShiftLeftI8x16(MacroAssembler& masm, RegI32 rs, RegV128 rsd,
                            RegI32 temp) {
   ShiftOpMask(masm, SimdOp::I8x16Shl, rs, temp);
@@ -10127,6 +10270,10 @@ static void WidenHighUI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
 static void PopcntI8x16(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
   masm.popcntInt8x16(rs, rd);
 }
+#  elif defined(JS_CODEGEN_LOONG64)
+static void PopcntI8x16(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.popcntInt8x16(rs, rd);
+}
 #  else
 static void PopcntI8x16(MacroAssembler& masm, RegV128 rs, RegV128 rd,
                         RegV128 temp) {
@@ -10301,6 +10448,22 @@ static void BitmaskI64x2(MacroAssembler& masm, RegV128 rs, RegI32 rd,
                          RegV128 temp) {
   masm.bitmaskInt64x2(rs, rd, temp);
 }
+#  elif defined(JS_CODEGEN_LOONG64)
+static void BitmaskI8x16(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
+  masm.bitmaskInt8x16(rs, rd);
+}
+
+static void BitmaskI16x8(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
+  masm.bitmaskInt16x8(rs, rd);
+}
+
+static void BitmaskI32x4(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
+  masm.bitmaskInt32x4(rs, rd);
+}
+
+static void BitmaskI64x2(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
+  masm.bitmaskInt64x2(rs, rd);
+}
 #  endif
 
 static void Swizzle(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
@@ -10315,11 +10478,22 @@ static void ConvertUI32x4ToF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
   masm.unsignedConvertInt32x4ToFloat32x4(rs, rd);
 }
 
+#  if defined(JS_CODEGEN_LOONG64)
+static void ConvertF32x4ToI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd,
+                                RegV128 temp) {
+  masm.truncSatFloat32x4ToInt32x4(rs, rd, temp);
+}
+#  else
 static void ConvertF32x4ToI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
   masm.truncSatFloat32x4ToInt32x4(rs, rd);
 }
+#  endif
 
 #  if defined(JS_CODEGEN_ARM64)
+static void ConvertF32x4ToUI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.unsignedTruncSatFloat32x4ToInt32x4(rs, rd);
+}
+#  elif defined(JS_CODEGEN_LOONG64)
 static void ConvertF32x4ToUI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
   masm.unsignedTruncSatFloat32x4ToInt32x4(rs, rd);
 }
@@ -10368,6 +10542,13 @@ static void BitselectV128(MacroAssembler& masm, RegV128 rhs, RegV128 control,
                           RegV128 lhsDest, RegV128 temp) {
   // The masm interface is not great for the baseline compiler here, but it's
   // optimal for Ion, so just work around it.
+  masm.moveSimd128(control, temp);
+  masm.bitwiseSelectSimd128(lhsDest, rhs, temp);
+  masm.moveSimd128(temp, lhsDest);
+}
+#  elif defined(JS_CODEGEN_LOONG64)
+static void BitselectV128(MacroAssembler& masm, RegV128 rhs, RegV128 control,
+                          RegV128 lhsDest, RegV128 temp) {
   masm.moveSimd128(control, temp);
   masm.bitwiseSelectSimd128(lhsDest, rhs, temp);
   masm.moveSimd128(temp, lhsDest);
@@ -10448,6 +10629,10 @@ void BaseCompiler::emitDotI8x16I7x16AddS() {
   RegV128 rs0, rs1;
   pop2xV128(&rs0, &rs1);
 #    if defined(JS_CODEGEN_ARM64)
+  RegV128 temp = needV128();
+  masm.dotInt8x16Int7x16ThenAdd(rs0, rs1, rsd, temp);
+  freeV128(temp);
+#    elif defined(JS_CODEGEN_LOONG64)
   RegV128 temp = needV128();
   masm.dotInt8x16Int7x16ThenAdd(rs0, rs1, rsd, temp);
   freeV128(temp);
@@ -10654,6 +10839,14 @@ bool BaseCompiler::emitVectorLaneSelect() {
   freeV128(mask);
   pushV128(rhsDest);
 #    elif defined(JS_CODEGEN_ARM64)
+  RegV128 maskDest = popV128();
+  RegV128 rhs = popV128();
+  RegV128 lhs = popV128();
+  masm.laneSelectSimd128(maskDest, lhs, rhs, maskDest);
+  freeV128(lhs);
+  freeV128(rhs);
+  pushV128(maskDest);
+#    elif defined(JS_CODEGEN_LOONG64)
   RegV128 maskDest = popV128();
   RegV128 rhs = popV128();
   RegV128 lhs = popV128();
@@ -12940,9 +13133,8 @@ bool js::wasm::BaselineCompileFunctions(const CodeMetadata& codeMeta,
 
     // Do the check.  This asserts if the check fails.
     auto checkThisTrapKind_debugMode = [](Trap t) -> bool {
-      // Trap kinds to check in debug mode
-      return t == Trap::InvalidConversionToInteger ||
-             t == Trap::IntegerOverflow || t == Trap::IntegerDivideByZero;
+      // In debug mode, we check most trap kinds.
+      return t != Trap::IndirectCallBadSig && t != Trap::StackOverflow;
     };
     auto checkThisTrapKind_normalMode = [](Trap t) -> bool {
       // Trap kinds to check in non-debug mode

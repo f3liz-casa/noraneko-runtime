@@ -7,6 +7,7 @@
 #include "mozilla/dom/HTMLOptionElement.h"
 #include "mozilla/dom/HTMLOptionsCollectionBinding.h"
 #include "mozilla/dom/HTMLSelectElement.h"
+#include "nsContentUtils.h"
 
 namespace mozilla::dom {
 
@@ -26,13 +27,12 @@ static bool MatchOption(Element* aElement, int32_t aNamespaceID, nsAtom* aAtom,
   return HTMLOptionsCollection::IsValidOption(*option, *root);
 }
 
-HTMLOptionsCollection::HTMLOptionsCollection(HTMLSelectElement* aRoot,
-                                             bool aFromParser)
+HTMLOptionsCollection::HTMLOptionsCollection(HTMLSelectElement* aRoot)
     : ContentList(aRoot, MatchOption, nullptr, aRoot,
                   /* aDeep = */ true, /* aMatchAtom = */ nullptr,
                   /* aMatchNameSpaceId = */ kNameSpaceID_None,
                   /* aFuncMayDependOnAttr = */ false,
-                  /* aLiveList = */ true, aFromParser) {}
+                  /* aLiveList = */ true) {}
 
 HTMLSelectElement* HTMLOptionsCollection::Select() const {
   return static_cast<HTMLSelectElement*>(mRootNode);
@@ -41,7 +41,9 @@ HTMLSelectElement* HTMLOptionsCollection::Select() const {
 nsresult HTMLOptionsCollection::GetOptionIndex(Element* aOption,
                                                int32_t aStartIndex,
                                                bool aForward, int32_t* aIndex) {
-  BringSelfUpToDate(true);
+  MOZ_ASSERT(!nsContentUtils::IsSafeToRunScript(),
+             "Callers must hold a script blocker");
+  BringSelfUpToDate();
 
   // NOTE: aIndex shouldn't be set if the returned value isn't NS_OK.
   int32_t index;

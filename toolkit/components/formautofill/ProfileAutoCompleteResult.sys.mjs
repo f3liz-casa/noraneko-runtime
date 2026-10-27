@@ -31,24 +31,19 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
-// Builds the "more actions" flyout secondaryAction for a profile row. The edit
-// menu item is a non-functional placeholder for now.
-function moreActionsSecondaryAction(
+function deleteSecondaryAction(
   entry,
-  editLabelId,
-  deleteLabelId,
-  deleteMessageName
+  labelId,
+  tooltipId,
+  deleteMessageName,
+  guid
 ) {
   return {
-    type: "menupopup",
-    label: lazy.l10n.formatValueSync("autocomplete-more-actions2", { entry }),
-    actions: [
-      { label: lazy.l10n.formatValueSync(editLabelId) },
-      {
-        label: lazy.l10n.formatValueSync(deleteLabelId),
-        fillMessageName: deleteMessageName,
-      },
-    ],
+    type: "delete",
+    label: lazy.l10n.formatValueSync(labelId, { entry }),
+    tooltip: lazy.l10n.formatValueSync(tooltipId),
+    fillMessageName: deleteMessageName,
+    fillMessageData: { guid },
   };
 }
 
@@ -71,7 +66,9 @@ export class ProfileAutoCompleteResult {
     this._focusedFieldName = focusedFieldDetail.fieldName;
     // The content dom reference id of the focused input.
     this._focusedElementId = focusedFieldDetail.elementId;
-    // The matching profiles contains the information for filling forms.
+    // The matching profiles, used to work out which of the form's fields they
+    // can fill. The profile a row fills is carried by the row itself, because
+    // not every profile ends up with one.
     this._matchingProfiles = matchingProfiles;
     // The default item that should be entered if none is selected
     this.defaultIndex = 0;
@@ -216,6 +213,10 @@ export class ProfileAutoCompleteResult {
       return JSON.stringify(item);
     }
 
+    // A row carries the record it was generated from, so that a record that
+    // doesn't get a row cannot shift the popup onto the wrong one.
+    const { profile, ...row } = item;
+
     const data = {
       fillMessageData: {
         focusElementId: this._focusedElementId,
@@ -234,17 +235,17 @@ export class ProfileAutoCompleteResult {
         data.noLearnMore = true;
         break;
       default: {
-        if (item.comment) {
-          return item.comment;
+        if (row.comment) {
+          return row.comment;
         }
 
         data.fillMessageName = "FormAutofill:FillForm";
-        data.fillMessageData.profile = this._matchingProfiles[index];
+        data.fillMessageData.profile = profile;
         break;
       }
     }
 
-    return JSON.stringify({ ...item, ...data });
+    return JSON.stringify({ ...row, ...data });
   }
 
   /**
@@ -438,14 +439,27 @@ export class AddressResult extends ProfileAutoCompleteResult {
     }
 
     const labels = [];
-    for (let idx = 0; idx < profiles.length; idx++) {
-      const profile = profiles[idx];
-
+    const seenFillValues = new Set();
+    for (const profile of profiles) {
       let primary = profile[focusedFieldName];
       // Skip results without a primary label.
       if (!primary) {
         continue;
       }
+
+      // The values this address would fill into the section. A field stored
+      // empty and a field not stored at all both fill nothing, so they map to
+      // the same value.
+      const fillValues = JSON.stringify(
+        allFieldNames.map(fieldName => profile[fieldName] ?? "")
+      );
+      // An earlier address already fills the section this way, so a second row
+      // would fill the same thing and may not even look different. Records
+      // arrive sorted by timeLastUsed, so the one kept is the most recent.
+      if (seenFillValues.has(fillValues)) {
+        continue;
+      }
+      seenFillValues.add(fillValues);
 
       if (
         focusedFieldName == "street-address" &&
@@ -469,12 +483,14 @@ export class AddressResult extends ProfileAutoCompleteResult {
         // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
         image: "chrome://browser/skin/fxa/avatar-empty.svg",
         type: "address",
+        profile,
         ...(lazy.removeRecordsEnabled && {
-          secondaryAction: moreActionsSecondaryAction(
+          secondaryAction: deleteSecondaryAction(
             ariaLabel,
-            "autocomplete-edit-address",
+            "autocomplete-delete-address-entry",
             "autocomplete-delete-address",
-            "FormAutofill:DeleteAddress"
+            "FormAutofill:DeleteAddress",
+            profile.guid
           ),
         }),
       });
@@ -621,12 +637,14 @@ export class CreditCardResult extends ProfileAutoCompleteResult {
           ariaLabel,
           image,
           type: "payment",
+          profile,
           ...(lazy.removeRecordsEnabled && {
-            secondaryAction: moreActionsSecondaryAction(
+            secondaryAction: deleteSecondaryAction(
               ariaLabel,
-              "autocomplete-edit-payment-method",
+              "autocomplete-delete-payment-method-entry",
               "autocomplete-delete-payment-method",
-              "FormAutofill:DeleteCreditCard"
+              "FormAutofill:DeleteCreditCard",
+              profile.guid
             ),
           }),
         };

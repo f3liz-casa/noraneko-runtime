@@ -15,7 +15,7 @@ use crate::render_backend_pool::{PoolMemberSetup, RenderBackendPool};
 use crate::scene_builder_thread::SceneBuilderRequest;
 use crate::composite::{CompositorKind, CompositorConfig};
 use crate::device::{
-    DeviceOptions, UploadMethod, UploadBufferPool, VertexUsageHint, Device, ProgramCache, TextureFilter
+    DeviceOptions, GpuBackendConfig, UploadMethod, UploadBufferPool, VertexUsageHint, Device, ProgramCache, TextureFilter
 };
 use crate::frame_builder::FrameBuilderConfig;
 use glyph_rasterizer::{GlyphRasterThread, SharedFontResources};
@@ -24,7 +24,6 @@ use crate::internal_types::{FastHashMap, FastHashSet};
 use crate::profiler::{self, Profiler, TransactionProfile};
 use crate::render_backend::RenderBackend;
 use crate::texture_cache::TextureCacheConfig;
-use gleam::gl;
 use crate::renderer::{
     debug, vertex,
     debug::DebugOverlayState,
@@ -130,6 +129,12 @@ pub struct WebRenderOptions {
     pub use_optimized_shaders: bool,
     pub enable_aa: bool,
     pub enable_dithering: bool,
+    /// Delay promotion of moving 8-bit YUV images to compositor surfaces until
+    /// their picture-space coverage rect has remained stable for several frames.
+    pub enable_yuv_overlay_stability: bool,
+    /// Promote only the largest visible 8-bit YUV image to external compositing.
+    /// Higher bit depths and RGB images retain their existing behavior.
+    pub limit_sdr_yuv_external_composites: bool,
     pub max_recorded_profiles: usize,
     pub precache_flags: ShaderPrecacheFlags,
     /// Enable sub-pixel anti-aliasing if a fast implementation is available.
@@ -185,9 +190,6 @@ pub struct WebRenderOptions {
     pub gpu_supports_fast_clears: bool,
     pub allow_dual_source_blending: bool,
     pub allow_advanced_blend_equation: bool,
-    /// If true, allow textures to be initialized with glTexStorage.
-    /// This affects VRAM consumption and data upload paths.
-    pub allow_texture_storage_support: bool,
     /// If true, we allow the data uploaded in a different format from the
     /// one expected by the driver, pretending the format is matching, and
     /// swizzling the components on all the shader sampling.
@@ -203,9 +205,6 @@ pub struct WebRenderOptions {
     /// The configuration options defining how WR composites the final scene.
     pub compositor_config: CompositorConfig,
     pub enable_gpu_markers: bool,
-    /// If true, panic whenever a GL error occurs. This has a significant
-    /// performance impact, so only use when debugging specific problems!
-    pub panic_on_gl_error: bool,
     pub picture_tile_size: Option<DeviceIntSize>,
     pub texture_cache_config: TextureCacheConfig,
     /// If true, we'll use instanced vertex attributes. Each instace is a quad.
@@ -251,6 +250,8 @@ impl Default for WebRenderOptions {
             use_optimized_shaders: false,
             enable_aa: true,
             enable_dithering: false,
+            enable_yuv_overlay_stability: false,
+            limit_sdr_yuv_external_composites: false,
             debug_flags: DebugFlags::empty(),
             max_recorded_profiles: 0,
             precache_flags: ShaderPrecacheFlags::empty(),
@@ -286,14 +287,12 @@ impl Default for WebRenderOptions {
             gpu_supports_fast_clears: false,
             allow_dual_source_blending: true,
             allow_advanced_blend_equation: false,
-            allow_texture_storage_support: true,
             allow_texture_swizzling: true,
             clear_caches_with_quads: true,
             dump_shader_source: None,
             surface_origin_is_top_left: false,
             compositor_config: CompositorConfig::default(),
             enable_gpu_markers: true,
-            panic_on_gl_error: false,
             picture_tile_size: None,
             texture_cache_config: TextureCacheConfig::DEFAULT,
             // Disabling instancing means more vertex data to upload and potentially
@@ -326,7 +325,7 @@ impl Default for WebRenderOptions {
 /// ```
 /// [WebRenderOptions]: struct.WebRenderOptions.html
 pub fn create_webrender_instance(
-    gl: Rc<dyn gl::Gl>,
+    backend: GpuBackendConfig,
     notifier: Box<dyn RenderNotifier>,
     mut options: WebRenderOptions,
     shaders: Option<&SharedShaders>,
@@ -361,7 +360,7 @@ pub fn create_webrender_instance(
     let (result_tx, result_rx) = unbounded_channel();
 
     let mut device = Device::new(
-        gl,
+        backend,
         DeviceOptions {
             crash_annotator: options.crash_annotator.clone(),
             resource_override_path: options.resource_override_path.clone(),
@@ -369,11 +368,9 @@ pub fn create_webrender_instance(
             upload_method: options.upload_method.clone(),
             batched_upload_threshold: options.batched_upload_threshold,
             cached_programs: options.cached_programs.take(),
-            allow_texture_storage_support: options.allow_texture_storage_support,
             allow_texture_swizzling: options.allow_texture_swizzling,
             dump_shader_source: options.dump_shader_source.take(),
             surface_origin_is_top_left: options.surface_origin_is_top_left,
-            panic_on_gl_error: options.panic_on_gl_error,
         },
     );
 
@@ -580,7 +577,7 @@ pub fn create_webrender_instance(
         gpu_supports_advanced_blend: ext_blend_equation_advanced,
         advanced_blend_is_coherent: ext_blend_equation_advanced_coherent,
         gpu_supports_render_target_partial_update: device.get_capabilities().supports_render_target_partial_update,
-        external_images_require_copy: !device.get_capabilities().supports_image_external_essl3,
+        external_images_require_copy: !device.get_capabilities().supports_external_textures_in_all_shaders,
         batch_lookback_count: WebRenderOptions::BATCH_LOOKBACK_COUNT,
         background_color: Some(options.clear_color),
         compositor_kind,
@@ -593,6 +590,7 @@ pub fn create_webrender_instance(
         low_quality_pinch_zoom: options.low_quality_pinch_zoom,
         max_shared_surface_size: options.max_shared_surface_size,
         enable_dithering: options.enable_dithering,
+        enable_yuv_overlay_stability: options.enable_yuv_overlay_stability,
     };
     info!("WR {:?}", config);
 
@@ -780,8 +778,10 @@ pub fn create_webrender_instance(
         vaos,
         gpu_buffer_texture_f: None,
         gpu_buffer_texture_f_too_large: 0,
+        gpu_buffer_last_data_f: Vec::new(),
         gpu_buffer_texture_i: None,
         gpu_buffer_texture_i_too_large: 0,
+        gpu_buffer_last_data_i: Vec::new(),
         vertex_data_textures,
         current_vertex_data_textures: 0,
         pipeline_info: PipelineInfo::default(),
@@ -790,6 +790,7 @@ pub fn create_webrender_instance(
         size_of_ops: make_size_of_ops(),
         cpu_profiles: VecDeque::new(),
         gpu_profiles: VecDeque::new(),
+        frame_build_profiles: VecDeque::new(),
         texture_upload_buffer_pool,
         staging_texture_pool,
         texture_resolver,
@@ -807,6 +808,7 @@ pub fn create_webrender_instance(
         force_redraw: true,
         compositor_config: options.compositor_config,
         current_compositor_kind: compositor_kind,
+        limit_sdr_yuv_external_composites: options.limit_sdr_yuv_external_composites,
         allocated_native_surfaces: FastHashSet::default(),
         debug_overlay_state: DebugOverlayState::new(),
         buffer_damage_tracker: BufferDamageTracker::default(),

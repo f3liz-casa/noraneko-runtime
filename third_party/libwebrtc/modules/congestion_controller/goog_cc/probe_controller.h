@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "absl/base/attributes.h"
@@ -75,6 +76,7 @@ struct ProbeControllerConfig {
 
   // Configures the probes emitted by changed to the allocated bitrate.
   FieldTrialParameter<bool> probe_on_max_allocated_bitrate_change;
+  FieldTrialParameter<bool> probe_on_max_allocated_bitrate_change_without_alr;
   FieldTrialOptional<double> first_allocation_probe_scale;
   FieldTrialOptional<double> second_allocation_probe_scale;
   FieldTrialParameter<double> allocation_probe_limit_by_current_scale;
@@ -178,7 +180,7 @@ class ProbeController {
   InitiateExponentialProbing(Timestamp at_time);
   ABSL_MUST_USE_RESULT std::vector<ProbeClusterConfig> InitiateProbing(
       Timestamp now,
-      std::vector<DataRate> bitrates_to_probe,
+      std::span<const DataRate> bitrates_to_probe,
       bool probe_further);
   bool TimeForAlrProbe(Timestamp at_time) const;
   bool TimeForNetworkStateProbe(Timestamp at_time) const;

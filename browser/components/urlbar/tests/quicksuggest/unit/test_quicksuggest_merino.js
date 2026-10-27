@@ -81,6 +81,63 @@ add_task(async function merinoDisabled() {
   await resetRemoteSettingsData();
 });
 
+// The Merino backend should be disabled when the `suggest.quicksuggest.all`
+// pref is false.
+add_task(async function suggestAllPref() {
+  // Make sure the `online` prefs are true so we can verify that disabling
+  // `suggest.quicksuggest.all` alone disables the backend.
+  UrlbarPrefs.set("quicksuggest.online.available", true);
+  UrlbarPrefs.set("quicksuggest.online.enabled", true);
+
+  // First, start with `all` set to true so that the backend is enabled.
+  UrlbarPrefs.set("suggest.quicksuggest.all", true);
+  await QuickSuggestTestUtils.forceSync();
+
+  Assert.ok(
+    QuickSuggest.getFeature("SuggestBackendMerino").isEnabled,
+    "SuggestBackendMerino should be enabled"
+  );
+
+  // With the backend enabled, do a search and check the request.
+  await check_results({
+    context: createContext(SEARCH_STRING, {
+      providers: [UrlbarProviderQuickSuggest.name],
+      isPrivate: false,
+    }),
+    matches: [EXPECTED_MERINO_URLBAR_RESULT],
+  });
+  MerinoTestUtils.server.checkAndClearRequests([
+    {
+      params: {
+        [MerinoTestUtils.SEARCH_PARAMS.QUERY]: SEARCH_STRING,
+        [MerinoTestUtils.SEARCH_PARAMS.SEQUENCE_NUMBER]: 0,
+      },
+    },
+  ]);
+
+  // Now set `all` to false, which should disable the backend.
+  UrlbarPrefs.set("suggest.quicksuggest.all", false);
+  await QuickSuggestTestUtils.forceSync();
+
+  Assert.ok(
+    !QuickSuggest.getFeature("SuggestBackendMerino").isEnabled,
+    "SuggestBackendMerino should be disabled after setting `suggest.quicksuggest.all` to false"
+  );
+
+  // With the backend disabled, do a search and make sure no request was sent.
+  await check_results({
+    context: createContext(SEARCH_STRING, {
+      providers: [UrlbarProviderQuickSuggest.name],
+      isPrivate: false,
+    }),
+    matches: [],
+  });
+  MerinoTestUtils.server.checkAndClearRequests([]);
+
+  UrlbarPrefs.set("suggest.quicksuggest.all", true);
+  await QuickSuggestTestUtils.forceSync();
+});
+
 // Results should be fetched from Merino only when online is both available and
 // enabled.
 add_task(async function onlineAvailableAndEnabled() {
@@ -91,19 +148,39 @@ add_task(async function onlineAvailableAndEnabled() {
 
   for (let onlineAvailable of [false, true]) {
     for (let onlineEnabled of [false, true]) {
+      info(
+        "Doing subtest: " + JSON.stringify({ onlineAvailable, onlineEnabled })
+      );
+
       UrlbarPrefs.set("quicksuggest.online.available", onlineAvailable);
       UrlbarPrefs.set("quicksuggest.online.enabled", onlineEnabled);
+
+      let shouldBeEnabled = onlineAvailable && onlineEnabled;
+      Assert.equal(
+        QuickSuggest.getFeature("SuggestBackendMerino").isEnabled,
+        shouldBeEnabled,
+        "SuggestBackendMerino should be enabled as expected"
+      );
 
       await check_results({
         context: createContext(SEARCH_STRING, {
           providers: [UrlbarProviderQuickSuggest.name],
           isPrivate: false,
         }),
-        matches:
-          onlineAvailable && onlineEnabled
-            ? [EXPECTED_MERINO_URLBAR_RESULT]
-            : [],
+        matches: shouldBeEnabled ? [EXPECTED_MERINO_URLBAR_RESULT] : [],
       });
+      MerinoTestUtils.server.checkAndClearRequests(
+        shouldBeEnabled
+          ? [
+              {
+                params: {
+                  [MerinoTestUtils.SEARCH_PARAMS.QUERY]: SEARCH_STRING,
+                  [MerinoTestUtils.SEARCH_PARAMS.SEQUENCE_NUMBER]: 0,
+                },
+              },
+            ]
+          : []
+      );
     }
   }
 
@@ -205,10 +282,10 @@ add_task(async function multipleMerinoSuggestions() {
       provider: "adm",
       full_keyword: "multipleMerinoSuggestions 0 full_keyword",
       title: "multipleMerinoSuggestions 0 title",
-      url: "multipleMerinoSuggestions 0 url",
-      icon: "multipleMerinoSuggestions 0 icon",
-      impression_url: "multipleMerinoSuggestions 0 impression_url",
-      click_url: "multipleMerinoSuggestions 0 click_url",
+      url: "https://example.com/merino/0/url",
+      icon: "https://example.com/merino/0/icon",
+      impression_url: "https://example.com/merino/0/impression_url",
+      click_url: "https://example.com/merino/0/click_url",
       block_id: 0,
       advertiser: "multipleMerinoSuggestions 0 advertiser",
       iab_category: "22 - Shopping",
@@ -224,10 +301,10 @@ add_task(async function multipleMerinoSuggestions() {
       provider: "adm",
       full_keyword: "multipleMerinoSuggestions 1 full_keyword",
       title: "multipleMerinoSuggestions 1 title",
-      url: "multipleMerinoSuggestions 1 url",
-      icon: "multipleMerinoSuggestions 1 icon",
-      impression_url: "multipleMerinoSuggestions 1 impression_url",
-      click_url: "multipleMerinoSuggestions 1 click_url",
+      url: "https://example.com/merino/1/url",
+      icon: "https://example.com/merino/1/icon",
+      impression_url: "https://example.com/merino/1/impression_url",
+      click_url: "https://example.com/merino/1/click_url",
       block_id: 1,
       advertiser: "multipleMerinoSuggestions 1 advertiser",
       iab_category: "22 - Shopping",
@@ -243,10 +320,10 @@ add_task(async function multipleMerinoSuggestions() {
       provider: "adm",
       full_keyword: "multipleMerinoSuggestions 2 full_keyword",
       title: "multipleMerinoSuggestions 2 title",
-      url: "multipleMerinoSuggestions 2 url",
-      icon: "multipleMerinoSuggestions 2 icon",
-      impression_url: "multipleMerinoSuggestions 2 impression_url",
-      click_url: "multipleMerinoSuggestions 2 click_url",
+      url: "https://example.com/merino/2/url",
+      icon: "https://example.com/merino/2/icon",
+      impression_url: "https://example.com/merino/2/impression_url",
+      click_url: "https://example.com/merino/2/click_url",
       block_id: 2,
       advertiser: "multipleMerinoSuggestions 2 advertiser",
       iab_category: "22 - Shopping",
@@ -270,11 +347,13 @@ add_task(async function multipleMerinoSuggestions() {
       QuickSuggestTestUtils.ampResult({
         keyword: "multipleMerinoSuggestions 1 full_keyword",
         title: "multipleMerinoSuggestions 1 title",
-        url: "multipleMerinoSuggestions 1 url",
-        originalUrl: "multipleMerinoSuggestions 1 url",
-        icon: "multipleMerinoSuggestions 1 icon",
-        impressionUrl: "multipleMerinoSuggestions 1 impression_url",
-        clickUrl: "multipleMerinoSuggestions 1 click_url",
+        url: "https://example.com/merino/1/url",
+        originalUrl: "https://example.com/merino/1/url",
+        icon: UrlbarTestUtils.makeMozRemoteImageUrl(
+          "https://example.com/merino/1/icon"
+        ),
+        impressionUrl: "https://example.com/merino/1/impression_url",
+        clickUrl: "https://example.com/merino/1/click_url",
         blockId: 1,
         advertiser: "multipleMerinoSuggestions 1 advertiser",
         requestId: "request_id",
@@ -567,7 +646,7 @@ add_task(async function dismissals_amp() {
       matches: [expectedResult],
       // Ignore values related to the timestamp template. They're not important
       // for this test.
-      conditionalPayloadProperties: {
+      payloadRules: {
         url: { ignore: true },
         urlTimestampIndex: { ignore: true },
       },
@@ -623,7 +702,7 @@ add_task(async function dismissals_amp() {
         isPrivate: false,
       }),
       matches: [expectedResult],
-      conditionalPayloadProperties: {
+      payloadRules: {
         url: { ignore: true },
         urlTimestampIndex: { ignore: true },
       },

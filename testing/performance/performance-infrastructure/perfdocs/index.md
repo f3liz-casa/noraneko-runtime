@@ -4,15 +4,19 @@
 :depth: 3
 ```
 
-Performance tests all run on bare metal, or real hardware devices instead of virtual machines. This gives us more realistic performance metrics, and helps with decreasing the variability of our data. See below for information on what hardware is used for each of the platforms we test on, try run wait times as well as guidelines for requesting new devices.
+Performance tests run on bare metal, or real hardware devices instead of virtual machines (the memory tests and Talos xperf are the only exceptions). This gives us more realistic performance metrics, and helps with decreasing the variability of our data. See below for information on what hardware is used for each of the platforms we test on, try run wait times as well as guidelines for requesting new devices.
 
 ## Platforms and Hardware Used
 
-At the moment, these are listed in the Mozilla Wiki which is [found here](https://wiki.mozilla.org/Performance/Platforms) (see [bug 1883400](https://bugzilla.mozilla.org/show_bug.cgi?id=1883400) for progress on this).
+The hardware below is maintained by the Relops (Release Operations) team. A platform label doesn't determine the machine on its own, as the same label can run different harnesses on different worker pools, so the platforms are listed under the worker pool they run on. The platforms found in the test documentation link back to this section.
+
+This information is generated from `python/mozperftest/mozperftest/perfdocs/hardware.yml`, where each hardware is mapped to the worker pools it makes up. If a new worker pool starts running performance tests, it must be added there or the documentation generation will fail.
+
+{hardware_documentation}
 
 ## Try Runs and Wait Times
 
-Given that our tests run on hardware, there's a limited amount of devices that can be used to run them. This means that it's very likely that a try run (e.g. tests scheduled by {ref}`Mach Try Perf`) will be delayed waiting for capacity to free up. This limited capacity is also why there is a limit of 600 tasks that can be scheduled with `mach try perf`.
+Given that our tests run on hardware, there's a limited amount of devices that can be used to run them. This means that it's very likely that a try run (e.g. tests scheduled by {doc}`mach-try-perf`) will be delayed waiting for capacity to free up. This limited capacity is also why there is a limit of 600 tasks that can be scheduled with `mach try perf`.
 
 Something to keep in mind is that try runs have a low priority, and our production branches (e.g. autoland/mozilla-central) have a higher priority. On days when there are more pushes to those branches, try runs will hit more delays. The platforms also have different capacities available to them which will change how long you have to wait for tests to start on them. **To find out how many tasks are currently pending, or running across all platforms** [see this redash query](https://sql.telemetry.mozilla.org/queries/98004#241985) **or consult the graph below.**
 

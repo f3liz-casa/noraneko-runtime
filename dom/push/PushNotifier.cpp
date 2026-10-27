@@ -5,9 +5,11 @@
 #include "PushNotifier.h"
 
 #include "mozilla/BasePrincipal.h"
+#include "mozilla/ErrorResult.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozilla/dom/BodyUtil.h"
+#include "mozilla/dom/Declarative.h"
 #include "mozilla/dom/ServiceWorkerManager.h"
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
@@ -15,7 +17,9 @@
 #include "nsIPushService.h"
 #include "nsIXULRuntime.h"
 #include "nsNetUtil.h"
+#include "nsThreadUtils.h"
 #include "nsXPCOM.h"
+#include "xpcpublic.h"
 
 namespace mozilla::dom {
 
@@ -33,8 +37,25 @@ NS_IMETHODIMP
 PushNotifier::NotifyPushWithData(const nsACString& aScope,
                                  nsIPrincipal* aPrincipal,
                                  const nsAString& aMessageId,
-                                 const nsTArray<uint8_t>& aData) {
+                                 const nsTArray<uint8_t>& aData, JSContext* aCx,
+                                 Promise** aResult) {
   NS_ENSURE_ARG(aPrincipal);
+
+  nsIGlobalObject* global = xpc::CurrentNativeGlobal(aCx);
+  MOZ_ASSERT(global);
+  RefPtr<Promise> promise = Promise::CreateInfallible(global);
+
+  // Check for Declarative Web Push
+  // TODO(krosylight): This needs to wait for the notification promise too
+  if (StaticPrefs::dom_push_declarative_enabled() &&
+      ParseDeclarativePushAndShowNotification(Span(aData), aPrincipal,
+                                              aScope)) {
+    promise->MaybeResolveWithUndefined();
+    NotifyPushMessageHandled(aMessageId);
+    promise.forget(aResult);
+    return NS_OK;
+  }
+
   // We still need to do this copying business, if we want the copy to be
   // fallible.  Just passing Some(aData) would do an infallible copy at the
   // point where the Some() call happens.
@@ -43,16 +64,27 @@ PushNotifier::NotifyPushWithData(const nsACString& aScope,
     return NS_ERROR_OUT_OF_MEMORY;
   }
   PushMessageDispatcher dispatcher(aScope, aPrincipal, aMessageId,
-                                   Some(std::move(data)));
-  return Dispatch(dispatcher);
+                                   Some(std::move(data)), promise);
+  nsresult rv = Dispatch(dispatcher);
+  promise.forget(aResult);
+  return rv;
 }
 
 NS_IMETHODIMP
 PushNotifier::NotifyPush(const nsACString& aScope, nsIPrincipal* aPrincipal,
-                         const nsAString& aMessageId) {
+                         const nsAString& aMessageId, JSContext* aCx,
+                         Promise** aResult) {
   NS_ENSURE_ARG(aPrincipal);
-  PushMessageDispatcher dispatcher(aScope, aPrincipal, aMessageId, Nothing());
-  return Dispatch(dispatcher);
+
+  nsIGlobalObject* global = xpc::CurrentNativeGlobal(aCx);
+  MOZ_ASSERT(global);
+  RefPtr<Promise> promise = Promise::CreateInfallible(global);
+
+  PushMessageDispatcher dispatcher(aScope, aPrincipal, aMessageId, Nothing(),
+                                   promise);
+  nsresult rv = Dispatch(dispatcher);
+  promise.forget(aResult);
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -79,6 +111,16 @@ PushNotifier::NotifyError(const nsACString& aScope, nsIPrincipal* aPrincipal,
   NS_ENSURE_ARG(aPrincipal);
   PushErrorDispatcher dispatcher(aScope, aPrincipal, aMessage, aFlags);
   return Dispatch(dispatcher);
+}
+
+void PushNotifier::NotifyPushMessageHandled(const nsAString& aMessageId) {
+  nsCOMPtr<nsIObserverService> observerService{
+      mozilla::services::GetObserverService()};
+  if (NS_WARN_IF(!observerService)) {
+    return;
+  }
+  observerService->NotifyObservers(nullptr, OBSERVER_TOPIC_PUSH_MESSAGE_HANDLED,
+                                   PromiseFlatString(aMessageId).get());
 }
 
 nsresult PushNotifier::Dispatch(PushDispatcher& aDispatcher) {
@@ -232,10 +274,12 @@ nsresult PushDispatcher::DoNotifyObservers(nsISupports* aSubject,
 
 PushMessageDispatcher::PushMessageDispatcher(
     const nsACString& aScope, nsIPrincipal* aPrincipal,
-    const nsAString& aMessageId, const Maybe<nsTArray<uint8_t>>& aData)
+    const nsAString& aMessageId, const Maybe<nsTArray<uint8_t>>& aData,
+    Promise* aPromise)
     : PushDispatcher(aScope, aPrincipal),
       mMessageId(aMessageId),
-      mData(aData ? Some(aData->Clone()) : Nothing()) {}
+      mData(aData ? Some(aData->Clone()) : Nothing()),
+      mPromise(aPromise) {}
 
 PushMessageDispatcher::~PushMessageDispatcher() = default;
 
@@ -248,20 +292,42 @@ nsresult PushMessageDispatcher::NotifyObservers() {
   return DoNotifyObservers(message, OBSERVER_TOPIC_PUSH, mScope);
 }
 
-nsresult PushMessageDispatcher::NotifyWorkers() {
+RefPtr<PushHandledPromise> PushMessageDispatcher::SendPushEvent() {
+  // System subscriptions are handled by their observers alone
   if (!ShouldNotifyWorkers()) {
-    return NS_OK;
+    return PushHandledPromise::CreateAndResolve(Ok(), __func__);
   }
+
   RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
   if (!swm) {
-    return NS_ERROR_FAILURE;
+    return PushHandledPromise::CreateAndReject(NS_ERROR_FAILURE, __func__);
   }
+
   nsAutoCString originSuffix;
-  nsresult rv = mPrincipal->GetOriginSuffix(originSuffix);
+  nsresult rv{mPrincipal->GetOriginSuffix(originSuffix)};
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
+    return PushHandledPromise::CreateAndReject(rv, __func__);
   }
+
   return swm->SendPushEvent(originSuffix, mScope, mMessageId, mData);
+}
+
+nsresult PushMessageDispatcher::NotifyWorkers() {
+  // The dispatcher is destroyed before this lambda runs, so copy what it
+  // needs
+  SendPushEvent()->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      [promise = mPromise, messageId = nsString(mMessageId)](
+          const PushHandledPromise::ResolveOrRejectValue& aResult) {
+        if (aResult.IsReject()) {
+          promise->MaybeReject(aResult.RejectValue());
+        } else {
+          promise->MaybeResolveWithUndefined();
+        }
+        PushNotifier::NotifyPushMessageHandled(messageId);
+      });
+
+  return NS_OK;
 }
 
 PushSubscriptionChangeDispatcher::PushSubscriptionChangeDispatcher(

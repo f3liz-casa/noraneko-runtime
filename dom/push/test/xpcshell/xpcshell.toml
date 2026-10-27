@@ -2,7 +2,7 @@
 head = "head.js"
 support-files = ["broadcast_handler.sys.mjs"]
 skip-if = [
-  "os == 'android'", # Push notifications and alarms are currently disabled on Android.
+  "os == 'android'", # bug 1214362
 ]
 
 ["test_broadcast_success.js"]
@@ -32,6 +32,8 @@ run-sequentially = ["true"] # This will delete all existing push subscriptions.
 ["test_notification_duplicate.js"]
 
 ["test_notification_error.js"]
+
+["test_notification_ignore.js"]
 
 ["test_notification_incomplete.js"]
 

@@ -36,6 +36,10 @@ class CachesDeleteCleanupAtShutdownTestCase(MarionetteTestCase):
         super().setUp()
         self.marionette.restart(in_app=False, clean=True)
         self.marionette.set_pref(QM_TESTING_PREF, True)
+        # The unclean restart kills the process, so make sure the pref has
+        # reached prefs.js instead of relying on the delayed async save.
+        with self.marionette.using_context("chrome"):
+            self.marionette.execute_script("Services.prefs.savePrefFile(null);")
 
     def tearDown(self):
         self.marionette.restart(in_app=False, clean=True)
@@ -169,6 +173,16 @@ class CachesDeleteCleanupAtShutdownTestCase(MarionetteTestCase):
         print(f"Usage = {usage} and number of orphaned bodies = {self.countBodies()}")
         return usage < EXPECTED_CACHEDIR_SIZE_AFTER_CLEANUP
 
+    # The freed database pages are only vacuumed when the Cache connection
+    # closes, which happens once the Cache object from openCache is collected.
+    def releaseCacheAndCheck(self, beforeUsage):
+        self.marionette.execute_script(
+            "Components.utils.forceGC(); Components.utils.forceCC();",
+            sandbox="system",
+            new_sandbox=False,
+        )
+        return self.afterCleanupClosure(self.getUsage() - beforeUsage)
+
     def test_ensure_cache_cleanup_after_clean_restart(self):
         self.marionette.navigate(
             self.marionette.absolute_url("dom/cache/cacheUsage.html")
@@ -207,7 +221,7 @@ class CachesDeleteCleanupAtShutdownTestCase(MarionetteTestCase):
 
             self.openCache()
             Wait(self.marionette, interval=1, timeout=60).until(
-                lambda _: self.afterCleanupClosure(self.getUsage() - beforeUsage),
+                lambda _: self.releaseCacheAndCheck(beforeUsage),
                 message="Cache directory is not cleaned up properly",
             )
 

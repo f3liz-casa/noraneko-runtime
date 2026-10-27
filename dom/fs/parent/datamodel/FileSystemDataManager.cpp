@@ -11,6 +11,7 @@
 #include "FileSystemFileManager.h"
 #include "FileSystemHashSource.h"
 #include "FileSystemParentTypes.h"
+#include "FileSystemQuotaClient.h"
 #include "NotifyUtils.h"
 #include "ResultStatement.h"
 #include "SchemaVersion001.h"
@@ -19,6 +20,7 @@
 #include "mozIStorageService.h"
 #include "mozStorageCID.h"
 #include "mozilla/Result.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/dom/FileSystemLog.h"
 #include "mozilla/dom/FileSystemManagerParent.h"
@@ -115,12 +117,14 @@ void RemoveFileSystemDataManager(const Origin& aOrigin) {
 
 Result<ResultConnection, QMResult> GetStorageConnection(
     const quota::OriginMetadata& aOriginMetadata,
-    const int64_t aDirectoryLockId) {
+    const int64_t aDirectoryLockId,
+    const Maybe<FileSystemCipherKey>& aMaybeCipherKey) {
   MOZ_ASSERT(aDirectoryLockId >= -1);
 
   // Ensure that storage is initialized and file system folder exists!
-  QM_TRY_INSPECT(const auto& dbFileUrl,
-                 GetDatabaseFileURL(aOriginMetadata, aDirectoryLockId));
+  QM_TRY_INSPECT(
+      const auto& dbFileUrl,
+      GetDatabaseFileURL(aOriginMetadata, aDirectoryLockId, aMaybeCipherKey));
 
   QM_TRY_INSPECT(
       const auto& storageService,
@@ -135,6 +139,15 @@ Result<ResultConnection, QMResult> GetStorageConnection(
                     mozIStorageService::CONNECTION_DEFAULT)));
 
   ResultConnection result(connection);
+
+  if (aMaybeCipherKey) {
+    // With a cipher key, mozilla::storage::obfsvfs is used (see
+    // GetDatabaseFileURL()). When using that, the database page size must be
+    // exactly 8192 bytes (see ObfuscatingVFS.cpp). IDB does the same thing in
+    // its CreateStorageConnection().
+    QM_TRY(
+        QM_TO_RESULT(result->ExecuteSimpleSQL("PRAGMA page_size = 8192;"_ns)));
+  }
 
   return result;
 }
@@ -462,6 +475,17 @@ Result<FileId, QMResult> FileSystemDataManager::LockShared(
   }
 
   auto& count = mSharedLocks.LookupOrInsert(aEntryId);
+
+  // LookupOrInsert may have created a new entry with count 0. If any of the
+  // operations below fail, we must remove it so IsLocked() doesn't see a
+  // stale zero-count entry. When count > 0, another shared lock already
+  // exists and the entry must stay.
+  auto removeOnFailure = MakeScopeExit([&] {
+    if (count == 0) {
+      mSharedLocks.Remove(aEntryId);
+    }
+  });
+
   if (!(1u + CheckedUint32(count)).isValid()) {  // don't make the count invalid
     return Err(QMResult(NS_ERROR_UNEXPECTED));
   }
@@ -475,6 +499,7 @@ Result<FileId, QMResult> FileSystemDataManager::LockShared(
   // quota usage until the (external) blocker is gone or the file is removed.
   QM_TRY(QM_TO_RESULT(mDatabaseManager->BeginUsageTracking(fileId)));
 
+  removeOnFailure.release();
   ++count;
   LOG_VERBOSE(("SharedLock %u", count));
 
@@ -645,6 +670,11 @@ RefPtr<BoolPromise> FileSystemDataManager::BeginOpen() {
                 MOZ_TO_RESULT(EnsureFileSystemDirectory(self->mOriginMetadata)),
                 CreateAndRejectBoolPromise);
 
+            auto* const quotaClient = static_cast<FileSystemQuotaClient*>(
+                self->mQuotaManager->GetClient(quota::Client::FILESYSTEM));
+            self->mCipherKeyManager =
+                quotaClient->GetOrCreateCipherKeyManager(self->mOriginMetadata);
+
             quota::SleepIfEnabled(
                 StaticPrefs::dom_fs_databaseInitialization_pauseOnIOThreadMs());
 
@@ -659,10 +689,17 @@ RefPtr<BoolPromise> FileSystemDataManager::BeginOpen() {
                                                   __func__);
             }
 
-            QM_TRY_UNWRAP(auto connection,
-                          GetStorageConnection(self->mOriginMetadata,
-                                               self->mDirectoryLockId),
-                          CreateAndRejectBoolPromiseFromQMResult);
+            Maybe<FileSystemCipherKey> maybeCipherKey;
+            if (self->mCipherKeyManager) {
+              maybeCipherKey =
+                  Some(self->mCipherKeyManager->Ensure(kDatabaseCipherKeyId));
+            }
+
+            QM_TRY_UNWRAP(
+                auto connection,
+                GetStorageConnection(self->mOriginMetadata,
+                                     self->mDirectoryLockId, maybeCipherKey),
+                CreateAndRejectBoolPromiseFromQMResult);
 
             QM_TRY_UNWRAP(UniquePtr<FileSystemFileManager> fmPtr,
                           FileSystemFileManager::CreateFileSystemFileManager(

@@ -61,10 +61,9 @@ void wr_compositor_bind(void* aCompositor, wr::NativeTileId aId,
 }
 
 void wr_compositor_create_surface(void* aCompositor, wr::NativeSurfaceId aId,
-                                  wr::DeviceIntPoint aVirtualOffset,
                                   wr::DeviceIntSize aTileSize, bool aIsOpaque) {
   RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
-  compositor->CreateSurface(aId, aVirtualOffset, aTileSize, aIsOpaque);
+  compositor->CreateSurface(aId, aTileSize, aIsOpaque);
 }
 
 void wr_compositor_create_external_surface(void* aCompositor,
@@ -200,6 +199,12 @@ void wr_partial_present_compositor_set_buffer_damage_region(
 /* static */
 UniquePtr<RenderCompositor> RenderCompositor::Create(
     const RefPtr<widget::CompositorWidget>& aWidget, nsACString& aError) {
+  if (aWidget->AsDelegate() &&
+      aWidget->AsDelegate()->AsHeadlessCompositorWidget()) {
+    MOZ_ASSERT(aWidget->GetCompositorOptions().UseSoftwareWebRender());
+    return RenderCompositorSWGL::Create(aWidget, aError);
+  }
+
   if (aWidget->GetCompositorOptions().UseSoftwareWebRender()) {
 #ifdef XP_DARWIN
     // Mac uses NativeLayerCA

@@ -12,6 +12,7 @@ ChromeUtils.defineESModuleGetters(this, {
   AboutReaderParent: "resource:///actors/AboutReaderParent.sys.mjs",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  Tabbrowser: "moz-src:///browser/components/tabbrowser/Tabbrowser.sys.mjs",
 });
 
 var { ExtensionError } = ExtensionUtils;
@@ -593,7 +594,7 @@ class TabTracker extends TabTrackerBase {
         if (this.has("tabs-highlighted")) {
           // Because we are delaying calling emitCreated above, we also need to
           // delay sending this event because it shouldn't fire before onCreated.
-          // event.target is gBrowser, so we don't use maybeWaitForTabOpen.
+          // event.target is the tab strip, so we don't use maybeWaitForTabOpen.
           Promise.resolve().then(() => {
             this.emitHighlighted(event.target.documentGlobal);
           });
@@ -633,7 +634,7 @@ class TabTracker extends TabTrackerBase {
       // by the first MozAfterPaint event. That code handles finally
       // adopting the tab, and clears it from the arguments list in the
       // process, so if we run later than it, we're too late.
-      if (window.gBrowser.isTab(tabToAdopt)) {
+      if (Tabbrowser.isTab(tabToAdopt)) {
         let adoptedBy = window.gBrowser.tabs[0];
         this.adopt(adoptedBy, tabToAdopt);
       }
@@ -822,7 +823,7 @@ class Tab extends TabBase {
   }
 
   get sharingState() {
-    return this.window.gBrowser.getTabSharingState(this.nativeTab);
+    return Tabbrowser.getTabSharingState(this.nativeTab);
   }
 
   get cookieStoreId() {
@@ -908,7 +909,7 @@ class Tab extends TabBase {
   }
 
   get successorTabId() {
-    const { successor } = this.nativeTab;
+    const successor = this.window.gBrowser.getSuccessor(this.nativeTab);
     return successor ? tabTracker.getId(successor) : -1;
   }
 
@@ -1093,8 +1094,10 @@ class Window extends WindowBase {
     })();
 
     const initialState = window.windowState;
-    // window.fullScreen is checked too, so that we still have work to do below
-    // when DOM and widget disagree on the fullscreen state (bug 2066805).
+    // window.fullScreen is checked too, because it is set as soon as a
+    // fullscreen change is requested, while window.windowState only follows
+    // when the widget reports the change. A request arriving while an earlier
+    // one is still running would otherwise return here and do nothing.
     if (
       expectedState == initialState &&
       window.fullScreen == (expectedState == window.STATE_FULLSCREEN)

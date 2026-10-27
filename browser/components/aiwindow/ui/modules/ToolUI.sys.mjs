@@ -5,6 +5,11 @@
  */
 
 /**
+ * @import { ChatConversation } from "moz-src:///browser/components/aiwindow/ui/modules/ChatConversation.sys.mjs"
+ * @import { ChatMessage } from "moz-src:///browser/components/aiwindow/ui/modules/ChatMessage.sys.mjs"
+ */
+
+/**
  * Tab action result status.
  *
  * @typedef {"success" | "partial_success" | "error"} TabActionCompletion
@@ -21,6 +26,7 @@
 
 /**
  * @typedef {object} ToolUpdateData
+ * @property {"current" | "new"} [openTarget] - Where to open an AITab
  * @property {Array<TabSelectionData>} [selectedTabs] - Array of selected tabs
  * @property {Array<string>} [operationIds] - Undo handles for the action
  * @property {boolean} [wasRestored] - Flag indicating tabs were restored
@@ -51,6 +57,9 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///browser/components/aiwindow/ui/modules/ToolUITelemetry.sys.mjs",
   MESSAGE_ROLE:
     "moz-src:///browser/components/aiwindow/ui/modules/ChatEnums.sys.mjs",
+  SmartWindowTelemetry:
+    "moz-src:///browser/components/aiwindow/ui/modules/SmartWindowTelemetry.sys.mjs",
+  URILoadingHelper: "resource:///modules/URILoadingHelper.sys.mjs",
 });
 
 ChromeUtils.defineLazyGetter(lazy, "console", function () {
@@ -63,6 +72,7 @@ ChromeUtils.defineLazyGetter(lazy, "console", function () {
  * UI labels for tool results and follow-ups.
  */
 export const UI_TYPES = {
+  AITAB: "aitab",
   WEBSITE_CONFIRMATION: "website-confirmation",
   TAB_GROUP_CONFIRMATION: "tab-group-confirmation",
   AI_ACTION_RESULT: "ai-action-result",
@@ -74,6 +84,7 @@ export const UI_TYPES = {
  * UI update types for communicating user interactions with tool UIs back to the actor.
  */
 export const UI_UPDATE_TYPES = {
+  OPEN_AITAB: "open-aitab",
   CONFIRMATION_TAB_SELECTION: "confirmation-tab-selection",
   CANCEL_TAB_SELECTION: "cancel-tab-selection",
   CONFIRM_TAB_GROUP_SELECTION: "confirm-tab-group-selection",
@@ -550,6 +561,8 @@ export class ToolUI {
     const { updateData, window, toolCallId } = context;
     const { selectedTabs = [], tabGroupLabel = "Tab Group" } = updateData ?? {};
 
+    // The chat tab is one of the tabs the user confirmed, so it needs no
+    // special handling here - see offerChatTab in ManageTabs.sys.mjs.
     const tokenToKey = this.#tabKeysByToolCall.get(toolCallId);
     const result = await this.createTabGroup({
       tabs: selectedTabs,
@@ -579,6 +592,10 @@ export class ToolUI {
         group: result.group,
       },
       resultInfo: {
+        // The group holds exactly the confirmed tabs that could still be
+        // grouped. Tabs closed between the card and the confirm are dropped
+        // before grouping and never reach failedTabs, so counting those out
+        // would report them as grouped.
         ...this.#summarizeTabActionOutcome(
           result.group.tabCount,
           selectedTabs.length,
@@ -600,17 +617,16 @@ export class ToolUI {
    * @private
    */
   static async #handleOpenAndGroupTabsSelection(context) {
-    const { updateData, window, toolCallId } = context;
+    const { updateData, window, toolCallId, conversation } = context;
     const { selectedTabs = [], tabGroupLabel = "Tab Group" } = updateData ?? {};
 
-    const isSingleTab = selectedTabs.length === 1;
-    const result = isSingleTab
-      ? await this.openOrSwitchToTab({ tab: selectedTabs[0], window })
-      : await this.openAndGroupTabs({
-          tabs: selectedTabs,
-          window,
-          label: tabGroupLabel,
-        });
+    const originTab = this.findChatTab(conversation?.id);
+    const result = await this.openOrGroupTabs({
+      tabs: selectedTabs,
+      window,
+      label: tabGroupLabel,
+      originTab,
+    });
     this.clearTabKeys(toolCallId);
     if (!result?.success) {
       return false;
@@ -624,7 +640,7 @@ export class ToolUI {
         operationIds: result.group?.id ? [result.group.id] : [],
         group: result.group ?? null,
         mergedCount: result.mergedCount,
-        switched: isSingleTab ? result.switched : false,
+        switched: result.switched ?? false,
       },
     });
 
@@ -850,6 +866,98 @@ export class ToolUI {
    * ======================================================================== */
 
   /**
+   * Whether the chat tab can go into the group we are about to create.
+   *
+   * A tab group can only hold tabs from one window, so we skip the chat tab
+   * if the group is being made in a different window. We also skip it if it
+   * is in a split view, because adding it would move the whole split view and
+   * pull in the other tab too. The rest of the rules (pinned, already in a
+   * group, closing) are checked by TabManagementService instead.
+   *
+   * @param {MozTabbrowserTab} [originTab] - The chat tab
+   * @param {Array<MozTabbrowserTab>} groupTabs - Tabs already going into the group
+   * @param {ChromeWindow} groupWindow - Window the group is created in
+   * @returns {boolean} True if we should add originTab to the group
+   * @private
+   */
+  static #canOriginTabJoinGroup(originTab, groupTabs, groupWindow) {
+    return !!(
+      originTab &&
+      originTab.documentGlobal === groupWindow &&
+      !originTab.splitview &&
+      !groupTabs.includes(originTab)
+    );
+  }
+
+  /**
+   * The tab a conversation is open in, within the given window.
+   *
+   * getChatTabConversationId only answers for tabs that are the chat page
+   * itself, so a sidebar conversation does not match here even though its id
+   * is recorded against the web page tab beside the sidebar.
+   *
+   * Every Smart Window is searched rather than one in particular, because a
+   * conversation id is unique and the chat may not be in the window the group
+   * ends up in. createTabGroup drops it again if the windows differ.
+   *
+   * @param {string} conversationId - Id of the conversation to find
+   * @returns {MozTabbrowserTab|null} The chat tab, or null if it is not in a tab
+   */
+  static findChatTab(conversationId) {
+    if (!conversationId) {
+      return null;
+    }
+    for (const win of lazy.BrowserWindowTracker.orderedWindows) {
+      if (win.closed || !win.gBrowser || !lazy.AIWindow.isAIWindowActive(win)) {
+        continue;
+      }
+      const tab = [...win.gBrowser.tabs].find(
+        candidate =>
+          lazy.AIWindow.getChatTabConversationId(candidate) === conversationId
+      );
+      if (tab) {
+        return tab;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Drops the chat tab when it is the only tab left that could be grouped.
+   *
+   * The user asked for their own tabs to be grouped, so if all of those turn
+   * out to be pinned or already in a group, a group holding nothing but the
+   * chat tab is not what they wanted. Leaving it out means createTabGroup
+   * finds nothing to group and reports the failure itself.
+   *
+   * A selection of just the chat tab is left alone, since that is a real
+   * choice rather than everything else falling away.
+   *
+   * @param {Array<MozTabbrowserTab>} windowTabs - Resolved tabs in the group's window
+   * @param {ChromeWindow} groupWindow - Window the group is created in
+   * @param {Array<TabSelectionData>} selections - What the user confirmed
+   * @param {Map<string, object>} tokenToKey - token -> permanentKey
+   * @returns {Array<MozTabbrowserTab>} The tabs to hand to the service
+   * @private
+   */
+  static #dropLoneChatTab(windowTabs, groupWindow, selections, tokenToKey) {
+    const chatSelection = selections.find(selection => selection.isChatTab);
+    if (!chatSelection || selections.length === 1) {
+      return windowTabs;
+    }
+
+    const chatKey = tokenToKey?.get(chatSelection.token);
+    const groupable = windowTabs.filter(
+      tab => !lazy.tabManagementService.getGroupingRejection(tab, groupWindow)
+    );
+    if (groupable.length !== 1 || groupable[0].permanentKey !== chatKey) {
+      return windowTabs;
+    }
+
+    return windowTabs.filter(tab => tab.permanentKey !== chatKey);
+  }
+
+  /**
    * Creates a tab group from selected tabs after verification.
    *
    * @param {object} options - Options for creating the tab group
@@ -897,7 +1005,12 @@ export class ToolUI {
     }
 
     const result = await lazy.tabManagementService.createTabGroup({
-      tabs: tabsByWindow.get(groupWindow),
+      tabs: this.#dropLoneChatTab(
+        tabsByWindow.get(groupWindow),
+        groupWindow,
+        tabs,
+        tokenToKey
+      ),
       window: groupWindow,
       label,
     });
@@ -925,12 +1038,14 @@ export class ToolUI {
    * @param {Array<TabSelectionData>} options.tabs - Tabs to open and group
    * @param {ChromeWindow} options.window - The browser window
    * @param {string} options.label - Tab group label
+   * @param {MozTabbrowserTab} [options.originTab] - The tab the chat is in,
+   *   so we can put it in the group as well
    * @returns {Promise<object|null>} Result of createTabGroup (plus
    *   mergedCount - how many selected tabs were already open rather than
    *   newly opened), or null if there were no tabs to open or none resolved
    *   successfully
    */
-  static async openAndGroupTabs({ tabs = [], window: win, label }) {
+  static async openAndGroupTabs({ tabs = [], window: win, label, originTab }) {
     if (!tabs.length) {
       lazy.console.warn("No tabs to open");
       return null;
@@ -946,8 +1061,25 @@ export class ToolUI {
       return null;
     }
 
+    // Put the chat tab in the group too. It is never one of the resolved tabs,
+    // because its chrome: URL gets filtered out before the model sees it, so
+    // we have to add it ourselves.
+    //
+    // Only do that if one of the requested tabs can actually be grouped. If
+    // they are all pinned or already in a group, createTabGroup would drop
+    // them all and we would be left with a group holding just the chat tab,
+    // which is not what was asked for.
+    const canGroupARequestedTab = resolvedTabs.some(
+      tab => !lazy.tabManagementService.getGroupingRejection(tab, win)
+    );
+    const groupTabs =
+      canGroupARequestedTab &&
+      this.#canOriginTabJoinGroup(originTab, resolvedTabs, win)
+        ? [originTab, ...resolvedTabs]
+        : resolvedTabs;
+
     const result = await lazy.tabManagementService.createTabGroup({
-      tabs: resolvedTabs,
+      tabs: groupTabs,
       window: win,
       label,
     });
@@ -988,6 +1120,24 @@ export class ToolUI {
 
     lazy.tabManagementService.switchToTab({ tab: openedTabs[0], window: win });
     return { success: true, switched: false };
+  }
+
+  /**
+   * Opens or switches to a single tab, or opens and groups multiple tabs.
+   *
+   * @param {object} options
+   * @param {Array<TabSelectionData>} options.tabs - Tabs to open
+   * @param {ChromeWindow} options.window - The browser window
+   * @param {string} options.label - Tab group label, used only when grouping
+   * @param {MozTabbrowserTab} [options.originTab] - See openAndGroupTabs
+   * @returns {Promise<object|null>} Result of openOrSwitchToTab for a
+   *   single tab, or of openAndGroupTabs otherwise
+   */
+  static async openOrGroupTabs({ tabs = [], window: win, label, originTab }) {
+    if (tabs.length === 1) {
+      return this.openOrSwitchToTab({ tab: tabs[0], window: win });
+    }
+    return this.openAndGroupTabs({ tabs, window: win, label, originTab });
   }
 
   /**
@@ -1061,11 +1211,77 @@ export class ToolUI {
   }
 
   /**
+   * Opens the stored AITab page in the requested tab.
+   *
+   * @param {HandlerContext & {
+   *   updateData: {openTarget: "current" | "new"}
+   * }} context
+   * @param {ChatMessage} context.message - Stored assistant message containing
+   *   the viewer URL and card state. Used to validate the action and mark the
+   *   card complete after opening.
+   * @param {{openTarget: "current" | "new"}} context.updateData - Opens the
+   *   page in the current tab or a new tab.
+   * @param {ChatConversation} context.conversation - Conversation owning the
+   *   card, used to update its state and record telemetry.
+   * @param {ChromeWindow} context.window - Browser window hosting the chat.
+   * @param {string} [context.mode] - Chat mode for telemetry.
+   *
+   * @returns {boolean} Whether opening the AITab was successful
+   */
+  static #handleOpenAITab({ message, updateData, conversation, window, mode }) {
+    const { openTarget } = updateData ?? {};
+    const viewerURL = message.toolUIData?.properties?.viewerURL;
+    const parsedURL = URL.parse(viewerURL);
+    if (
+      message.toolUIData?.uiType !== UI_TYPES.AITAB ||
+      message.toolUIData.properties?.state !== "choose" ||
+      (openTarget !== "current" && openTarget !== "new") ||
+      parsedURL?.protocol !== "about:" ||
+      parsedURL.pathname !== "smartpage" ||
+      !parsedURL.searchParams.get("page") ||
+      !window?.gBrowser
+    ) {
+      return false;
+    }
+
+    try {
+      const { userContextId } =
+        window.gBrowser.selectedBrowser.browsingContext.originAttributes;
+
+      lazy.URILoadingHelper.openTrustedLinkIn(
+        window,
+        viewerURL,
+        openTarget === "current" ? "current" : "tab",
+        { userContextId, forceForeground: true }
+      );
+    } catch (error) {
+      lazy.console.error(`Error opening AITab URL: ${error}`);
+
+      return false;
+    }
+
+    Glean.smartWindow.linkClick.record({
+      location: mode,
+      chat_id: conversation.id,
+      message_seq: conversation.messageCount,
+    });
+    lazy.SmartWindowTelemetry.recordUriLoad();
+    conversation.updateToolUI(
+      message,
+      { properties: { state: "complete" } },
+      UI_TYPES.AITAB
+    );
+
+    return true;
+  }
+
+  /**
    * Map of update type strings to their handler functions
    *
    * @private
    */
   static #UPDATE_TYPE_HANDLERS = {
+    [UI_UPDATE_TYPES.OPEN_AITAB]: this.#handleOpenAITab.bind(this),
     [UI_UPDATE_TYPES.CONFIRMATION_TAB_SELECTION]:
       this.#handleConfirmationTabSelection.bind(this),
     [UI_UPDATE_TYPES.CANCEL_TAB_SELECTION]:

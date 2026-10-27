@@ -13,6 +13,8 @@ var { XPCOMUtils } = ChromeUtils.importESModule(
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  isTrailingDotPolicyDuplicate:
+    "resource://gre/modules/PoliciesHelpers.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
 });
 
@@ -266,6 +268,15 @@ var gPermissionManager = {
       return;
     }
 
+    if (data === "cleared") {
+      this._permissions.clear();
+      this._permissionsToAdd.clear();
+      this._permissionsToDelete.clear();
+      this._loadPermissions();
+      this.buildPermissionsList();
+      return;
+    }
+
     let permission = subject.QueryInterface(Ci.nsIPermission);
 
     // Ignore unrelated permission types.
@@ -347,6 +358,12 @@ var gPermissionManager = {
 
   _addPermissionToList(perm) {
     if (perm.type !== this._type) {
+      return;
+    }
+    if (
+      perm.expireType === Services.perms.EXPIRE_POLICY &&
+      lazy.isTrailingDotPolicyDuplicate(perm)
+    ) {
       return;
     }
     if (!this._isCapabilitySupported(perm.capability)) {

@@ -215,6 +215,8 @@ def git_clone_firefox(git: Path, dest: Path, head_repo, head_rev):
     subprocess.check_call(
         [
             str(git),
+            "-c",
+            "checkout.workers=0",
             "checkout",
             "FETCH_HEAD" if head_rev else "main",
             "--",
@@ -309,6 +311,8 @@ def git_cinnabar_clone_firefox(git: Path, dest: Path, head_repo, head_rev):
         subprocess.check_call(
             [
                 str(git),
+                "-c",
+                "checkout.workers=0",
                 "checkout",
                 "FETCH_HEAD" if head_rev else "main",
                 "--",

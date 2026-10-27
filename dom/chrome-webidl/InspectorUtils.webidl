@@ -99,7 +99,7 @@ namespace InspectorUtils {
   sequence<DOMString> getRegisteredCssHighlights(Document document, optional boolean activeOnly = false);
   sequence<InspectorCSSPropertyDefinition> getCSSRegisteredProperties(Document document);
   InspectorCSSPropertyDefinition? getCSSRegisteredProperty(Document document, UTF8String name);
-  boolean valueMatchesSyntax(Document document, UTF8String value, UTF8String syntax);
+  boolean valueMatchesSyntax(Document document, UTF8String property, UTF8String value, UTF8String syntax);
 
   // Get the first rule body text within initialText
   // Consider the following example:
@@ -161,9 +161,16 @@ namespace InspectorUtils {
 
   // Given a "CSS expression" (e.g. `calc(12vw + 25%)`), return a list of string that represent
   // the steps from it to the computed value
-  sequence<UTF8String> getComputationSteps(DOMString expression,
-                                          Element element,
-                                          optional [LegacyNullToEmptyString] DOMString pseudo = "");
+  sequence<UTF8String> getComputationSteps(UTF8String property,
+                                           UTF8String expression,
+                                           Element element,
+                                           optional [LegacyNullToEmptyString] DOMString pseudo = "");
+
+  // Given a "CSS expression" (e.g. `var(--x, attr(data-y))`), returns an expression with
+  // the substitution function calls actually substituted
+  UTF8String? getSubstitutedValue(UTF8String expression,
+                                 Element element,
+                                 optional [LegacyNullToEmptyString] DOMString pseudo = "");
 };
 
 enum InspectorAnchorType {

@@ -3,10 +3,13 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { MozLitElement } from "chrome://global/content/lit-utils.mjs";
+import { CONTEXT_MENTION_TYPE } from "chrome://browser/content/urlbar/SmartbarMentionUtils.mjs";
 import { html, repeat } from "chrome://global/content/vendor/lit.all.mjs";
 
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://browser/content/aiwindow/components/smartwindow-panel-list.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://browser/content/aiwindow/components/tab-group-icon.mjs";
 
 /**
  * Container for rendering 3 or more grouped chips inside the chat content
@@ -14,12 +17,15 @@ import "chrome://browser/content/aiwindow/components/smartwindow-panel-list.mjs"
 export class AIGroupedChipContainer extends MozLitElement {
   static properties = {
     chips: { type: Array },
+    // Each host opens links itself, so it names the event it listens for.
+    openLinkEvent: { type: String },
     isPanelOpen: { type: Boolean, state: true },
   };
 
   constructor() {
     super();
     this.chips = [];
+    this.openLinkEvent = "AIChatContent:OpenLink";
     this.isPanelOpen = false;
   }
 
@@ -44,7 +50,7 @@ export class AIGroupedChipContainer extends MozLitElement {
     const url = event.detail?.id;
     if (url) {
       this.dispatchEvent(
-        new CustomEvent("AIChatContent:OpenLink", {
+        new CustomEvent(this.openLinkEvent, {
           bubbles: true,
           composed: true,
           detail: { url, preferSwitchToTab: true },
@@ -54,13 +60,35 @@ export class AIGroupedChipContainer extends MozLitElement {
     this.#closeGroupedPanel();
   }
 
+  // A tab group has no favicon, so it gets an icon in its color.
+  #renderStackedIcon(chip) {
+    if (chip.type == CONTEXT_MENTION_TYPE.TAB_GROUP) {
+      return html`<tab-group-icon
+        class="grouped-chips__stacked-icon"
+        .label=${chip.label}
+        .color=${chip.color}
+      ></tab-group-icon>`;
+    }
+
+    return html`<img
+      class="grouped-chips__favicon"
+      src=${chip.iconSrc || "chrome://global/skin/icons/defaultFavicon.svg"}
+      alt=""
+      @error=${e => {
+        e.target.src = "chrome://global/skin/icons/defaultFavicon.svg";
+      }}
+    />`;
+  }
+
   render() {
     const chipsGroups = [
       {
         items: this.chips.map(w => ({
           id: w.url,
+          type: w.type,
           label: w.label,
           icon: w.iconSrc,
+          color: w.color,
         })),
       },
     ];
@@ -82,18 +110,8 @@ export class AIGroupedChipContainer extends MozLitElement {
         <span class="grouped-chips__favicon-group">
           ${repeat(
             this.chips,
-            (chip, index) => `${chip.url}-${index}`,
-            chip =>
-              html`<img
-                class="grouped-chips__favicon"
-                src=${chip.iconSrc ||
-                "chrome://global/skin/icons/defaultFavicon.svg"}
-                alt=""
-                @error=${e => {
-                  e.target.src =
-                    "chrome://global/skin/icons/defaultFavicon.svg";
-                }}
-              />`
+            (chip, index) => `${chip.url ?? chip.groupId}-${index}`,
+            chip => this.#renderStackedIcon(chip)
           )}
         </span>
         <span

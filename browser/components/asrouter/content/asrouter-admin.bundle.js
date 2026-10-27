@@ -181,6 +181,7 @@ const MESSAGE_TYPE_LIST = [
   "EDIT_STATE",
   "AW_EVALUATE_SCREEN_TARGETING",
   "AW_ADD_SCREEN_IMPRESSION",
+  "AW_GET_ACTIVE_THEME_ID",
 ];
 
 const MESSAGE_TYPE_HASH = MESSAGE_TYPE_LIST.reduce((hash, value) => {
@@ -724,7 +725,7 @@ class ASRouterAdminInner extends (react__WEBPACK_IMPORTED_MODULE_1___default().P
     request.then(state => this.setStateFromParent(state));
   }
   messageRequiresAnchor(msg) {
-    const anchorTemplates = ["cfr_doorhanger", "bookmarks_bar_button"];
+    const anchorTemplates = ["bookmarks_bar_button"];
     return anchorTemplates.includes(msg.template) || !!msg.content?.anchors || !!msg.content?.screens?.some(screenDef => screenDef.anchors);
   }
   getProviderLabel(providerId) {
@@ -983,7 +984,7 @@ class ASRouterAdminInner extends (react__WEBPACK_IMPORTED_MODULE_1___default().P
     if (msg.template === "menu_message") {
       previewWarnings.push('To preview this message, add "testingTriggerContext" to the JSON set to either ' + '"app_menu" or "pxi_menu" to select which menu it renders in.');
     }
-    const aboutMessagePreviewSupported = ["infobar", "spotlight", "cfr_doorhanger", "feature_callout", "pb_newtab", "sidebar_chatbot_promo"].includes(msg.template);
+    const aboutMessagePreviewSupported = ["infobar", "spotlight", "feature_callout", "pb_newtab", "sidebar_chatbot_promo"].includes(msg.template);
     let itemClassName = "message-item";
     if (isBlocked) {
       itemClassName += " blocked";

@@ -178,6 +178,10 @@ static constexpr Register RegExpSearcherRegExpReg = CallTempReg1;
 static constexpr Register RegExpSearcherStringReg = CallTempReg2;
 static constexpr Register RegExpSearcherLastIndexReg = CallTempReg3;
 
+// Register used by the bailout tail and bailout stubs during stack
+// reconstruction.
+static constexpr Register BailoutStubHandlerReg = CallTempReg0;
+
 class ABIArgGenerator : public ABIArgGeneratorShared {
 #if defined(XP_WIN)
   unsigned regIndex_;
@@ -1217,6 +1221,9 @@ class Assembler : public AssemblerX86Shared {
 
   // Do not mask shared implementations.
   using AssemblerX86Shared::call;
+
+  void rdsspq(const Register& reg) { masm.rdsspq_r(reg.encoding()); }
+  void incsspq(const Register& reg) { masm.incsspq_r(reg.encoding()); }
 
   void vcvttsd2sq(FloatRegister src, Register dest) {
     masm.vcvttsd2sq_rr(src.encoding(), dest.encoding());

@@ -4,6 +4,7 @@
 
 import textwrap
 
+from marionette_driver.wait import Wait
 from telemetry_harness.fog_ping_filters import FOG_DELETION_REQUEST_PING
 from telemetry_harness.fog_testcase import FOGTestCase
 
@@ -15,6 +16,11 @@ class TestDeletionRequestPing(FOGTestCase):
         """Test the "deletion-request" ping behaviour across sessions."""
 
         self.navigate_in_new_tab("about:glean")
+
+        # Ensure Glean's been initialized at least once for this profile,
+        # or else we might init for the first time with data_upload: false,
+        # meaning Glean won't bother with a "deletion-request" ping.
+        self.restart_browser()
 
         ping1 = self.wait_for_ping(
             self.disable_telemetry,
@@ -39,6 +45,13 @@ class TestDeletionRequestPing(FOGTestCase):
 
         self.enable_telemetry()
         self.restart_browser()
+
+        # bug 2071391 - Ensure FOG's initialized before we set the tag.
+        with self.marionette.using_context(self.marionette.CONTEXT_CHROME):
+            Wait(self.marionette, timeout=60).until(
+                lambda m: m.execute_script("return Services.fog.initialized;"),
+                message="FOG wasn't initialized",
+            )
 
         debug_tag = "my-test-tag"
         tagging_script = f"""\
