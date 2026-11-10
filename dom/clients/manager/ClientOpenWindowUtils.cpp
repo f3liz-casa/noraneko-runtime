@@ -82,6 +82,12 @@ class WebProgressListener final : public nsIWebProgressListener,
       rv.ThrowInvalidStateError("Unable to open window");
       mPromise->Reject(rv, __func__);
       mPromise = nullptr;
+      if (browsingContext) {
+        if (nsCOMPtr<nsIWebProgress> webProgress =
+                browsingContext->GetWebProgress()) {
+          (void)webProgress->RemoveProgressListener(this);
+        }
+      }
       return NS_OK;
     }
 
@@ -208,6 +214,7 @@ struct ClientOpenWindowArgsParsed {
 
 #ifndef MOZ_GECKOVIEW
 
+MOZ_CAN_RUN_SCRIPT
 static Result<Ok, nsresult> OpenNewWindow(
     const ClientOpenWindowArgsParsed& aArgsValidated,
     nsOpenWindowInfo* aOpenWindowInfo) {
@@ -268,6 +275,7 @@ static Result<Ok, nsresult> OpenNewWindow(
  * @return true when the caller need to load URI on the resulting browsing
  *         context, otherwise false
  */
+MOZ_CAN_RUN_SCRIPT
 bool OpenWindow(const ClientOpenWindowArgsParsed& aArgsValidated,
                 nsOpenWindowInfo* aOpenInfo, BrowsingContext** aBC,
                 ErrorResult& aRv) {
@@ -321,6 +329,7 @@ bool OpenWindow(const ClientOpenWindowArgsParsed& aArgsValidated,
 }
 #endif
 
+MOZ_CAN_RUN_SCRIPT
 void WaitForLoad(const ClientOpenWindowArgsParsed& aArgsValidated,
                  BrowsingContext* aBrowsingContext,
                  ClientOpPromise::Private* aPromise, bool aShouldLoadURI) {
@@ -534,7 +543,7 @@ RefPtr<ClientOpPromise> ClientOpenWindow(
   browsingContextReadyPromise->Then(
       GetCurrentSerialEventTarget(), __func__,
       [argsValidated, promise,
-       shouldLoadURI](const RefPtr<BrowsingContext>& aBC) {
+       shouldLoadURI](const RefPtr<BrowsingContext>& aBC) MOZ_CAN_RUN_SCRIPT {
         WaitForLoad(argsValidated, aBC, promise, shouldLoadURI);
       },
       [promise]() {

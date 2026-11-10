@@ -124,6 +124,7 @@
 #ifdef FUZZING
 #  include "mozilla/StaticPrefs_fuzzing.h"
 #endif
+#include "mozilla/StaticPrefs_mathml.h"
 #include "mozilla/StaticPrefs_nglayout.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_test.h"
@@ -204,6 +205,7 @@
 #include "mozilla/dom/PBrowser.h"
 #include "mozilla/dom/PContentChild.h"
 #include "mozilla/dom/PrototypeList.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/ReferrerPolicyBinding.h"
 #include "mozilla/dom/ReportingUtils.h"
 #include "mozilla/dom/Sanitizer.h"
@@ -387,7 +389,6 @@
 #include "nsPresContext.h"
 #include "nsQueryFrame.h"
 #include "nsQueryObject.h"
-#include "nsRange.h"
 #include "nsReadableUtils.h"
 #include "nsRefPtrHashtable.h"
 #include "nsSandboxFlags.h"
@@ -414,6 +415,7 @@
 #include "nsVariant.h"
 #include "nsWhitespaceTokenizer.h"
 #include "nsWidgetsCID.h"
+#include "nsXMLContentSerializer.h"
 #include "nsXPCOM.h"
 #include "nsXPCOMCID.h"
 #include "nsXULAppAPI.h"
@@ -4769,7 +4771,7 @@ void nsContentUtils::GenerateStateKey(nsIContent* aContent, Document* aDocument,
           appendedForm = true;
         } else {
           KeyAppendString("fn"_ns, aKey);
-          int32_t index = htmlForms->IndexOf(formElement, false);
+          int32_t index = htmlForms->IndexOf(formElement);
           if (index <= -1) {
             //
             // XXX HACK this uses some state that was dumped into the document
@@ -4811,7 +4813,7 @@ void nsContentUtils::GenerateStateKey(nsIContent* aContent, Document* aDocument,
           generatedUniqueKey = true;
         } else {
           KeyAppendString("dn"_ns, aKey);
-          int32_t index = htmlFormControls->IndexOf(aContent, true);
+          int32_t index = htmlFormControls->IndexOf(aContent);
           if (index > -1) {
             KeyAppendInt(index, aKey);
             generatedUniqueKey = true;
@@ -6018,8 +6020,8 @@ void nsContentUtils::ReportDeprecation(
       new DeprecationReportBody(aGlobal, type, nullptr /* date */, msg,
                                 sourceFile, lineNumber, columnNumber);
 
-  ReportingUtils::Report(aGlobal, nsGkAtoms::deprecation, u"default"_ns,
-                         NS_ConvertUTF8toUTF16(url), body);
+  ReportingUtils::Report(aGlobal, nsGkAtoms::deprecation, "default"_ns, url,
+                         body);
 }
 
 void nsContentUtils::LogMessageToConsole(const char* aMsg) {
@@ -6833,7 +6835,6 @@ already_AddRefed<DocumentFragment> nsContentUtils::CreateContextualFragment(
         if (name->NamespaceEquals(kNameSpaceID_XMLNS)) {
           info.mValue->ToString(uriStr);
 
-          // really want something like nsXMLContentSerializer::SerializeAttr
           tagName.AppendLiteral(" xmlns");  // space important
           if (name->GetPrefix()) {
             tagName.Append(char16_t(':'));
@@ -6843,7 +6844,12 @@ already_AddRefed<DocumentFragment> nsContentUtils::CreateContextualFragment(
             setDefaultNamespace = true;
           }
           tagName.AppendLiteral(R"(=")");
-          tagName.Append(uriStr);
+          if (!nsXMLContentSerializer::
+                  AppendAndTranslateEntitiesInXMLAttributeValue(uriStr,
+                                                                tagName)) {
+            aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
+            return nullptr;
+          }
           tagName.Append('"');
         }
       }
@@ -6857,7 +6863,12 @@ already_AddRefed<DocumentFragment> nsContentUtils::CreateContextualFragment(
         // namespace.
         info->GetNamespaceURI(uriStr);
         tagName.AppendLiteral(R"( xmlns=")");
-        tagName.Append(uriStr);
+        if (!nsXMLContentSerializer::
+                AppendAndTranslateEntitiesInXMLAttributeValue(uriStr,
+                                                              tagName)) {
+          aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
+          return nullptr;
+        }
         tagName.Append('"');
       }
     }
@@ -6884,14 +6895,15 @@ void nsContentUtils::XPCOMShutdown() { nsContentUtils::DropFragmentParsers(); }
 static void SetAndFilterHTML(
     FragmentOrElement* aTarget, Element* aContext, const nsAString& aHTML,
     const OwningSanitizerOrSanitizerConfigOrSanitizerPresets& aSanitizerOptions,
-    const bool aSafe, ErrorResult& aError) {
+    nsContentUtils::SanitizerMode aSanitizerMode, ErrorResult& aError) {
+  const bool safe = aSanitizerMode == nsContentUtils::SanitizerMode::Safe;
   const RefPtr<Document> doc = aTarget->OwnerDoc();
 
   // Step 1. If safe and contextElement’s local name is "script" and
   // contextElement’s namespace is the HTML namespace or the SVG namespace, then
   // return.
-  if (aSafe && (aContext->IsHTMLElement(nsGkAtoms::script) ||
-                aContext->IsSVGElement(nsGkAtoms::script))) {
+  if (safe && (aContext->IsHTMLElement(nsGkAtoms::script) ||
+               aContext->IsSVGElement(nsGkAtoms::script))) {
     nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns, doc,
                                     PropertiesFile::DOM_PROPERTIES,
                                     "SetHTMLScript");
@@ -6900,13 +6912,14 @@ static void SetAndFilterHTML(
 
   // Step 2. Let sanitizer be the result of calling get a sanitizer instance
   // from options with options and safe.
-  nsCOMPtr<nsIGlobalObject> global = aTarget->GetRelevantGlobal();
-  if (!global) {
+  nsCOMPtr<nsPIDOMWindowInner> window =
+      do_QueryInterface(aTarget->GetRelevantGlobal());
+  if (!window) {
     aError.ThrowInvalidStateError("Missing owner global.");
     return;
   }
   RefPtr<Sanitizer> sanitizer =
-      Sanitizer::GetInstance(global, aSanitizerOptions, aSafe, aError);
+      Sanitizer::GetInstance(window, aSanitizerOptions, safe, aError);
   if (aError.Failed()) {
     return;
   }
@@ -6944,8 +6957,8 @@ static void SetAndFilterHTML(
   nsAtom* contextLocalName = aContext->NodeInfo()->NameAtom();
   int32_t contextNameSpaceID = aContext->GetNameSpaceID();
   int32_t flags =
-      aSafe ? nsContentUtils::kParseFragmentNoSanitization
-            : nsContentUtils::kParseFragmentPrivilegedDefaultSanitization;
+      safe ? nsContentUtils::kParseFragmentNoSanitization
+           : nsContentUtils::kParseFragmentPrivilegedDefaultSanitization;
 
   const bool sanitizeWhileParsing =
       StaticPrefs::dom_security_sanitizer_while_parsing();
@@ -6954,7 +6967,7 @@ static void SetAndFilterHTML(
       aHTML, fragment, contextLocalName, contextNameSpaceID,
       /* aQuirks */ false, /* aPreventScriptExecution */ true, flags,
       mozilla::Nothing(), sanitizeWhileParsing ? sanitizer.get() : nullptr,
-      aSafe);
+      aSanitizerMode);
   if (aError.Failed()) {
     return;
   }
@@ -6966,7 +6979,7 @@ static void SetAndFilterHTML(
 
   if (!sanitizeWhileParsing) {
     // Step 6. Run sanitize on fragment using sanitizer and safe.
-    sanitizer->Sanitize(fragment, aSafe, aError);
+    sanitizer->Sanitize(fragment, safe, aError);
     if (aError.Failed()) {
       return;
     }
@@ -6987,7 +7000,7 @@ void nsContentUtils::SetHTML(FragmentOrElement* aTarget, Element* aContext,
                              const SetHTMLOptions& aOptions,
                              ErrorResult& aError) {
   SetAndFilterHTML(aTarget, aContext, aHTML, aOptions.mSanitizer,
-                   /* aSafe */ true, aError);
+                   SanitizerMode::Safe, aError);
 }
 
 /* https://html.spec.whatwg.org/#unsafely-set-html */
@@ -7017,7 +7030,7 @@ void nsContentUtils::SetHTMLUnsafe(
   // Fallback to the more optimized code below without a sanitizer.
   if (aOptions.mSanitizer.WasPassed()) {
     return SetAndFilterHTML(aTarget, aContext, *compliantString,
-                            aOptions.mSanitizer.Value(), /* aSafe */ false,
+                            aOptions.mSanitizer.Value(), SanitizerMode::Unsafe,
                             aError);
   }
 
@@ -7128,7 +7141,7 @@ nsresult nsContentUtils::ParseFragmentHTML(
     bool aPreventScriptExecution, int32_t aFlags,
     mozilla::Maybe<RefPtr<mozilla::dom::CustomElementRegistry>>
         aCustomElementRegistry,
-    Sanitizer* aSanitizer, bool aSanitizerSafe) {
+    Sanitizer* aSanitizer, SanitizerMode aSanitizerMode) {
   MOZ_ASSERT(!aSanitizer ||
              StaticPrefs::dom_security_sanitizer_while_parsing());
   if (nsContentUtils::sFragmentParsingActive) {
@@ -7178,7 +7191,7 @@ nsresult nsContentUtils::ParseFragmentHTML(
   nsresult rv = sHTMLFragmentParser->ParseFragment(
       aSourceBuffer, target, aContextLocalName, aContextNamespace, aQuirks,
       aPreventScriptExecution, false, std::move(aCustomElementRegistry),
-      aSanitizer, aSanitizerSafe);
+      aSanitizer, aSanitizerMode);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (fragment) {
@@ -7201,7 +7214,7 @@ nsresult nsContentUtils::ParseFragmentHTML(
 nsresult nsContentUtils::ParseDocumentHTML(
     const nsAString& aSourceBuffer, Document* aTargetDocument,
     bool aScriptingEnabledForNoscriptParsing, Sanitizer* aSanitizer,
-    bool aSanitizerSafe) {
+    SanitizerMode aSanitizerMode) {
   MOZ_ASSERT(!aSanitizer ||
              StaticPrefs::dom_security_sanitizer_while_parsing());
   if (nsContentUtils::sFragmentParsingActive) {
@@ -7216,7 +7229,7 @@ nsresult nsContentUtils::ParseDocumentHTML(
   }
   nsresult rv = sHTMLFragmentParser->ParseDocument(
       aSourceBuffer, aTargetDocument, aScriptingEnabledForNoscriptParsing,
-      aSanitizer, aSanitizerSafe);
+      aSanitizer, aSanitizerMode);
   return rv;
 }
 
@@ -7640,7 +7653,9 @@ void nsContentUtils::TriggerLinkClick(
     nsAutoString fileName;
     if ((!aContent->IsHTMLElement(nsGkAtoms::a) &&
          !aContent->IsHTMLElement(nsGkAtoms::area) &&
-         !aContent->IsSVGElement(nsGkAtoms::a)) ||
+         !aContent->IsSVGElement(nsGkAtoms::a) &&
+         !(aContent->IsMathMLElement(nsGkAtoms::a) &&
+           StaticPrefs::mathml_a_element_enabled())) ||
         !aContent->AsElement()->GetAttr(nsGkAtoms::download, fileName) ||
         NS_FAILED(aContent->NodePrincipal()->CheckMayLoad(aLinkURI, true))) {
       fileName.SetIsVoid(true);  // No actionable download attribute was found.
@@ -7781,6 +7796,22 @@ void nsContentUtils::RemoveScriptBlocker() {
   sRemovingScriptBlockers = true;
 #endif
   sBlockedScriptRunners->RemoveElementsAt(originalFirstBlocker, blockersCount);
+}
+
+nsAutoMicroTaskForDocument::nsAutoMicroTaskForDocument(
+    const Document* aDocument)
+    : mContext(aDocument && aDocument->GetInnerWindow()
+                   ? CycleCollectedJSContext::Get()
+                   : nullptr) {
+  if (mContext) {
+    mContext->EnterMicroTask();
+  }
+}
+
+nsAutoMicroTaskForDocument::~nsAutoMicroTaskForDocument() {
+  if (mContext) {
+    mContext->LeaveMicroTask();
+  }
 }
 
 /* static */
@@ -8995,7 +9026,7 @@ bool nsContentUtils::IsPointInSelection(
   const uint32_t rangeCount = aSelection.RangeCount();
   for (const uint32_t i : IntegerRange(rangeCount)) {
     MOZ_ASSERT(aSelection.RangeCount() == rangeCount);
-    RefPtr<const nsRange> range = aSelection.GetRangeAt(i);
+    RefPtr<const dom::Range> range = aSelection.GetRangeAt(i);
     if (NS_WARN_IF(!range)) {
       // Don't bail yet, iterate through them all
       continue;
@@ -9021,7 +9052,7 @@ void nsContentUtils::GetSelectionInTextControl(Selection* aSelection,
   // We don't care which end of this selection is anchor and which is focus.  In
   // fact, we explicitly want to know which is the _start_ and which is the
   // _end_, not anchor vs focus.
-  const nsRange* range = aSelection->GetAnchorFocusRange();
+  const dom::Range* range = aSelection->GetAnchorFocusRange();
   if (!range) {
     // Nothing selected
     aOutStartOffset = aOutEndOffset = 0;
@@ -10236,7 +10267,11 @@ Maybe<BigBuffer> nsContentUtils::GetSurfaceData(DataSourceSurface& aSurface,
     return Nothing();
   }
 
-  BigBuffer surfaceData(maxBufLen);
+  BigBuffer surfaceData = BigBuffer::TryAlloc(maxBufLen);
+  if (surfaceData.Size() != maxBufLen) {
+    aSurface.Unmap();
+    return Nothing();
+  }
   memcpy(surfaceData.Data(), map.mData, bufLen);
   memset(surfaceData.Data() + bufLen, 0, maxBufLen - bufLen);
 
@@ -10454,10 +10489,13 @@ Result<bool, nsresult> nsContentUtils::SynthesizeMouseEvent(
         aMouseEventData.mInputSource != MouseEvent_Binding::MOZ_SOURCE_TOUCH;
   } else if (aType.EqualsLiteral("MozMouseHittest")) {
     msg = eMouseHitTest;
-  } else if (aType.EqualsLiteral("MozMouseExploreByTouch")) {
-    msg = eMouseExploreByTouch;
   } else {
     return Err(NS_ERROR_FAILURE);
+  }
+
+  if (aMouseEventData.mMovementX.WasPassed() !=
+      aMouseEventData.mMovementY.WasPassed()) {
+    return Err(NS_ERROR_INVALID_ARG);
   }
 
   Maybe<WidgetPointerEvent> pointerEvent;
@@ -10523,6 +10561,11 @@ Result<bool, nsresult> nsContentUtils::SynthesizeMouseEvent(
 
   mouseOrPointerEvent.mRefPoint = aRefPoint;
   mouseOrPointerEvent.mIgnoreRootScrollFrame = aOptions.mIgnoreRootScrollFrame;
+  if (aMouseEventData.mMovementX.WasPassed()) {
+    MOZ_ASSERT(aMouseEventData.mMovementY.WasPassed());
+    mouseOrPointerEvent.mMovement.emplace(aMouseEventData.mMovementX.Value(),
+                                          aMouseEventData.mMovementY.Value());
+  }
 
   nsEventStatus status = nsEventStatus_eIgnore;
   if (aOptions.mToWindow) {
@@ -10830,7 +10873,9 @@ bool nsContentUtils::HasRelNoReferrer(const Element& aElement) {
   // rel=noreferrer is only supported in <a>, <area>, and <form>
   if (!aElement.IsAnyOfHTMLElements(nsGkAtoms::a, nsGkAtoms::area,
                                     nsGkAtoms::form) &&
-      !aElement.IsSVGElement(nsGkAtoms::a)) {
+      !aElement.IsSVGElement(nsGkAtoms::a) &&
+      !(aElement.IsMathMLElement(nsGkAtoms::a) &&
+        StaticPrefs::mathml_a_element_enabled())) {
     return false;
   }
 
@@ -13009,11 +13054,7 @@ static constexpr uint64_t kIdBits = kIdTotalBits - kIdProcessBits;
 
 /* static */
 uint64_t nsContentUtils::GenerateProcessSpecificId(uint64_t aId) {
-  uint64_t processId = 0;
-  if (XRE_IsContentProcess()) {
-    ContentChild* cc = ContentChild::GetSingleton();
-    processId = cc->GetID();
-  }
+  uint64_t processId = XRE_GetChildID();
 
   MOZ_RELEASE_ASSERT(processId < (uint64_t(1) << kIdProcessBits));
   uint64_t processBits = processId & ((uint64_t(1) << kIdProcessBits) - 1);
@@ -13026,9 +13067,15 @@ uint64_t nsContentUtils::GenerateProcessSpecificId(uint64_t aId) {
 }
 
 /* static */
-std::tuple<uint64_t, uint64_t> nsContentUtils::SplitProcessSpecificId(
+std::tuple<GeckoChildID, uint64_t> nsContentUtils::SplitProcessSpecificId(
     uint64_t aId) {
-  return {aId >> kIdBits, aId & ((uint64_t(1) << kIdBits) - 1)};
+  return {GeckoChildID(aId >> kIdBits), aId & ((uint64_t(1) << kIdBits) - 1)};
+}
+
+/* static */
+bool nsContentUtils::IsProcessSpecificIdFrom(uint64_t aId,
+                                             GeckoChildID aChildID) {
+  return (aId >> kIdBits) == static_cast<uint64_t>(aChildID);
 }
 
 // Next process-local Tab ID.

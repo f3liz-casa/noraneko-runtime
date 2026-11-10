@@ -48,6 +48,7 @@
 #include "js/ErrorReport.h"           // JSErrorBase
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/HashTable.h"
+#include "js/Prefs.h"        // JS::Prefs
 #include "js/RegExpFlags.h"  // JS::RegExpFlags
 #include "js/Stack.h"        // JS::NativeStackLimit
 #include "util/DifferentialTesting.h"
@@ -1960,6 +1961,20 @@ FullParseHandler::ModuleNodeResult Parser<FullParseHandler, Unit>::moduleBody(
   modulepc.varScope()
       .lookupDeclaredName(
           TaggedParserAtomIndex::WellKnown::star_namespace_star_())
+      ->value()
+      ->setClosedOver();
+
+  // Reserve an environment slot for a "*deferred-namespace*" pseudo-binding
+  // and mark as closed-over. We do not know until module linking if this will
+  // be used.
+  if (!noteDeclaredName(
+          TaggedParserAtomIndex::WellKnown::star_deferred_namespace_star_(),
+          DeclarationKind::Const, pos())) {
+    return errorResult();
+  }
+  modulepc.varScope()
+      .lookupDeclaredName(
+          TaggedParserAtomIndex::WellKnown::star_deferred_namespace_star_())
       ->value()
       ->setClosedOver();
 
@@ -5087,16 +5102,70 @@ GeneralParser<ParseHandler, Unit>::importDeclaration() {
     return errorResult();
   }
 
+  TokenKind next = TokenKind::Eof;
+  if (options().deferImportEval() && tt == TokenKind::Defer &&
+      !tokenStream.peekToken(&next)) {
+    return errorResult();
+  }
+
   ListNodeType importSpecSet =
       MOZ_TRY(handler_.newList(ParseNodeKind::ImportSpecList, pos()));
 
   ImportPhase phase = ImportPhase::Evaluation;
-  NameNodeType importSourceBinding;
+  NameNodeType importSourceBinding = null();
   if (tt == TokenKind::String) {
+    // import ModuleSpecifier;
     // Handle the form |import 'a'| by leaving the list empty. This is
     // equivalent to |import {} from 'a'|.
     handler_.setEndPosition(importSpecSet, pos().begin);
+  } else if (options().deferImportEval() && tt == TokenKind::Defer &&
+             next == TokenKind::Mul) {
+    // import defer NameSpaceImport FromClause;
+    phase = ImportPhase::Deferred;
+    tokenStream.consumeKnownToken(TokenKind::Mul);
+
+    // Parse: as BindingIdentifier
+    if (!mustMatchToken(TokenKind::As, JSMSG_AS_AFTER_IMPORT_STAR)) {
+      return errorResult();
+    }
+    if (!mustMatchToken(TokenKindIsPossibleIdentifierName,
+                        JSMSG_NO_BINDING_NAME)) {
+      return errorResult();
+    }
+
+    uint32_t begin = pos().begin;
+    TaggedParserAtomIndex bindingAtom = importedBinding();
+    if (!bindingAtom) {
+      return errorResult();
+    }
+
+    NameNodeType bindingNameNode;
+    MOZ_TRY_VAR_OR_RETURN(bindingNameNode, newName(bindingAtom), errorResult());
+
+    // Deferred namespace imports are not indirect bindings but lexical
+    // definitions that hold a module namespace object, like regular namespace
+    // imports. They are treated as const variables initialized at module link.
+    if (!noteDeclaredName(bindingAtom, DeclarationKind::Const, pos())) {
+      return errorResult();
+    }
+
+    pc_->varScope().lookupDeclaredName(bindingAtom)->value()->setClosedOver();
+
+    // Add to importSpecSet like namespaceImport does
+    UnaryNodeType importSpec;
+    MOZ_TRY_VAR_OR_RETURN(
+        importSpec, handler_.newImportNamespaceSpec(begin, bindingNameNode),
+        errorResult());
+    handler_.addList(importSpecSet, importSpec);
+
+    if (!mustMatchToken(TokenKind::From, JSMSG_FROM_AFTER_IMPORT_CLAUSE)) {
+      return errorResult();
+    }
+    if (!mustMatchToken(TokenKind::String, JSMSG_MODULE_SPEC_AFTER_FROM)) {
+      return errorResult();
+    }
   } else {
+    // import ImportClause
     if (tt == TokenKind::LeftCurly) {
       if (!namedImports(importSpecSet)) {
         return errorResult();
@@ -5190,6 +5259,8 @@ GeneralParser<ParseHandler, Unit>::importDeclaration() {
           return errorResult();
         }
 
+        // ImportedDefaultBinding, NameSpaceImport
+        // ImportedDefaultBinding, NamedImports
         if (tt == TokenKind::Comma) {
           tokenStream.consumeKnownToken(tt);
           if (!tokenStream.getToken(&tt)) {
@@ -7956,12 +8027,36 @@ bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
   bool hasPrivateBrand = classInitializedMembers.hasPrivateBrand();
   if (hasPrivateBrand || numMemberInitializers > 0) {
     // Now that we have full set of initializers, update the constructor.
+    bool hasInstanceDecorators = false;
+#ifdef ENABLE_DECORATORS
+    hasInstanceDecorators = classInitializedMembers.hasInstanceDecorators;
+#endif
+    // The names are only valid in this compilation: skip constructors that may
+    // be compiled later.
+    mozilla::Span<const InlinedZeroField> inlinedFields;
+    if (!hasPrivateBrand && !hasInstanceDecorators &&
+        hasHeritage == HasHeritage::No && ctorbox->emitBytecode &&
+        classInitializedMembers.hasOnlyInlinableZeroFields &&
+        !classInitializedMembers.inlinableZeroFields.empty()) {
+      const auto& fields = classInitializedMembers.inlinableZeroFields;
+      MOZ_ASSERT(fields.length() == classInitializedMembers.instanceFields);
+      InlinedZeroField* copy =
+          this->alloc_.template newArrayUninitialized<InlinedZeroField>(
+              fields.length());
+      if (!copy) {
+        js::ReportOutOfMemory(fc_);
+        return false;
+      }
+      std::copy(fields.begin(), fields.end(), copy);
+      inlinedFields = mozilla::Span(copy, fields.length());
+    }
     MemberInitializers initializers(
         hasPrivateBrand,
 #ifdef ENABLE_DECORATORS
         classInitializedMembers.hasInstanceDecorators,
 #endif
-        numMemberInitializers);
+        numMemberInitializers, !inlinedFields.IsEmpty());
+    ctorbox->setInlinedZeroFields(inlinedFields);
     ctorbox->setMemberInitializers(initializers);
 
     // Field initialization need access to `this`.
@@ -8664,6 +8759,34 @@ GeneralParser<ParseHandler, Unit>::fieldInitializerOpt(
     handler_.checkAndSetIsDirectRHSAnonFunction(initializerExpr);
   } else {
     initializerExpr = MOZ_TRY(handler_.newRawUndefinedLiteral(propNamePos));
+  }
+
+  if constexpr (!std::is_same_v<ParseHandler, SyntaxParseHandler>) {
+    if (!isStatic && classInitializedMembers.hasOnlyInlinableZeroFields &&
+        JS::Prefs::experimental_inline_simple_field_initializers()) {
+      // Computed names (`[expr] = 0;`) leave propAtom null. Index-like names
+      // need different bytecode than a plain InitProp.
+      uint32_t index;
+      bool isPrivate = propAtom && handler_.isPrivateName(propName);
+      bool isPlainName = propAtom && (isPrivate || !this->parserAtoms().isIndex(
+                                                       propAtom, &index));
+      bool isZeroLiteral =
+          initializerExpr->isKind(ParseNodeKind::NumberExpr) &&
+          initializerExpr->template as<NumericLiteral>().value() == 0;
+      bool hasMaxInlinedZeroFields =
+          classInitializedMembers.inlinableZeroFields.length() >=
+          MemberInitializers::MaxInlinedZeroFields;
+      if (isPlainName && isZeroLiteral && !hasMaxInlinedZeroFields) {
+        if (!classInitializedMembers.inlinableZeroFields.append(
+                InlinedZeroField{propAtom, isPrivate})) {
+          js::ReportOutOfMemory(fc_);
+          return errorResult();
+        }
+      } else {
+        classInitializedMembers.hasOnlyInlinableZeroFields = false;
+        classInitializedMembers.inlinableZeroFields.clearAndFree();
+      }
+    }
   }
 
   TokenPos wholeInitializerPos(propNamePos.begin, pos().end);
@@ -11313,8 +11436,7 @@ PerHandlerParser<ParseHandler>::stringLiteral() {
 template <class ParseHandler>
 typename ParseHandler::NodeResult
 PerHandlerParser<ParseHandler>::noSubstitutionTaggedTemplate() {
-  if (anyChars.hasInvalidTemplateEscape()) {
-    anyChars.clearInvalidTemplateEscape();
+  if (anyChars.currentToken().hasInvalidTemplateEscape()) {
     return handler_.newRawUndefinedLiteral(pos());
   }
 
@@ -12371,10 +12493,10 @@ GeneralParser<ParseHandler, Unit>::importExpr(YieldHandling yieldHandling,
 
     if (options().sourcePhaseImports() && next == TokenKind::Source) {
       phase = ImportPhase::Source;
+    } else if (options().deferImportEval() && next == TokenKind::Defer) {
+      phase = ImportPhase::Deferred;
     } else {
-      error(JSMSG_UNEXPECTED_TOKEN,
-            options().sourcePhaseImports() ? "meta or source" : "meta",
-            TokenKindToDesc(next));
+      error(JSMSG_UNEXPECTED_TOKEN_NO_EXPECT, TokenKindToDesc(next));
       return errorResult();
     }
 

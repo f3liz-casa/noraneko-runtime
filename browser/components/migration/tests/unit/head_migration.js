@@ -1,7 +1,7 @@
 "use strict";
 
 var { MigrationUtils } = ChromeUtils.importESModule(
-  "resource:///modules/MigrationUtils.sys.mjs"
+  "moz-src:///browser/components/migration/MigrationUtils.sys.mjs"
 );
 var { LoginHelper } = ChromeUtils.importESModule(
   "resource://gre/modules/LoginHelper.sys.mjs"
@@ -37,6 +37,12 @@ var { getAppInfo, newAppInfo, updateAppInfo } = ChromeUtils.importESModule(
   "resource://testing-common/AppInfo.sys.mjs"
 );
 updateAppInfo();
+
+// The tests read browser data from temporary folders, which the OS does not
+// block, so reading them must not wait for the user to select a folder.
+ChromeUtils.importESModule(
+  "moz-src:///browser/components/migration/MigratorBase.sys.mjs"
+).MigratorBase.needsFolderSelectionToReadData = () => false;
 
 /**
  * Migrates the requested resource and waits for the migration to be complete.
@@ -158,6 +164,25 @@ function registerFakePath(key, file) {
   });
 }
 
+/**
+ * Copies a fixture directory into the test's temporary directory, so that
+ * tests can modify it without touching the test directory, which is shared
+ * with tests running in parallel.
+ *
+ * @param {string} relativePath
+ *   The path of the fixture directory, relative to the test directory.
+ *   For example: "Library/".
+ * @returns {Promise<nsIFile>}
+ *   The copy.
+ */
+async function copyFixtureDir(relativePath) {
+  let source = do_get_file(relativePath);
+  let target = do_get_tempdir();
+  target.append(source.leafName);
+  await IOUtils.copy(source.path, target.path, { recursive: true });
+  return target;
+}
+
 function getRootPath() {
   let dirKey;
   if (AppConstants.platform == "win") {
@@ -264,21 +289,9 @@ function createChromeBookmarkStructure(totalBookmarks = 100) {
   return bookmarksData;
 }
 
-// Setup that allows to use the profile service in xpcshell tests,
-// lifted from `toolkit/profile/xpcshell/head.js`.
-function setupProfileService() {
-  let gDataHome = gProfD.clone();
-  gDataHome.append("data");
-  gDataHome.createUnique(Ci.nsIFile.DIRECTORY_TYPE, 0o755);
-  let gDataHomeLocal = gProfD.clone();
-  gDataHomeLocal.append("local");
-  gDataHomeLocal.createUnique(Ci.nsIFile.DIRECTORY_TYPE, 0o755);
-
-  let xreDirProvider = Cc["@mozilla.org/xre/directory-provider;1"].getService(
-    Ci.nsIXREDirProvider
-  );
-  xreDirProvider.setUserDataDirectory(gDataHome, false);
-  xreDirProvider.setUserDataDirectory(gDataHomeLocal, true);
+// Make sure the directory service provider is initialised.
+function initDirectoryService() {
+  Cc["@mozilla.org/xre/directory-provider;1"].getService(Ci.nsIXREDirProvider);
 }
 
-add_setup(setupProfileService);
+add_setup(initDirectoryService);

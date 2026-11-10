@@ -183,7 +183,8 @@ enum class IsolationBehavior {
   PrivilegedMozilla,
   // Load this URI explicitly in the parent process.
   Parent,
-  // Load this URI wherever the browsing context is currently loaded. This is
+  // Load this URI wherever the browsing context is currently loaded, so long as
+  // the load was triggered by that remote type or the parent process. This is
   // generally used for error pages.
   Anywhere,
   // May only be returned for subframes. Inherits the remote type of the parent
@@ -432,33 +433,6 @@ static nsAutoCString OriginAttributesString(const OriginAttributes& aAttrs) {
   return originSuffix;
 }
 
-/**
- * Given an about:reader URI, extract the "url" query parameter, and use it to
- * construct a principal which should be used for process selection.
- */
-static already_AddRefed<nsIURI> GetAboutReaderURL(nsIURI* aURI) {
-#ifdef DEBUG
-  MOZ_ASSERT(aURI->SchemeIs("about"));
-  nsAutoCString path;
-  MOZ_ALWAYS_SUCCEEDS(NS_GetAboutModuleName(aURI, path));
-  MOZ_ASSERT(path == "reader"_ns);
-#endif
-
-  nsAutoCString query;
-  MOZ_ALWAYS_SUCCEEDS(aURI->GetQuery(query));
-
-  // Extract the "url" parameter from the `about:reader`'s query parameters,
-  // and recover a content principal from it.
-  nsAutoCString readerSpec;
-  if (URLParams::Extract(query, "url"_ns, readerSpec)) {
-    nsCOMPtr<nsIURI> readerUri;
-    if (NS_SUCCEEDED(NS_NewURI(getter_AddRefs(readerUri), readerSpec))) {
-      return readerUri.forget();
-    }
-  }
-  return nullptr;
-}
-
 static already_AddRefed<BasePrincipal> GetAboutReaderURLPrincipal(
     nsIURI* aURI, const OriginAttributes& aAttrs) {
   if (nsCOMPtr<nsIURI> readerUri = GetAboutReaderURL(aURI)) {
@@ -600,6 +574,33 @@ static Result<RemoteType, nsresult> SpecialBehaviorRemoteType(
 
 }  // namespace
 
+already_AddRefed<nsIURI> GetAboutReaderURL(nsIURI* aURI) {
+  if (!aURI->SchemeIs("about")) {
+    return nullptr;
+  }
+  nsAutoCString path;
+  if (NS_FAILED(NS_GetAboutModuleName(aURI, path)) || path != "reader"_ns) {
+    return nullptr;
+  }
+
+  nsAutoCString query;
+  MOZ_ALWAYS_SUCCEEDS(aURI->GetQuery(query));
+
+  // Extract the "url" parameter from the `about:reader`'s query parameters,
+  // and recover a content principal from it.
+  nsAutoCString readerSpec;
+  if (URLParams::Extract(query, "url"_ns, readerSpec)) {
+    nsCOMPtr<nsIURI> readerUri;
+    if (NS_SUCCEEDED(NS_NewURI(getter_AddRefs(readerUri), readerSpec)) &&
+        // about:reader only loads http(s) and file documents; see
+        // AboutReader.sys.mjs.
+        (net::SchemeIsHttpOrHttps(readerUri) || readerUri->SchemeIs("file"))) {
+      return readerUri.forget();
+    }
+  }
+  return nullptr;
+}
+
 Result<NavigationIsolationOptions, nsresult> IsolationOptionsForNavigation(
     CanonicalBrowsingContext* aTopBC, WindowGlobalParent* aParentWindow,
     nsIURI* aChannelCreationURI, nsIChannel* aChannel,
@@ -639,8 +640,20 @@ Result<NavigationIsolationOptions, nsresult> IsolationOptionsForNavigation(
     isNullPrincipalPrecursor = true;
   }
 
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+
+  // Get the remote type which is responsible for triggering this navigation.
+  RemoteType triggeringRemoteType;
+  rv = loadInfo->GetTriggeringRemoteType(triggeringRemoteType);
+  if (NS_FAILED(rv)) {
+    MOZ_LOG(gProcessIsolationLog, LogLevel::Error,
+            ("failed to get channel triggering remote type"));
+    return Err(rv);
+  }
+
   NavigationIsolationOptions options;
-  options.mReplaceBrowsingContext = aHasCOOPMismatch;
+  // Replace the new tab's context to match the response's isolation.
+  options.mReplaceBrowsingContext = aHasCOOPMismatch || aForNewTab;
   options.mShouldCrossOriginIsolate =
       ShouldCrossOriginIsolate(aChannel, aParentWindow);
 
@@ -653,6 +666,12 @@ Result<NavigationIsolationOptions, nsresult> IsolationOptionsForNavigation(
     if (NS_WARN_IF(!resultPrincipal->GetIsNullPrincipal())) {
       MOZ_LOG(gProcessIsolationLog, LogLevel::Error,
               ("invalid remote type override on non-null principal"));
+      return Err(NS_ERROR_DOM_SECURITY_ERR);
+    }
+
+    if (NS_WARN_IF(!triggeringRemoteType.IsNotRemote())) {
+      MOZ_LOG(gProcessIsolationLog, LogLevel::Error,
+              ("invalid remote type override from non-parent process"));
       return Err(NS_ERROR_DOM_SECURITY_ERR);
     }
 
@@ -695,7 +714,6 @@ Result<NavigationIsolationOptions, nsresult> IsolationOptionsForNavigation(
   // behaviour for loads which meet the requirements.
   if (StaticPrefs::browser_tabs_remote_systemTriggeredAboutBlankAnywhere() &&
       NS_IsAboutBlank(aChannelCreationURI)) {
-    nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
     if (loadInfo->TriggeringPrincipal()->IsSystemPrincipal() &&
         resultOrPrecursor->GetIsNullPrincipal()) {
       MOZ_LOG(gProcessIsolationLog, LogLevel::Warning,
@@ -752,6 +770,7 @@ Result<NavigationIsolationOptions, nsresult> IsolationOptionsForNavigation(
       // load there.
       bool isUIResource = false;
       if (aCurrentRemoteType.IsNotRemote() &&
+          triggeringRemoteType.IsNotRemote() &&
           (aChannelCreationURI->SchemeIs("about") ||
            (NS_SUCCEEDED(NS_URIChainHasFlags(
                 aChannelCreationURI, nsIProtocolHandler::URI_IS_UI_RESOURCE,
@@ -770,6 +789,19 @@ Result<NavigationIsolationOptions, nsresult> IsolationOptionsForNavigation(
                                          /* aForChannelCreationURI */ false,
                                          /* aIsWorker */ false);
     }
+  }
+
+  // Redirect `Anywhere` loads into a shared web remote type if not triggered by
+  // `aCurrentRemoteType` or the parent process.
+  if (behavior == IsolationBehavior::Anywhere &&
+      !triggeringRemoteType.IsNotRemote() &&
+      triggeringRemoteType != aCurrentRemoteType) {
+    MOZ_LOG(gProcessIsolationLog, LogLevel::Warning,
+            ("Unexpected Anywhere page load triggered by %s onto %s, forcing "
+             "web remote type",
+             triggeringRemoteType.Stringify().get(),
+             aCurrentRemoteType.Stringify().get()));
+    behavior = IsolationBehavior::ForceWebRemoteType;
   }
 
   // If we're currently loaded in the extension process, and are going to switch
@@ -892,9 +924,8 @@ Result<NavigationIsolationOptions, nsresult> IsolationOptionsForNavigation(
   // where we may have multiple documents with the same principal in different
   // processes. Those have been handled above, and will not be reaching here.
   //
-  // If we're doing a replace load or opening a new tab, we won't be staying in
-  // the same BrowsingContextGroup, so ignore this step.
-  if (!options.mReplaceBrowsingContext && !aForNewTab) {
+  // When replacing the BrowsingContext, ignore the old group's processes.
+  if (!options.mReplaceBrowsingContext) {
     // Helper for efficiently determining if a given origin is same-site. This
     // will attempt to do a fast equality check, and will only fall back to
     // computing the site-origin for content principals.
@@ -1458,9 +1489,9 @@ bool IsIsolateHighValueSiteEnabled() {
 bool ValidatePrincipalCouldPotentiallyBeLoadedBy(
     nsIPrincipal* aPrincipal, const RemoteType& aRemoteType,
     const EnumSet<ValidatePrincipalOptions>& aOptions,
-    FunctionRef<bool(nsIPrincipal*)> aIsPrincipalLoaded) {
+    LoadedOriginSet* aLoadedOriginSet) {
 #ifdef DEBUG
-  if (!aIsPrincipalLoaded) {
+  if (!aLoadedOriginSet) {
     MOZ_ASSERT(
         aOptions.contains(ValidatePrincipalOptions::AllowNotLoadedOrigin),
         "`AllowNotLoadedOrigin` is required if calling "
@@ -1471,6 +1502,17 @@ bool ValidatePrincipalCouldPotentiallyBeLoadedBy(
         "ValidatePrincipalCouldPotentiallyBeLoadedBy directly");
   }
 #endif
+
+  // FIXME(bug 2064204): Currently we only match site, and ignore OAs.
+  // In the future, we hope to tighten these checks.
+  auto isPrincipalLoaded = [&](nsIPrincipal* prin) {
+    auto threshold = aOptions.contains(
+                         ValidatePrincipalOptions::Internal_ValidatingPrecursor)
+                         ? LoadedOriginSet::Level::PrecursorOnly
+                         : LoadedOriginSet::Level::SiteOnly;
+    return !StaticPrefs::dom_ipc_validatePrincipal_validateSiteLoaded() ||
+           aLoadedOriginSet->Has(prin, threshold, OriginAttributes::STRIP_ALL);
+  };
 
   // Don't bother validating principals from the parent process.
   if (aRemoteType.IsNotRemote()) {
@@ -1483,8 +1525,16 @@ bool ValidatePrincipalCouldPotentiallyBeLoadedBy(
   }
 
   // We currently do not reliably track relationships between specific null
-  // principals and content processes, so we can not validate much here.
+  // principals and content processes, so we can not validate much here unless
+  // it has a precursor content principal.
   if (aPrincipal->GetIsNullPrincipal()) {
+    if (nsCOMPtr<nsIPrincipal> precursor =
+            aPrincipal->GetPrecursorPrincipal()) {
+      return ValidatePrincipalCouldPotentiallyBeLoadedBy(
+          precursor, aRemoteType,
+          aOptions + ValidatePrincipalOptions::Internal_ValidatingPrecursor,
+          aLoadedOriginSet);
+    }
     return true;
   }
 
@@ -1492,7 +1542,7 @@ bool ValidatePrincipalCouldPotentiallyBeLoadedBy(
   if (aPrincipal->IsSystemPrincipal()) {
     return aOptions.contains(ValidatePrincipalOptions::AlwaysAllowSystem) ||
            (aOptions.contains(ValidatePrincipalOptions::AllowSystemIfLoaded) &&
-            aIsPrincipalLoaded(aPrincipal));
+            isPrincipalLoaded(aPrincipal));
   }
 
   // Performing checks against the remote type requires the IOService and
@@ -1515,7 +1565,7 @@ bool ValidatePrincipalCouldPotentiallyBeLoadedBy(
     const auto& allowList = expandedPrincipal->AllowList();
     for (const auto& innerPrincipal : allowList) {
       if (!ValidatePrincipalCouldPotentiallyBeLoadedBy(
-              innerPrincipal, aRemoteType, aOptions, aIsPrincipalLoaded)) {
+              innerPrincipal, aRemoteType, aOptions, aLoadedOriginSet)) {
         return false;
       }
     }
@@ -1556,10 +1606,19 @@ bool ValidatePrincipalCouldPotentiallyBeLoadedBy(
   }
 
   // All other content principal schemes are always loaded via. the parent
-  // process, so we can early-return if `aIsPrincipalLoaded` returns false.
+  // process, so we can early-return if `isPrincipalLoaded` returns false.
   if (!aOptions.contains(ValidatePrincipalOptions::AllowNotLoadedOrigin) &&
-      !aIsPrincipalLoaded(aPrincipal)) {
+      !isPrincipalLoaded(aPrincipal)) {
     return false;
+  }
+
+  // With this test-only pref set a data: URL will always load in 'web',
+  // ignoring the precursor, so skip precursor validation in that case.
+  if (aOptions.contains(
+          ValidatePrincipalOptions::Internal_ValidatingPrecursor) &&
+      StaticPrefs::browser_tabs_remote_dataUriInDefaultWebProcess() &&
+      aRemoteType.IsSharedWeb()) {
+    return true;
   }
 
   // A URI with a file:// scheme can never load in a non-file content process
@@ -1592,13 +1651,22 @@ bool ValidatePrincipalCouldPotentiallyBeLoadedBy(
                                     /* aForChannelCreationURI */ true,
                                     /* aIsWorker */ false)) {
       case IsolationBehavior::Parent:
-        return false;
+        // An about: URI with parent process isolation could legitimately be the
+        // precursor for a content process null principal, as we try to load
+        // null principals in the content process when possible.
+        return aOptions.contains(
+            ValidatePrincipalOptions::Internal_ValidatingPrecursor);
       case IsolationBehavior::Anywhere:
         return true;
       case IsolationBehavior::AboutReader:
         // Allow about:reader to load anywhere, as it is process-allocated based
         // on the content it displays, and which content is being displayed is
         // unfortunately not part of the principal.
+        //
+        // NOTE: This means this check cannot constrain where an about:reader
+        // document ends up. The "url" parameter is restricted in
+        // GetAboutReaderURL and validated against the requesting process in
+        // ContentTriggeredURILoadIsAllowed.
         return true;
       case IsolationBehavior::Extension:
         return aRemoteType.IsExtension();
@@ -1642,6 +1710,7 @@ bool ValidatePrincipalCouldPotentiallyBeLoadedBy(
     return false;
   }
 
+  // FIXME(bug 2064204): We should validate OAs when possible.
   return aRemoteType.OriginNoSuffix() == siteOriginNoSuffix;
 }
 

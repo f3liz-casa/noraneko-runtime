@@ -13,14 +13,19 @@ import { MozLitElement } from "chrome://global/content/lit-utils.mjs";
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://global/content/elements/moz-button.mjs";
 
-const lazy = {};
-ChromeUtils.defineESModuleGetters(lazy, {
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
+);
+const lazy = XPCOMUtils.declareLazy({
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  SessionStore:
+    "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
   TabMetrics: "moz-src:///browser/components/tabbrowser/TabMetrics.sys.mjs",
 });
 
 class TabGroupsList extends MozLitElement {
   static properties = {
+    rowRole: { type: String, attribute: "row-role" },
     _openGroups: { type: Array, state: true },
     _savedGroups: { type: Array, state: true },
     _defaultGroupName: { type: String, state: true },
@@ -28,6 +33,7 @@ class TabGroupsList extends MozLitElement {
 
   constructor() {
     super();
+    this.rowRole = "";
     this._openGroups = [];
     this._savedGroups = [];
     this._defaultGroupName = "";
@@ -38,7 +44,7 @@ class TabGroupsList extends MozLitElement {
   }
 
   get #win() {
-    return this.documentGlobal;
+    return /** @type {BrowserWindow} */ (this.documentGlobal);
   }
 
   connectedCallback() {
@@ -59,19 +65,19 @@ class TabGroupsList extends MozLitElement {
     });
     this._savedGroups = lazy.PrivateBrowsingUtils.isWindowPrivate(win)
       ? []
-      : win.SessionStore.savedGroups.toSorted(
+      : lazy.SessionStore.savedGroups.toSorted(
           (a, b) => b.closedAt - a.closedAt
         );
   }
 
   #handleGroupClick(group, isOpen) {
-    this.closest("panel")?.hidePopup();
+    /** @type {XULPopupElement} */ (this.closest("panel"))?.hidePopup();
     if (isOpen) {
       group.select();
       group.documentGlobal.focus();
     } else {
-      this.#win.SessionStore.openSavedTabGroup(group.id, this.#win, {
-        source: lazy.TabMetrics.METRIC_SOURCE.TAB_OVERFLOW_MENU,
+      lazy.SessionStore.openSavedTabGroup(group.id, this.#win, {
+        source: lazy.TabMetrics.METRIC_SOURCE.APP_MENU_GROUP_LIST,
       });
     }
   }
@@ -81,7 +87,9 @@ class TabGroupsList extends MozLitElement {
     const menuId = isOpen
       ? "open-tab-group-context-menu"
       : "saved-tab-group-context-menu";
-    const popup = this.ownerDocument.getElementById(menuId);
+    const popup = /** @type {XULPopupElement} */ (
+      this.ownerDocument.getElementById(menuId)
+    );
     popup.openPopupAtScreen(event.screenX, event.screenY, true, event);
   }
 
@@ -96,6 +104,7 @@ class TabGroupsList extends MozLitElement {
     return html`
       <button
         class="tab-group-row subviewbutton"
+        role=${this.rowRole || nothing}
         data-tab-group-id=${group.id}
         ?data-saved=${!isOpen}
         data-l10n-id=${!isOpen ? "tab-group-menu-closed-tab-group" : nothing}
@@ -150,7 +159,7 @@ class TabGroupsList extends MozLitElement {
   }
 
   #handleCreateTabGroup() {
-    this.closest("panel")?.hidePopup();
+    /** @type {XULPopupElement} */ (this.closest("panel"))?.hidePopup();
     const win = this.#win;
     const newTab = win.gBrowser.addTrustedTab(win.BROWSER_NEW_TAB_URL);
     win.gBrowser.addTabGroup([newTab], {

@@ -12,13 +12,7 @@ add_setup(async () => {
 async function showOpenTabsPanel() {
   await SidebarTestUtils.showPanel(window, "viewOpenTabsSidebar");
   const { contentDocument } = SidebarController.browser;
-  const component = contentDocument.querySelector("sidebar-opentabs");
-  Assert.ok(component, "Open tabs panel element exists.");
-  Assert.ok(
-    BrowserTestUtils.isVisible(SidebarController.sidebarContainer),
-    "Open tabs panel is shown."
-  );
-  return component;
+  return contentDocument.querySelector("sidebar-opentabs");
 }
 
 function getTabList(component) {
@@ -481,7 +475,7 @@ add_task(async function test_window_close_drops_pref_entry() {
   await SpecialPowers.pushPrefEnv({ set: [[PREF, "{}"]] });
 
   const secondWin = await BrowserTestUtils.openNewBrowserWindow();
-  const secondWindowId = secondWin.__SSi;
+  const secondWindowId = SessionStore.getWindowId(secondWin);
   Assert.ok(secondWindowId, "Second window has a SessionStore id.");
 
   // Collapse the second window via the module and confirm the pref records it.

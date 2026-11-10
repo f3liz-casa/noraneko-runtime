@@ -14,11 +14,12 @@
 
 #include "mozilla/RefPtr.h"
 
+#include "mozilla/dom/Range.h"
+
 #include "nsCycleCollectionParticipant.h"
 #include "nsID.h"
 #include "nsIEditor.h"
 #include "nsISupportsImpl.h"
-#include "nsRange.h"
 #include "nscore.h"
 
 class nsINode;
@@ -31,7 +32,7 @@ namespace mozilla {
 class DeleteRangeTransaction final : public EditAggregateTransaction {
  protected:
   DeleteRangeTransaction(EditorBase& aEditorBase,
-                         const nsRange& aRangeToDelete);
+                         const dom::Range& aRangeToDelete);
 
  public:
   /**
@@ -41,7 +42,7 @@ class DeleteRangeTransaction final : public EditAggregateTransaction {
    * @param aRangeToDelete      The range to delete.
    */
   static already_AddRefed<DeleteRangeTransaction> Create(
-      EditorBase& aEditorBase, const nsRange& aRangeToDelete) {
+      EditorBase& aEditorBase, const dom::Range& aRangeToDelete) {
     RefPtr<DeleteRangeTransaction> transaction =
         new DeleteRangeTransaction(aEditorBase, aRangeToDelete);
     return transaction.forget();
@@ -64,24 +65,6 @@ class DeleteRangeTransaction final : public EditAggregateTransaction {
   EditorDOMPoint SuggestPointToPutCaret() const;
 
  protected:
-  /**
-   * Extend the range by adding a surrounding whitespace character to the range
-   * that is about to be deleted. This method depends on the pref
-   * `layout.word_select.delete_space_after_doubleclick_selection`.
-   *
-   * Considered cases:
-   *   "one [two] three" -> "one [two ]three" -> "one three"
-   *   "[one] two" -> "[one ]two" -> "two"
-   *   "one [two]" -> "one[ two]" -> "one"
-   *   "one [two], three" -> "one[ two], three" -> "one, three"
-   *   "one  [two]" -> "one [ two]" -> "one "
-   *
-   * @param aRange  [inout] The range that is about to be deleted.
-   * @return                NS_OK, unless nsRange::SetStart / ::SetEnd fails.
-   */
-  nsresult MaybeExtendDeletingRangeWithSurroundingWhitespace(
-      nsRange& aRange) const;
-
   /**
    * AppendTransactionsToDeleteIn() creates a DeleteTextTransaction or some
    * DeleteNodeTransactions to remove text or nodes between aStart and aEnd
@@ -142,7 +125,7 @@ class DeleteRangeTransaction final : public EditAggregateTransaction {
 
   // P1 in the range.  This is only non-null until DoTransaction is called and
   // we convert it into child transactions.
-  RefPtr<nsRange> mRangeToDelete;
+  RefPtr<dom::Range> mRangeToDelete;
 
   EditorDOMPoint mPointToPutCaret;
 };

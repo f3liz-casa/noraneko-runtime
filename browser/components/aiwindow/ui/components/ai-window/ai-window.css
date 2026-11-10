@@ -3,6 +3,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 :host {
+  --smart-page-empty-chat-message-font-color: light-dark(var(--color-violet-desaturated-50), var(--color-violet-desaturated-30));
+
+  @media (forced-colors) or (prefers-contrast) {
+    --smart-page-empty-chat-message-font-color: var(--text-color-deemphasized);
+  }
+}
+
+:host {
   height: 100vh;
   display: grid;
   grid-template-columns: 1fr;
@@ -26,10 +34,15 @@
     "smartbar"
     "prompts"
     "topsites"
+    "promo"
+    "resume-section"
     "."
     "footer";
-  grid-template-rows: 0 1fr auto auto auto auto 1fr auto;
+  /* Preserve space above the heading as the resume section grows, and a
+   * minimum gap above the footer so it doesn't crowd short content. */
+  grid-template-rows: 0 minmax(var(--space-xlarge), 1fr) auto auto auto auto auto auto minmax(var(--size-item-xlarge), 1fr) auto;
   align-content: stretch;
+  box-shadow: var(--smartwindow-main-box-shadow);
 }
 
 :host([mode="sidebar"]) {
@@ -85,6 +98,29 @@
   grid-area: browser;
   width: 100%;
   height: 100%;
+}
+
+.smartpage-chat-message {
+  grid-area: browser;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-large);
+  text-align: center;
+
+  img {
+    inline-size: var(--size-item-large);
+    block-size: var(--size-item-large);
+  }
+
+  p {
+    margin: 0;
+    max-inline-size: 270px;
+    color: var(--smart-page-empty-chat-message-font-color);
+    font-size: var(--font-size-root);
+    font-weight: 400;
+    line-height: 20px;
+  }
 }
 
 #smartbar-wrapper {
@@ -147,11 +183,12 @@
   accent-color: var(--smartwindow-assistant-accent-color-focus);
 }
 
-:host([mode="fullpage"]) #ai-window-smartbar {
+/* Keep the input from moving when the suggestions list opens. */
+#ai-window-smartbar[suggestions-position="bottom"] {
   top: 0;
 }
 
-:host([mode="sidebar"]) #ai-window-smartbar {
+#ai-window-smartbar[suggestions-position="top"] {
   bottom: 0;
 }
 
@@ -306,6 +343,20 @@ smartwindow-topsites {
   }
 }
 
+smartwindow-resume-section {
+  grid-area: resume-section;
+  width: 100%;
+
+  :host(.chat-active) & {
+    display: none;
+  }
+}
+
+/* Align the card grid with the content above it. */
+:host([mode="fullpage"]) smartwindow-resume-section {
+  max-width: var(--smartwindow-content-max-width);
+}
+
 smartwindow-footer {
   grid-area: footer;
   width: 100%;
@@ -314,9 +365,13 @@ smartwindow-footer {
 }
 
 smartwindow-promo {
-  grid-area: footer;
+  grid-area: promo;
   max-width: 580px;
   margin-block-end: calc(var(--space-small) + 20px);
+
+  :host(.chat-active) & {
+    display: none;
+  }
 }
 
 .sr-only {

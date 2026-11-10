@@ -23,6 +23,13 @@ const PREFS = {
   RESTORE_VERSION: "signon.storage.rust.restoreVersion",
   // Raising this asks every profile for one more restore pass (bug 2065703).
   RESTORE_TARGET_VERSION: "signon.storage.rust.restoreTargetVersion",
+  // How many startups in a row the Primary Password prompt for the migration
+  // was canceled.
+  PRIMARY_PASSWORD_DEFERRALS: "signon.storage.rust.primaryPasswordDeferrals",
+  // After that many canceled prompts the migration stops prompting; 0 means no
+  // limit.
+  MAX_PRIMARY_PASSWORD_DEFERRALS:
+    "signon.storage.rust.maxPrimaryPasswordDeferrals",
 };
 
 const MAX_MIGRATION_ATTEMPTS = 10;
@@ -32,7 +39,7 @@ const MAX_LOGINS_TO_RESTORE = 10000;
 
 // Continues the rust mirror's telemetry version sequence (last was 8); the
 // rust_migration_status event is shared with the former mirror.
-const telemetryVersion = "9";
+const telemetryVersion = "10";
 
 // Replace an origin's scheme with `moz-pwmngr-fixed-<prefix extracted from
 // login guid>://`.
@@ -71,6 +78,8 @@ function recordMigrationStatus({
   attempt,
   endState,
   primaryPasswordSet,
+  primaryPasswordDeferrals,
+  deferralReason,
   error,
 }) {
   Glean.pwmgr.rustMigrationStatus.record({
@@ -84,7 +93,22 @@ function recordMigrationStatus({
     attempt,
     end_state: endState,
     primary_password_set: primaryPasswordSet,
+    primary_password_deferrals: primaryPasswordDeferrals,
+    deferral_reason: deferralReason,
     error_message: error ? normalizeRustStorageErrorMessage(error) : null,
+  });
+}
+
+// Records a startup on which the migration did not run because the primary
+// password was not entered.
+function recordMigrationDeferred(deferralReason, primaryPasswordDeferrals) {
+  recordMigrationStatus({
+    runId: Services.uuid.generateUUID(),
+    attempt: Services.prefs.getIntPref(PREFS.MIGRATION_ATTEMPTS, 0),
+    endState: "Deferred",
+    primaryPasswordSet: true,
+    primaryPasswordDeferrals,
+    deferralReason,
   });
 }
 
@@ -166,6 +190,21 @@ export class LoginStorageMigrator {
       lazy.LoginHelper.isPrimaryPasswordSet() &&
       !this.#jsonStorage.isLoggedIn
     ) {
+      const deferrals = Services.prefs.getIntPref(
+        PREFS.PRIMARY_PASSWORD_DEFERRALS,
+        0
+      );
+      const maxDeferrals = Services.prefs.getIntPref(
+        PREFS.MAX_PRIMARY_PASSWORD_DEFERRALS,
+        3
+      );
+      if (maxDeferrals > 0 && deferrals >= maxDeferrals) {
+        this.#logger.log(
+          "Migration deferred: primary password prompt canceled too often"
+        );
+        recordMigrationDeferred("primary_password_limit", deferrals);
+        return this.#jsonStorage;
+      }
       const token = Cc[
         "@mozilla.org/security/internalkeytoken;1"
       ].createInstance(Ci.nsIPKCS11Token);
@@ -175,8 +214,17 @@ export class LoginStorageMigrator {
       } catch (e) {
         // An exception is thrown if the user cancels the prompt.
       }
+      Glean.pwmgr.primaryPasswordPrompt.record({
+        source: "migration",
+        result: token.isLoggedIn ? "success" : "cancel",
+      });
       if (!token.isLoggedIn) {
         this.#logger.log("Migration deferred: primary password locked");
+        Services.prefs.setIntPref(
+          PREFS.PRIMARY_PASSWORD_DEFERRALS,
+          deferrals + 1
+        );
+        recordMigrationDeferred("primary_password_canceled", deferrals + 1);
         return this.#jsonStorage;
       }
     }
@@ -186,10 +234,14 @@ export class LoginStorageMigrator {
   async #executeMigration() {
     this.#logger.log("Starting migration...");
 
-    const t0 = Date.now();
+    const t0 = ChromeUtils.now();
     const runId = Services.uuid.generateUUID();
     const attempt = Services.prefs.getIntPref(PREFS.MIGRATION_ATTEMPTS, 0);
     const primaryPasswordSet = lazy.LoginHelper.isPrimaryPasswordSet();
+    const primaryPasswordDeferrals = Services.prefs.getIntPref(
+      PREFS.PRIMARY_PASSWORD_DEFERRALS,
+      0
+    );
     let numberOfLoginsToMigrate = 0;
     let numberOfLoginsMigrated = 0;
     let numberOfLoginsQuarantined = 0;
@@ -280,7 +332,7 @@ export class LoginStorageMigrator {
     } finally {
       recordMigrationStatus({
         runId,
-        duration: Date.now() - t0,
+        duration: Math.round(ChromeUtils.now() - t0),
         numberOfLoginsToMigrate,
         numberOfLoginsMigrated,
         numberOfLoginsQuarantined,
@@ -288,6 +340,7 @@ export class LoginStorageMigrator {
         attempt,
         endState,
         primaryPasswordSet,
+        primaryPasswordDeferrals,
         error: fatalError,
       });
     }
@@ -298,6 +351,7 @@ export class LoginStorageMigrator {
     Services.prefs.setIntPref(PREFS.MIGRATION_ATTEMPTS, 0);
     Services.prefs.setIntPref(PREFS.RESTORE_VERSION, 0);
     Services.prefs.setIntPref(PREFS.RESTORE_ATTEMPTS, 0);
+    Services.prefs.setIntPref(PREFS.PRIMARY_PASSWORD_DEFERRALS, 0);
     return this.#rustStorage;
   }
 
@@ -388,6 +442,7 @@ export class LoginStorageMigrator {
     let updated = 0;
     let skipped = 0;
     let failed = 0;
+    let toDelete = 0;
     let fatalError = null;
     // Stays null while there is nothing worth reporting, which is the case for
     // every profile that never had the Rust backend enabled.
@@ -415,6 +470,18 @@ export class LoginStorageMigrator {
       Services.prefs.setIntPref(PREFS.RESTORE_ATTEMPTS, attempt + 1);
 
       const rustLogins = await this.#rustStorage.getAllLogins(false);
+
+      // What carrying the deletions over would cost: the JSON logins Rust no
+      // longer has, which is everything the user deleted while Rust was
+      // primary plus anything the migration failed to copy. Only counted for
+      // now, so that bug 2072278 can decide whether deleting them is safe.
+      const rustGuids = new Set(
+        rustLogins.map(login => login.QueryInterface(Ci.nsILoginMetaInfo).guid)
+      );
+      const jsonLogins = await this.#jsonStorage.getAllLogins(false);
+      toDelete = jsonLogins.filter(
+        login => !rustGuids.has(login.QueryInterface(Ci.nsILoginMetaInfo).guid)
+      ).length;
 
       for (const rustLogin of rustLogins) {
         // Between two logins is the only point where stopping leaves both
@@ -486,7 +553,8 @@ export class LoginStorageMigrator {
       if (endState) {
         this.#logger.log(
           `Restore ${endState}: ${added} added, ${updated} updated, ` +
-            `${skipped} skipped, ${failed} failed`
+            `${skipped} skipped, ${failed} failed, ` +
+            `${toDelete} to delete`
         );
         Glean.pwmgr.rustRestoreStatus.record({
           metric_version: telemetryVersion,
@@ -501,6 +569,7 @@ export class LoginStorageMigrator {
           number_of_logins_updated: updated,
           number_of_logins_skipped: skipped,
           number_of_logins_failed: failed,
+          number_of_logins_to_delete: toDelete,
           primary_password_set: lazy.LoginHelper.isPrimaryPasswordSet(),
           error_message: fatalError
             ? normalizeRustStorageErrorMessage(fatalError)

@@ -5,6 +5,7 @@
 #include "MediaFormatReader.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "AOMDecoder.h"
 #include "AllocationPolicy.h"
@@ -397,8 +398,7 @@ void MediaFormatReader::DecoderFactory::DoCreateDecoder(Data& aData) {
 
       p = platform->CreateDecoder(
           {*ownerData.GetCurrentInfo()->GetAsVideoInfo(),
-           mOwner->mKnowsCompositor, mOwner->GetImageContainer(),
-           mOwner->mCrashHelper,
+           mOwner->GetImageContainer(), mOwner->mCrashHelper,
            CreateDecoderParams::UseNullDecoder(ownerData.mIsNullDecode),
            TrackType::kVideoTrack, std::move(onWaitingForKeyEvent),
            CreateDecoderParams::VideoFrameRate(
@@ -914,7 +914,6 @@ MediaFormatReader::MediaFormatReader(MediaFormatReaderInit& aInit,
       mPendingNotifyDataArrived(false),
       mLastReportedNumDecodedFrames(0),
       mPreviousDecodedKeyframeTime_us(sNoPreviousDecodedKeyframe),
-      mKnowsCompositor(aInit.mKnowsCompositor),
       mInitDone(false),
       mTrackDemuxersMayBlock(false),
       mSeekScheduled(false),
@@ -2002,17 +2001,22 @@ bool MediaFormatReader::UpdateReceivedNewData(TrackType aTrack) {
   }
 
   if (!mSeekPromise.IsEmpty() &&
-      (!IsVideoOnlySeeking() || aTrack == TrackInfo::kVideoTrack)) {
+      (!IsVideoOnlySeeking() || aTrack == TrackInfo::kVideoTrack) &&
+      (!IsAudioOnlySeeking() || aTrack == TrackInfo::kAudioTrack)) {
     MOZ_ASSERT(!decoder.HasPromise());
     MOZ_DIAGNOSTIC_ASSERT(
-        (IsVideoOnlySeeking() || !mAudio.mTimeThreshold) &&
-            !mVideo.mTimeThreshold,
-        "InternalSeek must have been aborted when Seek was first called");
+        IsVideoOnlySeeking() || !mAudio.mTimeThreshold,
+        "Audio InternalSeek must have been aborted when Seek was first called");
     MOZ_DIAGNOSTIC_ASSERT(
-        (IsVideoOnlySeeking() || !mAudio.HasWaitingPromise()) &&
-            !mVideo.HasWaitingPromise(),
-        "Waiting promises must have been rejected when Seek was first called");
-    if (mVideo.mSeekRequest.Exists() ||
+        IsAudioOnlySeeking() || !mVideo.mTimeThreshold,
+        "Video InternalSeek must have been aborted when Seek was first called");
+    MOZ_DIAGNOSTIC_ASSERT(IsVideoOnlySeeking() || !mAudio.HasWaitingPromise(),
+                          "Audio waiting promise must have been rejected when "
+                          "Seek was first called");
+    MOZ_DIAGNOSTIC_ASSERT(IsAudioOnlySeeking() || !mVideo.HasWaitingPromise(),
+                          "Video waiting promise must have been rejected when "
+                          "Seek was first called");
+    if ((!IsAudioOnlySeeking() && mVideo.mSeekRequest.Exists()) ||
         (!IsVideoOnlySeeking() && mAudio.mSeekRequest.Exists())) {
       // Already waiting for a seek to complete. Nothing more to do.
       return true;
@@ -2065,7 +2069,8 @@ void MediaFormatReader::RequestDemuxSamples(TrackType aTrack) {
 void MediaFormatReader::DecoderData::StartRecordDecodingPerf(
     const TrackType aTrack, const MediaRawData* aSample) {
   if (!mDecodePerfRecorder) {
-    mDecodePerfRecorder.reset(new PerformanceRecorderMulti<PlaybackStage>());
+    mDecodePerfRecorder =
+        std::make_unique<PerformanceRecorderMulti<PlaybackStage>>();
   }
   const int32_t height = aTrack == TrackInfo::kVideoTrack
                              ? GetCurrentInfo()->GetAsVideoInfo()->mImage.height
@@ -2647,6 +2652,7 @@ void MediaFormatReader::Update(TrackType aTrack) {
     // We failed to decode on Linux with HW decoder,
     // give it another try without HW decoder.
     if (decoder.mError.ref() == NS_ERROR_DOM_MEDIA_DECODE_ERR &&
+        !decoder.mHardwareDecodingDisabled &&
         decoder.mDecoder->IsHardwareAccelerated(error)) {
       LOG("Error: {} decode error, disable HW acceleration",
           TrackTypeToStr(aTrack));
@@ -2890,7 +2896,7 @@ nsresult MediaFormatReader::ResetDecode(const TrackSet& aTracks) {
 
   if (HasAudio() && aTracks.contains(TrackInfo::kAudioTrack)) {
     mAudio.ResetDemuxer();
-    mVideo.mFirstFrameTime = Some(media::TimeUnit::Zero());
+    mAudio.mFirstFrameTime = Some(media::TimeUnit::Zero());
     Reset(TrackInfo::kAudioTrack);
     if (mAudio.HasPromise()) {
       mAudio.RejectPromise(NS_ERROR_DOM_MEDIA_CANCELED, __func__);
@@ -3543,12 +3549,6 @@ void MediaFormatReader::GetDebugInfo(dom::MediaFormatReaderDebugInfo& aInfo) {
 void MediaFormatReader::SetVideoNullDecode(bool aIsNullDecode) {
   MOZ_ASSERT(OnTaskQueue());
   return SetNullDecode(TrackType::kVideoTrack, aIsNullDecode);
-}
-
-void MediaFormatReader::UpdateCompositor(
-    already_AddRefed<layers::KnowsCompositor> aCompositor) {
-  MOZ_ASSERT(OnTaskQueue());
-  mKnowsCompositor = aCompositor;
 }
 
 void MediaFormatReader::SetNullDecode(TrackType aTrack, bool aIsNullDecode) {

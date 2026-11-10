@@ -1151,20 +1151,24 @@ void nsMenuPopupFrame::SchedulePendingWidgetMoveResize() {
   SchedulePaint();
 }
 
+void nsMenuPopupFrame::FlipAnchorForRTL(int8_t& aPopupAnchor,
+                                        int8_t& aPopupAlignment) {
+  // no need to flip the centered anchor types vertically
+  if (aPopupAnchor <= POPUPALIGNMENT_LEFTCENTER) {
+    aPopupAnchor = -aPopupAnchor;
+  }
+  if (aPopupAlignment <= POPUPALIGNMENT_LEFTCENTER) {
+    aPopupAlignment = -aPopupAlignment;
+  }
+}
+
 nsPoint nsMenuPopupFrame::AdjustPositionForAnchorAlign(
     nsRect& anchorRect, const nsSize& aPrefSize, FlipStyle& aHFlip,
     FlipStyle& aVFlip) const {
-  // flip the anchor and alignment for right-to-left
   int8_t popupAnchor(mPopupAnchor);
   int8_t popupAlign(mPopupAlignment);
   if (IsDirectionRTL()) {
-    // no need to flip the centered anchor types vertically
-    if (popupAnchor <= POPUPALIGNMENT_LEFTCENTER) {
-      popupAnchor = -popupAnchor;
-    }
-    if (popupAlign <= POPUPALIGNMENT_LEFTCENTER) {
-      popupAlign = -popupAlign;
-    }
+    FlipAnchorForRTL(popupAnchor, popupAlign);
   }
 
   nsRect originalAnchorRect(anchorRect);
@@ -2318,8 +2322,10 @@ void nsMenuPopupFrame::MoveTo(const CSSPoint& aPos, bool aUpdateAttrs,
     nsAutoString left, top;
     left.AppendInt(RoundedToInt(aPos).x);
     top.AppendInt(RoundedToInt(aPos).y);
-    popup->SetAttr(kNameSpaceID_None, nsGkAtoms::left, left, false);
-    popup->SetAttr(kNameSpaceID_None, nsGkAtoms::top, top, false);
+    popup->SetAttr(kNameSpaceID_None, nsGkAtoms::left, left, false,
+                   dom::IsKnownNewAttr::No);
+    popup->SetAttr(kNameSpaceID_None, nsGkAtoms::top, top, false,
+                   dom::IsKnownNewAttr::No);
   }
 }
 
@@ -2559,8 +2565,10 @@ void nsMenuPopupFrame::WindowResized(nsIWidget* aWidget,
   nsAutoString width, height;
   width.AppendInt(newCSS.width);
   height.AppendInt(newCSS.height);
-  popup->SetAttr(kNameSpaceID_None, nsGkAtoms::width, width, true);
-  popup->SetAttr(kNameSpaceID_None, nsGkAtoms::height, height, true);
+  popup->SetAttr(kNameSpaceID_None, nsGkAtoms::width, width, true,
+                 dom::IsKnownNewAttr::No);
+  popup->SetAttr(kNameSpaceID_None, nsGkAtoms::height, height, true,
+                 dom::IsKnownNewAttr::No);
 }
 
 bool nsMenuPopupFrame::RequestWindowClose(nsIWidget* aWidget) {

@@ -1440,9 +1440,14 @@ class BuildDriver(MozbuildObject):
 
             jobs = self.resolve_num_jobs(jobs, job_size)
 
+            backend_cls = get_backend_class(active_backend)
+            if what:
+                what = backend_cls.resolve_targets(what)
+
             if "Make" not in active_backend:
-                backend_cls = get_backend_class(active_backend)(config)
-                status = backend_cls.build(self, output, jobs, verbose, what)
+                status = backend_cls(config).build(
+                    self, output, jobs, verbose, what, append_env=append_env
+                )
 
                 if status and clobber_requested:
                     for line in CLOBBER_REQUESTED_MESSAGE.splitlines():
@@ -1485,22 +1490,6 @@ class BuildDriver(MozbuildObject):
                             continue
 
                     if make_dir is None and make_target is None:
-                        return 1
-
-                    if (
-                        config.is_artifact_build
-                        and target.startswith("installers-")
-                        and config.substs.get("MOZ_USE_LEGACY_L10N")
-                    ):
-                        # See https://bugzilla.mozilla.org/show_bug.cgi?id=1387485
-                        self.log(
-                            logging.ERROR,
-                            "build_error",
-                            {},
-                            "Localized Builds are not supported with Artifact Builds enabled.\n"
-                            "You should disable Artifact Builds (Use --disable-compile-environment "
-                            "in your mozconfig instead) then re-build to proceed.",
-                        )
                         return 1
 
                     # See bug 886162 - we don't want to "accidentally" build
@@ -1836,6 +1825,7 @@ class BuildDriver(MozbuildObject):
         line_handler = line_handler or on_line
 
         append_env = dict(append_env or {})
+        sccache = None
 
         # Back when client.mk was used, `mk_add_options "export ..."` lines
         # from the mozconfig would spill into the configure environment, so
@@ -1845,6 +1835,8 @@ class BuildDriver(MozbuildObject):
                 k, eq, v = line[len("export ") :].partition("=")
                 if eq == "=":
                     append_env[k] = v
+            elif line.startswith("MOZBUILD_MANAGE_SCCACHE_DAEMON="):
+                sccache = line.partition("=")[2]
 
         build_site = CommandSiteManager.from_environment(
             self.topsrcdir,
@@ -1866,21 +1858,52 @@ class BuildDriver(MozbuildObject):
         env = os.environ.copy()
         env.update(append_env)
 
-        with subprocess.Popen(
-            command,
-            cwd=self.topobjdir,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-        ) as process:
-            for line in process.stdout:
-                line_handler(line.rstrip())
-            status = process.wait()
+        def run_sccache(*args, extra_env=None):
+            result = subprocess.run(
+                [sccache, *args],
+                env={**env, **(extra_env or {})},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+            for line in result.stdout.splitlines():
+                line_handler(line)
+
+        upload_path = os.environ.get("UPLOAD_PATH")
+        # In automation, configure's compiler checks would otherwise implicitly
+        # start an sccache server without logging, leaving nothing to debug
+        # failures to start it. client.mk starts its own server for the build.
+        if sccache and upload_path:
+            mkdir(upload_path)
+            run_sccache(
+                "--start-server",
+                extra_env={
+                    "SCCACHE_LOG": "sccache=debug",
+                    "SCCACHE_ERROR_LOG": mozpath.join(upload_path, "sccache.log"),
+                    "SCCACHE_LOG_MILLIS": "true",
+                },
+            )
+
+        try:
+            with subprocess.Popen(
+                command,
+                cwd=self.topobjdir,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+            ) as process:
+                for line in process.stdout:
+                    line_handler(line.rstrip())
+                status = process.wait()
+        finally:
+            if sccache and upload_path:
+                run_sccache("--stop-server")
         if buildstatus_messages:
             line_handler("BUILDSTATUS TIER_FINISH configure")
         # config.log is written in the objdir, which automation doesn't upload.
-        if upload_path := os.environ.get("UPLOAD_PATH"):
+        if upload_path:
             try:
                 mkdir(upload_path)
                 shutil.copy2(

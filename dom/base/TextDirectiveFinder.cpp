@@ -7,10 +7,11 @@
 #include "TextDirectiveUtil.h"
 #include "fragmentdirectives_ffi_generated.h"
 #include "mozilla/CycleCollectedUniquePtr.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/ToString.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/glean/DomMetrics.h"
 #include "nsFind.h"
-#include "nsRange.h"
 
 namespace mozilla::dom {
 
@@ -42,7 +43,7 @@ bool TextDirectiveFinder::HasUninvokedDirectives() const {
   return !mUninvokedTextDirectives.IsEmpty();
 }
 
-nsTArray<RefPtr<nsRange>> TextDirectiveFinder::FindTextDirectivesInDocument() {
+nsTArray<RefPtr<Range>> TextDirectiveFinder::FindTextDirectivesInDocument() {
   if (mUninvokedTextDirectives.IsEmpty()) {
     return {};
   }
@@ -57,7 +58,7 @@ nsTArray<RefPtr<nsRange>> TextDirectiveFinder::FindTextDirectivesInDocument() {
   // To invoke text directives, given as input a list of text directives text
   // directives and a Document document, run these steps:
   // 1. Let ranges be a list of ranges, initially empty.
-  nsTArray<RefPtr<nsRange>> textDirectiveRanges(
+  nsTArray<RefPtr<Range>> textDirectiveRanges(
       mUninvokedTextDirectives.Length());
 
   // Additionally (not mentioned in the spec), remove all text directives from
@@ -71,7 +72,7 @@ nsTArray<RefPtr<nsRange>> TextDirectiveFinder::FindTextDirectivesInDocument() {
   for (TextDirective& textDirective : mUninvokedTextDirectives) {
     // 2.1 If the result of running find a range from a text directive given
     //     directive and document is non-null, then append it to ranges.
-    if (RefPtr<nsRange> range = FindRangeForTextDirective(textDirective)) {
+    if (RefPtr<Range> range = FindRangeForTextDirective(textDirective)) {
       textDirectiveRanges.AppendElement(range);
       TEXT_FRAGMENT_LOG("Found text directive '{}'",
                         ToString(textDirective).c_str());
@@ -113,7 +114,7 @@ nsTArray<RefPtr<nsRange>> TextDirectiveFinder::FindTextDirectivesInDocument() {
   return textDirectiveRanges;
 }
 
-RefPtr<nsRange> TextDirectiveFinder::FindRangeForTextDirective(
+RefPtr<Range> TextDirectiveFinder::FindRangeForTextDirective(
     const TextDirective& aTextDirective) {
   // This method follows this spec algorithm and applies some changes:
   // https://wicg.github.io/scroll-to-text-fragment/#find-a-range-from-a-text-directive
@@ -122,27 +123,36 @@ RefPtr<nsRange> TextDirectiveFinder::FindRangeForTextDirective(
   // 1. Let searchRange be a range with start (document, 0) and end (document,
   // document’s length)
   ErrorResult rv;
-  RefPtr<nsRange> searchRange =
-      nsRange::Create(mDocument, 0, mDocument, mDocument->Length(), rv);
+  RefPtr<Range> searchRange =
+      Range::Create(mDocument, 0, mDocument, mDocument->Length(), rv);
   if (rv.Failed()) {
     return nullptr;
   }
 
   nsContentUtils::NodeIndexCache nodeIndexCache;
+  nsFind::WordBoundaryCache wordBoundaryCache;
   RefPtr<nsFind> finder = new nsFind();
+
   finder->SetNodeIndexCache(&nodeIndexCache);
+  auto clearNodeIndexCache =
+      MakeScopeExit([&] { finder->SetNodeIndexCache(nullptr); });
+  finder->SetWordBoundaryCache(&wordBoundaryCache);
+  auto clearWordBoundaryCache =
+      MakeScopeExit([&] { finder->SetWordBoundaryCache(nullptr); });
+
   finder->SetSkipNativeAnonymousContent(true);
+  finder->SetSegmenterWordBoundaries(true);
 
   // 2. While searchRange is not collapsed:
   while (!searchRange->Collapsed()) {
     // 2.1. Let potentialMatch be null.
-    RefPtr<nsRange> potentialMatch;
+    RefPtr<Range> potentialMatch;
     // 2.2. If parsedValues’s prefix is not null:
     if (!aTextDirective.prefix.IsEmpty()) {
       // 2.2.1. Let prefixMatch be the the result of running the find a string
       // in range steps with query parsedValues’s prefix, searchRange
       // searchRange, wordStartBounded true and wordEndBounded false.
-      RefPtr<nsRange> prefixMatch = TextDirectiveUtil::FindStringInRange(
+      RefPtr<Range> prefixMatch = TextDirectiveUtil::FindStringInRange(
           finder, searchRange->StartRef(), searchRange->EndRef(),
           aTextDirective.prefix, true, false);
       // 2.2.2. If prefixMatch is null, return null.
@@ -177,7 +187,7 @@ RefPtr<nsRange> TextDirectiveFinder::FindRangeForTextDirective(
       // search until the end of the document. Since the following `start`
       // attribute can't go across a block boundary, it is sufficient to do a
       // search until the next block boundary.
-      RefPtr<nsRange> matchRange = nsRange::Create(
+      RefPtr<Range> matchRange = Range::Create(
           prefixMatch->GetEndContainer(), prefixMatch->EndOffset(),
           searchRange->GetEndContainer(), searchRange->EndOffset(), rv);
       if (rv.Failed()) {
@@ -282,7 +292,7 @@ RefPtr<nsRange> TextDirectiveFinder::FindRangeForTextDirective(
     }
     // 2.4. Let rangeEndSearchRange be a range whose start is potentialMatch’s
     // end and whose end is searchRange’s end.
-    RefPtr<nsRange> rangeEndSearchRange = nsRange::Create(
+    RefPtr<Range> rangeEndSearchRange = Range::Create(
         potentialMatch->GetEndContainer(), potentialMatch->EndOffset(),
         searchRange->GetEndContainer(), searchRange->EndOffset(), rv);
     if (rv.Failed()) {
@@ -299,7 +309,7 @@ RefPtr<nsRange> TextDirectiveFinder::FindRangeForTextDirective(
         // range steps with query parsedValues’s end, searchRange
         // rangeEndSearchRange, wordStartBounded true, and wordEndBounded
         // mustEndAtWordBoundary.
-        RefPtr<nsRange> endMatch = TextDirectiveUtil::FindStringInRange(
+        RefPtr<Range> endMatch = TextDirectiveUtil::FindStringInRange(
             finder, rangeEndSearchRange->StartRef(),
             rangeEndSearchRange->EndRef(), aTextDirective.end, true,
             mustEndAtWordBoundary);
@@ -328,7 +338,7 @@ RefPtr<nsRange> TextDirectiveFinder::FindRangeForTextDirective(
       // end and end equal to searchRange’s end.
       // Note: Again, this is highly inefficient. It's perfectly fine to only
       // search up to the next block boundary.
-      RefPtr<nsRange> suffixRange = nsRange::Create(
+      RefPtr<Range> suffixRange = Range::Create(
           potentialMatch->GetEndContainer(), potentialMatch->EndOffset(),
           searchRange->GetEndContainer(), searchRange->EndOffset(), rv);
       if (rv.Failed()) {
@@ -352,7 +362,7 @@ RefPtr<nsRange> TextDirectiveFinder::FindRangeForTextDirective(
       // 2.5.6. Let suffixMatch be result of running the find a string in range
       // steps with query parsedValue's suffix, searchRange suffixRange,
       // wordStartBounded false, and wordEndBounded true.
-      RefPtr<nsRange> suffixMatch = TextDirectiveUtil::FindStringInRange(
+      RefPtr<Range> suffixMatch = TextDirectiveUtil::FindStringInRange(
           finder, suffixRange->StartRef(), suffixRange->EndRef(),
           aTextDirective.suffix, false, true);
       // 2.5.7. If suffixMatch is null, return null.

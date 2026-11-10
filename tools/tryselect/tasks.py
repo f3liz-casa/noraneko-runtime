@@ -223,7 +223,9 @@ def generate_tasks(
 
         register_gecko_taskgraph(load_graph_config(root))
 
-    generator = TaskGraphGenerator(root_dir=root, parameters=params)
+    generator = TaskGraphGenerator(
+        root_dir=root, parameters=params, enable_verifications=False
+    )
 
     cache_dir = os.path.join(
         get_state_dir(specific_to_topsrcdir=True), "cache", "taskgraph"
@@ -267,11 +269,6 @@ def generate_tasks(
     # time.
     tg_full = generate("full_task_set")
     tg_target = generate("target_task_set")
-
-    # discard results from these, we only need cache.
-    if full:
-        generate("full_task_graph")
-    generate("target_task_graph")
 
     os.chdir(cwd)
     if full:

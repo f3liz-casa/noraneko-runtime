@@ -28,7 +28,7 @@
 #include "mozilla/glean/GfxMetrics.h"
 #include "mozilla/glean/IpcMetrics.h"
 #include "mozilla/ipc/Endpoint.h"
-#include "mozilla/layers/APZInputBridgeChild.h"
+#include "mozilla/layers/APZBridgeChild.h"
 #include "mozilla/layers/LayerTreeOwnerTracker.h"
 #include "nsHashPropertyBag.h"
 #include "nsIGfxInfo.h"
@@ -352,6 +352,7 @@ void GPUChild::ActorDestroy(ActorDestroyReason aWhy) {
 
   gfxVars::RemoveReceiver(this);
   mHost->OnChannelClosed();
+  mHost = nullptr;
 }
 
 mozilla::ipc::IPCResult GPUChild::RecvUpdateFeature(

@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Test Panel Item shortcut attribute</title>
+    <script src="chrome://mochikit/content/tests/SimpleTest/SimpleTest.js"></script>
+    <link
+      rel="stylesheet"
+      href="chrome://mochikit/content/tests/SimpleTest/test.css"
+    />
+  </head>
+  <body>
+    <p id="display"></p>
+    <div id="content">
+      <panel-list>
+        <panel-item shortcut="Ctrl+N">New</panel-item>
+        <panel-item>Open</panel-item>
+      </panel-list>
+    </div>
+    <script class="testbody" type="application/javascript">
+      const getShortcut = item =>
+        item.shadowRoot.querySelector("[part=shortcut]");
+
+      add_task(async function testShortcutFromMarkup() {
+        let [item, plainItem] = document.querySelector("panel-list").children;
+
+        let shortcut = getShortcut(item);
+        is(shortcut.textContent, "Ctrl+N", "The shortcut text is shown");
+        is(
+          shortcut.previousElementSibling,
+          item.label,
+          "The shortcut follows the label"
+        );
+
+        ok(!getShortcut(plainItem), "No shortcut without the attribute");
+      });
+
+      add_task(async function testShortcutInAccessibleName() {
+        let panel = document.querySelector("panel-list");
+        let [item] = panel.children;
+        let shown = new Promise(r =>
+          panel.addEventListener("shown", r, { once: true })
+        );
+        panel.show();
+        await shown;
+        let accService = SpecialPowers.Cc[
+          "@mozilla.org/accessibilityService;1"
+        ].getService(SpecialPowers.Ci.nsIAccessibilityService);
+        let acc;
+        await SimpleTest.promiseWaitForCondition(
+          () => (acc = accService.getAccessibleFor(item.button)),
+          "Waiting for the button's accessible"
+        );
+        is(acc.name, "New Ctrl+N", "The shortcut is in the accessible name");
+
+        let hidden = new Promise(r =>
+          panel.addEventListener("hidden", r, { once: true })
+        );
+        panel.hide();
+        await hidden;
+      });
+
+      add_task(async function testShortcutUpdates() {
+        let [item] = document.querySelector("panel-list").children;
+
+        item.setAttribute("shortcut", "Ctrl+M");
+        is(getShortcut(item).textContent, "Ctrl+M", "The shortcut updates");
+
+        item.removeAttribute("shortcut");
+        ok(!getShortcut(item), "The shortcut is removed");
+      });
+
+      add_task(async function testShortcutAndBadgeOrder() {
+        let [item] = document.querySelector("panel-list").children;
+        let getBadge = () => item.shadowRoot.querySelector("moz-badge");
+        let checkOrder = msg => {
+          is(getBadge().previousElementSibling, item.label, `${msg}: badge`);
+          is(
+            getShortcut(item).previousElementSibling,
+            getBadge(),
+            `${msg}: shortcut`
+          );
+        };
+
+        item.setAttribute("shortcut", "Ctrl+N");
+        item.setAttribute("badge-type", "new");
+        checkOrder("Badge set after shortcut");
+
+        item.removeAttribute("shortcut");
+        item.removeAttribute("badge-type");
+        item.setAttribute("badge-type", "new");
+        item.setAttribute("shortcut", "Ctrl+N");
+        checkOrder("Shortcut set after badge");
+
+        item.removeAttribute("shortcut");
+        item.removeAttribute("badge-type");
+      });
+    </script>
+  </body>
+</html>

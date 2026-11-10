@@ -1337,6 +1337,11 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   void RemoveNodeFromChainIfNeeded(ElementState aState,
                                    nsIContent* aContentRemoved, bool aNotify);
 
+  // Tells the hovered document's speculation rules that the deepest hovered
+  // node is about to become aNewHover, so that it can start or cancel the
+  // hover delay for a moderate eagerness prefetch.
+  void NotifySpeculationRulesOfHover(nsIContent* aNewHover);
+
   [[nodiscard]] bool IsEventOutsideDragThreshold(
       const WidgetInputEvent& aEvent) const;
 
@@ -1423,6 +1428,12 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   // Last mouse event screen point (in device pixel) when mouse was locked, used
   // to restore mouse position after unlocking.
   static LayoutDeviceIntPoint sPreLockScreenPoint;
+
+  // Screen point of the last event that wasn't synthesized for tests, if any.
+  // Only this is used to restore the pointer after unlocking, so that
+  // synthesized events don't move the real cursor somewhere it never was.
+  static Maybe<CSSIntPoint> sLastRealScreenPoint;
+  static bool sRestorePointerAfterUnlock;
 
   // Stores the mRefPoint of the last synthetic mouse move we dispatched
   // to re-center the mouse when we were pointer locked. If this is (-1,-1) it

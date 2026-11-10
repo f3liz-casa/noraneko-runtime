@@ -913,7 +913,7 @@ static WrFiltersStatus WrFilterOpSVGFEDisplacementMap(
     return WrFiltersStatus::BLOB_FALLBACK;
   }
   aWrFilters.filters.AppendElement(wr::FilterOp::SVGFEDisplacementMap(
-      aGraphNode, aAttributes.mScale,
+      aGraphNode, aAttributes.mScale.Width(), aAttributes.mScale.Height(),
       static_cast<uint32_t>(aAttributes.mXChannel),
       static_cast<uint32_t>(aAttributes.mYChannel)));
   return WrFiltersStatus::SVGFE;
@@ -2012,8 +2012,9 @@ gfxMatrix FilterInstance::GetUserSpaceToFrameSpaceInCSSPxTransform() const {
   if (!mTargetFrame) {
     return gfxMatrix();
   }
-  return gfxMatrix::Translation(
-      -SVGUtils::FrameSpaceInCSSPxToUserSpaceOffset(mTargetFrame));
+  CSSPoint toUserSpace =
+      SVGUtils::FrameSpaceInCSSPxToUserSpaceOffset(mTargetFrame);
+  return gfxMatrix::Translation(-toUserSpace.x, -toUserSpace.y);
 }
 
 }  // namespace mozilla

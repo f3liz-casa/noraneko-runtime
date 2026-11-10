@@ -257,14 +257,33 @@ class gfxTextRun : public gfxShapedText {
     virtual uint32_t GetAppUnitsPerDevUnit() const = 0;
 
     virtual nscoord LetterSpacing() const = 0;
+
+    /**
+     * Get the source text that the given range of the textrun was shaped
+     * from, so that glyphs produced via OpenType substitution (ligatures,
+     * math styling, etc.) can be mapped back to their original characters,
+     * e.g. for a PDF ToUnicode/ActualText mapping. aText must be empty, and
+     * is filled with exactly aRange.Length() UTF-16 code units, one for each
+     * textrun character.
+     * Returns false if the source text can't or shouldn't be provided, e.g.
+     * because providing it could leak sensitive text (as for masked password
+     * fields).
+     */
+    virtual bool GetSourceText(Range aRange, nsAString& aText) const {
+      return false;
+    }
   };
 
   struct MOZ_STACK_CLASS DrawParams {
+    DrawParams(gfxContext* aContext,
+               mozilla::gfx::FontPaletteValueSet* aPaletteValueSet)
+        : context(aContext), paletteValueSet(aPaletteValueSet) {}
+
     gfxContext* context;
-    mozilla::gfx::PaletteCache& paletteCache;
     DrawMode drawMode = DrawMode::GLYPH_FILL;
     nscolor textStrokeColor = 0;
     nsAtom* fontPalette = nullptr;
+    mozilla::gfx::FontPaletteValueSet* paletteValueSet = nullptr;
     gfxPattern* textStrokePattern = nullptr;
     const mozilla::gfx::StrokeOptions* strokeOpts = nullptr;
     const mozilla::gfx::DrawOptions* drawOpts = nullptr;
@@ -275,8 +294,6 @@ class gfxTextRun : public gfxShapedText {
     gfxTextRunDrawCallbacks* callbacks = nullptr;
     bool allowGDI = true;
     bool hasTextShadow = false;
-    DrawParams(gfxContext* aContext, mozilla::gfx::PaletteCache& aPaletteCache)
-        : context(aContext), paletteCache(aPaletteCache) {}
   };
 
   /**
@@ -310,7 +327,7 @@ class gfxTextRun : public gfxShapedText {
   void DrawEmphasisMarks(gfxContext* aContext, gfxTextRun* aMark,
                          gfxFloat aMarkAdvance, mozilla::gfx::Point aPt,
                          Range aRange, const PropertyProvider* aProvider,
-                         mozilla::gfx::PaletteCache& aPaletteCache,
+                         mozilla::gfx::FontPaletteValueSet* aPaletteValueSet,
                          imgDrawingParams& aImgParams) const;
 
   /**
@@ -886,7 +903,7 @@ class gfxTextRun : public gfxShapedText {
 
   // **** drawing helper ****
   void DrawGlyphs(gfxFont* aFont, Range aRange, mozilla::gfx::Point* aPt,
-                  const PropertyProvider* aProvider, Range aSpacingRange,
+                  const PropertyProvider* aProvider, Range aProviderRange,
                   TextRunDrawParams& aParams, imgDrawingParams& aImgParams,
                   mozilla::gfx::ShapedTextFlags aOrientation) const;
 
@@ -930,7 +947,7 @@ class gfxFontGroup final : public gfxTextRunFactory {
                const gfxFontStyle* aStyle, nsAtom* aLanguage,
                bool aExplicitLanguage, gfxTextPerfMetrics* aTextPerf,
                gfxUserFontSet* aUserFontSet, gfxFloat aDevToCssSize,
-               StyleFontVariantEmoji aVariantEmoji);
+               mozilla::StyleFontVariantEmoji aVariantEmoji);
 
   virtual ~gfxFontGroup();
 
@@ -1424,7 +1441,8 @@ class gfxFontGroup final : public gfxTextRunFactory {
 
   bool mResolvedFonts = false;  // Whether the mFonts array has been set up.
 
-  StyleFontVariantEmoji mFontVariantEmoji = StyleFontVariantEmoji::Normal;
+  mozilla::StyleFontVariantEmoji mFontVariantEmoji =
+      mozilla::StyleFontVariantEmoji::Normal;
 
   // Generic font family used to select among font prefs during fallback.
   mozilla::StyleGenericFontFamily mFallbackGeneric =

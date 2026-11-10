@@ -50,6 +50,10 @@ public class Environment {
     return BuildConfig.DEBUG_BUILD;
   }
 
+  public boolean isCoverageBuild() {
+    return BuildConfig.MOZ_CODE_COVERAGE;
+  }
+
   public boolean isX86() {
     final String abi = Build.SUPPORTED_ABIS[0];
     return abi.startsWith("x86");
@@ -67,7 +71,7 @@ public class Environment {
   }
 
   public boolean isIsolatedProcess() {
-    return BuildConfig.MOZ_ANDROID_CONTENT_SERVICE_ISOLATED_PROCESS;
+    return getEnvVar("MOZ_ANDROID_CONTENT_SERVICE_ISOLATED_PROCESS").equals("1");
   }
 
   public boolean isAppZygoteProcess() {

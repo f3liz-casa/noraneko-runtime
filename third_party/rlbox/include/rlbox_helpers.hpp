@@ -2,8 +2,8 @@
 // IWYU pragma: private, include "rlbox.hpp"
 // IWYU pragma: friend "rlbox_.*\.hpp"
 
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -28,8 +28,8 @@ namespace detail {
         RLBOX_CUSTOM_ABORT(msg);
       #else
         fprintf(stderr, "%s\n", msg);
-        std::abort();
       #endif
+      std::abort();
     #endif
   }
     // clang-format on
@@ -153,7 +153,8 @@ namespace detail {
     explicit scope_exit(T_ExitFunc&& cleanup)
       : exit_func(cleanup)
       , released(true)
-    {}
+    {
+    }
 
     scope_exit(scope_exit&& rhs)
       : exit_func(std::move(rhs.exit_func))
@@ -185,7 +186,7 @@ namespace detail {
   }
 
 /*
-Make sure classes can access the private memmbers of tainted<T1> and
+Make sure classes can access the private members of tainted<T1> and
 tainted_volatile. Ideally, this should be
 
 template <typename U1>
@@ -211,6 +212,31 @@ But C++ doesn't seem to allow the above
                                                                                \
   template<typename U1, typename U2>                                           \
   friend class app_pointer;
+
+  template<typename T>
+  T checked_add(T aLhs, T aRhs, const char* aErrorMsg)
+  {
+    static_assert(std::is_unsigned_v<T>, "Expected unsigned type");
+
+    T ret = aLhs + aRhs;
+    bool has_overflow = ret < aLhs;
+    detail::dynamic_check(!has_overflow, aErrorMsg);
+
+    return ret;
+  }
+
+  template<typename T>
+  T checked_multiply(T aLhs, T aRhs, const char* aErrorMsg)
+  {
+    static_assert(std::is_unsigned_v<T>, "Expected unsigned type");
+
+    bool has_overflow =
+      (aLhs != 0) && (aRhs > (std::numeric_limits<T>::max() / aLhs));
+    detail::dynamic_check(!has_overflow, aErrorMsg);
+
+    T ret = aLhs * aRhs;
+    return ret;
+  }
 }
 
 }

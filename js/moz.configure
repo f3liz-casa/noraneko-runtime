@@ -155,10 +155,6 @@ set_define(
     "ENABLE_PORTABLE_BASELINE_INTERP_FORCE",
     depends_if("--enable-portable-baseline-interp-force")(lambda _: True),
 )
-set_config(
-    "ENABLE_PORTABLE_BASELINE_INTERP_FORCE",
-    depends_if("--enable-portable-baseline-interp-force")(lambda _: True),
-)
 
 # Enable ahead-of-time-known preloaded IC bodies.
 option(
@@ -185,10 +181,6 @@ set_define(
     "ENABLE_JS_AOT_ICS_FORCE",
     depends_if("--enable-aot-ics-force")(lambda _: True),
 )
-set_config(
-    "ENABLE_JS_AOT_ICS_FORCE",
-    depends_if("--enable-aot-ics-force")(lambda _: True),
-)
 
 # Enforce AOT ICs (testing only): abort if a new IC (not in AOT corpus) is encountered.
 option(
@@ -197,10 +189,6 @@ option(
 )
 
 set_define(
-    "ENABLE_JS_AOT_ICS_ENFORCE",
-    depends_if("--enable-aot-ics-enforce")(lambda _: True),
-)
-set_config(
     "ENABLE_JS_AOT_ICS_ENFORCE",
     depends_if("--enable-aot-ics-enforce")(lambda _: True),
 )
@@ -264,7 +252,6 @@ def simulator(jit_enabled, simulator_enabled, target):
     return namespace(**{sim_cpu: True})
 
 
-set_config("JS_SIMULATOR", depends_if(simulator)(lambda x: True))
 set_config("JS_SIMULATOR_ARM", simulator.arm)
 set_config("JS_SIMULATOR_ARM64", simulator.arm64)
 set_config("JS_SIMULATOR_MIPS64", simulator.mips64)
@@ -317,6 +304,31 @@ set_define("JS_CODEGEN_RISCV64", jit_codegen.riscv64)
 set_define("JS_CODEGEN_X86", jit_codegen.x86)
 set_define("JS_CODEGEN_X64", jit_codegen.x64)
 set_define("JS_CODEGEN_WASM32", jit_codegen.wasm32)
+
+
+# Hardware shadow stack support
+# =======================================================
+option(
+    "--enable-js-hardware-shadow-stack",
+    help="Enable experimental hardware shadow stack support",
+)
+
+
+@depends("--enable-js-hardware-shadow-stack", target, simulator)
+def js_hw_shstk(enabled, target, simulator):
+    if not enabled:
+        return
+
+    if target.cpu != "x86_64":
+        die("--enable-js-hardware-shadow-stack is only supported on x86_64")
+
+    if simulator:
+        die("--enable-js-hardware-shadow-stack is not supported with a JIT simulator")
+
+    return True
+
+
+set_define("JS_HW_SHADOW_STACK", js_hw_shstk)
 
 
 # Profiling
@@ -389,7 +401,6 @@ def imply_vtune(value, target):
         return True
 
 
-set_config("MOZ_PROFILING", profiling)
 set_define("MOZ_PROFILING", profiling)
 imply_option("--enable-vtune", imply_vtune, reason="--enable-profiling")
 
@@ -516,7 +527,6 @@ def jit_disasm_arm(jit_enabled, spew, simulator, target, debug):
         return True
 
 
-set_config("JS_DISASM_ARM", jit_disasm_arm)
 set_define("JS_DISASM_ARM", jit_disasm_arm)
 
 
@@ -533,7 +543,6 @@ def jit_disasm_riscv(jit_enabled, spew, simulator, target, debug):
         return True
 
 
-set_config("JS_DISASM_RISCV64", jit_disasm_riscv)
 set_define("JS_DISASM_RISCV64", jit_disasm_riscv)
 
 
@@ -550,7 +559,6 @@ def jit_disasm_loong64(jit_enabled, spew, simulator, target, debug):
         return True
 
 
-set_config("JS_DISASM_LOONG64", jit_disasm_loong64)
 set_define("JS_DISASM_LOONG64", jit_disasm_loong64)
 
 
@@ -567,7 +575,6 @@ def jit_disasm_arm64(jit_enabled, spew, simulator, target, debug):
         return True
 
 
-set_config("JS_DISASM_ARM64", jit_disasm_arm64)
 set_define("JS_DISASM_ARM64", jit_disasm_arm64)
 
 # When enabled, masm will generate assumeUnreachable calls that act as
@@ -580,7 +587,6 @@ option(
     help="{Enable|Disable} MacroAssembler verbosity of generated code",
 )
 set_define("JS_MASM_VERBOSE", depends_if("--enable-masm-verbose")(lambda _: True))
-set_config("JS_MASM_VERBOSE", depends_if("--enable-masm-verbose")(lambda _: True))
 
 # Architecture feature flags
 # =======================================================
@@ -641,6 +647,17 @@ def rust_simd(value, target):
 set_config("MOZ_RUST_SIMD", rust_simd)
 set_define("MOZ_RUST_SIMD", rust_simd)
 
+
+@depends(rust_simd)
+def rustc_bootstrap_default(rust_simd):
+    crates = ["mozglue_static", "qcms"]
+    if rust_simd:
+        crates += ["encoding_rs", "any_all_workaround"]
+    return ",".join(crates)
+
+
+set_config("MOZ_RUSTC_BOOTSTRAP_DEFAULT", rustc_bootstrap_default)
+
 # Telemetry to measure compile time and generated-code runtime
 # ============================================================
 
@@ -664,9 +681,6 @@ option(
     help="{Enable|Disable} debugging for wasm codegen",
 )
 
-set_config(
-    "WASM_CODEGEN_DEBUG", depends_if("--enable-wasm-codegen-debug")(lambda x: True)
-)
 set_define(
     "WASM_CODEGEN_DEBUG", depends_if("--enable-wasm-codegen-debug")(lambda x: True)
 )
@@ -760,7 +774,6 @@ def wasm_jspi(value, jit_enabled, simulator, no_experimental, target):
     )
 
 
-set_config("ENABLE_WASM_JSPI", wasm_jspi)
 set_define("ENABLE_WASM_JSPI", wasm_jspi)
 
 # Support for WebAssembly shared memory and atomics.
@@ -779,7 +792,6 @@ def enable_shared_memory(value):
         return True
 
 
-set_config("ENABLE_SHARED_MEMORY", enable_shared_memory)
 set_define("ENABLE_SHARED_MEMORY", enable_shared_memory)
 
 # Support for JIT SIMD
@@ -794,7 +806,7 @@ def default_jit_simd(jit_enabled, simulator, target):
     if simulator and (simulator[0] != "arm64"):
         return
 
-    if target.cpu in ("x86_64", "x86", "aarch64"):
+    if target.cpu in ("x86_64", "x86", "aarch64", "loongarch64"):
         return True
 
 
@@ -821,13 +833,14 @@ def jit_simd(value, jit_enabled, simulator, target):
     if simulator and (simulator[0] != "arm64"):
         die("--enable-jit-simd is not supported for simulators, except arm64")
 
-    if target.cpu in ("x86_64", "x86", "aarch64"):
+    if target.cpu in ("x86_64", "x86", "aarch64", "loongarch64"):
         return True
 
-    die("--enable-jit-simd only possible when targeting the x86_64/x86/arm64 jits")
+    die(
+        "--enable-jit-simd only possible when targeting the x86_64/x86/arm64/loongarch64 jits"
+    )
 
 
-set_config("ENABLE_JIT_SIMD", jit_simd)
 set_define("ENABLE_JIT_SIMD", jit_simd)
 
 # Whether to check for field changes in WebAssembly serialization
@@ -909,7 +922,6 @@ def jit_avx(value, jit_simd_enabled, simulator, target):
     die("--enable-jit-avx only possible when targeting the x86_64/x86 jits")
 
 
-set_config("ENABLE_JIT_AVX", jit_avx)
 set_define("ENABLE_JIT_AVX", jit_avx)
 
 # Support for WebAssembly relaxed SIMD
@@ -940,7 +952,6 @@ def wasm_relaxed_simd(value, jit_simd):
     return True
 
 
-set_config("ENABLE_WASM_RELAXED_SIMD", wasm_relaxed_simd)
 set_define("ENABLE_WASM_RELAXED_SIMD", wasm_relaxed_simd)
 
 # Support for WebAssembly intgemm private intrinsics
@@ -997,7 +1008,6 @@ def wasm_memory_control(value, no_experimental):
     return True
 
 
-set_config("ENABLE_WASM_MEMORY_CONTROL", wasm_memory_control)
 set_define("ENABLE_WASM_MEMORY_CONTROL", wasm_memory_control)
 
 
@@ -1010,10 +1020,6 @@ option(
     help="{Enable|Disable} WebAssembly branch hinting",
 )
 
-set_config(
-    "ENABLE_WASM_BRANCH_HINTING",
-    depends_if("--enable-wasm-branch-hinting")(lambda x: True),
-)
 set_define(
     "ENABLE_WASM_BRANCH_HINTING",
     depends_if("--enable-wasm-branch-hinting")(lambda x: True),
@@ -1061,7 +1067,6 @@ def wasm_custom_page_sizes(value, simulator, target, no_experimental):
     )
 
 
-set_config("ENABLE_WASM_CUSTOM_PAGE_SIZES", wasm_custom_page_sizes)
 set_define("ENABLE_WASM_CUSTOM_PAGE_SIZES", wasm_custom_page_sizes)
 
 # Experimental support for GC concurrent marking
@@ -1085,7 +1090,6 @@ def gc_concurrent_marking(value, target):
     return True
 
 
-set_config("JS_GC_CONCURRENT_MARKING", gc_concurrent_marking)
 set_define("JS_GC_CONCURRENT_MARKING", gc_concurrent_marking)
 
 
@@ -1098,10 +1102,6 @@ option(
     help="{Enable|Disable} WebAssembly compact import section support",
 )
 
-set_config(
-    "ENABLE_WASM_COMPACT_IMPORTS",
-    depends_if("--enable-wasm-compact-imports")(lambda x: True),
-)
 set_define(
     "ENABLE_WASM_COMPACT_IMPORTS",
     depends_if("--enable-wasm-compact-imports")(lambda x: True),
@@ -1133,7 +1133,6 @@ def wasm_components(value, no_experimental):
     return True
 
 
-set_config("ENABLE_WASM_COMPONENTS", wasm_components)
 set_define("ENABLE_WASM_COMPONENTS", wasm_components)
 
 
@@ -1288,10 +1287,6 @@ option(
     help="{Enable|Disable} type reflection in WASM JS-API",
 )
 
-set_config(
-    "ENABLE_WASM_TYPE_REFLECTIONS",
-    depends_if("--enable-wasm-type-reflections")(lambda x: True),
-)
 set_define(
     "ENABLE_WASM_TYPE_REFLECTIONS",
     depends_if("--enable-wasm-type-reflections")(lambda x: True),
@@ -1306,10 +1301,6 @@ option(
     help="{Enable|Disable} resizable ArrayBuffer in WASM",
 )
 
-set_config(
-    "ENABLE_WASM_RESIZABLE_ARRAYBUFFER",
-    depends_if("--enable-wasm-resizable-arraybuffer")(lambda x: True),
-)
 set_define(
     "ENABLE_WASM_RESIZABLE_ARRAYBUFFER",
     depends_if("--enable-wasm-resizable-arraybuffer")(lambda x: True),

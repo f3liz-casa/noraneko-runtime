@@ -2,10 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { BrowserTestUtils } from "resource://testing-common/BrowserTestUtils.sys.mjs";
 import { Assert } from "resource://testing-common/Assert.sys.mjs";
 import { TestUtils } from "resource://testing-common/TestUtils.sys.mjs";
 
+const lazy = XPCOMUtils.declareLazy({
+  BookmarksSidebarTestUtils:
+    "resource://testing-common/BookmarksSidebarTestUtils.sys.mjs",
+});
 const initialStates = new WeakMap();
 let gTestScope;
 
@@ -28,6 +33,10 @@ class _SidebarTestUtils {
     scope.registerCleanupFunction?.(() => {
       gTestScope = null;
     });
+  }
+
+  get bookmarks() {
+    return lazy.BookmarksSidebarTestUtils;
   }
 
   /**
@@ -56,6 +65,12 @@ class _SidebarTestUtils {
           `Sidebar ${win.SidebarController.currentID} was left open, closing it in cleanup function`
         );
         this.closePanel(win);
+      }
+      // SidebarPopupNotifications is created when chat sidebar opens.
+      // Clean up here as sidebar may close before content fully loads.
+      if (win.SidebarPopupNotifications) {
+        win.SidebarPopupNotifications._currentAnchorElement = null;
+        delete win.SidebarPopupNotifications;
       }
       await this.restoreToInitialState(win);
     });

@@ -20,6 +20,7 @@ use crate::render_task_graph::{RenderTaskGraph, RenderTaskId};
 pub struct GpuBufferBuilder {
     pub i32: GpuBufferBuilderI,
     pub f32: GpuBufferBuilderF,
+    pub edges: PathEdgeBufferBuilder,
 }
 
 pub type GpuBufferF = GpuBuffer<GpuBufferBlockF>;
@@ -52,7 +53,7 @@ impl Default for GpuBufferBlockI {
 }
 
 /// A single texel in RGBAF32 texture - 16 bytes.
-#[derive(Copy, Clone, Debug, MallocSizeOf)]
+#[derive(Copy, Clone, Debug, MallocSizeOf, PartialEq)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct GpuBufferBlockF {
@@ -60,7 +61,7 @@ pub struct GpuBufferBlockF {
 }
 
 /// A single texel in RGBAI32 texture - 16 bytes.
-#[derive(Copy, Clone, Debug, MallocSizeOf)]
+#[derive(Copy, Clone, Debug, MallocSizeOf, PartialEq)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct GpuBufferBlockI {
@@ -545,10 +546,10 @@ impl<T> GpuBufferBuilderImpl<T> where T: Texel + std::convert::From<DeviceIntRec
                     let w = task_target_rect.width() as f32;
                     let h = task_target_rect.height() as f32;
                     [
-                        sub.sub_rect.min.x as f32 / w,
-                        sub.sub_rect.min.y as f32 / h,
-                        sub.sub_rect.max.x as f32 / w,
-                        sub.sub_rect.max.y as f32 / h,
+                        sub.sub_rect.min.x / w,
+                        sub.sub_rect.min.y / h,
+                        sub.sub_rect.max.x / w,
+                        sub.sub_rect.max.y / h,
                     ]
                 } else {
                     [0.0, 0.0, 1.0, 1.0]
@@ -562,7 +563,7 @@ impl<T> GpuBufferBuilderImpl<T> where T: Texel + std::convert::From<DeviceIntRec
                 continue;
             }
 
-            let mut target_rect = render_task.get_target_rect();
+            let mut target_rect = render_task.get_target_rect().to_f32();
             if block.task_id.has_sub_rect() {
                 let sub = &render_tasks.sub_rects[block.task_id.sub_rect_index as usize];
                 target_rect = sub.sub_rect
@@ -570,7 +571,6 @@ impl<T> GpuBufferBuilderImpl<T> where T: Texel + std::convert::From<DeviceIntRec
                     .intersection_unchecked(&target_rect);
             }
 
-            let target_rect = target_rect.to_f32();
             let uv_rect = match render_task.uv_rect_kind() {
                 UvRectKind::Rect => {
                     target_rect
@@ -741,6 +741,62 @@ impl<T> GpuBuffer<T> {
         assert!(self.epoch == epoch);
 
         GpuBufferAddress(handle.0 & !GpuBufferHandle::EPOCH_MASK)
+    }
+}
+
+/// One edge of a path tile, in an RGBA8 texel: the endpoints `[x0, y0, x1, y1]`
+/// in tile-local coordinates with 15 steps per pixel, where 0..240 spans the
+/// tile.
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, MallocSizeOf)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+#[allow(dead_code)]
+pub struct GpuBufferBlockEdge(pub [u8; 4]);
+
+unsafe impl Texel for GpuBufferBlockEdge {
+    fn image_format() -> ImageFormat { ImageFormat::RGBA8 }
+}
+
+pub type GpuBufferEdges = GpuBuffer<GpuBufferBlockEdge>;
+
+/// The frame's path edges, shared by all of the path tiles in the frame.
+///
+/// Unlike `GpuBufferBuilderImpl`, pushes are not aligned to rows: the shader
+/// computes the uv of each edge from its linear index, so the edges of a tile
+/// can straddle rows.
+pub struct PathEdgeBufferBuilder {
+    data: FrameVec<GpuBufferBlockEdge>,
+}
+
+impl PathEdgeBufferBuilder {
+    pub fn new(memory: &FrameMemory, capacity: usize) -> Self {
+        PathEdgeBufferBuilder {
+            data: memory.new_vec_with_capacity(capacity),
+        }
+    }
+
+    /// Returns the index of the first pushed edge.
+    pub fn push_slice(&mut self, edges: &[GpuBufferBlockEdge]) -> u32 {
+        let index = self.data.len() as u32;
+        self.data.extend_from_slice(edges);
+
+        index
+    }
+
+    pub fn finalize(mut self) -> GpuBufferEdges {
+        finish_row(&mut self.data);
+
+        let len = self.data.len();
+        assert!(len % MAX_VERTEX_TEXTURE_WIDTH == 0);
+
+        GpuBuffer {
+            data: self.data,
+            size: DeviceIntSize::new(MAX_VERTEX_TEXTURE_WIDTH as i32, (len / MAX_VERTEX_TEXTURE_WIDTH) as i32),
+            format: GpuBufferBlockEdge::image_format(),
+            deferred_uv_copies: Vec::new(),
+            epoch: 0,
+        }
     }
 }
 

@@ -30,6 +30,9 @@ if CONFIG["MOZ_PHC"]:
         "FdPrintf.cpp",
         # PHC.cpp is #included in mozjemalloc.cpp
     ]
+    SOURCE_HEADERS += [
+        "FdPrintf.h",
+    ]
 
 if CONFIG["MOZ_MEMORY"]:
     UNIFIED_SOURCES += [
@@ -40,6 +43,14 @@ if CONFIG["MOZ_MEMORY"]:
         "mozmemory_wrap.cpp",
         "Mutex.cpp",
         "Utils.cpp",
+    ]
+    SOURCE_HEADERS += [
+        "BaseAlloc.h",
+        "Chunk.h",
+        "Globals.h",
+        "mozjemalloc.h",
+        "Mutex.h",
+        "Utils.h",
     ]
 else:
     UNIFIED_SOURCES += [
@@ -52,6 +63,18 @@ if CONFIG["OS_TARGET"] == "Darwin" and (
     SOURCES += [
         "Zone.c",
     ]
+
+SOURCE_HEADERS += [
+    "Arena.h",
+    "ArenaAvailRuns.h",
+    "BaseAllocInternals.h",
+    "BaseArray.h",
+    "Constants.h",
+    "Extent.h",
+    "RadixTree.h",
+    "RedBlackTree.h",
+    "Zero.h",
+]
 
 Library("memory")
 
@@ -75,3 +98,15 @@ TEST_DIRS += ["test"]
 
 if CONFIG["NIGHTLY_BUILD"]:
     DEFINES["MOZJEMALLOC_PROFILING_CALLBACKS"] = True
+
+LICENSES += ["jemalloc"]
+LICENSES["jemalloc"].title = "jemalloc License"
+LICENSES["jemalloc"].text = "LICENSE-NOTICE.txt"
+LICENSES["jemalloc"].spdx = "BSD-2-Clause"
+LICENSES["jemalloc"].notice = """
+<p>This license applies to portions of the files in the directory <code>memory/build/</code>.</p>
+"""
+
+LICENSED_UNDER += [
+    "jemalloc",
+]

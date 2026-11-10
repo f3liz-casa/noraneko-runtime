@@ -17,12 +17,9 @@
 #include "pkit.h"
 #endif /* PKIT_H */
 
-PR_BEGIN_EXTERN_C
+#include "certt.h"
 
-NSS_EXTERN NSSCallback *
-nssTrustDomain_GetDefaultCallback(
-    NSSTrustDomain *td,
-    PRStatus *statusOpt);
+PR_BEGIN_EXTERN_C
 
 NSS_EXTERN NSSCertificate **
 nssTrustDomain_FindCertificatesBySubject(
@@ -35,7 +32,9 @@ nssTrustDomain_FindCertificatesBySubject(
 NSS_EXTERN NSSTrust *
 nssTrustDomain_FindTrustForCertificate(
     NSSTrustDomain *td,
-    NSSCertificate *c);
+    NSSDER *encoding,
+    NSSDER *issuer,
+    NSSDER *serial);
 
 NSS_EXTERN NSSCertificate *
 nssCertificate_AddRef(NSSCertificate *c);
@@ -46,48 +45,16 @@ nssCertificate_Destroy(NSSCertificate *c);
 NSS_EXTERN NSSDER *
 nssCertificate_GetEncoding(NSSCertificate *c);
 
-NSS_EXTERN NSSDER *
-nssCertificate_GetIssuer(NSSCertificate *c);
-
-NSS_EXTERN NSSDER *
-nssCertificate_GetSerialNumber(NSSCertificate *c);
-
-NSS_EXTERN NSSDER *
-nssCertificate_GetSubject(NSSCertificate *c);
-
 /* Returns a copy, Caller must free using nss_ZFreeIf */
 NSS_EXTERN NSSUTF8 *
 nssCertificate_GetNickname(
     NSSCertificate *c,
     NSSToken *tokenOpt);
 
-NSS_EXTERN NSSASCII7 *
-nssCertificate_GetEmailAddress(NSSCertificate *c);
-
 NSS_EXTERN PRBool
 nssCertificate_IssuerAndSerialEqual(
     NSSCertificate *c1,
     NSSCertificate *c2);
-
-NSS_EXTERN NSSPrivateKey *
-nssPrivateKey_AddRef(NSSPrivateKey *vk);
-
-NSS_EXTERN PRStatus
-nssPrivateKey_Destroy(NSSPrivateKey *vk);
-
-NSS_EXTERN NSSItem *
-nssPrivateKey_GetID(NSSPrivateKey *vk);
-
-NSS_EXTERN NSSUTF8 *
-nssPrivateKey_GetNickname(
-    NSSPrivateKey *vk,
-    NSSToken *tokenOpt);
-
-NSS_EXTERN PRStatus
-nssPublicKey_Destroy(NSSPublicKey *bk);
-
-NSS_EXTERN NSSItem *
-nssPublicKey_GetID(NSSPublicKey *vk);
 
 NSS_EXTERN NSSCertificate **
 nssCryptoContext_FindCertificatesBySubject(
@@ -123,6 +90,9 @@ nssTrust_AddRef(NSSTrust *trust);
 
 NSS_EXTERN PRStatus
 nssTrust_Destroy(NSSTrust *trust);
+
+NSS_EXTERN void
+nssTrust_ToCERTCertTrust(NSSTrust *trust, CERTCertTrust *certTrust);
 
 NSS_EXTERN nssSMIMEProfile *
 nssSMIMEProfile_AddRef(nssSMIMEProfile *profile);

@@ -195,9 +195,6 @@ always-check-default =
 startup-restore-windows-and-tabs =
     .label = Open previous windows and tabs
     .accesskey = s
-startup-windows-launch-on-login-profile-disabled =
-    .message = Enable this preference by checking “{ profile-manager-use-selected.label }” in the “Choose User Profile” window.
-
 windows-launch-on-login =
     .label = Open { -brand-short-name } automatically when your computer starts up
     .accesskey = O
@@ -893,6 +890,11 @@ settings-keyboard-shortcuts-group =
 settings-keyboard-shortcuts-customkeys-link =
     .label = Customize keyboard shortcuts
 
+# Link that takes the user to the Search category of settings, where the
+# address bar options live.
+settings-keyboard-shortcuts-addressbar-link =
+    .label = Customize address bar settings in Search
+
 settings-media-group =
     .label = Media
 
@@ -934,10 +936,6 @@ network-proxy-connection-settings2 =
 home-section =
     .heading = Home and startup
 
-home-new-windows-tabs-header = New Windows and Tabs
-
-home-new-windows-tabs-description2 = Choose what you see when you open your homepage, new windows, and new tabs.
-
 ## Home Section - Default Browser
 
 home-default-browser-title =
@@ -955,10 +953,6 @@ set-as-my-default-browser-2 =
 
 ## Home Section - Home Page Customization
 
-home-homepage-mode-label = Homepage and new windows
-
-home-newtabs-mode-label = New tabs
-
 home-restore-defaults =
     .label = Restore Defaults
     .accesskey = R
@@ -972,35 +966,10 @@ home-mode-choice-custom =
 home-mode-choice-blank =
     .label = Blank Page
 
-home-homepage-custom-url =
-    .placeholder = Paste a URL…
-
-# This button is shown when the homepage is managed by an extension and is placed below extension-controlling-homepage.
-home-homepage-manage-extension-button =
-    .label = Manage extension
-
 ## Custom Homepage subpage
-
-home-custom-homepage-header = Custom Homepage
 
 home-custom-homepage-subpage =
     .heading = Custom Homepage
-
-# This string has a special case for '1' and [other] (default). If necessary for
-# your language, you can add {$tabCount} to your translations and use the
-# standard CLDR forms, or only use the form for [other] if both strings should
-# be identical.
-use-current-pages =
-    .label =
-        { $tabCount ->
-            [1] Use Current Page
-           *[other] Use Current Pages
-        }
-    .accesskey = C
-
-choose-bookmark =
-    .label = Use Bookmark…
-    .accesskey = B
 
 home-homepage-title =
     .label = Homepage
@@ -1051,68 +1020,6 @@ home-custom-homepage-bookmarks-button =
 home-prefs-homepage-extension-option =
     .label = Extension ({ $extension })
 
-## Home Section - Firefox Home Content Customization
-
-home-prefs-content-header2 = { -firefox-home-brand-name } Content
-home-prefs-content-description2 = Choose what content you want on your { -firefox-home-brand-name } screen.
-
-home-prefs-search-header =
-    .label = Web Search
-home-prefs-shortcuts-header =
-    .label = Shortcuts
-home-prefs-shortcuts-description = Sites you save or visit
-home-prefs-shortcuts-by-option-sponsored =
-    .label = Sponsored shortcuts
-
-home-prefs-recommended-by-header-generic =
-    .label = Recommended stories
-home-prefs-recommended-by-description-generic = Exceptional content curated by the { -brand-product-name } family
-
-home-prefs-stories-header =
-    .label = Stories
-home-prefs-stories-description = Personalized stories based on your activity
-
-##
-
-home-prefs-recommended-by-learn-more = How it works
-home-prefs-recommended-by-option-sponsored-stories =
-    .label = Sponsored stories
-
-home-prefs-highlights-option-visited-pages =
-    .label = Visited pages
-home-prefs-highlights-options-bookmarks =
-    .label = Bookmarks
-home-prefs-highlights-option-most-recent-download =
-    .label = Most recent download
-
-home-prefs-recent-activity-header =
-    .label = Recent activity
-home-prefs-recent-activity-description = A selection of recent sites and content
-
-# Variables:
-#   $num (number) - Number of rows displayed
-home-prefs-sections-rows-option =
-    .label =
-        { $num ->
-            [one] { $num } row
-           *[other] { $num } rows
-        }
-home-prefs-weather-header =
-  .label = Weather
-home-prefs-weather-description = Today’s forecast at a glance
-home-prefs-weather-learn-more-link = Learn more
-
-# "Support" here means to help sustain or contribute to something, especially through funding or sponsorship.
-home-prefs-support-firefox-header =
-    .label = Support { -brand-product-name }
-
-home-prefs-mission-message = Our sponsors support our mission to build a better web
-home-prefs-mission-message-learn-more-link = Find out how
-
-home-prefs-manage-topics-link = Manage topics
-
-home-prefs-choose-wallpaper-link = Choose a wallpaper
-
 ## Search Section
 
 # Header for the search section ("search" is a noun).
@@ -1135,6 +1042,16 @@ search-separate-default-engine-2 =
 
 search-separate-default-engine-dropdown =
     .aria-label = Default search engine in private windows
+
+# "Navigation" here means moving around within the address bar and its results
+# list, not navigation to the address bar.
+addressbar-navigation-group =
+    .label = Address bar navigation
+
+# "Results menu" refers to the menu available on each row of the address bar
+# results list, which offers actions such as dismissing the result.
+addressbar-skip-result-menu-on-tab =
+    .label = Skip the results menu when using the tab key to move focus
 
 search-suggestions-header-2 =
     .label = Search engine suggestions
@@ -1456,6 +1373,11 @@ prefs-syncing-off-2 =
     .label = Syncing is OFF
     .description = Turn on sync to get your bookmarks, passwords, history, and more on any device.
 
+# This string is shown when the user's device has per-device syncing enabled but sync is disabled on the device.
+prefs-syncing-off-3 =
+    .label = Syncing is OFF
+    .description = Turn on sync to get your bookmarks, passwords, history, and more on this device.
+
 prefs-sync-turn-on-syncing =
     .label = Turn on syncing…
     .accesskey = s
@@ -1487,9 +1409,15 @@ sync-syncing-across-devices-heading = You are syncing these items across all you
 
 sync-syncing-across-devices-heading-2 = Data synced across devices
 
+sync-syncing-across-devices-heading-3 = Data syncing on this device
+
 sync-syncing-across-devices-empty-state2 =
     .label = Manage synced data
     .description = You aren’t syncing anything… yet. Start syncing to get all of your data on all your devices.
+
+sync-syncing-across-devices-empty-state3 =
+    .label = Manage synced data
+    .description = You aren’t syncing anything… yet. Choose what to sync on this device.
 
 sync-currently-syncing-bookmarks = Bookmarks
 sync-currently-syncing-history = History
@@ -1515,6 +1443,14 @@ settings-sync-disconnect-button =
 
 sync-choose-what-to-sync-dialog4 =
     .title = Manage what syncs on all your connected devices
+    .style = min-width: 36em;
+    .buttonlabelaccept = Save
+    .buttonaccesskeyaccept = S
+    .buttonlabelextra2 = Disconnect…
+    .buttonaccesskeyextra2 = D
+
+sync-choose-what-to-sync-dialog5 =
+    .title = Manage what syncs on this device
     .style = min-width: 36em;
     .buttonlabelaccept = Save
     .buttonaccesskeyaccept = S
@@ -1741,6 +1677,10 @@ autofill-payment-methods-manage-payments-button =
 autofill-reauth-payment-methods-checkbox-2 =
     .label = Require device sign in to autofill and manage payment methods
     .accesskey = o
+# Security codes are the CVV/CVC card codes
+autofill-payment-methods-save-security-codes-checkbox =
+    .label = Save security codes
+    .accesskey = c
 
 autofill-payment-methods-add-button = Add new payment method
 payments-list-header =
@@ -1765,6 +1705,25 @@ payments-no-payments-stored-message =
 payment-moz-box-item =
   .label = { $cardNumber }
   .description = { $expDate }
+
+# Used in place of payment-moz-box-item when a security code is saved alongside
+# the card. Only the presence of a saved security code is ever shown, never the
+# code itself. "CVV" is a common abbreviation for the security code printed on a
+# payment card; use whichever abbreviation is most familiar in your locale.
+# Variables:
+#   $cardNumber (string) - The obscured credit card number (for example: ********* 2423)
+#   $expDate (string) - The obscured expiry date of the credit card (for example: XX/2027)
+payment-moz-box-item-with-security-code =
+  .label = { $cardNumber }
+  .description = { $expDate } | CVV saved
+
+# Used in place of payment-moz-box-item-with-security-code for a card that has a
+# saved security code but no expiry date to show alongside it.
+# Variables:
+#   $cardNumber (string) - The obscured credit card number (for example: ********* 2423)
+payment-moz-box-item-security-code-only =
+  .label = { $cardNumber }
+  .description = CVV saved
 
 addresses-group =
     .label = Addresses and more
@@ -2093,6 +2052,72 @@ permissions-data-section =
 pane-permissions-data-title2 = Permissions and data
   .title = Permissions and data
 
+notifications-section-header =
+    .heading = Notifications
+
+notifications-entry-card-header =
+    .label = Notifications
+    .description = Choose which websites can send notifications, and how those alerts show up.
+
+# Variables:
+#   $count (number) - Number of websites with a stored notification decision,
+#                     always one or more. The zero case is a separate message,
+#                     notifications-entry-manage-button-empty.
+notifications-entry-manage-button =
+    .label = Manage notification settings
+    .description =
+        { $count ->
+            [one] { $count } website
+           *[other] { $count } websites
+        }
+
+# Replaces notifications-entry-manage-button when no website has a stored
+# notification decision. It deliberately carries no description: the empty
+# state is stated on the Notifications page rather than on this row.
+notifications-entry-manage-button-empty =
+    .label = Manage website notification settings
+
+notifications-website-card-header =
+    .label = Website notifications
+    .description = Choose how websites can send notifications.
+
+notifications-filter =
+    .placeholder = Search websites
+
+# Heading of the website column in the list of websites and their notification
+# state, shown when the list has rows.
+notifications-list-header =
+    .label = Website
+# Heading of the state column in the list of websites and their notification
+# state, shown when the list has rows.
+notifications-list-header-state = Allow notifications
+# Heading of the list of websites when it has no rows, because no website has a
+# stored notification decision or a search matches no website.
+notifications-list-header-empty =
+    .label = Websites
+
+# Read-only state shown on each row of the website notifications list, in the
+# column headed "Allow notifications". "Always" is used where notifications can
+# also be delivered while Firefox is closed.
+notifications-state-always = Always
+# Read-only state shown on each row of the website notifications list, in the
+# column headed "Allow notifications". "Allow" is used where notifications
+# cannot be delivered while Firefox is closed.
+notifications-state-allow = Allow
+# Read-only state shown on each row of the website notifications list, in the
+# column headed "Allow notifications", for websites blocked from sending
+# notifications.
+notifications-state-never = Never
+
+# Shown as a row under the list header when no website has a stored
+# notification decision.
+notifications-empty-message =
+    .label = No website notifications added.
+
+# Shown as a row under the list header when a search matches no website.
+notifications-no-results-message =
+    .label = No website notifications match your search.
+
 permissions-header3 =
     .label = Permissions
     .description = Manage what websites can access, control, or trigger.
@@ -2148,6 +2173,17 @@ permissions-addon-install-warning3 =
 permissions-addon-exceptions2 =
     .label = Choose which websites can install extensions
     .accesskey = E
+
+# App links are links that a website can ask to open for you, like email
+# (mailto:) links.
+permissions-allow-app-links =
+    .label = Allow sites to ask to open app links.
+    .accesskey = A
+
+# Opens the list of sites that are blocked from asking to open app links.
+permissions-app-links-manage-button =
+    .label = Manage blocked sites
+    .accesskey = M
 
 ## Privacy Section - Data Collection
 

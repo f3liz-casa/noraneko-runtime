@@ -140,7 +140,7 @@ class nsDragSession : public nsBaseDragSession {
              const mozilla::LayoutDeviceIntPoint& aWindowPoint =
                  mozilla::LayoutDeviceIntPoint(),
              guint aTime = 0);
-    virtual ~DragTask() = default;
+    virtual ~DragTask();
 
     virtual void Reset() = 0;
     virtual uintptr_t GetContextID() = 0;
@@ -157,6 +157,11 @@ class nsDragSession : public nsBaseDragSession {
   // Recent drag task, always present.
   // If empty it's mType = eDragTaskNone.
   mozilla::UniquePtr<DragTask> mRecentTask;
+
+  // Whether the drag is currently over the window it was started from. Starts
+  // true because that is where a drag starts, so a compositor that reports no
+  // drag motion at all leaves it true.
+  bool mDragIsOverSourceWindow = true;
 
   gboolean Schedule(mozilla::UniquePtr<DragTask> aTask);
 

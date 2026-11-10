@@ -991,12 +991,17 @@ void nsLineLayout::ReflowFrame(nsIFrame* aFrame, nsReflowStatus& aReflowStatus,
       if (nsIFrame* kidNextInFlow = aFrame->GetNextInFlow()) {
         if (StaticPrefs::layout_abspos_fragment_aware_inline_cb_enabled()) {
           if (nsInlineFrame* inlineFrame = do_QueryFrame(aFrame)) {
-            // Before removing aFrame's next-in-flows, pull any absolute
-            // children's first-in-flows in the next-in-flows into aFrame to
-            // prevent those children from being destroyed.
+            // Before removing aFrame's next-in-flows, pull all the absolute
+            // children in those next-in-flows into the first inline
+            // continuation in the current fragmentainer.
+            nsIFrame* first =
+                AbsoluteContainingBlock::FirstInlineContinuationInFragmentainer(
+                    inlineFrame);
             if (AbsoluteContainingBlock* absCB =
-                    inlineFrame->GetAbsoluteContainingBlock()) {
-              absCB->PrepareAbsoluteFrames(inlineFrame);
+                    first->GetAbsoluteContainingBlock()) {
+              absCB->PrepareAbsoluteFrames(
+                  static_cast<nsInlineFrame*>(first),
+                  AbsoluteContainingBlock::PrepareReason::Destroy);
             }
           }
         }
@@ -1902,7 +1907,7 @@ void nsLineLayout::AdjustLeadings(nsIFrame* spanFrame, PerSpanData* psd,
   if (aStyleText->HasEffectiveTextEmphasis()) {
     nscoord bsize = GetBSizeOfEmphasisMarks(spanFrame, aInflation);
     LogicalSide side = aStyleText->TextEmphasisSide(
-        mRootSpan->mWritingMode, spanFrame->StyleFont()->mLanguage);
+        mRootSpan->mWritingMode, spanFrame->StyleFont()->GetLangAtom());
     if (spanFrame->PresContext()->NormalizeRubyMetrics()) {
       // Add extra leading for emphasis marks only if their bsize exceeds the
       // space built in to the font (difference between its max ascent/descent
@@ -2620,7 +2625,7 @@ void nsLineLayout::VerticalAlignFrames(PerSpanData* psd) {
               delta = emphasisHeight;
             }
             LogicalSide side = mStyleText->TextEmphasisSide(
-                lineWM, spanFrame->StyleFont()->mLanguage);
+                lineWM, spanFrame->StyleFont()->GetLangAtom());
             if (side == LogicalSide::BStart) {
               blockStart -= delta;
             } else {

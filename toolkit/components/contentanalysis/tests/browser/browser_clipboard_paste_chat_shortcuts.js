@@ -49,7 +49,7 @@ function assertContentAnalysisRequest(
   );
   is(
     request.operationTypeForDisplay,
-    Ci.nsIContentAnalysisRequest.eClipboard,
+    Ci.nsIContentAnalysisRequest.ePasteClipboard,
     "request has correct operationTypeForDisplay"
   );
   is(request.filePath, null, "request filePath should match");
@@ -89,8 +89,10 @@ add_task(async function testClipboardPasteIntoChatShortcut() {
     });
     goDoCommand("cmd_selectAll");
     await selectPromise;
-    BrowserTestUtils.synthesizeMouseAtCenter(
+    BrowserTestUtils.synthesizeMouse(
       browser,
+      60,
+      10,
       { type: "mouseup" },
       browser
     );

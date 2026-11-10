@@ -4,6 +4,8 @@
 
 #include "FilterSupport.h"
 
+#include <cmath>
+
 #include "FilterDescription.h"
 #include "gfx2DGlue.h"
 #include "gfxContext.h"
@@ -456,9 +458,12 @@ bool ComputeColorMatrix(const ColorMatrixAttributes& aMatrixAttributes,
         return false;
       }
 
-      PodCopy(aOutMatrix, identityMatrix, 20);
-
       float hueRotateValue = aMatrixAttributes.mValues[0];
+      if (std::fmod(hueRotateValue, 360.f) == 0.f) {
+        return false;
+      }
+
+      PodCopy(aOutMatrix, identityMatrix, 20);
 
       float c = static_cast<float>(cos(hueRotateValue * kRadPerDegree));
       float s = static_cast<float>(sin(hueRotateValue * kRadPerDegree));
@@ -1454,9 +1459,11 @@ static nsIntRegion ResultChangeRegionForPrimitive(
     }
 
     nsIntRegion operator()(const DisplacementMapAttributes& aDisplacementMap) {
-      int32_t scale = ceil(std::abs(aDisplacementMap.mScale));
+      auto scale = aDisplacementMap.mScale;
+      int32_t scaleX = ceil(std::abs(scale.Width()));
+      int32_t scaleY = ceil(std::abs(scale.Height()));
       return mInputChangeRegions[0].Inflated(
-          nsIntMargin(scale, scale, scale, scale));
+          nsIntMargin(scaleY, scaleX, scaleY, scaleX));
     }
 
     nsIntRegion operator()(const TurbulenceAttributes& aTurbulence) {
@@ -1825,9 +1832,10 @@ static nsIntRegion SourceNeededRegionForPrimitive(
       if (mInputIndex == 1) {
         return mResultNeededRegion;
       }
-      int32_t scale = ceil(std::abs(aDisplacementMap.mScale));
+      int32_t scaleX = ceil(std::abs(aDisplacementMap.mScale.Width()));
+      int32_t scaleY = ceil(std::abs(aDisplacementMap.mScale.Height()));
       return mResultNeededRegion.Inflated(
-          nsIntMargin(scale, scale, scale, scale));
+          nsIntMargin(scaleY, scaleX, scaleY, scaleX));
     }
 
     nsIntRegion operator()(const TurbulenceAttributes& aTurbulence) {

@@ -7,6 +7,8 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AIWindow:
     "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
+  AIWindowMenu:
+    "moz-src:///browser/components/aiwindow/ui/modules/AIWindowMenu.sys.mjs",
   BrowserSearchTelemetry:
     "moz-src:///browser/components/search/BrowserSearchTelemetry.sys.mjs",
   BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
@@ -15,7 +17,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///toolkit/components/contextualidentity/ContextualIdentityService.sys.mjs",
   DevToolsShim: "chrome://devtools-startup/content/DevToolsShim.sys.mjs",
   E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
-  GenAI: "resource:///modules/GenAI.sys.mjs",
+  GenAI: "moz-src:///browser/components/genai/GenAI.sys.mjs",
   LinkPreview: "moz-src:///browser/components/genai/LinkPreview.sys.mjs",
   LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
   LoginManagerContextMenu:
@@ -25,6 +27,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   ScreenshotsUtils:
     "moz-src:///browser/components/screenshots/ScreenshotsUtils.sys.mjs",
+  SELECTION_MODES:
+    "moz-src:///browser/components/screenshots/ScreenshotsSelectionModes.sys.mjs",
   SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
   SearchUIUtils: "moz-src:///browser/components/search/SearchUIUtils.sys.mjs",
   SearchUtils: "moz-src:///toolkit/components/search/SearchUtils.sys.mjs",
@@ -46,6 +50,17 @@ ChromeUtils.defineLazyGetter(lazy, "ReferrerInfo", () =>
     "init"
   )
 );
+
+// Badge variants for menu items. #setFeatureBadge maps each to its label's
+// l10n id; NEW additionally uses the filled `badge-new` style, BETA the
+// default outlined one.
+const BADGE_TYPE = {
+  NEW: "new",
+  BETA: "beta",
+};
+
+// Formatted badge labels, keyed by l10n id.
+const badgeL10nCache = new Map();
 
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
@@ -82,13 +97,6 @@ XPCOMUtils.defineLazyServiceGetter(
   Ci.nsIClipboardHelper
 );
 
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "TEXT_FRAGMENTS_ENABLED",
-  "dom.text_fragments.enabled",
-  false
-);
-
 const PASSWORD_FIELDNAME_HINTS = ["current-password", "new-password"];
 const USERNAME_FIELDNAME_HINT = "username";
 
@@ -115,14 +123,6 @@ export class nsContextMenu {
    * @type {Promise<{sourceLanguage: string, targetLanguage: string}>}
    */
   #translationsLangPairPromise;
-
-  /**
-   * The value of the `main-context-menu-new-feature-badge` l10n string. Fetched
-   * lazily.
-   *
-   * @type {string}
-   */
-  #newFeatureBadgeL10nString;
 
   /**
    * Cancels the login lookup for this menu once the menu is gone, so that a
@@ -413,7 +413,6 @@ export class nsContextMenu {
 
   initTextFragmentItems() {
     const shouldShow =
-      lazy.TEXT_FRAGMENTS_ENABLED &&
       !(
         this.inPDFViewer ||
         this.inFrame ||
@@ -437,9 +436,6 @@ export class nsContextMenu {
   }
 
   async getTextDirective() {
-    if (!lazy.TEXT_FRAGMENTS_ENABLED) {
-      return;
-    }
     this.textFragmentURL = await this.actor.getTextDirective();
 
     // enable menu items when a text fragment can be built
@@ -622,13 +618,13 @@ export class nsContextMenu {
 
     initBackForwardMenuItemTooltip(
       "context-back",
-      "main-context-menu-back-2",
+      "main-context-menu-back-3",
       "goBackKb"
     );
 
     initBackForwardMenuItemTooltip(
       "context-forward",
-      "main-context-menu-forward-2",
+      "main-context-menu-forward-3",
       "goForwardKb"
     );
   }
@@ -859,7 +855,12 @@ export class nsContextMenu {
       this.inTabBrowser &&
       !this.inAboutDevtoolsToolbox &&
       Services.prefs.getBoolPref("devtools.inspector.enabled", true) &&
-      !Services.prefs.getBoolPref("devtools.policy.disabled", false);
+      !Services.prefs.getBoolPref("devtools.policy.disabled", false) &&
+      !(
+        this.browser.contentPrincipal?.isSystemPrincipal &&
+        Services.prefs.prefIsLocked("devtools.chrome.enabled") &&
+        !Services.prefs.getBoolPref("devtools.chrome.enabled", false)
+      );
 
     var showInspectA11Y =
       showInspect &&
@@ -930,6 +931,10 @@ export class nsContextMenu {
       showItem: this.showItem.bind(this),
       source: "page",
     });
+    this.showItem(
+      "context-create-aitab",
+      lazy.AIWindowMenu.canShowAITabMenu(this.window, [this.browser.currentURI])
+    );
 
     // srcdoc cannot be opened separately due to concerns about web
     // content with about:srcdoc in location bar masquerading as trusted
@@ -1319,27 +1324,13 @@ export class nsContextMenu {
   }
 
   initViewSourceItems() {
-    const getString = aName => {
-      const { bundle } = this.window.gViewSourceUtils.getPageActor(
-        this.browser
-      );
-      return bundle.GetStringFromName(aName);
-    };
-    const showViewSourceItem = (id, check, accesskey) => {
+    const showViewSourceItem = (id, check) => {
       const fullId = `context-viewsource-${id}`;
       this.showItem(fullId, onViewSource);
       if (!onViewSource) {
         return;
       }
       this.setItemAttr(fullId, "checked", check());
-      this.setItemAttr(fullId, "label", getString(`context_${id}_label`));
-      if (accesskey) {
-        this.setItemAttr(
-          fullId,
-          "accesskey",
-          getString(`context_${id}_accesskey`)
-        );
-      }
     };
 
     const onViewSource =
@@ -1347,7 +1338,7 @@ export class nsContextMenu {
         "view-source"
       );
 
-    showViewSourceItem("goToLine", () => false, true);
+    showViewSourceItem("goToLine", () => false);
     showViewSourceItem("wrapLongLines", () =>
       Services.prefs.getBoolPref("view_source.wrap_long_lines", false)
     );
@@ -1418,10 +1409,21 @@ export class nsContextMenu {
 
     this.showItem("context-sep-screenshots", shouldShow);
     this.showItem("context-take-screenshot", shouldShow);
+
+    let miniWindowItem = this.document.getElementById(
+      "context-use-mini-window"
+    );
+    let showMiniWindow =
+      shouldShow &&
+      Services.prefs.getBoolPref("browser.mini-window.enabled", false) &&
+      !this.document.documentElement.hasAttribute("mini-window");
+    this.showItem(miniWindowItem, showMiniWindow);
+    this.#setFeatureBadge(miniWindowItem, showMiniWindow, BADGE_TYPE.BETA);
   }
 
   initPasswordControlItems() {
-    let shouldShow = this.onPassword;
+    let shouldShow =
+      this.onPassword && Services.policies.isAllowed("passwordReveal");
     if (shouldShow) {
       let revealPassword = this.document.getElementById(
         "context-reveal-password"
@@ -1664,6 +1666,12 @@ export class nsContextMenu {
     );
   }
 
+  useMiniWindow() {
+    lazy.ScreenshotsUtils.toggle(this.browser, "MiniWindowContextMenu", {
+      mode: lazy.SELECTION_MODES.MINI_WINDOW,
+    });
+  }
+
   // View Partial Source
   viewPartialSource() {
     let { browser } = this;
@@ -1893,7 +1901,7 @@ export class nsContextMenu {
 
     this.actor
       .setAsDesktopBackground(this.targetIdentifier)
-      .then(({ failed, dataURL, imageName }) => {
+      .then(({ failed, dataURL }) => {
         if (failed) {
           return;
         }
@@ -1915,15 +1923,14 @@ export class nsContextMenu {
             "Shell:SetDesktopBackground"
           );
           if (dbWin) {
-            dbWin.gSetBackground.init(image, imageName);
+            dbWin.gSetBackground.init(image);
             dbWin.focus();
           } else {
             this.window.openDialog(
               kDesktopBackgroundURL,
               "",
               "centerscreen,chrome,dialog=no,dependent,resizable=no",
-              image,
-              imageName
+              image
             );
           }
         } else {
@@ -1932,8 +1939,7 @@ export class nsContextMenu {
             kDesktopBackgroundURL,
             "",
             "centerscreen,chrome,dialog,modal,dependent",
-            image,
-            imageName
+            image
           );
         }
       });
@@ -2653,6 +2659,14 @@ export class nsContextMenu {
     this.window.openTrustedLinkIn(drmInfoURL, dest);
   }
 
+  createAITab() {
+    lazy.AIWindow.createAITab(
+      this.window,
+      [this.browser.currentURI.spec],
+      "tab_list"
+    );
+  }
+
   /**
    * Opens the SelectTranslationsPanel singleton instance.
    *
@@ -2866,13 +2880,13 @@ export class nsContextMenu {
 
     if (!menuItemPrivate.hidden) {
       let otherEngine = engineName != privateEngineName;
-      let accessKey = "contextMenuPrivateSearch.accesskey";
+      let accessKey = "contextMenuPrivateSearch2.accesskey";
       if (otherEngine) {
         menuItemPrivate.label = gNavigatorBundle.getFormattedString(
           "contextMenuPrivateSearchOtherEngine",
           [privateEngineName]
         );
-        accessKey = "contextMenuPrivateSearchOtherEngine.accesskey";
+        accessKey = "contextMenuPrivateSearchOtherEngine2.accesskey";
       } else {
         menuItemPrivate.label = gNavigatorBundle.getString(
           "contextMenuPrivateSearch"
@@ -2986,7 +3000,7 @@ export class nsContextMenu {
           engine: visualSearchUrl.displayName || menuitem.engine.name,
         }
       );
-      this.#setNewFeatureBadge(menuitem, visualSearchUrl.isNew());
+      this.#setFeatureBadge(menuitem, visualSearchUrl.isNew(), BADGE_TYPE.NEW);
       lazy.BrowserSearchTelemetry.recordSapImpression(
         this.browser,
         menuitem.engine,
@@ -3034,36 +3048,54 @@ export class nsContextMenu {
 
   /**
    * Sets or removes the `badge` attribute on a menuitem. If it should be set,
-   * it will be set to the value of the `main-context-menu-new-feature-badge`
-   * l10n string. If the string has already been cached, the badge is set
-   * synchronously, so there won't be any visual pop-in. Otherwise the string is
-   * first fetched and cached, and then the badge is set asynchronously.
+   * it is set to the label for `type`. If that label has already been
+   * cached, the badge is set synchronously, so there won't be any visual
+   * pop-in. Otherwise the string is first fetched and cached, and then the
+   * badge is set asynchronously.
    *
    * This method is async but only for ease of implementation. It doesn't need
    * to be awaited unless you need to block until the badge is set.
    *
-   * @param {Element}
+   * @param {Element} menuitem
    *   The menuitem that should be badged.
+   * @param {boolean} shouldShow
+   *   Whether the badge should be shown.
+   * @param {"new" | "beta"} type
+   *   Which badge to show; picks both the label and the style.
    */
-  async #setNewFeatureBadge(menuitem, shouldShow) {
-    menuitem.classList.toggle("badge-new", shouldShow);
+  async #setFeatureBadge(menuitem, shouldShow, type) {
+    menuitem.classList.toggle(
+      "badge-new",
+      shouldShow && type === BADGE_TYPE.NEW
+    );
 
     if (!shouldShow) {
       menuitem.removeAttribute("badge");
       return;
     }
 
-    if (this.#newFeatureBadgeL10nString) {
-      menuitem.setAttribute("badge", this.#newFeatureBadgeL10nString);
+    let l10nId;
+    switch (type) {
+      case BADGE_TYPE.NEW:
+        l10nId = "main-context-menu-new-feature-badge";
+        break;
+      case BADGE_TYPE.BETA:
+        l10nId = "main-context-menu-beta-feature-badge";
+        break;
+      default:
+        throw new Error(`Unknown badge type: ${type}`);
+    }
+
+    let cached = badgeL10nCache.get(l10nId);
+    if (cached) {
+      menuitem.setAttribute("badge", cached);
       return;
     }
 
-    let value = await this.window.document.l10n.formatValue(
-      "main-context-menu-new-feature-badge"
-    );
+    let value = await this.window.document.l10n.formatValue(l10nId);
     if (value) {
-      this.#newFeatureBadgeL10nString = value;
-      this.#setNewFeatureBadge(menuitem, shouldShow);
+      badgeL10nCache.set(l10nId, value);
+      this.#setFeatureBadge(menuitem, shouldShow, type);
     }
   }
 }

@@ -48,6 +48,7 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiObjectNotFoundException
 import androidx.test.uiautomator.UiScrollable
 import androidx.test.uiautomator.UiSelector
+import kotlin.test.assertNotNull
 import mozilla.components.browser.menu.R as menuR
 import mozilla.components.compose.base.R as composeBaseR
 import mozilla.components.compose.browser.toolbar.concept.BrowserToolbarTestTags.ADDRESSBAR_URL_BOX
@@ -58,6 +59,7 @@ import org.mozilla.fenix.R
 import org.mozilla.fenix.helpers.Constants.RETRY_COUNT
 import org.mozilla.fenix.helpers.Constants.TAG
 import org.mozilla.fenix.helpers.DataGenerationHelper.getStringResource
+import org.mozilla.fenix.helpers.DataGenerationHelper.sponsoredShortcuts
 import org.mozilla.fenix.helpers.MatcherHelper.assertItemIsChecked
 import org.mozilla.fenix.helpers.MatcherHelper.assertUIObjectExists
 import org.mozilla.fenix.helpers.MatcherHelper.itemContainingText
@@ -92,7 +94,9 @@ class HomeScreenRobot(private val composeTestRule: ComposeTestRule) {
     fun verifyHomeScreen() = assertUIObjectExists(homeScreen())
 
     fun verifyPrivateBrowsingHomeScreenItems() {
-        verifyHomeScreenAppBarItems()
+        // The redesigned private homepage header deliberately hides the wordmark, so we don't call the
+        // shared verifyHomeScreenAppBarItems() here (it still checks the wordmark for normal-mode tests).
+        assertUIObjectExists(homeScreen(), privateBrowsingButton())
         composeTestRule.waitForIdle()
         mDevice.waitForIdle()
         assertUIObjectExists(itemContainingText(getStringResource(R.string.felt_privacy_desc_card_title)))
@@ -254,18 +258,22 @@ class HomeScreenRobot(private val composeTestRule: ComposeTestRule) {
         Log.i(TAG, "verifyAddShortcutButtonExists: Verified that the \"Add shortcut\" button exists")
     }
 
-    fun verifySponsoredShortcutDetails(sponsoredShortcutTitle: String, position: Int) {
-        assertUIObjectExists(
-            itemWithResIdAndIndex(resourceId = "top_sites_list.top_site_item", index = position - 1)
-                .getChild(UiSelector().resourceId(TOP_SITE_CARD_FAVICON))
+    /**
+     * Asserts the [ordinal]th sponsored shortcut has a favicon and the expected title.
+     *
+     * @param sponsoredShortcutTitle The shortcut title which is expected.
+     * @param ordinal One-based index among the sponsored shortcuts only, matching
+     *   [org.mozilla.fenix.helpers.DataGenerationHelper.getSponsoredShortcutTitle].
+     */
+    fun verifySponsoredShortcutDetails(sponsoredShortcutTitle: String, ordinal: Int) {
+        val sponsoredShortcut = sponsoredShortcuts()[ordinal - 1]
+        assertNotNull(
+            sponsoredShortcut.findObject(By.res(TOP_SITE_CARD_FAVICON)),
+            "Sponsored shortcut #$ordinal has no favicon",
         )
-        assertUIObjectExists(
-            itemWithResIdAndIndex(resourceId = "top_sites_list.top_site_item", index = position - 1)
-                .getChild(UiSelector().textContains(sponsoredShortcutTitle))
-        )
-        assertUIObjectExists(
-            itemWithResIdAndIndex(resourceId = "top_sites_list.top_site_item", index = position - 1)
-                .getChild(UiSelector().textContains(getStringResource(R.string.top_sites_sponsored_label)))
+        assertNotNull(
+            sponsoredShortcut.findObject(By.textContains(sponsoredShortcutTitle)),
+            "Sponsored shortcut #$ordinal is not titled $sponsoredShortcutTitle",
         )
     }
 
@@ -1005,6 +1013,18 @@ class HomeScreenRobot(private val composeTestRule: ComposeTestRule) {
             return BrowserRobot.Transition(composeTestRule)
         }
 
+        fun openFirstTopSiteTab(interact: BrowserRobot.() -> Unit): BrowserRobot.Transition {
+            Log.i(TAG, "openFirstTopSiteTab: Trying to scroll to first top site item")
+            composeTestRule.firstTopSiteItem().performScrollTo()
+            Log.i(TAG, "openFirstTopSiteTab: Scrolled to first top site item")
+            Log.i(TAG, "openFirstTopSiteTab: Trying to click first top site item")
+            composeTestRule.firstTopSiteItem().performClick()
+            Log.i(TAG, "openFirstTopSiteTab: Clicked first top site item")
+
+            BrowserRobot(composeTestRule).interact()
+            return BrowserRobot.Transition(composeTestRule)
+        }
+
         fun editTopSite(
             title: String,
             url: String,
@@ -1099,14 +1119,6 @@ class HomeScreenRobot(private val composeTestRule: ComposeTestRule) {
 
             BrowserRobot(composeTestRule).interact()
             return BrowserRobot.Transition(composeTestRule)
-        }
-
-        fun clickSaveTabsToCollectionButton(interact: TabDrawerRobot.() -> Unit): TabDrawerRobot.Transition {
-            Log.i(TAG, "clickSaveTabsToCollectionButton: Trying to click save tabs to collection button")
-            saveTabsToCollectionButton(composeTestRule).performClick()
-            Log.i(TAG, "clickSaveTabsToCollectionButton: Clicked save tabs to collection button")
-            TabDrawerRobot(composeTestRule).interact()
-            return TabDrawerRobot.Transition(composeTestRule)
         }
 
         fun expandCollection(title: String, interact: CollectionRobot.() -> Unit): CollectionRobot.Transition {
@@ -1209,9 +1221,6 @@ fun homeScreen(composeTestRule: ComposeTestRule, interact: HomeScreenRobot.() ->
     return HomeScreenRobot.Transition(composeTestRule)
 }
 
-private fun saveTabsToCollectionButton(composeTestRule: ComposeTestRule) =
-    composeTestRule.onNodeWithText(getStringResource(R.string.tabs_menu_save_to_collection1))
-
 private fun tabsCounterFromRedesignedToolbar() = itemWithResId("$packageName:id/counter_box")
 
 private fun tabsCounter() = mDevice.findObject(By.res("$packageName:id/counter_root"))
@@ -1253,6 +1262,8 @@ private fun firefoxOptionSetAsDefaultBrowserDialogRadioButton() =
             index = 2,
         )
         .getFromParent(UiSelector().className("android.widget.LinearLayout").index(1))
+
+private fun ComposeTestRule.firstTopSiteItem() = onAllNodesWithTag(TopSitesTestTag.TOP_SITE_ITEM_ROOT).onFirst()
 
 private fun ComposeTestRule.topSiteItem(title: String) =
     onAllNodesWithTag(TopSitesTestTag.TOP_SITE_ITEM_ROOT).filter(hasAnyChild(hasText(title))).onFirst()

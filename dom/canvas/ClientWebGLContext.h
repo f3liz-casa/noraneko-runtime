@@ -655,15 +655,15 @@ inline bool Convert(const Uint32ListU& list, Converter&& converter) {
 }
 
 template <typename T>
-inline Range<const uint8_t> MakeByteRange(const T& x) {
+inline mozilla::Range<const uint8_t> MakeByteRange(const T& x) {
   const auto typed = MakeRange(x);
-  return Range<const uint8_t>(
+  return mozilla::Range<const uint8_t>(
       reinterpret_cast<const uint8_t*>(typed.begin().get()),
       typed.length() * sizeof(typed[0]));
 }
 
 template <typename T>
-inline Range<const uint8_t> MakeByteRange(const Span<T>& x) {
+inline mozilla::Range<const uint8_t> MakeByteRange(const Span<T>& x) {
   return AsBytes(x);
 }
 
@@ -781,6 +781,8 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
   mutable webgl::ObjectId mLastId = 0;
   // Buffer to accumulate JS warnings until it is safe to flush them.
   mutable std::vector<std::string>* mDeferJsWarnings = nullptr;
+  // Description of a deferred context creation error.
+  mutable std::string mDeferContextCreationError;
 
  public:
   webgl::ObjectId NextId() const { return mLastId += 1; }
@@ -986,11 +988,12 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
   const WebGLContextOptions& GetContextOptions() const {
     return mInitialOptions.ref();
   }
-  NS_IMETHOD
-  SetContextOptions(JSContext* cx, JS::Handle<JS::Value> options,
-                    ErrorResult& aRvForDictionaryInit) override;
+  NS_IMETHOD SetContextOptions(
+      const dom::CanvasRenderingContextOptions& aOptions) override;
   NS_IMETHOD
   SetDimensions(int32_t width, int32_t height) override;
+  NS_IMETHOD MaybeThrowContextCreationError() override;
+
   bool UpdateWebRenderCanvasData(
       nsDisplayListBuilder* aBuilder,
       layers::WebRenderCanvasData* aCanvasData) override;
@@ -1427,6 +1430,8 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
 
   void ClearStencil(GLint v);
 
+  void ClipControlEXT(GLenum origin, GLenum depth);
+
   void ColorMask(bool r, bool g, bool b, bool a) const {
     ColorMaskI({}, r, g, b, a);
   }
@@ -1457,6 +1462,7 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
   void PixelStorei(GLenum pname, GLint param);
 
   void PolygonOffset(GLfloat factor, GLfloat units);
+  void PolygonOffsetClampEXT(GLfloat factor, GLfloat units, GLfloat clamp);
 
   void SampleCoverage(GLclampf value, WebGLboolean invert);
 
@@ -1958,7 +1964,7 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
   // sent over IPC which has a tendency to GC, or unsuccesfully in which case
   // error handling can GC.)
   void UniformData(GLenum funcElemType, const WebGLUniformLocationJS* const loc,
-                   bool transpose, const Range<const uint8_t>& bytes,
+                   bool transpose, const mozilla::Range<const uint8_t>& bytes,
                    JS::AutoCheckCannotGC&& nogc, GLuint elemOffset = 0,
                    GLuint elemCountOverride = 0) const;
 
@@ -1966,7 +1972,7 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
   // This will create an artificial and unnecessary nogc region that should
   // get optimized away to nothing.
   void UniformData(GLenum funcElemType, const WebGLUniformLocationJS* const loc,
-                   bool transpose, const Range<const uint8_t>& bytes,
+                   bool transpose, const mozilla::Range<const uint8_t>& bytes,
                    GLuint elemOffset = 0, GLuint elemCountOverride = 0) const {
     JS::AutoCheckCannotGC nogc;
     UniformData(funcElemType, loc, transpose, bytes, std::move(nogc),
@@ -1976,8 +1982,9 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
   // -
 
   template <typename T>
-  Maybe<Range<T>> ValidateSubrange(const Range<T>& data, size_t elemOffset,
-                                   size_t elemLengthOverride = 0) const {
+  Maybe<mozilla::Range<T>> ValidateSubrange(
+      const mozilla::Range<T>& data, size_t elemOffset,
+      size_t elemLengthOverride = 0) const {
     auto ret = data;
     if (elemOffset > ret.length()) {
       EnqueueError(LOCAL_GL_INVALID_VALUE,
@@ -2093,7 +2100,7 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
 
  private:
   void VertexAttrib4Tv(GLuint index, webgl::AttribBaseType,
-                       const Range<const uint8_t>&);
+                       const mozilla::Range<const uint8_t>&);
 
  public:
   void VertexAttrib1f(GLuint index, GLfloat x) {

@@ -18,7 +18,6 @@ support-files = [
 ]
 prefs = [
   "accessibility.ariaNotify.enabled=true",
-  "dom.text_fragments.enabled=true",
   # Required for the eval in invokeContentTask in shared-head.js
   "security.allow_eval_with_system_principal=true",
   "accessibility.force_disabled=-1"
@@ -32,13 +31,12 @@ https_first_disabled = true
 ["browser_aria_busy.js"]
 
 ["browser_aria_current.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64' && opt", # Bug 1802555
-]
 
 ["browser_aria_errormessage.js"]
 
 ["browser_aria_expanded.js"]
+
+["browser_aria_grabbed.js"]
 
 ["browser_aria_haspopup.js"]
 
@@ -116,8 +114,6 @@ skip-if = [
 
 ["browser_text_input.js"]
 skip-if = [
-  "os == 'mac' && os_version == '10.15' && arch == 'x86_64'", # Bug 1778821
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64'", # Bug 1778821
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1778821
 ]
 

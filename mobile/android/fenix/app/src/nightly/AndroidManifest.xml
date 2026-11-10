@@ -7,13 +7,23 @@
 
     <application>
 
-        <service
-            android:name=".customtabs.CustomTabsService"
+        <!--
+          Verified App Link for the staging Firefox Accounts pairing host. Nightly only, so
+          release and beta builds do not claim the staging domain. See the matching production
+          filter in the main manifest.
+        -->
+        <activity
+            android:name=".IntentReceiverActivity"
             android:exported="true">
-            <intent-filter>
-                <action android:name="android.support.customtabs.action.CustomTabsService" />
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="accounts.stage.mozaws.net" />
+                <data android:pathPrefix="/pair" />
             </intent-filter>
-        </service>
+        </activity>
 
         <!-- ProfilerProvider is only exposed in nightly builds to allow profiler control through adb.
              Access is restricted to shell / system UID via enforceShellCaller(). -->
@@ -22,6 +32,7 @@
             android:authorities="${applicationId}.profiler"
             android:exported="true"
             android:enabled="true"
+            tools:ignore="ExportedContentProvider"
             tools:replace="android:exported,android:enabled" />
 
     </application>

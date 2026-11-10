@@ -6,7 +6,7 @@ for review. Don't worry about which person to select for reviewing your code;
 for geckodriver it will be done automatically.
 
 Once you have contributed a couple of patches, we are happy to sponsor you in
-{ref}`levelling up <Levelling up>`. With commit access level 1 you will have
+{doc}`levelling up </contributing/levelling-up>`. With commit access level 1 you will have
 permission to use the [Firefox CI] to trigger your own “try runs” to test your
 changes. You can use the following [try preset] to run the most relevant tests:
 
@@ -23,4 +23,4 @@ reduce the number of tasks by filtering on platforms (e.g. linux) or build type
 ```
 
 [Firefox CI]: https://treeherder.mozilla.org/
-[try preset]: https://firefox-source-docs.mozilla.org/tools/try/presets.html
+[try preset]: /tools/try/presets.md

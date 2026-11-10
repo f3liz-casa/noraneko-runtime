@@ -2,7 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { UrlbarUtils } from "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs";
+
 import { RealtimeSuggestProvider } from "moz-src:///browser/components/urlbar/private/RealtimeSuggestProvider.sys.mjs";
+
+const lazy = {};
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  UrlbarShared: "chrome://browser/content/urlbar/UrlbarShared.mjs",
+});
 
 /**
  * A feature that supports flight status suggestions.
@@ -90,7 +98,7 @@ export class FlightStatusSuggestions extends RealtimeSuggestProvider {
     ];
   }
 
-  getViewUpdateForPayloadItem(item, index) {
+  getViewUpdateForPayloadItem(item, index, controller) {
     let status;
     switch (item.status) {
       case "Scheduled": {
@@ -135,16 +143,29 @@ export class FlightStatusSuggestions extends RealtimeSuggestProvider {
     let statusL10nArgs;
     if (status == "delayed") {
       statusL10nArgs = {
-        departureEstimatedTime: new Intl.DateTimeFormat(undefined, {
-          hour: "numeric",
-          minute: "numeric",
-          timeZone: getTimeZone(item.departure.estimated_time),
-        }).format(new Date(item.departure.estimated_time)),
+        departureEstimatedTime: new Intl.DateTimeFormat(
+          lazy.UrlbarShared.locale(),
+          {
+            hour: "numeric",
+            minute: "numeric",
+            timeZone: getTimeZone(item.departure.estimated_time),
+          }
+        ).format(new Date(item.departure.estimated_time)),
       };
     }
 
     let foregroundImage;
     let backgroundImage;
+
+    let iconUrl;
+    if (item.airline.icon) {
+      iconUrl = UrlbarUtils.getRemoteImageUrl({
+        controller,
+        url: item.airline.icon,
+        size: lazy.UrlbarShared.TOP_PICK_ICON_SIZE,
+      });
+    }
+
     if (status == "inflight") {
       let backgroundImageId =
         item.progress_percent == 100
@@ -161,16 +182,14 @@ export class FlightStatusSuggestions extends RealtimeSuggestProvider {
       };
       foregroundImage = {
         attributes: {
-          src: item.airline.icon,
+          src: iconUrl,
         },
       };
     } else {
       foregroundImage = {
         attributes: {
-          src:
-            item.airline.icon ??
-            "chrome://browser/skin/urlbar/flight-airline.svg",
-          fallback: !item.airline.icon,
+          src: iconUrl ?? "chrome://browser/skin/urlbar/flight-airline.svg",
+          fallback: !iconUrl,
         },
       };
     }
@@ -181,7 +200,7 @@ export class FlightStatusSuggestions extends RealtimeSuggestProvider {
       let minutes = item.time_left_minutes % 60;
       // TODO Bug 1997547: TypeScript support for `Intl.DurationFormat`
       // @ts-ignore
-      timeLeft = new Intl.DurationFormat(undefined, {
+      timeLeft = new Intl.DurationFormat(lazy.UrlbarShared.locale(), {
         style: "short",
       }).format({
         // If hours is zero, pass `undefined` to not show it at all.
@@ -199,14 +218,14 @@ export class FlightStatusSuggestions extends RealtimeSuggestProvider {
       [`image_container_${index}`]: backgroundImage,
       [`image_${index}`]: foregroundImage,
       [`departure_time_${index}`]: {
-        textContent: new Intl.DateTimeFormat(undefined, {
+        textContent: new Intl.DateTimeFormat(lazy.UrlbarShared.locale(), {
           hour: "numeric",
           minute: "numeric",
           timeZone: departureTimeZone,
         }).format(departureTime),
       },
       [`departure_date_${index}`]: {
-        textContent: new Intl.DateTimeFormat(undefined, {
+        textContent: new Intl.DateTimeFormat(lazy.UrlbarShared.locale(), {
           month: "short",
           day: "numeric",
           weekday: "short",
@@ -214,7 +233,7 @@ export class FlightStatusSuggestions extends RealtimeSuggestProvider {
         }).format(departureTime),
       },
       [`arrival_time_${index}`]: {
-        textContent: new Intl.DateTimeFormat(undefined, {
+        textContent: new Intl.DateTimeFormat(lazy.UrlbarShared.locale(), {
           hour: "numeric",
           minute: "numeric",
           timeZone: arrivalTimeZone,

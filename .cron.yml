@@ -261,7 +261,6 @@ jobs:
       run-on-projects:
           - mozilla-central
           - mozilla-beta
-          - mozilla-esr153
       when:
           - {weekday: 'Friday', hour: 17, minute: 0}
 
@@ -361,12 +360,14 @@ jobs:
           - autoland
           - mozilla-beta
           - mozilla-release
+          - mozilla-esr153
       when:
           by-project:
               autoland: [{hour: 6, minute: 45}, {hour: 18, minute: 45}]
               # 4h before launch of `daily-releases`
               mozilla-beta: [{hour: 9, minute: 00}]
               mozilla-release: [{weekday: 'Sunday', hour: 19, minute: 00}]
+              mozilla-esr153: [{weekday: 'Sunday', hour: 19, minute: 00}]
               # No default
 
     - name: system-symbols
@@ -395,6 +396,7 @@ jobs:
           type: decision-task
           treeherder-symbol: perftest-fenix-startup
           target-tasks-method: perftest-fenix-startup
+          include-push-tasks: true
       run-on-projects:
           - mozilla-central
       when:
@@ -413,6 +415,7 @@ jobs:
           type: decision-task
           treeherder-symbol: perftest-applink-p
           target-tasks-method: perftest-applink-profiling
+          include-push-tasks: true
       run-on-projects:
           - mozilla-central
       when:
@@ -438,6 +441,7 @@ jobs:
           type: decision-task
           treeherder-symbol: eslint-build
           target-tasks-method: eslint-build
+          include-push-tasks: true
       run-on-projects:
           - mozilla-central
       when:
@@ -496,6 +500,8 @@ jobs:
           type: decision-task
           treeherder-symbol: osint
           target-tasks-method: os-integration
+          include-push-tasks: true
+          optimize-target-tasks: false
       run-on-projects:
           - mozilla-central
       when:
@@ -566,8 +572,20 @@ jobs:
           type: decision-task
           treeherder-symbol: DTbc
           target-tasks-method: devtools_backward_compat
+          include-push-tasks: true
       run-on-projects:
           - mozilla-central
       # Replaces manual smoke tests from the DevTools release checklist.
       when:
           - {hour: 8, minute: 0}
+
+    - name: appservices
+      job:
+          type: decision-task
+          treeherder-symbol: as
+          target-tasks-method: appservices
+          optimize-target-tasks: false
+      run-on-projects:
+          - mozilla-central
+      when:
+          - {hour: 12, minute: 0}

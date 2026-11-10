@@ -6,7 +6,6 @@
 #include "GLContext.h"
 #include "WebGLBuffer.h"
 #include "WebGLContext.h"
-#include "WebGLContextUtils.h"
 #include "WebGLExtensions.h"
 #include "WebGLFramebuffer.h"
 #include "WebGLProgram.h"
@@ -56,8 +55,6 @@ void WebGLContext::BindTexture(GLenum rawTarget, WebGLTexture* newTex) {
   FuncScope funcScope(*this, "bindTexture");
   if (IsContextLost()) return;
   funcScope.mBindFailureGuard = true;
-
-  if (newTex && !ValidateObject("tex", *newTex)) return;
 
   // Need to check rawTarget first before comparing against newTex->Target() as
   // newTex->Target() returns a TexTarget, which will assert on invalid value.
@@ -170,6 +167,15 @@ void WebGLContext::TexStorage(GLenum texTarget, uint32_t levels,
   tex->TexStorage(texTarget, levels, internalFormat, size);
 }
 
+void WebGLContext::HintTexRenderTarget(GLenum texTarget) const {
+  const FuncScope funcScope(*this, "hintTexRenderTarget");
+  if (!gl->IsD3DANGLE()) return;
+  const auto tex = GetActiveTex(texTarget);
+  if (!tex) return;
+  gl->fTexParameteri(texTarget, LOCAL_GL_TEXTURE_USAGE_ANGLE,
+                     LOCAL_GL_FRAMEBUFFER_ATTACHMENT_ANGLE);
+}
+
 void WebGLContext::TexImage(uint32_t level, GLenum respecFormat, uvec3 offset,
                             const webgl::PackingInfo& pi,
                             const webgl::TexUnpackBlobDesc& src) const {
@@ -198,7 +204,7 @@ void WebGLContext::TexImage(uint32_t level, GLenum respecFormat, uvec3 offset,
 void WebGLContext::CompressedTexImage(bool sub, GLenum imageTarget,
                                       uint32_t level, GLenum format,
                                       uvec3 offset, uvec3 size,
-                                      const Range<const uint8_t>& src,
+                                      const mozilla::Range<const uint8_t>& src,
                                       const uint32_t pboImageSize,
                                       const Maybe<uint64_t>& pboOffset) const {
   const WebGLContext::FuncScope funcScope(

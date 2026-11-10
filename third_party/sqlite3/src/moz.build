@@ -92,6 +92,9 @@ DEFINES['SQLITE_OMIT_BUILTIN_TEST'] = True
 # Try to use a MEMORY temp store when possible. That allows for better
 # performance and doesn't suffer from a full separate tmp partition.
 # Exclude 32bit platforms due to address space fragmentation issues.
+# Connection::initializeInternal in storage/mozStorageConnection.cpp assumes
+# these values when deciding whether encrypted databases need to set
+# PRAGMA temp_store themselves; keep the two in sync.
 if CONFIG['OS_TARGET'] == 'Android':
     # On Android there's no tmp partition, so always use a MEMORY temp store.
     DEFINES['SQLITE_TEMP_STORE'] = 3
@@ -142,3 +145,16 @@ DEFINES['SQLITE_ENABLE_CARRAY'] = 1
 
 # The percentile extension is part of the amalgamation but disabled by default.
 DEFINES['SQLITE_ENABLE_PERCENTILE'] = 1
+
+# SQLite is in the public domain, so the credit is a courtesy.
+LICENSES += ['sqlite']
+LICENSES['sqlite'].title = 'SQLite Public Domain Dedication'
+LICENSES['sqlite'].acknowledgement = (
+    'The <a href="https://www.sqlite.org/">sqlite</a> database engine '
+    '(D. Richard Hipp and team)'
+)
+
+LICENSED_UNDER += ['sqlite']
+
+# We use sqlite's built-in normalization to sanitize SQL statements for reporting.
+DEFINES['SQLITE_ENABLE_NORMALIZE'] = 1

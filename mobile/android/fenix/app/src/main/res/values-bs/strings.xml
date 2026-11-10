@@ -69,7 +69,11 @@
   <string name="about_content" tools:ignore="BrandUsage">%1$s je razvila Mozilla.</string>
   <!-- Private Browsing -->
   <string name="private_browsing_common_myths">Uobičajeni mitovi o privatnom surfanju</string>
-  <!-- Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active. -->
+  <!--
+    Private Browsing
+
+    Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active.
+  -->
   <string name="private_browsing_a11y_session_announcement">Sesija privatnog pregledavanja</string>
   <!--
     True Private Browsing Mode
@@ -157,11 +161,7 @@
   <string name="recently_visited_menu_item_remove">Ukloni</string>
   <!-- Content description for the button which navigates the user to show all of their history. -->
   <string name="past_explorations_show_all_content_description_2">Prikaži sva prošla istraživanja</string>
-  <!--
-    Browser Fragment
-
-    Content description (not visible, for screen readers etc.): Navigate backward (browsing history)
-  -->
+  <!-- Content description (not visible, for screen readers etc.): Navigate backward (browsing history) -->
   <string name="browser_menu_back">Nazad</string>
   <!-- Content description (not visible, for screen readers etc.): Navigate forward (browsing history) -->
   <string name="browser_menu_forward">Naprijed</string>
@@ -276,8 +276,6 @@
   <string name="browser_menu_default_banner_title">Postavi %1$s kao zadanu opciju</string>
   <!-- Label text within the set as default banner -->
   <string name="browser_menu_default_banner_subtitle_2">Brz, privatan i napravljen za vas.</string>
-  <!-- Content description (not visible, for screen readers etc.) for the button that dismisses the set as default banner in the menu -->
-  <string name="browser_menu_default_banner_dismiss_promotion">Odbaci promociju</string>
   <!-- Content description (not visible, for screen readers etc.) for recommended extensions in main menu -->
   <string name="browser_menu_recommended_extensions_content_description">Više informacija</string>
   <!--
@@ -476,7 +474,11 @@
     Title for the settings page
   -->
   <string name="settings">Postavke</string>
-  <!-- Preference category for general settings -->
+  <!--
+    Preferences
+
+    Preference category for general settings
+  -->
   <string name="preferences_category_general">Opće</string>
   <!-- Preference category for all links about Fenix -->
   <string name="preferences_category_about">O Fenixu</string>
@@ -973,8 +975,6 @@
   <string name="preference_simple_toolbar">Jednostavno</string>
   <!-- Preference for using expanded toolbar -->
   <string name="preference_expanded_toolbar">Prošireno</string>
-  <!-- Preference description indicating the toolbar location preference is disabled when the tab strip is enabled -->
-  <string name="preference_toolbar_pref_disabled_explanation">Adresna traka mora biti na vrhu kada se prikazuje traka s tabovima.</string>
   <!--
     App icon Preferences
 
@@ -1077,8 +1077,6 @@
     Title of preference for tabs management
   -->
   <string name="preferences_tabs">Tabovi</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">Prikaz taba</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">Lista</string>
   <!-- Option for a grid tab view -->
@@ -1123,12 +1121,6 @@
   <string name="opening_screen_last_tab_summary">Otvori u zadnjem tabu</string>
   <!-- Summary for homepage preference indicating opening the homepage when re-opening the app after four hours of inactivity -->
   <string name="opening_screen_after_four_hours_of_inactivity_summary">Otvori na početnoj stranici nakon četiri sata</string>
-  <!--
-    Inactive tabs
-
-    Category header of a preference that allows a user to enable or disable the inactive tabs feature
-  -->
-  <string name="preferences_inactive_tabs">Premjestite stare tabove u neaktivne</string>
   <!-- Summary of the preference that allows a user to enable or disable the inactive tabs feature. -->
   <string name="preferences_inactive_tabs_title">Tabovi koje niste pogledali dvije sedmice se premještaju u neaktivan odjeljak.</string>
   <!--

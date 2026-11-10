@@ -12,9 +12,24 @@
 const { RustAutofillAddressesAdapter } = ChromeUtils.importESModule(
   "resource://autofill/RustAutofillAddressStorage.sys.mjs"
 );
-const { Store } = ChromeUtils.importESModule(
-  "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustAutofill.sys.mjs"
+const { createAutofillKey, createAutofillStoreWithStaticKeyManager } =
+  ChromeUtils.importESModule(
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustAutofill.sys.mjs"
+  );
+const { initialize: initRustComponents } = ChromeUtils.importESModule(
+  "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustInitRustComponents.sys.mjs"
 );
+const { FormAutofill } = ChromeUtils.importESModule(
+  "resource://autofill/FormAutofill.sys.mjs"
+);
+
+// The store holds an encryption key even where, as here, nothing is encrypted.
+// A test store gets one of its own rather than the profile's NSS key, but
+// generating it still goes through NSS.
+async function newStore(dbPath) {
+  await initRustComponents(PathUtils.profileDir);
+  return createAutofillStoreWithStaticKeyManager(dbPath, createAutofillKey());
+}
 
 const TEST_RECORD = {
   name: "Jane Doe",
@@ -42,7 +57,7 @@ function waitForStorageChanged(expectedAction) {
 
 add_task(async function test_adapter_crud_and_computed_fields() {
   const dbPath = FileTestUtils.getTempFile("autofill-adapter.sqlite").path;
-  const adapter = new RustAutofillAddressesAdapter(await Store.init(dbPath));
+  const adapter = new RustAutofillAddressesAdapter(await newStore(dbPath));
 
   // isEmpty() answers from a cached count and reports empty until something
   // primes it, so prime it first: without this the assertion passes whatever
@@ -111,7 +126,7 @@ add_task(async function test_adapter_crud_and_computed_fields() {
 
 add_task(async function test_add_many_with_meta_bulk_import() {
   const dbPath = FileTestUtils.getTempFile("autofill-adapter-bulk.sqlite").path;
-  const adapter = new RustAutofillAddressesAdapter(await Store.init(dbPath));
+  const adapter = new RustAutofillAddressesAdapter(await newStore(dbPath));
 
   const records = [
     {
@@ -174,7 +189,7 @@ add_task(async function test_add_many_with_meta_isolates_per_record_failure() {
   const dbPath = FileTestUtils.getTempFile(
     "autofill-adapter-bulkfail.sqlite"
   ).path;
-  const adapter = new RustAutofillAddressesAdapter(await Store.init(dbPath));
+  const adapter = new RustAutofillAddressesAdapter(await newStore(dbPath));
 
   // Two records sharing a guid: the second insert collides (duplicate primary
   // key) and must be reported as an error without aborting the good one.
@@ -208,7 +223,7 @@ add_task(async function test_add_many_with_meta_isolates_per_record_failure() {
 
 add_task(async function test_get_distinguishes_missing_from_unreadable() {
   const dbPath = FileTestUtils.getTempFile("autofill-adapter-get.sqlite").path;
-  const adapter = new RustAutofillAddressesAdapter(await Store.init(dbPath));
+  const adapter = new RustAutofillAddressesAdapter(await newStore(dbPath));
 
   Assert.equal(
     await adapter.get("NoSuchGuid01"),
@@ -228,4 +243,57 @@ add_task(async function test_get_distinguishes_missing_from_unreadable() {
     /database is locked/,
     "a failure to read propagates rather than reading as not-found"
   );
+});
+
+add_task(async function test_read_suppresses_country_without_metadata() {
+  // A region ICU can name, so AddressRecord.normalizeFields keeps it on write,
+  // but one with no bundled address metadata, so it is absent from
+  // FormAutofill.countries. AddressesBase._recordReadProcessor drops such a
+  // code on every read, and this store has to agree: a profile that migrates
+  // must not start exposing a code the JSON store hid.
+  const UNSUPPORTED_COUNTRY = "XK";
+  Assert.ok(
+    !FormAutofill.countries.has(UNSUPPORTED_COUNTRY),
+    `${UNSUPPORTED_COUNTRY} has no bundled address metadata`
+  );
+
+  const dbPath = FileTestUtils.getTempFile(
+    "autofill-adapter-country.sqlite"
+  ).path;
+  const adapter = new RustAutofillAddressesAdapter(await newStore(dbPath));
+
+  const guid = await adapter.add({
+    ...TEST_RECORD,
+    "address-level1": "",
+    "address-level2": "Pristina",
+    "postal-code": "10000",
+    country: UNSUPPORTED_COUNTRY,
+  });
+
+  const stored = await adapter._get(await adapter._store(), guid);
+  Assert.equal(
+    stored.country,
+    UNSUPPORTED_COUNTRY,
+    "the code is persisted, as the JSON store persists it"
+  );
+
+  const fetched = await adapter.get(guid);
+  Assert.ok(
+    !("country" in fetched),
+    "get() does not report a country with no address metadata"
+  );
+  Assert.ok(
+    !("country-name" in fetched),
+    "get() does not report a country-name for it either"
+  );
+
+  const [all] = await adapter.getAll();
+  Assert.ok(
+    !("country" in all),
+    "getAll() does not report a country with no address metadata"
+  );
+
+  // Only the country is hidden: the rest of the record reads back intact.
+  Assert.equal(fetched["address-level2"], "Pristina", "other fields are kept");
+  Assert.equal(fetched["postal-code"], "10000", "other fields are kept");
 });

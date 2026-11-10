@@ -273,6 +273,8 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
   virtual nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
   nsresult CopyInnerTo(HTMLCanvasElement* aDest);
 
+  void DestroyContent() override;
+
   static void MapAttributesIntoRule(MappedDeclarationsBuilder&);
 
   /*
@@ -320,14 +322,10 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
 
   CSSIntSize GetWidthHeight() override;
 
-  bool CanCreateContext() const override { return !mOffscreenCanvas; }
-
   virtual already_AddRefed<nsICanvasRenderingContextInternal> CreateContext(
       CanvasContextType aContextType) override;
 
-  nsresult UpdateContext(JSContext* aCx,
-                         JS::Handle<JS::Value> aNewContextOptions,
-                         ErrorResult& aRvForDictionaryInit) override;
+  void AfterUpdateContext() override;
 
   nsresult ExtractData(JSContext* aCx, nsIPrincipal& aSubjectPrincipal,
                        nsAString& aType, const nsAString& aOptions,
@@ -359,6 +357,12 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
   bool IsOffscreen() const { return !!mOffscreenCanvas; }
   OffscreenCanvas* GetOffscreenCanvas() const { return mOffscreenCanvas; }
   void FlushOffscreenCanvas();
+
+  // Only canvases which have been transferred to an OffscreenCanvas observe
+  // the document activity, to let the display helper know whether the frames
+  // it produces would end up on the screen at all.
+  void NotifyOwnerDocumentActivityChanged();
+  void NodeInfoChanged(Document* aOldDoc) override;
 
   layers::ImageContainer* GetImageContainer() const { return mImageContainer; }
 

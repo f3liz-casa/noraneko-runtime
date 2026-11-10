@@ -4,7 +4,6 @@
 
 EXPORTS += [
     "external_api/moz_external_vr.h",
-    "FxROutputHandler.h",
     "FxRWindowManager.h",
     "gfxVR.h",
     "ipc/VRChild.h",
@@ -68,6 +67,9 @@ else:
     UNIFIED_SOURCES += [
         "VRServiceHost.cpp",
     ]
+    SOURCE_HEADERS += [
+        "VRServiceHost.h",
+    ]
 
 IPDL_SOURCES = [
     "ipc/PVR.ipdl",
@@ -84,10 +86,16 @@ if CONFIG["OS_ARCH"] == "WINNT" and CONFIG["NIGHTLY_BUILD"]:
     SOURCES += [
         "nsFxrCommandLineHandler.cpp",
     ]
+    SOURCE_HEADERS += [
+        "nsFxrCommandLineHandler.h",
+    ]
 
 if CONFIG["OS_ARCH"] == "WINNT":
     LOCAL_INCLUDES += ["/layout/generic", "/widget", "/widget/windows"]
     SOURCES += ["FxROutputHandler.cpp", "FxRWindowManager.cpp"]
+    EXPORTS += [
+        "FxROutputHandler.h",
+    ]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     CXXFLAGS += CONFIG["MOZ_GTK3_CFLAGS"]
@@ -102,3 +110,7 @@ FINAL_LIBRARY = "xul"
 
 with Files("**"):
     BUG_COMPONENT = ("Core", "WebVR")
+
+SOURCE_HEADERS += [
+    "gfxVRMutex.h",
+]

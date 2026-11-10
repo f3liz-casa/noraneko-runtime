@@ -3,18 +3,18 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::util::sync::atomic::AtomicBool;
 use std::any::Any;
 use std::fmt::Display;
-
-use crate::error::Result;
-use crate::image::{DataTypeTag, ImageDataType};
-use crate::render::{ErasedLocalState, StageSpecialCase};
-use crate::util::ShiftRightCeil;
+use std::sync::Arc;
 
 use super::save::SaveStage;
 use super::stages::ExtendToImageDimensionsStage;
 use super::{RenderPipelineInOutStage, RenderPipelineInPlaceStage};
+use crate::error::Result;
+use crate::image::{BufferRecycler, DataTypeTag, ImageDataType};
+use crate::render::ErasedLocalState;
+use crate::util::ShiftRightCeil;
+use crate::util::sync::atomic::AtomicBool;
 
 pub enum Stage<Buffer> {
     InPlace(Box<dyn RunInPlaceStage<Buffer>>),
@@ -62,24 +62,17 @@ impl<Buffer: 'static> Stage<Buffer> {
             Stage::Save(s) => s.uses_channel(c),
         }
     }
-    pub(super) fn input_type(&self) -> DataTypeTag {
+    pub(super) fn input_type(&self, c: usize) -> DataTypeTag {
         match self {
             Stage::Extend(_) => DataTypeTag::F32,
             Stage::InPlace(s) => s.ty(),
             Stage::InOut(s) => s.input_type(),
-            Stage::Save(s) => s.input_type(),
+            Stage::Save(s) => s.input_type(c),
         }
     }
     pub(super) fn output_type(&self) -> Option<DataTypeTag> {
         match self {
             Stage::InOut(s) => Some(s.output_type()),
-            _ => None,
-        }
-    }
-    pub(super) fn is_special_case(&self) -> Option<StageSpecialCase> {
-        match self {
-            Stage::InOut(s) => s.is_special_case(),
-            Stage::InPlace(s) => s.is_special_case(),
             _ => None,
         }
     }
@@ -98,7 +91,7 @@ impl<Buffer> Display for Stage<Buffer> {
 
 #[derive(Clone, Debug)]
 pub struct ChannelInfo {
-    pub ty: Option<DataTypeTag>,
+    pub ty: DataTypeTag,
     pub downsample: (u8, u8),
 }
 
@@ -112,7 +105,7 @@ pub struct RenderPipelineShared<Buffer> {
     pub stages: Vec<Stage<Buffer>>,
     pub extend_stage_index: Option<usize>,
     pub channel_is_used: Vec<bool>,
-    pub group_scratch_buffers_limit: Option<usize>,
+    pub buffer_recycler: Arc<BufferRecycler>,
 }
 
 impl<Buffer> RenderPipelineShared<Buffer> {
@@ -148,10 +141,13 @@ impl<Buffer> RenderPipelineShared<Buffer> {
         requested_data_type: DataTypeTag,
     ) -> (usize, usize) {
         let ChannelInfo { downsample, ty } = self.channel_info[0][channel];
-        if ty.unwrap() != requested_data_type {
+        // Channels that no stage consumes are not marked as used. Callers may still ask for a
+        // scratch buffer for them (e.g. VarDCT always decodes three colour channels, but a
+        // grayscale pipeline only ever reads the first one); the data written there is
+        // discarded, so any type is acceptable.
+        if self.channel_is_used[channel] && ty != requested_data_type {
             panic!(
-                "Invalid pipeline usage: incorrect channel type, requested {:?}, but pipeline wants {ty:?}",
-                requested_data_type
+                "Invalid pipeline usage: incorrect channel type, requested {requested_data_type:?}, but pipeline wants {ty:?}"
             );
         }
         // 420 JPEGs are padded to 16 pixels, not to 8.
@@ -185,7 +181,6 @@ pub trait InPlaceStage: Any + Display + Send + Sync {
     fn init_local_state(&self) -> Result<Option<Box<ErasedLocalState>>>;
     fn uses_channel(&self, c: usize) -> bool;
     fn ty(&self) -> DataTypeTag;
-    fn is_special_case(&self) -> Option<StageSpecialCase>;
 }
 
 pub trait RunInPlaceStage<Buffer: PipelineBuffer>: InPlaceStage {
@@ -207,9 +202,6 @@ impl<T: RenderPipelineInPlaceStage> InPlaceStage for T {
     fn ty(&self) -> DataTypeTag {
         T::Type::DATA_TYPE_ID
     }
-    fn is_special_case(&self) -> Option<StageSpecialCase> {
-        self.is_special_case()
-    }
 }
 
 pub trait InOutStage: Any + Display + Send + Sync {
@@ -219,7 +211,6 @@ pub trait InOutStage: Any + Display + Send + Sync {
     fn uses_channel(&self, c: usize) -> bool;
     fn input_type(&self) -> DataTypeTag;
     fn output_type(&self) -> DataTypeTag;
-    fn is_special_case(&self) -> Option<StageSpecialCase>;
 }
 
 impl<T: RenderPipelineInOutStage> InOutStage for T {
@@ -240,9 +231,6 @@ impl<T: RenderPipelineInOutStage> InOutStage for T {
     }
     fn output_type(&self) -> DataTypeTag {
         T::OutputT::DATA_TYPE_ID
-    }
-    fn is_special_case(&self) -> Option<StageSpecialCase> {
-        self.is_special_case()
     }
 }
 

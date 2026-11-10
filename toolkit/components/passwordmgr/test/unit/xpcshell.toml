@@ -10,6 +10,8 @@ prefs = ["security.storage.encryption.sqlite.enabled=false"]
 
 ["test_BreachAlertStore.js"]
 
+["test_BreachAlertsData.js"]
+
 ["test_CSVParser.js"]
 
 ["test_LoginManagerParent_doAutocompleteSearch.js"]
@@ -37,6 +39,18 @@ run-if = [
   "os != 'android'", # Tests desktop's prompter
 ]
 
+["test_LoginStorageMigrator.js"]
+run-if = [
+  "os != 'android'", # The migrator only runs on desktop
+]
+
+["test_LoginStorageMigrator_nimbus.js"]
+run-if = [
+  # The migrator only runs on desktop, and Normandy is only included where
+  # MOZ_BUILD_APP == 'browser'.
+  "os != 'android' && buildapp == 'browser'",
+]
+
 ["test_OSCrypto_win.js"]
 run-if = [
   "os == 'win'",
@@ -57,6 +71,8 @@ skip-if = [
 run-if = [
   "buildapp == 'browser'",
 ]
+
+["test_crypto_SDR_primary_password.js"]
 
 ["test_dedupeLogins.js"]
 
@@ -120,11 +136,6 @@ run-if = [
   "os != 'android'", # Only used by migrator, which isn't on Android
 ]
 
-["test_LoginStorageMigrator.js"]
-run-if = [
-  "os != 'android'", # The migrator only runs on desktop
-]
-
 ["test_module_LoginCSVImport.js"]
 
 ["test_module_LoginExport.js"]
@@ -159,6 +170,8 @@ run-if = [
 ["test_storage.js"]
 
 ["test_storage_rust_shutdown.js"]
+
+["test_storage_rust_timestamps.js"]
 
 ["test_telemetry.js"]
 

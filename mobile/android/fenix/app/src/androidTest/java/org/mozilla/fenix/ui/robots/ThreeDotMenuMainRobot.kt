@@ -35,6 +35,7 @@ import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiSelector
 import mozilla.components.browser.menu.R as menuR
+import mozilla.components.compose.menu.R as MozacMenuR
 import org.hamcrest.Matchers.allOf
 import org.mozilla.fenix.R
 import org.mozilla.fenix.components.menu.MenuDialogTestTag.DESKTOP_SITE_OFF
@@ -400,7 +401,7 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
             .onNodeWithText(getStringResource(R.string.browser_menu_default_banner_subtitle_2))
             .assertIsDisplayed()
         composeTestRule
-            .onNodeWithContentDescription(getStringResource(R.string.browser_menu_default_banner_dismiss_promotion))
+            .onNodeWithContentDescription(getStringResource(MozacMenuR.string.mozac_menu_banner_dismiss_description))
             .assertIsDisplayed()
     }
 
@@ -634,10 +635,19 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
         }
     }
 
-    fun verifySummarizePageButton() {
-        Log.i(TAG, "verifySummarizePageButton: Trying to verify that the \"Summarize page\" button exists.")
-        composeTestRule.summarizePageButton().assertIsDisplayed()
-        Log.i(TAG, "verifySummarizePageButton: Verified that the \"Summarize page\" button exists.")
+    fun verifySummarizePageButton(isDisplayed: Boolean = true) {
+        if (isDisplayed) {
+            Log.i(TAG, "verifySummarizePageButton: Trying to verify that the \"Summarize page\" button is displayed.")
+            composeTestRule.summarizePageButton().assertIsDisplayed()
+            Log.i(TAG, "verifySummarizePageButton: Verified that the \"Summarize page\" button is displayed.")
+        } else {
+            Log.i(
+                TAG,
+                "verifySummarizePageButton: Trying to verify that the \"Summarize page\" button is not displayed.",
+            )
+            composeTestRule.summarizePageButton().assertIsNotDisplayed()
+            Log.i(TAG, "verifySummarizePageButton: Verified that the \"Summarize page\" button is not displayed.")
+        }
     }
 
     class Transition(private val composeTestRule: ComposeTestRule) {
@@ -1060,9 +1070,7 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
             return SettingsSubMenuAddonsManagerRobot.Transition(composeTestRule)
         }
 
-        fun clickSummarizePageButton(
-            interact: SettingsSubMenuPageSummariesRobot.() -> Unit
-        ): SettingsSubMenuPageSummariesRobot.Transition {
+        fun clickSummarizePageButton(interact: BrowserRobot.() -> Unit): BrowserRobot.Transition {
             Log.i(
                 TAG,
                 "clickSummarizePageButton: Trying to click the Summarize Page button from the new main menu design.",
@@ -1073,8 +1081,17 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
             composeTestRule.waitForIdle()
             Log.i(TAG, "clickSummarizePageButton: Waited for compose test rule to be idle")
 
-            SettingsSubMenuPageSummariesRobot(composeTestRule).interact()
-            return SettingsSubMenuPageSummariesRobot.Transition(composeTestRule)
+            BrowserRobot(composeTestRule).interact()
+            return BrowserRobot.Transition(composeTestRule)
+        }
+
+        fun dismissMainMenu(interact: BrowserRobot.() -> Unit): BrowserRobot.Transition {
+            Log.i(TAG, "dismissMainMenu: Trying to dismiss the main menu from the new main menu design.")
+            mDevice.pressBack()
+            Log.i(TAG, "dismissMainMenu: Dismissed the main menu from the new main menu design.")
+
+            BrowserRobot(composeTestRule).interact()
+            return BrowserRobot.Transition(composeTestRule)
         }
     }
 }

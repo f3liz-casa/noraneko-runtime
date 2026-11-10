@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* stylelint-disable stylelint-plugin-mozilla/use-design-tokens */
-
 .crossword {
   @include widget-base-style;
 
@@ -27,12 +25,6 @@
     align-items: center;
     gap: var(--space-small);
     min-inline-size: 0;
-  }
-
-  h3 {
-    margin-block: 0;
-    font-weight: var(--font-weight);
-    font-size: var(--font-size-root);
   }
 
   // moz-badge renders its visible content in shadow DOM, so it can only be

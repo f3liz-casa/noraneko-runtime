@@ -81,6 +81,7 @@ fuzz_oss=0
 no_local_nspr=0
 sslkeylogfile=1
 static_libs=0
+clang_cl=0
 
 gyp_params=(--depth="$cwd" --generator-output=".")
 ninja_params=()
@@ -116,6 +117,7 @@ while [ $# -gt 0 ]; do
         --clang) export CC=clang; export CCC=clang++; export CXX=clang++; msvc=0 ;;
         --gcc) export CC=gcc; export CCC=g++; export CXX=g++; msvc=0 ;;
         --msvc) msvc=1 ;;
+        --clang-cl) msvc=1; clang_cl=1 ;;
         --scan-build) enable_scanbuild  ;;
         --scan-build=?*) enable_scanbuild "${1#*=}" ;;
         --disable-tests) gyp_params+=(-Ddisable_tests=1) ;;
@@ -135,7 +137,7 @@ while [ $# -gt 0 ]; do
         --no-zdefs) gyp_params+=(-Dno_zdefs=1) ;;
         --static) static_libs=1; gyp_params+=(-Dstatic_libs=1) ;;
         --ct-verif) gyp_params+=(-Dct_verif=1) ;;
-        --nspr) nspr_clean; rebuild_nspr=1 ;;
+        --nspr) rebuild_nspr=1 ;;
         --nspr-test-build) build_nspr_tests=1 ;;
         --nspr-test-run) run_nspr_tests=1 ;;
         --nspr-only) exit_after_nspr=1 ;;
@@ -210,6 +212,25 @@ if [ "$msvc" = 1 ]; then
     source "$cwd/coreconf/msvc.sh"
 fi
 
+# clang-cl compiles against the headers and libraries msvc.sh just set up.
+if [ "$clang_cl" = 1 ]; then
+    if ! clang_cl_path=$(command -v clang-cl); then
+        echo "Can't find clang-cl on the path, aborting" 1>&2
+        exit 1
+    fi
+    # ninja runs the tools natively and gyp would prefix a relative path, so
+    # gyp needs the directory as an absolute Windows path.
+    gyp_params+=(-Dclang_cl=1 -Dcc_is_clang=1)
+    gyp_params+=(-Dllvm_bindir="$(cygpath -m "$(dirname "$clang_cl_path")")")
+    # NSPR's configure takes the compiler from the environment.
+    case "$target_arch" in
+        ia32) CC="clang-cl -m32" ;;
+        arm64|aarch64) CC="clang-cl --target=aarch64-pc-windows-msvc" ;;
+        *) CC=clang-cl ;;
+    esac
+    export CC CCC="$CC" CXX="$CC"
+fi
+
 # -c = clean first
 if [ "$clean" = 1 -o "$clean_only" = 1 ]; then
     nspr_clean
@@ -263,7 +284,8 @@ fi
 if check_config "$nspr_config" \
                  nspr_cflags="$(Q "$nspr_cflags")" \
                  nspr_cxxflags="$(Q "$nspr_cxxflags")" \
-                 nspr_ldflags="$(Q "$nspr_ldflags")"; then
+                 nspr_ldflags="$(Q "$nspr_ldflags")" \
+                 nspr_opt="$(Q "$nspr_opt")"; then
     rebuild_nspr=1
 fi
 
@@ -331,8 +353,10 @@ generate_pkg_config()
     vpatch=$(sed -n 's/^#define NSS_VPATCH \([0-9]*\).*/\1/p' "$nss_h")
     [ -n "$vmajor" ] || return 0
 
-    nspr_version=$(sed -n 's/^Version: *//p' \
-        "$obj_dir/lib/pkgconfig/nspr.pc" 2>/dev/null)
+    if [ "$no_local_nspr" = 0 ]; then
+        nspr_version=$(sed -n 's/^Version: *//p' \
+            "$obj_dir/lib/pkgconfig/nspr.pc" 2>/dev/null)
+    fi
     : "${nspr_version:=4.32}"
 
     mkdir -p "$obj_dir/lib/pkgconfig"

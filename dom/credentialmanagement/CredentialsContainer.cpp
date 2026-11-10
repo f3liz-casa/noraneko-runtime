@@ -7,7 +7,7 @@
 #include "mozilla/StaticPrefs_security.h"
 #include "mozilla/dom/Credential.h"
 #include "mozilla/dom/DigitalCredentialHandler.h"
-#include "mozilla/dom/FeaturePolicyUtils.h"
+#include "mozilla/dom/PermissionsPolicyUtils.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/WebAuthnHandler.h"
 #include "mozilla/dom/WebIdentityHandler.h"
@@ -129,6 +129,10 @@ already_AddRefed<Promise> CredentialsContainer::Get(
     return nullptr;
   }
 
+  if (!CheckState(*promise)) {
+    return promise.forget();
+  }
+
   uint64_t totalOptions = 0;
   if (aOptions.mPublicKey.WasPassed()) {
     totalOptions += 1;
@@ -156,7 +160,7 @@ already_AddRefed<Promise> CredentialsContainer::Get(
       aOptions.mMediation == CredentialMediationRequirement::Conditional;
   if (aOptions.mPublicKey.WasPassed()) {
     MOZ_ASSERT(mParent);
-    if (!FeaturePolicyUtils::IsFeatureAllowed(
+    if (!PermissionsPolicyUtils::IsFeatureAllowed(
             mParent->GetExtantDoc(), u"publickey-credentials-get"_ns) ||
         !(IsInActiveTab(mParent) || conditionallyMediated)) {
       promise->MaybeRejectWithNotAllowedError(
@@ -209,8 +213,8 @@ already_AddRefed<Promise> CredentialsContainer::Get(
   }
 
   if (aOptions.mDigital.WasPassed()) {
-    if (!FeaturePolicyUtils::IsFeatureAllowed(mParent->GetExtantDoc(),
-                                              u"digital-credentials-get"_ns)) {
+    if (!PermissionsPolicyUtils::IsFeatureAllowed(
+            mParent->GetExtantDoc(), u"digital-credentials-get"_ns)) {
       promise->MaybeRejectWithNotAllowedError(
           "The 'digital-credentials-get' feature is not allowed by policy in this document."_ns);
       return promise.forget();
@@ -233,6 +237,10 @@ already_AddRefed<Promise> CredentialsContainer::Create(
   RefPtr<Promise> promise = Promise::Create(mParent->AsGlobal(), aRv);
   if (aRv.Failed()) {
     return nullptr;
+  }
+
+  if (!CheckState(*promise)) {
+    return promise.forget();
   }
 
   // Count the types of options provided. Must not be >1.
@@ -264,7 +272,7 @@ already_AddRefed<Promise> CredentialsContainer::Create(
     bool hasRequiredActivation =
         IsInActiveTab(mParent) &&
         (IsSameOriginWithAncestors(mParent) || ConsumeUserActivation(mParent));
-    if (!FeaturePolicyUtils::IsFeatureAllowed(
+    if (!PermissionsPolicyUtils::IsFeatureAllowed(
             mParent->GetExtantDoc(), u"publickey-credentials-create"_ns) ||
         !hasRequiredActivation) {
       promise->MaybeRejectWithNotAllowedError(
@@ -286,7 +294,7 @@ already_AddRefed<Promise> CredentialsContainer::Create(
   }
 
   if (aOptions.mDigital.WasPassed()) {
-    if (!FeaturePolicyUtils::IsFeatureAllowed(
+    if (!PermissionsPolicyUtils::IsFeatureAllowed(
             mParent->GetExtantDoc(), u"digital-credentials-create"_ns)) {
       promise->MaybeRejectWithNotAllowedError(
           "The 'digital-credentials-create' feature is not allowed by policy in this document."_ns);
@@ -309,6 +317,10 @@ already_AddRefed<Promise> CredentialsContainer::Store(
   RefPtr<Promise> promise = Promise::Create(mParent->AsGlobal(), aRv);
   if (aRv.Failed()) {
     return nullptr;
+  }
+
+  if (!CheckState(*promise)) {
+    return promise.forget();
   }
 
   nsString type;
@@ -343,6 +355,10 @@ already_AddRefed<Promise> CredentialsContainer::PreventSilentAccess(
     return nullptr;
   }
 
+  if (!CheckState(*promise)) {
+    return promise.forget();
+  }
+
   WebIdentityHandler* identityHandler =
       mParent->GetOrCreateWebIdentityHandler();
   if (!identityHandler) {
@@ -352,6 +368,17 @@ already_AddRefed<Promise> CredentialsContainer::PreventSilentAccess(
 
   identityHandler->PreventSilentAccess(promise);
   return promise.forget();
+}
+
+bool CredentialsContainer::CheckState(Promise& aPromise) {
+  MOZ_ASSERT(mParent);
+  if (!mParent->IsFullyActive()) {
+    aPromise.MaybeRejectWithInvalidStateError(
+        "The document is not fully active."_ns);
+    return false;
+  }
+
+  return true;
 }
 
 }  // namespace mozilla::dom

@@ -15,6 +15,7 @@
 // Globals
 
 const kDeleteTempFileOnExit = "browser.helperApps.deleteTempFileOnExit";
+const kStartDownloadsInTmpDir = "browser.download.start_downloads_in_tmp_dir";
 // TODO (bug 1986365): we should replace the setting of this pref with an actual
 // test for the "new" behaviour (introduced in bug 1790641).
 const kDeletePrivateFileFeature = "browser.download.enableDeletePrivate";
@@ -239,56 +240,67 @@ add_task(async function test_unix_permissions() {
 
   let launcherPath = getTempFile("app-launcher").path;
 
-  for (let autoDelete of [false, true]) {
-    for (let isPrivate of [false, true]) {
-      for (let launchWhenSucceeded of [false, true]) {
-        info(
-          "Checking " +
-            JSON.stringify({ autoDelete, isPrivate, launchWhenSucceeded })
-        );
-
-        Services.prefs.setBoolPref(kDeleteTempFileOnExit, autoDelete);
-
-        let download;
-        if (!gUseLegacySaver) {
-          download = await Downloads.createDownload({
-            source: { url: httpUrl("source.txt"), isPrivate },
-            target: getTempFile(TEST_TARGET_FILE_NAME).path,
-            launchWhenSucceeded,
-            launcherPath,
-          });
-          await download.start();
-        } else {
-          download = await promiseStartLegacyDownload(httpUrl("source.txt"), {
-            isPrivate,
-            launchWhenSucceeded,
-            launcherPath: launchWhenSucceeded && launcherPath,
-          });
-          await promiseDownloadStopped(download);
-        }
-
-        let isTemporary = launchWhenSucceeded && isPrivate;
-        let stat = await IOUtils.stat(download.target.path);
-        if (Services.appinfo.OS == "WINNT") {
-          // On Windows
-          // Temporary downloads should be read-only
-          Assert.equal(stat.permissions, isTemporary ? 0o444 : 0o666);
-        } else {
-          // On Linux, Mac
-          // Temporary downloads should be read-only and not accessible to other
-          // users, while permanently downloaded files should be readable and
-          // writable as specified by the system umask.
-          Assert.equal(
-            stat.permissions,
-            isTemporary ? 0o400 : 0o666 & ~Services.sysinfo.getProperty("umask")
+  for (let startInTmpDir of [false, true]) {
+    for (let autoDelete of [false, true]) {
+      for (let isPrivate of [false, true]) {
+        for (let launchWhenSucceeded of [false, true]) {
+          info(
+            "Checking " +
+              JSON.stringify({
+                startInTmpDir,
+                autoDelete,
+                isPrivate,
+                launchWhenSucceeded,
+              })
           );
+
+          Services.prefs.setBoolPref(kStartDownloadsInTmpDir, startInTmpDir);
+          Services.prefs.setBoolPref(kDeleteTempFileOnExit, autoDelete);
+
+          let download;
+          if (!gUseLegacySaver) {
+            download = await Downloads.createDownload({
+              source: { url: httpUrl("source.txt"), isPrivate },
+              target: getTempFile(TEST_TARGET_FILE_NAME).path,
+              launchWhenSucceeded,
+              launcherPath,
+            });
+            await download.start();
+          } else {
+            download = await promiseStartLegacyDownload(httpUrl("source.txt"), {
+              isPrivate,
+              launchWhenSucceeded,
+              launcherPath: launchWhenSucceeded && launcherPath,
+            });
+            await promiseDownloadStopped(download);
+          }
+
+          let isTemporary = launchWhenSucceeded && isPrivate && startInTmpDir;
+          let stat = await IOUtils.stat(download.target.path);
+          if (Services.appinfo.OS == "WINNT") {
+            // On Windows
+            // Temporary downloads should be read-only
+            Assert.equal(stat.permissions, isTemporary ? 0o444 : 0o666);
+          } else {
+            // On Linux, Mac
+            // Temporary downloads should be read-only and not accessible to
+            // other users, while permanently downloaded files should be
+            // readable and writable as specified by the system umask.
+            Assert.equal(
+              stat.permissions,
+              isTemporary
+                ? 0o400
+                : 0o666 & ~Services.sysinfo.getProperty("umask")
+            );
+          }
         }
       }
     }
   }
 
-  // Clean up the changes to the preference.
+  // Clean up the changes to the preferences.
   Services.prefs.clearUserPref(kDeleteTempFileOnExit);
+  Services.prefs.clearUserPref(kStartDownloadsInTmpDir);
 });
 
 /**
@@ -2123,6 +2135,10 @@ add_task(async function test_getSha256Hash() {
     await promiseDownloadStopped(download);
     Assert.ok(download.stopped);
     Assert.equal(32, download.saver.getSha256Hash().length);
+    Assert.equal(
+      download.saver.getSha256HashHex(),
+      "616b8d2d6f4f68c4edd6d1e2fb9f7b383705f314f0358958b7f7a982a5861cb4"
+    );
   }
 });
 

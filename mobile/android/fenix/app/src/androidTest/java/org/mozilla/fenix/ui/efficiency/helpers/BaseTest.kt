@@ -214,10 +214,12 @@ abstract class BaseTest(
                                 skipOnboarding = cfg.skipOnboarding,
                                 isPageLoadTranslationsPromptEnabled = cfg.isPageLoadTranslationsPromptEnabled,
                                 isPocketEnabled = cfg.isPocketEnabled,
+                                isBookmarksHomeFeatureEnabled = cfg.isBookmarksHomeFeatureEnabled,
                                 isRecentlyVisitedFeatureEnabled = cfg.isRecentlyVisitedFeatureEnabled,
                                 shouldUseExpandedToolbar = cfg.shouldUseExpandedToolbar,
                                 isTabStripEnabled = cfg.isTabStripEnabled,
                                 shakeToSummarizeFeatureFlagEnabled = cfg.shakeToSummarizeFeatureFlagEnabled,
+                                isPrivateModeAndStoriesEntryPointEnabled = cfg.isPrivateModeAndStoriesEntryPointEnabled,
                             )
                         ) {
                             it.activity

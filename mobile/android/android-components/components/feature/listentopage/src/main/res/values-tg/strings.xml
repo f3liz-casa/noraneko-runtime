@@ -23,8 +23,20 @@
     <item quantity="one">Ба пеш %1$d сония</item>
     <item quantity="other">Ба пеш %1$d сония</item>
   </plurals>
+  <!-- Listen to Page media player: screen reader value of the playback position slider, such as "3:34 of 6:00". %1$s is the elapsed time and %2$s is the total duration. -->
+  <string name="mozac_feature_listentopage_seek_state">%1$s аз %2$s</string>
+  <!-- Error text shown on the Listen to Page media player when the text-to-speech engine fails to convert the article into spoken audio -->
+  <string name="mozac_feature_listentopage_error_audio_not_available">Аудио дастрас нест</string>
+  <!-- Title of the Listen to page lock-screen notification: displayed instead of the page title, when the page being read is in a Private tab (to protect the user's privacy) -->
+  <string name="mozac_feature_listentopage_private_tab_title">Варақаи хусусӣ</string>
+  <!-- Message of the Listen to page lock-screen notification: displayed instead of the page URL, when the page being read is in a Private tab (to protect the user's privacy) -->
+  <string name="mozac_feature_listentopage_private_tab_site">Сомона пинҳон аст</string>
   <!-- Listen to Page media player: content description for the button that closes the player. -->
   <string name="mozac_feature_listentopage_close">Пӯшидан</string>
+  <!-- Listen to Page media player: content description for the button that opens the list of available voices. -->
+  <string name="mozac_feature_listentopage_voice_options">Имконоти овозӣ</string>
+  <!-- Listen to Page media player: screen reader state of the voice and playback speed buttons while their menu is open. -->
+  <string name="mozac_feature_listentopage_dropdown_expanded">Баркушода</string>
   <!-- Listen to Page media player: content description for the button that opens the list of available voices. -->
   <string name="mozac_feature_listentopage_audio">Аудио</string>
   <!-- Listen to Page media player: content description for the button that rewinds 10 seconds. -->
@@ -35,4 +47,8 @@
   <string name="mozac_feature_listentopage_pause">Таваққуф кардан</string>
   <!-- Listen to Page media player: content description for the button that Fast-forwards 30 seconds. -->
   <string name="mozac_feature_listentopage_forward_30_sec">Ба пеш 30 сония</string>
+  <!-- Playback speed menu item, such as "1.5×". %1$s is the multiplier already formatted with the decimal separator of the locale. -->
+  <string name="mozac_feature_listentopage_playback_speed_option">%1$s×</string>
+  <!-- Playback speed menu item for the normal reading speed, which is also the default speed. "1×" means one times the normal speed. -->
+  <string name="mozac_feature_listentopage_playback_speed_option_default">1× (Пешфарз)</string>
 </resources>

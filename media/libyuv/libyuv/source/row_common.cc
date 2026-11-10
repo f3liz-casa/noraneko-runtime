@@ -13,7 +13,6 @@
 #include <assert.h>
 #include <string.h>  // For memcpy and memset.
 
-#include "libyuv/basic_types.h"
 #include "libyuv/convert_argb.h"       // For kYuvI601Constants
 #include "libyuv/convert_from_argb.h"  // For ArgbConstants
 
@@ -36,9 +35,6 @@ extern "C" {
 // LIBYUV_UNLIMITED_BT601
 // LIBYUV_UNLIMITED_BT709
 // LIBYUV_UNLIMITED_BT2020
-
-// This macro fixes the AR30 rounding bias offset (+24 / -24) for 10-bit YUV to RGB conversions:
-// LIBYUV_UNBIASED_DATA
 
 // llvm x86 is poor at ternary operator, so use branchless min/max.
 
@@ -1788,14 +1784,13 @@ MAKEYUVCONSTANTS(V2020, YG, YB, UB, UG, VG, VR)
   int r16 = y1 + (vi * vr)
 #endif
 
-#if defined(LIBYUV_UNBIASED_DATA)
 #if defined(__aarch64__) || defined(__arm__) || defined(__riscv)
-#define LOAD_YUV_CONSTANTS_AR30            \
-  int ub = yuvconstants->kUVCoeff[0];      \
-  int vr = yuvconstants->kUVCoeff[1];      \
-  int ug = yuvconstants->kUVCoeff[2];      \
-  int vg = yuvconstants->kUVCoeff[3];      \
-  int yg = yuvconstants->kRGBCoeffBias[0]; \
+#define LOAD_YUV_CONSTANTS_AR30                 \
+  int ub = yuvconstants->kUVCoeff[0];           \
+  int vr = yuvconstants->kUVCoeff[1];           \
+  int ug = yuvconstants->kUVCoeff[2];           \
+  int vg = yuvconstants->kUVCoeff[3];           \
+  int yg = yuvconstants->kRGBCoeffBias[0];      \
   int bb = yuvconstants->kRGBCoeffBias[1] + 24; \
   int bg = yuvconstants->kRGBCoeffBias[2] - 24; \
   int br = yuvconstants->kRGBCoeffBias[3] + 24
@@ -1807,9 +1802,6 @@ MAKEYUVCONSTANTS(V2020, YG, YB, UB, UG, VG, VR)
   int vr = yuvconstants->kUVToR[1];  \
   int yg = yuvconstants->kYToRgb[0]; \
   int yb = yuvconstants->kYBiasToRgb[0] - 24
-#endif
-#else
-#define LOAD_YUV_CONSTANTS_AR30 LOAD_YUV_CONSTANTS
 #endif
 
 // C reference code that mimics the YUV assembly.
@@ -2830,16 +2822,15 @@ void MirrorSplitUVRow_C(const uint8_t* src_uv,
 
 void ARGBMirrorRow_C(const uint8_t* src, uint8_t* dst, int width) {
   int x;
-  const uint32_t* src32 = (const uint32_t*)(src);
-  uint32_t* dst32 = (uint32_t*)(dst);
-  src32 += width - 1;
-  for (x = 0; x < width - 1; x += 2) {
-    dst32[x] = src32[0];
-    dst32[x + 1] = src32[-1];
-    src32 -= 2;
-  }
-  if (width & 1) {
-    dst32[width - 1] = src32[0];
+  const uint8_t* s = src + (ptrdiff_t)(width - 1) * 4;
+  uint8_t* d = dst;
+  for (x = 0; x < width; ++x) {
+    d[0] = s[0];
+    d[1] = s[1];
+    d[2] = s[2];
+    d[3] = s[3];
+    s -= 4;
+    d += 4;
   }
 }
 
@@ -3249,16 +3240,15 @@ void Convert16To8Row_C(const uint16_t* src_y,
   }
 }
 
-// Use scale to convert lsb formats to msb, depending how many bits there are:
-// 1024 = 10 bits
+// Convert 8 bit values to 10, 12 or 16 bits.
 void Convert8To16Row_C(const uint8_t* src_y,
                        uint16_t* dst_y,
-                       int scale,
+                       int bits,
                        int width) {
   int x;
-  scale *= 0x0101;  // replicates the byte.
+  int shift = 16 - bits;
   for (x = 0; x < width; ++x) {
-    dst_y[x] = (src_y[x] * scale) >> 16;
+    dst_y[x] = (src_y[x] * 0x0101) >> shift;
   }
 }
 
@@ -3714,19 +3704,16 @@ void HalfWidthRow_16To8_C(const uint16_t* src_uv,
   int x;
   for (x = 0; x < width - 1; x += 2) {
     dst_uv[0] = STATIC_CAST(
-        uint8_t,
-        C16TO8((s[0] + s[1] + t[0] + t[1] + 2) >> 2, scale));
+        uint8_t, C16TO8((s[0] + s[1] + t[0] + t[1] + 2) >> 2, scale));
     dst_uv[1] = STATIC_CAST(
-        uint8_t,
-        C16TO8((s[2] + s[3] + t[2] + t[3] + 2) >> 2, scale));
+        uint8_t, C16TO8((s[2] + s[3] + t[2] + t[3] + 2) >> 2, scale));
     dst_uv += 2;
     s += 4;
     t += 4;
   }
   if (width & 1) {
     dst_uv[0] = STATIC_CAST(
-        uint8_t,
-        C16TO8((s[0] + s[1] + t[0] + t[1] + 2) >> 2, scale));
+        uint8_t, C16TO8((s[0] + s[1] + t[0] + t[1] + 2) >> 2, scale));
   }
 }
 
@@ -3741,19 +3728,16 @@ void HalfWidthRow_16To8_Odd_C(const uint16_t* src_uv,
   width -= 1;
   for (x = 0; x < width - 1; x += 2) {
     dst_uv[0] = STATIC_CAST(
-        uint8_t,
-        C16TO8((s[0] + s[1] + t[0] + t[1] + 2) >> 2, scale));
+        uint8_t, C16TO8((s[0] + s[1] + t[0] + t[1] + 2) >> 2, scale));
     dst_uv[1] = STATIC_CAST(
-        uint8_t,
-        C16TO8((s[2] + s[3] + t[2] + t[3] + 2) >> 2, scale));
+        uint8_t, C16TO8((s[2] + s[3] + t[2] + t[3] + 2) >> 2, scale));
     dst_uv += 2;
     s += 4;
     t += 4;
   }
   if (width & 1) {
     dst_uv[0] = STATIC_CAST(
-        uint8_t,
-        C16TO8((s[0] + s[1] + t[0] + t[1] + 2) >> 2, scale));
+        uint8_t, C16TO8((s[0] + s[1] + t[0] + t[1] + 2) >> 2, scale));
     dst_uv += 1;
     s += 2;
     t += 2;
@@ -4290,8 +4274,6 @@ void I422ToARGB4444Row_AVX2(const uint8_t* src_y,
 }
 #endif
 
-
-
 #if defined(HAS_I444TOARGBROW_AVX2) && defined(HAS_ARGBTORGB24ROW_AVX2)
 void I444ToRGB24Row_AVX2(const uint8_t* src_y,
                          const uint8_t* src_u,
@@ -4685,8 +4667,7 @@ void RGBToUVMatrixRow_AVX512BW(const uint8_t* src_rgb,
 }
 #endif
 
-#if defined(HAS_ARGBTOUV444MATRIXROW_SSSE3) && \
-    defined(HAS_RGB24TOARGBROW_SSSE3)
+#if defined(HAS_ARGBTOUV444MATRIXROW_SSSE3) && defined(HAS_RGB24TOARGBROW_SSSE3)
 void RGBToUV444MatrixRow_SSSE3(const uint8_t* src_rgb,
                                uint8_t* dst_u,
                                uint8_t* dst_v,
@@ -4705,8 +4686,7 @@ void RGBToUV444MatrixRow_SSSE3(const uint8_t* src_rgb,
 }
 #endif
 
-#if defined(HAS_ARGBTOUV444MATRIXROW_AVX2) && \
-    defined(HAS_RGB24TOARGBROW_AVX2)
+#if defined(HAS_ARGBTOUV444MATRIXROW_AVX2) && defined(HAS_RGB24TOARGBROW_AVX2)
 void RGBToUV444MatrixRow_AVX2(const uint8_t* src_rgb,
                               uint8_t* dst_u,
                               uint8_t* dst_v,

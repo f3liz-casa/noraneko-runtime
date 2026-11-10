@@ -11,10 +11,9 @@ transforms:
 
 kind-dependencies:
     - release-beetmover-push-to-release
-    - push-bundle
+    - push-android
 
 task-defaults:
-    run-on-repo-type: [hg]
     name: notify-release-drivers-push
     description: Sends email to release-drivers telling release was pushed.
     run-on-projects: []

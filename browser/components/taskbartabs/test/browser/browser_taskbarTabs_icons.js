@@ -6,11 +6,13 @@
 ChromeUtils.defineESModuleGetters(this, {
   sinon: "resource://testing-common/Sinon.sys.mjs",
   ShellService: "moz-src:///browser/components/shell/ShellService.sys.mjs",
-  TaskbarTabs: "resource:///modules/taskbartabs/TaskbarTabs.sys.mjs",
-  TaskbarTabsPin: "resource:///modules/taskbartabs/TaskbarTabsPin.sys.mjs",
+  TaskbarTabs: "moz-src:///browser/components/taskbartabs/TaskbarTabs.sys.mjs",
+  TaskbarTabsPin:
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsPin.sys.mjs",
   TaskbarTabsWindowManager:
-    "resource:///modules/taskbartabs/TaskbarTabsWindowManager.sys.mjs",
-  TaskbarTabsUtils: "resource:///modules/taskbartabs/TaskbarTabsUtils.sys.mjs",
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsWindowManager.sys.mjs",
+  TaskbarTabsUtils:
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsUtils.sys.mjs",
 });
 
 const kBaseUri = Services.io.newURI("https://example.com");
@@ -280,7 +282,7 @@ add_task(async function test_findOrCreateTaskbarTab_noIcon() {
   let fakeImg = {};
   sandbox.stub(TaskbarTabsUtils, "getFaviconUri").resolves(null);
   sandbox.stub(TaskbarTabsUtils, "getDefaultIcon").resolves(fakeImg);
-  let pinStub = sandbox.stub(TaskbarTabsPin, "pinTaskbarTab").resolves();
+  let pinStub = sandbox.stub(TaskbarTabsPin, "pinTaskbarTab").resolves({});
 
   let result = await TaskbarTabs.findOrCreateTaskbarTab(kBaseUri, 0);
   Assert.equal(
@@ -339,7 +341,7 @@ async function checkManifestIcon(aImageWithTab, aImageWithoutTab, aManifest) {
   // This case checks moveTabIntoTaskbarTab.
   await checkTaskbarTabIcon(aImageWithTab, { manifest: aManifest });
 
-  let pinStub = sandbox.stub(TaskbarTabsPin, "pinTaskbarTab").resolves();
+  let pinStub = sandbox.stub(TaskbarTabsPin, "pinTaskbarTab").resolves({});
 
   let { taskbarTab } = await TaskbarTabs.findOrCreateTaskbarTab(kBaseUri, 0, {
     manifest: aManifest,
@@ -381,6 +383,7 @@ async function checkTaskbarTabIcon(
     .stub(TaskbarTabsPin, "pinTaskbarTab")
     .callsFake((...args) => {
       pendingPin = TaskbarTabsPin.pinTaskbarTab.wrappedMethod(...args);
+      return pendingPin;
     });
 
   let replaceStub = sandbox
@@ -483,7 +486,7 @@ async function openAndMoveIntoTaskbarTab(aUri, aManifest) {
 async function checkLoadsCorrectIcon(methodName, index, callback) {
   let sandbox = sinon.createSandbox();
 
-  sandbox.stub(TaskbarTabsPin, "pinTaskbarTab").resolves();
+  sandbox.stub(TaskbarTabsPin, "pinTaskbarTab").resolves({});
   let { taskbarTab } = await TaskbarTabs.findOrCreateTaskbarTab(kBaseUri, 0);
 
   let fakeImg = { which: "fakeImg" };

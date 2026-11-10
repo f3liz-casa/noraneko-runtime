@@ -80,12 +80,16 @@ SharedPlanarYCbCrImage::GetAsSourceSurface() {
 }
 
 nsresult SharedPlanarYCbCrImage::CopyData(const PlanarYCbCrData& aData) {
+  const auto sizes = aData.GetPlaneSizes();
+  if (!sizes) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
   // If mTextureClient has not already been allocated by CreateEmptyBuffer,
   // allocate it. This code path is slower than the one used when
   // CreateEmptyBuffer has been called since it will trigger a full copy.
   if (!mTextureClient) {
-    nsresult r =
-        CreateEmptyBuffer(aData, aData.YDataSize(), aData.CbCrDataSize());
+    nsresult r = CreateEmptyBuffer(aData, sizes->mY, sizes->mCbCr);
     if (NS_FAILED(r)) {
       return r;
     }
@@ -119,6 +123,16 @@ nsresult SharedPlanarYCbCrImage::CreateEmptyBuffer(
     const gfx::IntSize& aCbCrSize) {
   MOZ_ASSERT(!mTextureClient, "This image already has allocated data");
 
+  if (!aData.GetPlaneSizes()) {
+    return NS_ERROR_INVALID_ARG;
+  }
+  const auto bufferSize = ImageDataSerializer::ComputeYCbCrBufferSize(
+      aData.mPictureRect, aYSize, aData.mYStride, aCbCrSize, aData.mCbCrStride,
+      aData.mColorDepth, aData.mChromaSubsampling);
+  if (!bufferSize) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
   TextureFlags flags =
       mCompositable ? mCompositable->GetTextureFlags() : TextureFlags::DEFAULT;
   {
@@ -142,10 +156,11 @@ nsresult SharedPlanarYCbCrImage::CreateEmptyBuffer(
   // The locking here is sort of a lie. The SharedPlanarYCbCrImage just pulls
   // pointers out of the TextureClient and keeps them around, which works only
   // because the underlyin BufferTextureData is always mapped in memory even
-  // outside of the lock/unlock interval. That's sad and new code should follow
-  // this example.
+  // outside of the lock/unlock interval. For shmem, mShmemHolder also keeps the
+  // mapping alive if ImageBridge shutdown destroys the TextureClient. New code
+  // should not retain borrowed pointers without retaining their storage.
   if (!mTextureClient->Lock(OpenMode::OPEN_READ) ||
-      !mTextureClient->BorrowMappedYCbCrData(mapped)) {
+      !mTextureClient->BorrowMappedYCbCrData(mapped, mShmemHolder)) {
     MOZ_CRASH("GFX: Cannot lock or borrow mapped YCbCr");
   }
 
@@ -173,18 +188,13 @@ nsresult SharedPlanarYCbCrImage::CreateEmptyBuffer(
   // do not set mBuffer like in PlanarYCbCrImage because the later
   // will try to manage this memory without knowing it belongs to a
   // shmem.
-  Maybe<uint32_t> bufferSize = ImageDataSerializer::ComputeYCbCrBufferSize(
-      mData.mPictureRect, aYSize, mData.mYStride, aCbCrSize, mData.mCbCrStride,
-      mData.mColorDepth, mData.mChromaSubsampling);
-  mBufferSize = bufferSize.valueOr(0);
+  mBufferSize = *bufferSize;
   mSize = mData.mPictureRect.Size();
   mOrigin = mData.mPictureRect.TopLeft();
 
   mTextureClient->Unlock();
 
-  // ImageDataSerializer::ComputeYCbCrBufferSize may return Nothing() when the
-  // size requested is out of the limit.
-  return bufferSize.isSome() ? NS_OK : NS_ERROR_INVALID_ARG;
+  return NS_OK;
 }
 
 void SharedPlanarYCbCrImage::SetIsDRM(bool aIsDRM) {

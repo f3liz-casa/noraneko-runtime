@@ -64,7 +64,7 @@ BrowsingContextGroup* WindowContext::Group() const {
 
 WindowGlobalParent* WindowContext::Canonical() {
   MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
-  return static_cast<WindowGlobalParent*>(this);
+  return WindowGlobalParent::Cast(this);
 }
 
 bool WindowContext::IsCurrent() const {
@@ -228,138 +228,8 @@ bool WindowContext::CheckOnlyOwningProcessCanSet(ContentParent* aSource) {
   return false;
 }
 
-bool WindowContext::CanSet(FieldIndex<IDX_IsSecure>, const bool& aIsSecure,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_NeedsBeforeUnload>,
-                           const bool& aHasBeforeUnload,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_NeedsTraverse>,
-                           const bool& aNeedsTraverse, ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_CookieBehavior>,
-                           const Maybe<uint32_t>& aValue,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_IsOnContentBlockingAllowList>,
-                           const bool& aValue, ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_IsThirdPartyWindow>,
-                           const bool& IsThirdPartyWindow,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_IsThirdPartyTrackingResourceWindow>,
-                           const bool& aIsThirdPartyTrackingResourceWindow,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_UsingStorageAccess>,
-                           const bool& aUsingStorageAccess,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_ShouldResistFingerprinting>,
-                           const bool& aShouldResistFingerprinting,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_OverriddenFingerprintingSettings>,
-                           const Maybe<RFPTargetSet>& aValue,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_IsSecureContext>,
-                           const bool& aIsSecureContext,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_IsOriginalFrameSource>,
-                           const bool& aIsOriginalFrameSource,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_DocTreeHadMedia>, const bool& aValue,
-                           ContentParent* aSource) {
-  return IsTop();
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_AutoplayPermission>,
-                           const uint32_t& aValue, ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_ShortcutsPermission>,
-                           const uint32_t& aValue, ContentParent* aSource) {
-  return IsTop() && CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_ActiveMediaSessionContextId>,
-                           const Maybe<uint64_t>& aValue,
-                           ContentParent* aSource) {
-  return IsTop();
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_PopupPermission>, const uint32_t&,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(
-    FieldIndex<IDX_DelegatedPermissions>,
-    const PermissionDelegateHandler::DelegatedPermissionList& aValue,
-    ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(
-    FieldIndex<IDX_DelegatedExactHostMatchPermissions>,
-    const PermissionDelegateHandler::DelegatedPermissionList& aValue,
-    ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_IsLocalIP>, const bool& aValue,
-                           ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_AllowJavascript>, bool aValue,
-                           ContentParent* aSource) {
-  return (XRE_IsParentProcess() && !aSource) ||
-         CheckOnlyOwningProcessCanSet(aSource);
-}
-
 void WindowContext::DidSet(FieldIndex<IDX_AllowJavascript>, bool aOldValue) {
   RecomputeCanExecuteScripts();
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_HasActivePeerConnections>, bool,
-                           ContentParent*) {
-  return XRE_IsParentProcess() && IsTop();
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_IsFramebustingAllowed>,
-                           const bool& aValue, ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
 }
 
 void WindowContext::ProcessCloseRequest() {
@@ -531,23 +401,13 @@ void WindowContext::Discard() {
 }
 
 void WindowContext::AddSecurityState(uint32_t aStateFlags) {
-  MOZ_ASSERT(TopWindowContext() == this);
-  MOZ_ASSERT((aStateFlags &
-              (nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT |
-               nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT |
-               nsIWebProgressListener::STATE_BLOCKED_MIXED_DISPLAY_CONTENT |
-               nsIWebProgressListener::STATE_BLOCKED_MIXED_ACTIVE_CONTENT |
-               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADED |
-               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADE_FAILED |
-               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADED_FIRST)) ==
-                 aStateFlags,
+  MOZ_ASSERT((aStateFlags & kValidSecurityStateFlags) == aStateFlags,
              "Invalid flags specified!");
 
   if (XRE_IsParentProcess()) {
-    Canonical()->AddSecurityState(aStateFlags);
-  } else {
-    ContentChild* child = ContentChild::GetSingleton();
-    child->SendAddSecurityState(this, aStateFlags);
+    TopWindowContext()->Canonical()->ApplySecurityStateToTop(aStateFlags);
+  } else if (WindowGlobalChild* child = GetWindowGlobalChild()) {
+    child->SendAddSecurityState(aStateFlags);
   }
 }
 

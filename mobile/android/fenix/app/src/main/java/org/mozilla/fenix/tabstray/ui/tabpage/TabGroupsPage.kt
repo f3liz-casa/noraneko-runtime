@@ -27,6 +27,8 @@ import mozilla.components.compose.base.annotation.FlexibleWindowLightDarkPreview
 import mozilla.components.ui.icons.R as iconsR
 import org.mozilla.fenix.R
 import org.mozilla.fenix.compose.BetaLabel
+import org.mozilla.fenix.home.collections.CollectionsMigrationPromoCard
+import org.mozilla.fenix.home.collections.CollectionsMigrationPromoSource
 import org.mozilla.fenix.tabstray.TabsTrayTestTag
 import org.mozilla.fenix.tabstray.data.TabGroupTheme
 import org.mozilla.fenix.tabstray.data.TabsTrayItem
@@ -44,6 +46,7 @@ private val EmptyPageWidth = 225.dp
  * @param onEditTabGroupClick Invoked when a group is requested to be edited.
  * @param onShareTabGroupClick Invoked when a group is requested to be shared.
  * @param onDeleteTabGroupClick Invoked when a group is requested to be deleted.
+ * @param onCollectionsMigrationCardDismiss Invoked when the Collections to Tab Groups migration card is dismissed.
  */
 @Composable
 internal fun TabGroupsPage(
@@ -52,6 +55,7 @@ internal fun TabGroupsPage(
     onEditTabGroupClick: (TabsTrayItem.TabGroup) -> Unit,
     onShareTabGroupClick: (TabsTrayItem.TabGroup) -> Unit,
     onDeleteTabGroupClick: (TabsTrayItem.TabGroup) -> Unit,
+    onCollectionsMigrationCardDismiss: () -> Unit,
 ) {
     if (state.groups.isNotEmpty()) {
         Column {
@@ -63,8 +67,28 @@ internal fun TabGroupsPage(
                     )
             )
 
+            if (state.showCollectionsMigrationCard) {
+                CollectionsMigrationPromoCard(
+                    source = CollectionsMigrationPromoSource.TABS_TRAY,
+                    modifier =
+                        Modifier.padding(
+                                start = FirefoxTheme.layout.space.dynamic200,
+                                top = FirefoxTheme.layout.space.dynamic200,
+                                end = FirefoxTheme.layout.space.dynamic200,
+                            )
+                            .testTag(TabsTrayTestTag.COLLECTIONS_MIGRATION_CARD),
+                    onDismiss = onCollectionsMigrationCardDismiss,
+                )
+            }
+
             TabGroupList(
                 groups = state.groups,
+                topPadding =
+                    if (state.showCollectionsMigrationCard) {
+                        FirefoxTheme.layout.space.static100
+                    } else {
+                        FirefoxTheme.layout.space.dynamic200
+                    },
                 onTabGroupClick = onTabGroupClick,
                 onEditTabGroupClick = onEditTabGroupClick,
                 onShareTabGroupClick = onShareTabGroupClick,
@@ -168,6 +192,33 @@ private fun TabGroupsPagePreview(
             onEditTabGroupClick = {},
             onShareTabGroupClick = {},
             onDeleteTabGroupClick = {},
+            onCollectionsMigrationCardDismiss = {},
+        )
+    }
+}
+
+@FlexibleWindowLightDarkPreview
+@Composable
+private fun TabGroupsPageWithCollectionsMigrationCardPreview() {
+    FirefoxTheme {
+        TabGroupsPage(
+            state =
+                TabGroupState(
+                    groups =
+                        listOf(
+                            TabsTrayItem.TabGroup(
+                                title = "Work",
+                                theme = TabGroupTheme.Blue,
+                                tabs = mutableListOf(createTab(url = "https://www.mozilla.org")),
+                            )
+                        ),
+                    showCollectionsMigrationCard = true,
+                ),
+            onTabGroupClick = {},
+            onEditTabGroupClick = {},
+            onShareTabGroupClick = {},
+            onDeleteTabGroupClick = {},
+            onCollectionsMigrationCardDismiss = {},
         )
     }
 }

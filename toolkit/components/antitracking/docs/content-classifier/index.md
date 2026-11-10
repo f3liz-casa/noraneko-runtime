@@ -8,7 +8,9 @@ its safebrowsing-format hash tables: same set of features (trackers, social
 trackers, fingerprinters, cryptominers, email trackers, plus
 allow-list/exception features and dedicated `test_block` / `test_annotate`
 features), but driven by full adblock syntax rules evaluated by a Rust
-engine wrapping the [`adblock`](https://crates.io/crates/adblock) crate.
+engine wrapping the in-tree `etp_engine` crate
+(`toolkit/components/content-classifier/etp_engine/`), a fork of
+[brave/adblock-rust](https://github.com/brave/adblock-rust).
 
 This page is a reference for how the service is wired up internally: where
 list bytes live, how they get turned into engines, how a channel
@@ -23,7 +25,7 @@ depends on.
 | `nsIContentClassifierRemoteSettingsClient.idl` | JS-side contract: `init`, `shutdown`, `getListBytes(listName)`. |
 | `ContentClassifierService.{h,cpp}` | The singleton C++ service. Owns the feature table, the per-feature engine map, the four mode-keyed active-engine lists, the mutex, pref/Nimbus observers, async-shutdown blocker, and the build thread. |
 | `ContentClassifierRemoteSettingsClient.sys.mjs` | Wraps the `content-classifier-lists` Remote Settings collection. Owns the on-disk attachment cache, registers a sync listener, and pulls bytes on demand. |
-| `content_classifier_engine/` (Rust crate) | Wraps the `adblock` crate (v0.12.1, `full-regex-handling` + `single-thread` features) behind a small FFI: `engine_from_rules`, `check_network_request_preparsed`, `engine_destroy`, plus init/teardown for an `nsIEffectiveTLDService`-backed domain resolver. |
+| `content_classifier_engine/` (Rust crate) | Wraps the `etp_engine` crate (`full-regex-handling` + `single-thread` features) behind a small FFI: `engine_from_rules`, `check_network_request_preparsed`, `engine_destroy`, plus init/teardown for an `nsIEffectiveTLDService`-backed domain resolver. |
 | `ContentClassifierEngine.{h,cpp}` | Thread-safe refcounted C++ wrapper around the Rust FFI engine. Extracts request metadata from an `nsIChannel`-derived `ContentClassifierRequest` and calls into Rust. |
 | `components.conf`, `moz.build` | Component registration and build setup (cbindgen generates `content_classifier_ffi.h`). |
 
@@ -178,24 +180,34 @@ flag (via `mozIThirdPartyUtil`), and the PBM flag.
 the appropriate active-engine array based on PBM and mode, and call
 `ClassifyWithEngines`. The lock is released before returning the result.
 
-`ClassifyWithEngines` takes an `aIndependentEngines` flag that controls
-how engine evaluation chains:
+`ClassifyWithEngines` takes a `ClassifyMode` that controls which requests
+are considered and how engine evaluation chains:
 
-- **Cancel (`aIndependentEngines = false`).** Threads a `matchedSoFar`
-  flag through every `CheckNetworkRequest` call so exception-only engines
-  see the propagated `matched_rule`. Stops iterating when the aggregated
-  status reaches `ImportantHit` or `ImportantException` — either of those
-  pins the outcome and further engines can't change it — but otherwise
-  continues so a trailing exception can still demote an earlier hit.
-- **Annotate (`aIndependentEngines = true`).** Each engine sees
-  `previously_matched_rule = false`, so each evaluates its own rules in
-  isolation and `MaybeAnnotateChannel` can attribute matches to every
-  feature whose rules fired.
+- **Cancel.** Threads a `matchedSoFar` flag through every
+  `CheckNetworkRequest` call so exception-only engines see the propagated
+  `matched_rule`. Stops iterating when the aggregated status reaches
+  `ImportantHit` or `ImportantException` — either of those pins the
+  outcome and further engines can't change it — but otherwise continues
+  so a trailing exception can still demote an earlier hit.
+- **Annotate.** Also classifies top-level documents. Each engine
+  sees `previously_matched_rule = false`, so each evaluates its own rules
+  in isolation and `MaybeAnnotateChannel` can attribute matches to every
+  feature whose rules fired. Untyped filter rules never match the
+  `document` request type on their own, so in this mode a top-level
+  document is presented to the engine as an untyped (`other`) request.
 
-`ContentClassifierEngine::CheckNetworkRequest` short-circuits to a `Miss`
-for first-party requests before crossing the FFI. For genuine
-third-party requests, it builds the preparsed request fields once and
-calls `content_classifier_engine_check_network_request_preparsed`. The
+Which requests a feature considers in each mode is up to its
+`mRequestFilter`. The ETP features use `IsThirdPartyUnlessAnnotating`: they
+block third-party requests only, like url-classifier's protection features,
+but annotate first-party requests as well, like its annotation features.
+Those first-party matches land on the channel as first-party
+classification flags, which the antitracking redirect, navigation and
+popup heuristics read off the top-level document channel. The harmful-addon
+feature instead filters on the requesting add-on, regardless of party.
+
+`ContentClassifierEngine::CheckNetworkRequest` builds the preparsed
+request fields once and calls
+`content_classifier_engine_check_network_request_preparsed`. The
 Rust side constructs an `adblock::Request` via `Request::preparsed`,
 calls `Engine::check_network_request_subset(req, previously_matched_rule,
 false)`, and writes back `matched`, `important`, and an optional

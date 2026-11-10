@@ -56,7 +56,7 @@ skip-if = [
 ]
 support-files = [
   "!/gfx/layers/apz/test/mochitest/apz_test_native_event_utils.js",
-  "!/browser/base/content/test/forms/head.js"
+  "!/browser/base/content/test/browser-forms/head.js"
 ]
 tags = "bleedover"
 
@@ -82,6 +82,8 @@ support-files = [
   "470711-1.xhtml",
   "470711-1-ref.xhtml"
 ]
+
+["browser_viewport_size_override.js"]
 
 ["browser_visual_viewport_iframe.js"]
 support-files = [

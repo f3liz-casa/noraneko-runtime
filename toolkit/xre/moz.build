@@ -54,6 +54,9 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
         "nsNativeAppSupportWin.cpp",
         "WinTokenUtils.cpp",
     ]
+    SOURCE_HEADERS += [
+        "nsNativeAppSupportWin.h",
+    ]
     DEFINES["PROXY_PRINTING"] = 1
     LOCAL_INCLUDES += [
         "../components/printingui",
@@ -82,16 +85,25 @@ elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
         "nsNativeAppSupportCocoa.mm",
         "updaterfileutils_osx.mm",
     ]
-    if CONFIG["NIGHTLY_BUILD"]:
-        XPIDL_SOURCES += [
-            "nsIASWebAuthSessionRequest.idl",
-        ]
-        UNIFIED_SOURCES += [
-            "ASWebAuthSessionHandler.mm",
-        ]
-        OS_LIBS += [
-            "-framework AuthenticationServices",
-        ]
+
+    XPIDL_SOURCES += [
+        "nsIASWebAuthSessionRequest.idl",
+    ]
+    UNIFIED_SOURCES += [
+        "ASWebAuthSessionHandler.mm",
+    ]
+    OS_LIBS += [
+        "-framework AuthenticationServices",
+    ]
+
+    SOURCE_HEADERS += [
+        "ASWebAuthSessionHandler.h",
+        "MacApplicationDelegate.h",
+        "MacLaunchHelper.h",
+        "nsCommandLineServiceMac.h",
+        "updaterfileutils_osx.h",
+    ]
+
     DEFINES["PROXY_PRINTING"] = 1
     LOCAL_INCLUDES += [
         "../components/printingui",
@@ -129,6 +141,9 @@ if CONFIG["MOZ_HAS_REMOTE"]:
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     UNIFIED_SOURCES += [
         "nsGDKErrorHandler.cpp",
+    ]
+    SOURCE_HEADERS += [
+        "nsGDKErrorHandler.h",
     ]
     LOCAL_INCLUDES += [
         "/widget",
@@ -176,6 +191,11 @@ if CONFIG["MOZ_UPDATER"]:
             "nsUpdateMutex.cpp",
             "nsUpdateSyncManager.cpp",
         ]
+        SOURCE_HEADERS += [
+            "nsUpdateDriver.h",
+            "nsUpdateMutex.h",
+            "nsUpdateSyncManager.h",
+        ]
 
 if CONFIG["MOZ_PDF_PRINTING"]:
     DEFINES["PROXY_PRINTING"] = 1
@@ -208,6 +228,9 @@ for var in (
 
 if CONFIG["MOZ_DEFAULT_BROWSER_AGENT"] and CONFIG["OS_ARCH"] == "WINNT":
     DEFINES["MOZ_DEFAULT_BROWSER_AGENT"] = CONFIG["MOZ_DEFAULT_BROWSER_AGENT"]
+
+if CONFIG["MOZ_PUSH_NOTIFICATION_HELPER"] and CONFIG["OS_ARCH"] == "WINNT":
+    DEFINES["MOZ_PUSH_NOTIFICATION_HELPER"] = CONFIG["MOZ_PUSH_NOTIFICATION_HELPER"]
 
 if CONFIG["MOZ_UPDATER"] and CONFIG["MOZ_WIDGET_TOOLKIT"] != "android":
     DEFINES["MOZ_UPDATER"] = True
@@ -296,3 +319,10 @@ TEST_DIRS += ["test/gtest"]
 
 if CONFIG["DMG_INSTALL_HELPER_DEBUG"]:
     DEFINES["DMG_INSTALL_HELPER_DEBUG"] = 1
+
+SOURCE_HEADERS += [
+    "nsNativeAppSupportBase.h",
+    "nsSigHandlers.h",
+    "nsXREDirProvider.h",
+    "ProfileReset.h",
+]

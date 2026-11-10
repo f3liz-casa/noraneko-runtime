@@ -7,6 +7,7 @@
 
 #include "ipc/EnumSerializer.h"
 #include "ipc/IPCMessageUtils.h"
+#include "ipc/IPCMessageUtilsSpecializations.h"
 #include "mozilla/OriginAttributes.h"
 #include "mozilla/dom/quota/Client.h"
 #include "mozilla/dom/quota/CommonMetadata.h"
@@ -52,9 +53,10 @@ struct ParamTraits<mozilla::dom::quota::ClientUsageArray> {
 
 DEFINE_IPC_SERIALIZER_WITH_FIELDS(mozilla::dom::quota::FullOriginMetadata,
                                   mSuffix, mGroup, mOrigin, mStorageOrigin,
-                                  mIsPrivate, mPersistenceType, mLastAccessTime,
-                                  mLastMaintenanceDate, mAccessed, mPersisted,
-                                  mClientUsages, mOriginUsage, mQuotaVersion);
+                                  mIsPrivate, mIsEncrypted, mPersistenceType,
+                                  mLastAccessTime, mLastMaintenanceDate,
+                                  mAccessed, mPersisted, mClientUsages,
+                                  mOriginUsage, mQuotaVersion);
 
 DEFINE_IPC_SERIALIZER_WITH_SUPER_CLASS_AND_FIELDS(
     mozilla::dom::quota::OriginUsageMetadata,

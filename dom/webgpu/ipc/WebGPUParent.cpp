@@ -4,6 +4,7 @@
 
 #include "WebGPUParent.h"
 
+#include <memory>
 #include <unordered_set>
 
 #include "ExternalTexture.h"
@@ -258,7 +259,7 @@ extern void wgpu_parent_buffer_unmap(WGPUWebGPUParentPtr aParent,
 }
 
 extern void wgpu_parent_queue_submit(
-    WGPUWebGPUParentPtr aParent, WGPUDeviceId aDeviceId, WGPUQueueId aQueueId,
+    WGPUWebGPUParentPtr aParent, WGPUQueueId aQueueId,
     const WGPUCommandBufferId* aCommandBufferIds,
     uintptr_t aCommandBufferIdsLength, const WGPUTextureId* aTextureIds,
     uintptr_t aTextureIdsLength,
@@ -269,7 +270,7 @@ extern void wgpu_parent_queue_submit(
   auto textures = Span(aTextureIds, aTextureIdsLength);
   auto externalTextureSources =
       Span(aExternalTextureSourceIds, aExternalTextureSourceIdsLength);
-  parent->QueueSubmit(aQueueId, aDeviceId, command_buffers, textures,
+  parent->QueueSubmit(aQueueId, command_buffers, textures,
                       externalTextureSources);
 }
 
@@ -315,13 +316,14 @@ extern void wgpu_parent_swap_chain_drop(
 }
 
 #ifdef XP_WIN
-extern void wgpu_parent_get_compositor_device_luid(
+extern bool wgpu_parent_get_compositor_device_luid(
     struct WGPUFfiLUID* aOutLuid) {
   auto luid = WebGPUParent::GetCompositorDeviceLuid();
   if (luid.isSome()) {
     *aOutLuid = luid.extract();
+    return true;
   } else {
-    aOutLuid = nullptr;
+    return false;
   }
 }
 #endif
@@ -337,9 +339,9 @@ extern ffi::WGPUBufferMapClosure wgpu_parent_build_buffer_map_closure(
     ffi::WGPUHostMap aMode, uint64_t aOffset, uint64_t aSize) {
   auto* parent = static_cast<WebGPUParent*>(aParent);
 
-  std::unique_ptr<WebGPUParent::MapRequest> request(
-      new WebGPUParent::MapRequest{parent, aDeviceId, aBufferId, aMode, aOffset,
-                                   aSize});
+  auto request =
+      std::make_unique<WebGPUParent::MapRequest>(WebGPUParent::MapRequest{
+          parent, aDeviceId, aBufferId, aMode, aOffset, aSize});
 
   ffi::WGPUBufferMapClosure closure = {
       &WebGPUParent::MapCallback,
@@ -353,8 +355,8 @@ wgpu_parent_build_submitted_work_done_closure(WGPUWebGPUParentPtr aParent,
                                               WGPUQueueId aQueueId) {
   auto* parent = static_cast<WebGPUParent*>(aParent);
 
-  std::unique_ptr<WebGPUParent::OnSubmittedWorkDoneRequest> request(
-      new WebGPUParent::OnSubmittedWorkDoneRequest{parent, aQueueId});
+  auto request = std::make_unique<WebGPUParent::OnSubmittedWorkDoneRequest>(
+      WebGPUParent::OnSubmittedWorkDoneRequest{parent, aQueueId});
 
   ffi::WGPUSubmittedWorkDoneClosure closure = {
       &WebGPUParent::OnSubmittedWorkDoneCallback,
@@ -507,6 +509,11 @@ static const char* MapStatusString(ffi::WGPUBufferMapAsyncStatus status) {
   MOZ_CRASH("Bad ffi::WGPUBufferMapAsyncStatus");
 }
 
+Maybe<MappedRangeGuard> WebGPUParent::LockMappedRange(
+    ffi::WGPUBufferId aBufferId, uint64_t aStart, uint64_t aSize) {
+  return MappedRangeGuard::Create(mContext.get(), aBufferId, aStart, aSize);
+}
+
 void WebGPUParent::MapCallback(uint8_t* aUserData,
                                ffi::WGPUBufferMapAsyncStatus aStatus) {
   auto req =
@@ -543,22 +550,21 @@ void WebGPUParent::MapCallback(uint8_t* aUserData,
   auto size = req->mSize;
   auto offset = req->mOffset;
 
-  const auto src = ffi::wgpu_server_buffer_get_mapped_range(
-      req->mParent->GetContext(), req->mBufferId, offset, size);
+  Maybe<MappedRangeGuard> maybeSrc =
+      req->mParent->LockMappedRange(req->mBufferId, offset, size);
 
   // The buffer mapping callback can race with buffer.destroy() and
   // buffer.unmap() since the callback is not directly called by wgpu-core;
   // it's called later by a task on the same thread as the WebGPU parent
   // actor.
-  if (src.ptr == nullptr && src.length == 0) {
+  if (!maybeSrc) {
     auto error = nsCString("Mapping WebGPU buffer failed: Map aborted");
     ffi::wgpu_server_send_buffer_map_error(req->mParent, req->mBufferId,
                                            &error);
     return;
   }
 
-  MOZ_RELEASE_ASSERT(src.ptr != nullptr);
-  MOZ_RELEASE_ASSERT(src.length >= size);
+  const std::span<uint8_t> src = maybeSrc->AsSpan();
 
   if (req->mHostMap == ffi::WGPUHostMap_Read && size > 0) {
     auto shmSize = mapData->mShmem->Size();
@@ -566,8 +572,12 @@ void WebGPUParent::MapCallback(uint8_t* aUserData,
     MOZ_RELEASE_ASSERT(size <= shmSize - offset);
 
     auto dst = mapData->mShmem->DataAsSpan<uint8_t>().Subspan(offset, size);
-    memcpy(dst.data(), src.ptr, size);
+    memcpy(dst.data(), src.data(), size);
   }
+
+  // Release the lock on the mapped range before we do anything else
+  // interesting with the buffer or device.
+  maybeSrc.reset();
 
   mapData->mMappedOffset = offset;
   mapData->mMappedSize = size;
@@ -591,26 +601,25 @@ void WebGPUParent::BufferUnmap(RawId aDeviceId, RawId aBufferId, bool aFlush) {
     uint64_t offset = mapData->mMappedOffset;
     uint64_t size = mapData->mMappedSize;
 
-    const auto mapped = ffi::wgpu_server_buffer_get_mapped_range(
-        mContext.get(), aBufferId, offset, size);
+    // To avoid deadlock, this `MappedRangeGuard` must go out of scope
+    // before we try to unmap the buffer.
+    const Maybe<MappedRangeGuard> mapped =
+        LockMappedRange(aBufferId, offset, size);
 
     // There may be nothing left to flush into: once a device is lost or
     // destroyed, wgpu-core destroys its buffers in `release_gpu_resources`
     // on poll.
-    bool is_destroyed = mapped.ptr == nullptr && mapped.length == 0;
-    if (!is_destroyed) {
-      MOZ_RELEASE_ASSERT(mapped.ptr != nullptr);
-      MOZ_RELEASE_ASSERT(mapped.length >= size);
+    if (mapped) {
       auto shmSize = mapData->mShmem->Size();
       MOZ_RELEASE_ASSERT(offset <= shmSize);
       MOZ_RELEASE_ASSERT(size <= shmSize - offset);
 
       auto src = mapData->mShmem->DataAsSpan<uint8_t>().Subspan(offset, size);
-      memcpy(mapped.ptr, src.data(), size);
+      memcpy(mapped->AsSpan().data(), src.data(), size);
     }
   }
 
-  ffi::wgpu_server_buffer_unmap(mContext.get(), aBufferId, mapData->mIsMapped);
+  ffi::wgpu_server_buffer_unmap(mContext.get(), aBufferId);
 
   mapData->mMappedOffset = 0;
   mapData->mMappedSize = 0;
@@ -662,7 +671,7 @@ void WebGPUParent::DropExternalTextureSource(RawId aSourceId) {
   }
 }
 
-void WebGPUParent::QueueSubmit(RawId aQueueId, RawId aDeviceId,
+void WebGPUParent::QueueSubmit(RawId aQueueId,
                                Span<const RawId> aCommandBuffers,
                                Span<const RawId> aTextureIds,
                                Span<const RawId> aExternalTextureSourceIds) {
@@ -670,7 +679,7 @@ void WebGPUParent::QueueSubmit(RawId aQueueId, RawId aDeviceId,
     auto it = mExternalTextureSources.find(sourceId);
     if (it != mExternalTextureSources.end()) {
       auto& source = it->second;
-      if (!source.OnBeforeQueueSubmit(this, aDeviceId, aQueueId)) {
+      if (!source.OnBeforeQueueSubmit(this, aQueueId)) {
         // If the above call failed we cannot submit the command buffers, as
         // it would be invalid to read from the external textures.
         return;
@@ -686,13 +695,13 @@ void WebGPUParent::QueueSubmit(RawId aQueueId, RawId aDeviceId,
     auto it = mSharedTextures.find(textureId);
     if (it != mSharedTextures.end()) {
       auto& sharedTexture = it->second;
-      sharedTexture->onBeforeQueueSubmit(mContext.get(), aDeviceId, aQueueId,
+      sharedTexture->onBeforeQueueSubmit(mContext.get(), aQueueId,
                                          signalSemaphores);
     }
   }
 
   auto index = ffi::wgpu_server_queue_submit(
-      mContext.get(), aDeviceId, aQueueId,
+      mContext.get(), aQueueId,
       {aCommandBuffers.Elements(), aCommandBuffers.Length()},
       {signalSemaphores.Elements(), signalSemaphores.Length()});
   // Check if index is valid. 0 means error.
@@ -849,23 +858,19 @@ static void ReadbackPresentCallback(uint8_t* userdata,
   if (status == ffi::WGPUBufferMapAsyncStatus_Success) {
     const auto bufferSize = data->mBufferSize;
 
-    const auto mapped = ffi::wgpu_server_buffer_get_mapped_range(
-        req->mContext, bufferId, 0, bufferSize);
+    Maybe<MappedRangeGuard> mapped =
+        MappedRangeGuard::Create(req->mContext, bufferId, 0, bufferSize);
 
     // There may be nothing to read back: once a device is lost or
     // destroyed, wgpu-core destroys its buffers in `release_gpu_resources`
     // on poll.
-    bool is_destroyed = mapped.ptr == nullptr && mapped.length == 0;
-    if (is_destroyed) {
+    if (!mapped) {
       MOZ_LOG(sLogger, LogLevel::Info,
               ("ReadbackPresentCallback for buffer %" PRIu64
                " skipped: the readback buffer is gone\n",
                bufferId));
       return;
     }
-
-    MOZ_RELEASE_ASSERT(mapped.ptr != nullptr);
-    MOZ_RELEASE_ASSERT(mapped.length >= bufferSize);
 
     const auto size = data->mDesc.size();
 
@@ -878,7 +883,7 @@ static void ReadbackPresentCallback(uint8_t* userdata,
     }
     layers::MappedTextureData mappedData;
     if (textureData && textureData->BorrowMappedData(mappedData)) {
-      uint8_t* src = mapped.ptr;
+      uint8_t* src = mapped->AsSpan().data();
       uint8_t* dst = mappedData.data;
 
       const size_t dst_stride = static_cast<size_t>(mappedData.stride);
@@ -908,7 +913,10 @@ static void ReadbackPresentCallback(uint8_t* userdata,
       NS_WARNING("WebGPU present skipped: the swapchain is resized!");
     }
 
-    wgpu_server_buffer_unmap(req->mContext, bufferId, true);
+    // Release the lock on the mapped range, so the unmap doesn't deadlock.
+    mapped.reset();
+
+    wgpu_server_buffer_unmap(req->mContext, bufferId);
   } else {
     // TODO: better handle errors
     NS_WARNING("WebGPU frame mapping failed!");
@@ -953,14 +961,13 @@ static void ReadbackSnapshotCallback(uint8_t* userdata,
   // copy the data
   const auto bufferSize = data->mBufferSize;
 
-  const auto mapped = ffi::wgpu_server_buffer_get_mapped_range(
-      req->mContext, req->mBufferId, 0, bufferSize);
+  Maybe<MappedRangeGuard> mapped =
+      MappedRangeGuard::Create(req->mContext, req->mBufferId, 0, bufferSize);
 
   // There may be nothing to read back: once a device is lost or
   // destroyed, wgpu-core destroys its buffers in `release_gpu_resources`
   // on poll.
-  bool is_destroyed = mapped.ptr == nullptr && mapped.length == 0;
-  if (is_destroyed) {
+  if (!mapped) {
     MOZ_LOG(sLogger, LogLevel::Info,
             ("ReadbackSnapshotCallback for buffer %" PRIu64
              " skipped: the readback buffer is gone\n",
@@ -968,10 +975,7 @@ static void ReadbackSnapshotCallback(uint8_t* userdata,
     return;
   }
 
-  MOZ_RELEASE_ASSERT(mapped.ptr != nullptr);
-  MOZ_RELEASE_ASSERT(mapped.length >= bufferSize);
-
-  uint8_t* src = mapped.ptr;
+  uint8_t* src = mapped->AsSpan().data();
   uint8_t* dst = req->mDestShmem.get<uint8_t>();
 
   const size_t src_stride = static_cast<size_t>(data->mBufferStride);
@@ -990,7 +994,10 @@ static void ReadbackSnapshotCallback(uint8_t* userdata,
     dst += req->mDestStride;
   }
 
-  wgpu_server_buffer_unmap(req->mContext, req->mBufferId, true);
+  // Release the lock on the mapped range, so the unmap doesn't deadlock.
+  mapped.reset();
+
+  wgpu_server_buffer_unmap(req->mContext, req->mBufferId);
 }
 
 ipc::IPCResult WebGPUParent::GetFrontBufferSnapshot(
@@ -1085,8 +1092,9 @@ ipc::IPCResult WebGPUParent::GetFrontBufferSnapshot(
       bufferId = data->mUnassignedBufferIds.back();
       data->mUnassignedBufferIds.pop_back();
 
-      ffi::WGPUBufferUsages usage =
-          WGPUBufferUsages_COPY_DST | WGPUBufferUsages_MAP_READ;
+      ffi::WGPUBufferUsagesWebGPU usage =
+          dom::GPUBufferUsage_Binding::COPY_DST |
+          dom::GPUBufferUsage_Binding::MAP_READ;
 
       bool succeeded = ffi::wgpu_server_device_create_buffer(
           mContext.get(), data->mDeviceId, bufferId, bufferSize, usage);
@@ -1234,8 +1242,9 @@ void WebGPUParent::SwapChainPresent(
       bufferId = data->mUnassignedBufferIds.back();
       data->mUnassignedBufferIds.pop_back();
 
-      ffi::WGPUBufferUsages usage =
-          WGPUBufferUsages_COPY_DST | WGPUBufferUsages_MAP_READ;
+      ffi::WGPUBufferUsagesWebGPU usage =
+          dom::GPUBufferUsage_Binding::COPY_DST |
+          dom::GPUBufferUsage_Binding::MAP_READ;
 
       bool succeeded = ffi::wgpu_server_device_create_buffer(
           mContext.get(), data->mDeviceId, bufferId, bufferSize, usage);
@@ -1283,8 +1292,8 @@ void WebGPUParent::SwapChainPresent(
 
   data->mQueuedBufferIds.insert(data->mQueuedBufferIds.begin(), bufferId);
 
-  ffi::wgpu_server_buffer_map(mContext.get(), data->mDeviceId, bufferId, 0,
-                              bufferSize, ffi::WGPUHostMap_Read, closure);
+  ffi::wgpu_server_buffer_map(mContext.get(), bufferId, 0, bufferSize,
+                              ffi::WGPUHostMap_Read, closure);
   // bufferId was transferred to ReadbackPresentCallback.
   bufferId = 0;
 }

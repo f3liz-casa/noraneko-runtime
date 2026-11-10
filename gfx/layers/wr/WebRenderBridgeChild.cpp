@@ -121,8 +121,11 @@ bool WebRenderBridgeChild::EndTransaction(
 
   TimeStamp fwdTime = TimeStamp::Now();
 
+  // Destroyed actors stay queued with the destroy commands that reference them.
+  nsTArray<OpDestroy> destroyedActors;
   if (!aRenderOffscreen) {
     MergeWebRenderParentCommands();
+    destroyedActors = std::move(mDestroyedActors);
   }
   aDisplayListData.mCommands = std::move(mParentCommands);
   aDisplayListData.mIdNamespace = mIdNamespace;
@@ -134,16 +137,18 @@ bool WebRenderBridgeChild::EndTransaction(
 
   mSentDisplayList = true;
   bool ret = this->SendSetDisplayList(
-      std::move(aDisplayListData), mDestroyedActors, GetFwdTransactionId(),
+      std::move(aDisplayListData), destroyedActors, GetFwdTransactionId(),
       aTransactionId, aContainsSVGGroup, aVsyncId, aVsyncStartTime,
       aRefreshStartTime, aTxnStartTime, aTxnURL, fwdTime, payloads,
       aRenderOffscreen);
 
   // With multiple render roots, we may not have sent all of our
   // mParentCommands, so go ahead and go through our mParentCommands and ensure
-  // they get sent.
-  ProcessWebRenderParentCommands();
-  mDestroyedActors.Clear();
+  // they get sent. Destroy commands must stay queued after an offscreen
+  // transaction, until the main display list stops referencing their resources.
+  if (!aRenderOffscreen) {
+    ProcessWebRenderParentCommands();
+  }
   mIsInTransaction = false;
 
   return ret;
@@ -281,14 +286,15 @@ Maybe<wr::FontInstanceKey> WebRenderBridgeChild::GetFontKeyForScaledFont(
 
           Maybe<wr::FontInstanceOptions> options;
           Maybe<wr::FontInstancePlatformOptions> platformOptions;
-          std::vector<FontVariation> variations;
+          std::vector<wr::FontVariation> variations;
           aScaledFont->GetWRFontInstanceOptions(&options, &platformOptions,
                                                 &variations);
 
           aResources.AddFontInstance(
               instanceKey, fontKey.value(), aScaledFont->GetSize(),
               options.ptrOr(nullptr), platformOptions.ptrOr(nullptr),
-              Range<const FontVariation>(variations.data(), variations.size()));
+              Range<const wr::FontVariation>(variations.data(),
+                                             variations.size()));
 
           entry.Insert(instanceKey);
         }
@@ -329,7 +335,7 @@ void WebRenderBridgeChild::RemoveExpiredFontKeys(
   if (mFontInstanceKeysDeleted != counter) {
     mFontInstanceKeysDeleted = counter;
     for (auto iter = mFontInstanceKeys.Iter(); !iter.Done(); iter.Next()) {
-      if (!iter.Key()) {
+      if (iter.Key().IsDead()) {
         aResourceUpdates.DeleteFontInstance(iter.Data());
         iter.Remove();
       }
@@ -339,7 +345,7 @@ void WebRenderBridgeChild::RemoveExpiredFontKeys(
   if (mFontKeysDeleted != counter) {
     mFontKeysDeleted = counter;
     for (auto iter = mFontKeys.Iter(); !iter.Done(); iter.Next()) {
-      if (!iter.Key()) {
+      if (iter.Key().IsDead()) {
         aResourceUpdates.DeleteFont(iter.Data());
         iter.Remove();
       }

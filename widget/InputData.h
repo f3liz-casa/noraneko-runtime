@@ -31,8 +31,8 @@ enum TouchPointerState : uint8_t;
 namespace mozilla {
 
 namespace layers {
-class APZInputBridgeChild;
-class PAPZInputBridgeParent;
+class APZBridgeChild;
+class PAPZBridgeParent;
 }  // namespace layers
 
 namespace dom {
@@ -271,8 +271,8 @@ class MultiTouchInput : public InputData {
 
 class MouseInput : public InputData {
  protected:
-  friend mozilla::layers::APZInputBridgeChild;
-  friend mozilla::layers::PAPZInputBridgeParent;
+  friend mozilla::layers::APZBridgeChild;
+  friend mozilla::layers::PAPZBridgeParent;
   ALLOW_DEPRECATED_READPARAM
 
   MouseInput();
@@ -294,7 +294,6 @@ class MouseInput : public InputData {
       MOUSE_WIDGET_ENTER,
       MOUSE_WIDGET_EXIT,
       MOUSE_HITTEST,
-      MOUSE_EXPLORE_BY_TOUCH,
       MOUSE_CONTEXTMENU
   ));
 
@@ -346,8 +345,8 @@ class PanGestureInput : public InputData {
   friend struct IPC::ParamTraits<PanGestureInput>;
 
  protected:
-  friend mozilla::layers::APZInputBridgeChild;
-  friend mozilla::layers::PAPZInputBridgeParent;
+  friend mozilla::layers::APZBridgeChild;
+  friend mozilla::layers::PAPZBridgeParent;
   ALLOW_DEPRECATED_READPARAM
 
   PanGestureInput();
@@ -456,10 +455,6 @@ class PanGestureInput : public InputData {
     return mMayTriggerSwipe && mOverscrollBehaviorAllowsSwipe;
   }
 
-  // Similar to above AllowsSwipe() but this doesn't care the
-  // overscroll-behavior property, this function should be only used for cases
-  // where APZ isn't involved.
-  bool MayTriggerSwipe() const { return mMayTriggerSwipe; }
   bool RequiresContentResponseIfCannotScrollHorizontallyInStartDirection();
 
   static gfx::IntPoint GetIntegerDeltaForEvent(bool aIsStart, float x, float y);
@@ -525,8 +520,8 @@ class PanGestureInput : public InputData {
  */
 class PinchGestureInput : public InputData {
  protected:
-  friend mozilla::layers::APZInputBridgeChild;
-  friend mozilla::layers::PAPZInputBridgeParent;
+  friend mozilla::layers::APZBridgeChild;
+  friend mozilla::layers::PAPZBridgeParent;
   ALLOW_DEPRECATED_READPARAM
 
   PinchGestureInput();
@@ -637,8 +632,8 @@ class PinchGestureInput : public InputData {
  */
 class TapGestureInput : public InputData {
  protected:
-  friend mozilla::layers::APZInputBridgeChild;
-  friend mozilla::layers::PAPZInputBridgeParent;
+  friend mozilla::layers::APZBridgeChild;
+  friend mozilla::layers::PAPZBridgeParent;
   ALLOW_DEPRECATED_READPARAM
 
   TapGestureInput();
@@ -688,8 +683,8 @@ class TapGestureInput : public InputData {
 // scroll gestures.
 class ScrollWheelInput : public InputData {
  protected:
-  friend mozilla::layers::APZInputBridgeChild;
-  friend mozilla::layers::PAPZInputBridgeParent;
+  friend mozilla::layers::APZBridgeChild;
+  friend mozilla::layers::PAPZBridgeParent;
   ALLOW_DEPRECATED_READPARAM
 
   typedef mozilla::layers::APZWheelAction APZWheelAction;
@@ -849,8 +844,8 @@ class KeyboardInput : public InputData {
   KeyboardScrollAction mAction;
 
  protected:
-  friend mozilla::layers::APZInputBridgeChild;
-  friend mozilla::layers::PAPZInputBridgeParent;
+  friend mozilla::layers::APZBridgeChild;
+  friend mozilla::layers::PAPZBridgeParent;
   ALLOW_DEPRECATED_READPARAM
 
   KeyboardInput();

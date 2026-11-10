@@ -118,11 +118,13 @@ const typeAssertions = {
 export const ATTRIBUTE_TRANSFORMS = Object.freeze({
   activeExperiments: typeAssertions.array,
   activeRollouts: typeAssertions.array,
+  activeWebPushSubscriptionCount: typeAssertions.quantity,
   addonsInfo: addonsInfo => ({
     addons: Object.keys(addonsInfo?.addons ?? {}).sort(),
     hasInstalledAddons: !!addonsInfo?.hasInstalledAddons,
   }),
   addressesSaved: typeAssertions.quantity,
+  allowedNotificationOrigins: typeAssertions.quantity,
   archBits: typeAssertions.quantity,
   attributionData: pick("medium", "source", "ua"),
   browserSettings: pickWith({
@@ -139,6 +141,9 @@ export const ATTRIBUTE_TRANSFORMS = Object.freeze({
       branchSlug,
     })),
   firefoxVersion: typeAssertions.quantity,
+  // forgetButtonAreaType is nullable, with the null value coerced to the string "none".
+  forgetButtonAreaType: forgetButtonAreaType =>
+    typeAssertions.string(forgetButtonAreaType ?? "none"),
   hasActiveEnterprisePolicies: typeAssertions.boolean,
   hasPinnedTabs: typeAssertions.boolean,
   homePageSettings: pick("isCustomUrl", "isDefault", "isLocked", "isWebExt"),
@@ -159,9 +164,11 @@ export const ATTRIBUTE_TRANSFORMS = Object.freeze({
     "windowsBuildNumber",
     "windowsVersion"
   ),
+  previousSessionEnd: typeAssertions.quantity,
   primaryResolution: pick("height", "width"),
   profileAgeCreated: typeAssertions.quantity,
   profileGroupProfileCount: typeAssertions.quantity,
+  profileLastUse: typeAssertions.quantity,
   region: typeAssertions.string,
   totalBookmarksCount: typeAssertions.quantity,
   userMonthlyActivity: userMonthlyActivity =>

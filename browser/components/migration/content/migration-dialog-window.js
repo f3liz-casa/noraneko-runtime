@@ -7,16 +7,17 @@
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  MigrationUtils: "resource:///modules/MigrationUtils.sys.mjs",
+  MigrationUtils:
+    "moz-src:///browser/components/migration/MigrationUtils.sys.mjs",
   MigrationWizardConstants:
     "chrome://browser/content/migration/migration-wizard-constants.mjs",
 });
 
 /**
  * This file manages a MigrationWizard embedded in a dialog that runs
- * in a top-level dialog window. It's main responsibility is to listen
- * for dialog-specific events from the embedded MigrationWizard and to
- * respond appropriately to them.
+ * in a top-level dialog window or in a tab modal dialog. It's main
+ * responsibility is to listen for dialog-specific events from the
+ * embedded MigrationWizard and to respond appropriately to them.
  *
  * A single object argument is expected to be passed when opening
  * this dialog.
@@ -50,7 +51,11 @@ const MigrationDialog = {
     }
 
     let observer = new ResizeObserver(() => {
-      window.sizeToContent();
+      if (window.resizeDialog) {
+        window.resizeDialog();
+      } else {
+        window.sizeToContent();
+      }
     });
     observer.observe(this._wiz);
 

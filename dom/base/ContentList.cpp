@@ -64,6 +64,12 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(BaseContentList)
       }
       Element::MarkNodeChildren(c);
     }
+    if (nsINode* root = tmp->GetParentObject()) {
+      if (root->IsContent() && root->AsContent()->IsPurple()) {
+        root->AsContent()->RemovePurple();
+      }
+      Element::MarkNodeChildren(root);
+    }
     return true;
   }
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
@@ -91,12 +97,8 @@ nsIContent* BaseContentList::Item(uint32_t aIndex) {
   return mElements.SafeElementAt(aIndex);
 }
 
-int32_t BaseContentList::IndexOf(nsIContent* aContent, bool aDoFlush) {
-  return mElements.IndexOf(aContent);
-}
-
 int32_t BaseContentList::IndexOf(nsIContent* aContent) {
-  return IndexOf(aContent, true);
+  return mElements.IndexOf(aContent);
 }
 
 size_t BaseContentList::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const {
@@ -252,7 +254,7 @@ static StaticAutoPtr<nsTHashtable<CacheableFuncStringContentList::HashEntry>>
 
 ContentList::ContentList(nsINode* aRootNode, int32_t aMatchNameSpaceId,
                          nsAtom* aHTMLMatchAtom, nsAtom* aXMLMatchAtom,
-                         bool aDeep, bool aLiveList, bool aKnownParserCreated)
+                         bool aDeep, bool aLiveList)
     : mRootNode(aRootNode),
       mMatchNameSpaceId(aMatchNameSpaceId),
       mHTMLMatchAtom(aHTMLMatchAtom),
@@ -277,21 +279,13 @@ ContentList::ContentList(nsINode* aRootNode, int32_t aMatchNameSpaceId,
     SetEnabledCallbacks(nsIMutationObserver::kNodeWillBeDestroyed);
     mRootNode->AddMutationObserver(this);
   }
-
-  // We only need to flush if we're in an non-HTML document, since the HTML5
-  // parser doesn't need flushing.  Further, if we're not in a document at all
-  // right now (in the IsInUncomposedDoc() sense), and aKnownParserCreated is
-  // false, we're not parser-created and don't need to be flushing stuff under
-  // us to get our kids right.
-  mFlushesNeeded = (aKnownParserCreated || aRootNode->IsInUncomposedDoc()) &&
-                   !mIsHTMLDocument;
 }
 
 ContentList::ContentList(nsINode* aRootNode, nsContentListMatchFunc aFunc,
                          nsContentListDestroyFunc aDestroyFunc, void* aData,
                          bool aDeep, nsAtom* aMatchAtom,
                          int32_t aMatchNameSpaceId, bool aFuncMayDependOnAttr,
-                         bool aLiveList, bool aKnownParserCreated)
+                         bool aLiveList)
     : mRootNode(aRootNode),
       mMatchNameSpaceId(aMatchNameSpaceId),
       mHTMLMatchAtom(aMatchAtom),
@@ -313,10 +307,6 @@ ContentList::ContentList(nsINode* aRootNode, nsContentListMatchFunc aFunc,
     SetEnabledCallbacks(nsIMutationObserver::kNodeWillBeDestroyed);
     mRootNode->AddMutationObserver(this);
   }
-
-  // See above
-  mFlushesNeeded = (aKnownParserCreated || aRootNode->IsInUncomposedDoc()) &&
-                   !aRootNode->OwnerDoc()->IsHTMLDocument();
 }
 
 ContentList::~ContentList() {
@@ -336,24 +326,31 @@ JSObject* ContentList::WrapObject(JSContext* cx,
   return HTMLCollection_Binding::Wrap(cx, this, aGivenProto);
 }
 
-NS_IMPL_ISUPPORTS_INHERITED(ContentList, HTMLCollection, nsIMutationObserver)
+NS_IMPL_CYCLE_COLLECTION_CLASS(ContentList)
 
-uint32_t ContentList::Length(bool aDoFlush) {
-  BringSelfUpToDate(aDoFlush);
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(ContentList, HTMLCollection)
+  tmp->DisconnectFromRoot();
+  tmp->SetDirty();
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(ContentList, HTMLCollection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRootNode)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ContentList)
+  NS_INTERFACE_MAP_ENTRY(nsIMutationObserver)
+NS_INTERFACE_MAP_END_INHERITING(HTMLCollection)
+
+NS_IMPL_ADDREF_INHERITED(ContentList, HTMLCollection)
+NS_IMPL_RELEASE_INHERITED(ContentList, HTMLCollection)
+
+uint32_t ContentList::Length() {
+  BringSelfUpToDate();
 
   return mElements.Length();
 }
 
-Element* ContentList::Item(uint32_t aIndex, bool aDoFlush) {
-  if (mRootNode && aDoFlush && mFlushesNeeded) {
-    // XXX sXBL/XBL2 issue
-    Document* doc = mRootNode->GetUncomposedDoc();
-    if (doc) {
-      // Flush pending content changes Bug 4891.
-      doc->FlushPendingNotifications(FlushType::ContentAndNotify);
-    }
-  }
-
+Element* ContentList::Item(uint32_t aIndex) {
   if (mState != State::UpToDate) {
     PopulateSelf(std::min(aIndex, UINT32_MAX - 1) + 1);
   }
@@ -427,8 +424,8 @@ inline void ContentList::InvalidateNamedItemsCacheForDeletion(
   }
 }
 
-void ContentList::EnsureNamedItemsCacheValid(bool aDoFlush) {
-  BringSelfUpToDate(aDoFlush);
+void ContentList::EnsureNamedItemsCacheValid() {
+  BringSelfUpToDate();
 
   if (mNamedItemsCacheValid) {
     return;
@@ -446,12 +443,14 @@ void ContentList::EnsureNamedItemsCacheValid(bool aDoFlush) {
   mNamedItemsCacheValid = true;
 }
 
-Element* ContentList::NamedItem(const nsAString& aName, bool aDoFlush) {
+Element* ContentList::GetFirstNamedElement(const nsAString& aName,
+                                           bool& aFound) {
+  aFound = false;
   if (aName.IsEmpty()) {
     return nullptr;
   }
 
-  EnsureNamedItemsCacheValid(aDoFlush);
+  EnsureNamedItemsCacheValid();
 
   if (!mNamedItemsCache) {
     return nullptr;
@@ -461,7 +460,9 @@ Element* ContentList::NamedItem(const nsAString& aName, bool aDoFlush) {
   RefPtr<nsAtom> name = NS_Atomize(aName);
   NS_ENSURE_TRUE(name, nullptr);
 
-  return mNamedItemsCache->Get(name);
+  Element* item = mNamedItemsCache->Get(name);
+  aFound = !!item;
+  return item;
 }
 
 Element* HTMLCollection::DefaultGetFirstNamedElement(const nsAString& aName,
@@ -517,37 +518,24 @@ void HTMLCollection::GetSupportedNames(nsTArray<nsString>& aNames,
   }
 }
 
-int32_t ContentList::IndexOf(nsIContent* aContent, bool aDoFlush) {
-  BringSelfUpToDate(aDoFlush);
+int32_t ContentList::IndexOf(nsIContent* aContent) {
+  BringSelfUpToDate();
 
   return mElements.IndexOf(aContent);
 }
 
-int32_t ContentList::IndexOf(nsIContent* aContent) {
-  return IndexOf(aContent, true);
-}
-
-void ContentList::NodeWillBeDestroyed(nsINode* aNode) {
-  // We shouldn't do anything useful from now on
-
-  RemoveFromCaches();
+void ContentList::DisconnectFromRoot() {
+  if (mIsLiveList && mRootNode) {
+    mRootNode->RemoveMutationObserver(this);
+  }
   mRootNode = nullptr;
-
-  // We will get no more updates, so we can never know we're up to
-  // date
-  SetDirty();
 }
 
 void ContentList::LastRelease() {
   RemoveFromCaches();
-  if (mIsLiveList && mRootNode) {
-    mRootNode->RemoveMutationObserver(this);
-    mRootNode = nullptr;
-  }
+  DisconnectFromRoot();
   SetDirty();
 }
-
-Element* ContentList::Item(uint32_t aIndex) { return Item(aIndex, true); }
 
 void ContentList::AttributeChanged(Element* aElement, int32_t aNameSpaceID,
                                    nsAtom* aAttribute, AttrModType,
@@ -806,7 +794,7 @@ void ContentList::PopulateSelf(uint32_t aNeededLength,
   if (mDeep) {
     // If we already have nodes start searching at the last one, otherwise
     // start searching at the root.
-    nsINode* cur = count ? mElements[count - 1].get() : mRootNode;
+    nsINode* cur = count ? mElements[count - 1].get() : mRootNode.get();
     do {
       cur = GetNextNode(cur);
       if (!cur) {
@@ -869,15 +857,7 @@ void ContentList::RemoveFromHashtable() {
   MOZ_RELEASE_ASSERT(!mInHashtable);
 }
 
-void ContentList::BringSelfUpToDate(bool aDoFlush) {
-  if (mFlushesNeeded && mRootNode && aDoFlush) {
-    // XXX sXBL/XBL2 issue
-    if (Document* doc = mRootNode->GetUncomposedDoc()) {
-      // Flush pending content changes Bug 4891.
-      doc->FlushPendingNotifications(FlushType::ContentAndNotify);
-    }
-  }
-
+void ContentList::BringSelfUpToDate() {
   if (mState != State::UpToDate) {
     PopulateSelf(uint32_t(-1));
   }
@@ -1046,6 +1026,19 @@ void LabelsNodeList::AttributeChanged(Element* aElement, int32_t aNameSpaceID,
     SetDirty();
     return;
   }
+
+  // We need to handle changes to `<label for>`.
+  if (aElement->IsHTMLElement(nsGkAtoms::label) &&
+      aAttribute == nsGkAtoms::_for && aNameSpaceID == kNameSpaceID_None) {
+    SetDirty();
+    return;
+  }
+
+  // We need to handle changes to the `id` attribute.
+  if (aAttribute == nsGkAtoms::id && aNameSpaceID == kNameSpaceID_None) {
+    SetDirty();
+    return;
+  }
 }
 
 void LabelsNodeList::ContentAppended(nsIContent* aFirstNewContent,
@@ -1080,10 +1073,10 @@ void LabelsNodeList::ContentWillBeRemoved(nsIContent* aChild,
 }
 
 void LabelsNodeList::NodeWillBeDestroyed(nsINode* aNode) {
-  ContentList::NodeWillBeDestroyed(aNode);
-
+  RemoveFromCaches();
+  DisconnectFromRoot();
+  SetDirty();
   mData = nullptr;
-  mRoots.Clear();
 }
 
 // static
@@ -1224,7 +1217,7 @@ void LabelsNodeList::PopulateSelf(uint32_t aNeededLength,
   ContentList::PopulateSelf(aNeededLength, aExpectedElementsIfDirty);
 }
 
-void LabelsNodeList::LastRelease() {
+void LabelsNodeList::DisconnectFromRoot() {
   for (nsINode* root : mRoots) {
     root->RemoveMutationObserver(this);
     if (auto* shadow = ShadowRoot::FromNodeOrNull(root)) {
@@ -1235,7 +1228,7 @@ void LabelsNodeList::LastRelease() {
   }
   mRoots.Clear();
 
-  ContentList::LastRelease();
+  ContentList::DisconnectFromRoot();
 }
 
 }  // namespace mozilla::dom

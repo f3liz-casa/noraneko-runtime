@@ -80,7 +80,7 @@ add_task(async function test_sidebar_providers() {
   await SidebarController.show("viewGenaiChatSidebar");
 
   const origCount = countVisible();
-  Assert.equal(origCount, 4, "Rendered expected number of provider options");
+  Assert.equal(origCount, 5, "Rendered expected number of provider options");
 
   await SidebarController.hide();
   await SpecialPowers.pushPrefEnv({
@@ -106,6 +106,13 @@ add_task(async function test_sidebar_onboarding() {
     document.querySelector("label:has(.localhost)")
   );
   Assert.ok(label, "Got a provider");
+  const header = document.getElementById("header");
+  const browserContainer = document.getElementById("browser-container");
+  Assert.ok(header.inert, "Header is inert during onboarding");
+  Assert.ok(
+    browserContainer.inert,
+    "Provider frame is inert during onboarding"
+  );
   let events =
     Glean.genaiChatbot.onboardingProviderChoiceDisplayed.testGetValue();
   Assert.equal(events.length, 1, "Displayed onboarding once");
@@ -158,6 +165,11 @@ add_task(async function test_sidebar_onboarding() {
     () => !document.getElementById("multi-stage-message-root")
   );
   Assert.ok(noOnboarding, "Onboarding container went away");
+  Assert.ok(!header.inert, "Header is not inert after onboarding");
+  Assert.ok(
+    !browserContainer.inert,
+    "Provider frame is not inert after onboarding"
+  );
 
   events = Glean.genaiChatbot.onboardingFinish.testGetValue();
   Assert.equal(events.length, 1, "Finished once");
@@ -185,21 +197,25 @@ add_task(async function test_switch_from_chat_onboarding() {
   });
 
   await SidebarTestUtils.showPanel(window, "viewGenaiChatSidebar");
-  const chatWindow = SidebarController.browser.contentWindow;
-  await BrowserTestUtils.waitForMutationCondition(
-    chatWindow.document.body,
-    { childList: true },
-    () => chatWindow.document.getElementById("multi-stage-message-root"),
-    { msg: "Chatbot onboarding is visible" }
-  );
-  const switcher = chatWindow.document.querySelector("sidebar-panel-switcher");
-  await switcher.updateComplete;
+  const { contentDocument, contentWindow } = SidebarController.browser;
+  const isFocused = () =>
+    contentDocument
+      .getElementById("multi-stage-message-root")
+      ?.contains(contentDocument.activeElement);
+  if (!isFocused()) {
+    await BrowserTestUtils.waitForEvent(
+      contentWindow,
+      "focusin",
+      false,
+      isFocused
+    );
+  }
+  const { switcher } = SidebarController.panelHeader;
   Assert.ok(BrowserTestUtils.isVisible(switcher), "Panel switcher is visible");
 
   const listShown = BrowserTestUtils.waitForEvent(switcher.panelList, "shown");
-  EventUtils.synthesizeMouseAtCenter(switcher.button, {}, chatWindow);
+  EventUtils.synthesizeMouseAtCenter(switcher.button, {}, window);
   await listShown;
-  await switcher.updateComplete;
 
   const { label } = (await SidebarController.getRevampSwitcherItems()).find(
     ({ view }) => view === "viewHistorySidebar"
@@ -209,7 +225,7 @@ add_task(async function test_switch_from_chat_onboarding() {
   );
   Assert.ok(historyItem, "History is available in the switcher");
   const sidebarShown = BrowserTestUtils.waitForEvent(window, "SidebarShown");
-  EventUtils.synthesizeMouseAtCenter(historyItem, {}, chatWindow);
+  EventUtils.synthesizeMouseAtCenter(historyItem, {}, window);
   await sidebarShown;
   Assert.equal(
     SidebarController.currentID,
@@ -366,12 +382,12 @@ add_task(async function test_keyboard_shortcut() {
 
   await SpecialPowers.pushPrefEnv({ set: [[enabled, true]] });
   key.doCommand();
-
+  await SidebarController.waitUntilStable();
   Assert.ok(Services.prefs.getBoolPref(enabled), "Enabled with keyboard");
   Assert.ok(SidebarController.isOpen, "Opened chatbot with keyboard");
 
   key.doCommand();
-
+  await SidebarController.waitUntilStable();
   Assert.ok(!SidebarController.isOpen, "Closed chatbot with keyboard");
 
   Assert.ok(
@@ -428,6 +444,9 @@ add_task(async function test_pip_actor_not_chat_sidebar() {
  * Check that the sidebar is focused when opened
  */
 add_task(async function test_sidebar_browser_focus() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.ml.chat.provider", TEST_CHAT_PROVIDER_URL]],
+  });
   const sidebar = document.getElementById("sidebar");
   await SidebarController.show("viewGenaiChatSidebar");
   Assert.equal(document.activeElement, sidebar, "Sidebar is focused");

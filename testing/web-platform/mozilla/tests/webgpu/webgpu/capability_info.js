@@ -370,7 +370,8 @@ makeTable(
     'sint32x4': [4, 'sint', 4, 16, 'vec4<i32>'],
     // 32 bit packed
     'unorm10-10-10-2': ['packed', 'unorm', 4, 4, 'vec4<f32>'],
-    'unorm8x4-bgra': ['packed', 'unorm', 4, 4, 'vec4<f32>']
+    'unorm8x4-bgra': ['packed', 'unorm', 4, 4, 'vec4<f32>'],
+    'snorm10-10-10-2': ['packed', 'snorm', 4, 4, 'vec4<f32>']
   });
 /** List of all GPUVertexFormat values. */
 export const kVertexFormats = keysOf(kVertexFormatInfo);
@@ -971,8 +972,8 @@ export const kFeatureNameInfo =
   'primitive-index': {},
   'texture-component-swizzle': {},
   'subgroup-size-control': {},
-  ['atomic-vec2u-min-max']: {},
-  ['texture-compression-unaligned']: {}
+  'atomic-vec2u-min-max': {},
+  'texture-compression-unaligned': {}
 };
 /** List of all GPUFeatureName values. */
 export const kFeatureNames = keysOf(kFeatureNameInfo);

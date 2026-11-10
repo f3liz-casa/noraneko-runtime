@@ -3,23 +3,23 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::{
-    api::{Endianness, JxlColorType, JxlDataFormat, JxlOutputBuffer},
-    error::Result,
-    headers::Orientation,
-    image::{DataTypeTag, Image, ImageDataType, Rect},
-    render::{SimpleRenderPipeline, buffer_splitter::BufferSplitter},
-    util::{
-        ShiftRightCeil,
-        tracing_wrappers::{instrument, trace},
-    },
-};
+use std::sync::Arc;
+
 use rand::SeedableRng;
 
+use super::internal::Stage;
+use super::stages::ExtendToImageDimensionsStage;
 use super::{
     RenderPipeline, RenderPipelineBuilder, RenderPipelineInOutStage, RenderPipelineInPlaceStage,
-    internal::Stage, stages::ExtendToImageDimensionsStage,
 };
+use crate::api::{Endianness, JxlColorType, JxlDataFormat, JxlOutputBuffer};
+use crate::error::Result;
+use crate::headers::Orientation;
+use crate::image::{BufferRecycler, DataTypeTag, Image, ImageDataType, Rect};
+use crate::render::SimpleRenderPipeline;
+use crate::render::buffer_splitter::BufferSplitter;
+use crate::util::ShiftRightCeil;
+use crate::util::tracing_wrappers::{instrument, trace};
 
 pub(super) trait RenderPipelineTestableStage<V> {
     type InputT: ImageDataType;
@@ -97,14 +97,14 @@ fn make_and_run_simple_pipeline_impl<InputT: ImageDataType, OutputT: ImageDataTy
         .iter()
         .map(|x| stage.uses_channel(*x))
         .collect();
+    let channel_types = vec![(InputT::DATA_TYPE_ID, None); input_images.len()];
     let mut pipeline = RenderPipelineBuilder::<SimpleRenderPipeline>::new_with_chunk_size(
-        input_images.len(),
+        &channel_types,
         image_size,
         downsampling_shift,
         LOG_GROUP_SIZE,
         chunk_size,
-        // No need to reuse buffers in tests.
-        Some(0),
+        Arc::new(BufferRecycler::new()),
     )
     .add_stage_internal(stage);
 

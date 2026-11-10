@@ -59,6 +59,7 @@ async function check_homepage({
   expectedURL,
   expectedPageVal = -1,
   locked = false,
+  checkUI = false,
 }) {
   if (expectedURL) {
     is(HomePage.get(), expectedURL, "Homepage URL should match expected");
@@ -79,6 +80,13 @@ async function check_homepage({
       locked,
       "Lock status of browser.startup.page should match expected"
     );
+  }
+
+  // Loading about:preferences dominates this helper's runtime. The disabled
+  // states below follow |locked| and |expectedPageVal|, not the URLs, so
+  // callers that only vary the homepage list have nothing new to check.
+  if (!checkUI && !locked && expectedPageVal == -1) {
+    return;
   }
 
   // Test that UI is disabled when the Locked property is enabled
@@ -116,97 +124,49 @@ async function check_homepage({
         // If only StartPage was changed, no need to check these
         return;
       }
-      const srdEnabled = Services.prefs.getBoolPref(
-        "browser.settings-redesign.enabled",
-        false
+      await content.gotoPref("customHomepage");
+      let homepageTextbox = content.document.getElementById(
+        "customHomepageAddUrlInput"
       );
-      if (srdEnabled) {
-        await content.gotoPref("customHomepage");
-        let homepageTextbox = content.document.getElementById(
-          "customHomepageAddUrlInput"
-        );
-        let addButton = content.document.getElementById(
-          "customHomepageAddAddressButton"
-        );
-        let replaceCurrentButton = content.document.getElementById(
-          "customHomepageReplaceWithCurrentPagesButton"
-        );
-        let replaceBookmarksButton = content.document.getElementById(
-          "customHomepageReplaceWithBookmarksButton"
-        );
-        let boxGroup = content.document.getElementById(
-          "customHomepageBoxGroup"
-        );
-        let urlItems = [...boxGroup.querySelectorAll("moz-box-item[data-url]")];
-        is(
-          homepageTextbox.disabled,
-          locked,
-          "Homepage URL text box disabled status should match expected"
-        );
-        is(
-          addButton.disabled,
-          locked,
-          "Add address button disabled status should match expected"
-        );
-        is(
-          replaceCurrentButton.disabled,
-          locked,
-          '"Current open pages" button disabled status should match expected'
-        );
-        is(
-          replaceBookmarksButton.disabled,
-          locked,
-          '"Bookmarks..." button disabled status should match expected'
-        );
-        Assert.greater(urlItems.length, 0, "Some URLs are shown");
-        ok(
-          urlItems.every(item => !item.querySelector("moz-button") == locked),
-          "Item delete buttons hidden should match expected"
-        );
-        ok(
-          urlItems.every(item => !item.handleEl == locked),
-          "Item reorder handle hidden should match expected"
-        );
-        return;
-      }
-      await content.gotoPref("paneHome");
-
-      let homepageTextbox = content.document.getElementById("homePageUrl");
-      // Unfortunately this test does not work because the new UI does not fill
-      // default values into the URL box at the moment.
-      // is(homepageTextbox.value, expectedURL,
-      //    "Homepage URL should match expected");
-
-      // Wait for rendering to be finished
-      await ContentTaskUtils.waitForCondition(
-        () =>
-          content.document.getElementById("useCurrentBtn").disabled === locked
+      let addButton = content.document.getElementById(
+        "customHomepageAddAddressButton"
       );
-
+      let replaceCurrentButton = content.document.getElementById(
+        "customHomepageReplaceWithCurrentPagesButton"
+      );
+      let replaceBookmarksButton = content.document.getElementById(
+        "customHomepageReplaceWithBookmarksButton"
+      );
+      let boxGroup = content.document.getElementById("customHomepageBoxGroup");
+      let urlItems = [...boxGroup.querySelectorAll("moz-box-item[data-url]")];
       is(
         homepageTextbox.disabled,
         locked,
         "Homepage URL text box disabled status should match expected"
       );
       is(
-        content.document.getElementById("homeMode").disabled,
+        addButton.disabled,
         locked,
-        "Home mode drop down disabled status should match expected"
+        "Add address button disabled status should match expected"
       );
       is(
-        content.document.getElementById("useCurrentBtn").disabled,
+        replaceCurrentButton.disabled,
         locked,
-        '"Use current page" button disabled status should match expected'
+        '"Current open pages" button disabled status should match expected'
       );
       is(
-        content.document.getElementById("useBookmarkBtn").disabled,
+        replaceBookmarksButton.disabled,
         locked,
-        '"Use bookmark" button disabled status should match expected'
+        '"Bookmarks..." button disabled status should match expected'
       );
-      is(
-        content.document.getElementById("restoreDefaultHomePageBtn").disabled,
-        locked,
-        '"Restore defaults" button disabled status should match expected'
+      Assert.greater(urlItems.length, 0, "Some URLs are shown");
+      ok(
+        urlItems.every(item => !item.querySelector("moz-button") == locked),
+        "Item delete buttons hidden should match expected"
+      );
+      ok(
+        urlItems.every(item => !item.handleEl == locked),
+        "Item reorder handle hidden should match expected"
       );
     }
   );
@@ -233,6 +193,28 @@ registerCleanupFunction(async function policies_headjs_finishWithCleanSlate() {
     Ci.nsIEnterprisePolicies.INACTIVE,
     "Engine is inactive at the end of the test"
   );
+
+  // PermissionManager refuses to remove EXPIRE_POLICY permissions one by one,
+  // so clear everything and restore the permissions that weren't from policies.
+  let permissions = Services.perms.all;
+  if (permissions.some(p => p.expireType == Services.perms.EXPIRE_POLICY)) {
+    Services.perms.removeAll();
+    for (let p of permissions) {
+      if (
+        p.expireType != Services.perms.EXPIRE_POLICY &&
+        Services.perms.testExactPermissionFromPrincipal(p.principal, p.type) !=
+          p.capability
+      ) {
+        Services.perms.addFromPrincipal(
+          p.principal,
+          p.type,
+          p.capability,
+          p.expireType,
+          p.expireTime
+        );
+      }
+    }
+  }
 
   EnterprisePolicyTesting.resetRunOnceState();
   PoliciesPrefTracker.stop();

@@ -113,6 +113,11 @@ const ERR_PARENT_PID_PERSISTS =
 const ERR_BGTASK_EXCLUSIVE =
   "failed to exclusively open executable file from background task: ";
 
+// Sentinel value for the aExpectedExitValue parameter of runUpdate, to be used
+// when the updater is expected to crash. A crash has no portable exit value, so
+// the exit value cannot tell a crash apart from a graceful failure.
+const EXIT_VALUE_CRASHED = "crashed";
+
 const LOG_SVC_SUCCESSFUL_LAUNCH = "Process was started... waiting on result.";
 const LOG_SVC_UNSUCCESSFUL_LAUNCH =
   "The install directory path is not valid for this application.";
@@ -1380,30 +1385,44 @@ function checkAppBundleModTime() {
 }
 
 /**
- * Checks that the updater wrote update_telemetry.json to the install directory
- * with a valid, recent install_timestamp. On macOS the updater does not write
- * this file so we assert it is absent instead.
+ * Checks that the updater wrote update telemetry with a valid, recent
+ * install_timestamp. On macOS the data is stored as an extended attribute on
+ * the .app directory; on other platforms it is a JSON file in the install
+ * directory.
  */
 function checkUpdateTelemetry() {
+  let contents;
   if (AppConstants.platform == "macosx") {
-    checkNoUpdateTelemetry();
-    return;
+    let telemetryFile = getApplyDirFile("update_telemetry.json");
+    Assert.ok(
+      !telemetryFile.exists(),
+      "update_telemetry.json should not exist on macOS"
+    );
+    let appDir = getApplyDirFile();
+    let macFile = appDir.QueryInterface(Ci.nsILocalFileMac);
+    Assert.ok(
+      macFile.hasXAttr("org.mozilla.update-telemetry"),
+      "org.mozilla.update-telemetry xattr should exist"
+    );
+    let attrValue = macFile.getXAttr("org.mozilla.update-telemetry");
+    contents = new TextDecoder().decode(new Uint8Array(attrValue));
+  } else {
+    let telemetryFile = getApplyDirFile("update_telemetry.json");
+    Assert.ok(
+      telemetryFile.exists(),
+      "update_telemetry.json should exist in the install directory"
+    );
+    contents = readFile(telemetryFile);
   }
-  let telemetryFile = getApplyDirFile("update_telemetry.json");
-  Assert.ok(
-    telemetryFile.exists(),
-    "update_telemetry.json should exist in the install directory"
-  );
-  let contents = readFile(telemetryFile);
-  Assert.ok(contents, "update_telemetry.json should not be empty");
+  Assert.ok(contents, "update telemetry should not be empty");
   Assert.ok(
     !contents.includes("\0"),
-    "update_telemetry.json should be UTF-8 encoded (no null bytes)"
+    "update telemetry should be UTF-8 encoded (no null bytes)"
   );
   let data = JSON.parse(contents);
   Assert.ok(
     "install_timestamp" in data,
-    "update_telemetry.json should contain install_timestamp"
+    "update telemetry should contain install_timestamp"
   );
   let ts = parseInt(data.install_timestamp, 10);
   Assert.ok(
@@ -1419,7 +1438,7 @@ function checkUpdateTelemetry() {
 }
 
 /**
- * Checks that update_telemetry.json was NOT written to the install directory.
+ * Checks that update telemetry was NOT written to the install directory.
  */
 function checkNoUpdateTelemetry() {
   let telemetryFile = getApplyDirFile("update_telemetry.json");
@@ -1427,6 +1446,14 @@ function checkNoUpdateTelemetry() {
     !telemetryFile.exists(),
     "update_telemetry.json should not exist in the install directory"
   );
+  if (AppConstants.platform == "macosx") {
+    let appDir = getApplyDirFile();
+    let macFile = appDir.QueryInterface(Ci.nsILocalFileMac);
+    Assert.ok(
+      !macFile.hasXAttr("org.mozilla.update-telemetry"),
+      "org.mozilla.update-telemetry xattr should not exist"
+    );
+  }
 }
 
 /**
@@ -2187,7 +2214,7 @@ function readServiceLogFile() {
  *          installed application.
  * @param   aExpectedExitValue
  *          The expected exit value from the updater binary for non-service
- *          tests.
+ *          tests, or EXIT_VALUE_CRASHED when the updater is expected to crash.
  * @param   aCheckSvcLog
  *          Whether the service log should be checked for service tests.
  * @param   aPatchDirPath (optional)
@@ -2292,7 +2319,16 @@ function runUpdate(
 
   let process = Cc["@mozilla.org/process/util;1"].createInstance(Ci.nsIProcess);
   process.init(launchBin);
-  process.run(true, args, args.length);
+  try {
+    process.run(true, args, args.length);
+  } catch (e) {
+    // nsIProcess.run throws when the process exits with a negative exit value,
+    // which is how Windows reports a process that crashed. Leave it to the exit
+    // value check below to tell whether that crash was expected.
+    if (process.exitValue >= 0) {
+      throw e;
+    }
+  }
 
   resetEnvironment();
 
@@ -2300,15 +2336,19 @@ function runUpdate(
     Services.env.set("MOZ_TEST_SHORTER_WAIT_PID", "");
   }
 
+  let exitValue = process.exitValue;
+  let expectCrash = aExpectedExitValue == EXIT_VALUE_CRASHED;
+  let checkExitValue = !gIsServiceTest && !expectCrash;
+
   let status = readStatusFile();
   if (
-    (!gIsServiceTest && process.exitValue != aExpectedExitValue) ||
+    (checkExitValue && exitValue != aExpectedExitValue) ||
     (status != aExpectedStatus && !gIsServiceTest && !isInvalidArgTest)
   ) {
-    if (process.exitValue != aExpectedExitValue) {
+    if (checkExitValue && exitValue != aExpectedExitValue) {
       logTestInfo(
         "updater exited with unexpected value! Got: " +
-          process.exitValue +
+          exitValue +
           ", Expected: " +
           aExpectedExitValue
       );
@@ -2331,9 +2371,9 @@ function runUpdate(
     }
   }
 
-  if (!gIsServiceTest) {
+  if (checkExitValue) {
     Assert.equal(
-      process.exitValue,
+      exitValue,
       aExpectedExitValue,
       "the process exit value" + MSG_SHOULD_EQUAL
     );
@@ -4301,11 +4341,15 @@ function checkFilesAfterUpdateCommon(aStageDirExists, aToBeDeletedDirExists) {
 function checkToBeDeletedFileCount(aExpectedCount) {
   let toBeDeletedDir = getApplyDirFile(DIR_TOBEDELETED);
   let relocatedFiles = [];
-  let dirEntries = toBeDeletedDir.directoryEntries;
-  while (dirEntries.hasMoreElements()) {
-    let entry = dirEntries.nextFile;
-    if (entry.isFile() && entry.leafName.startsWith("moz")) {
-      relocatedFiles.push(entry);
+  // The directory only exists on Windows, and only once the updater had a
+  // reason to create it, so a missing directory means no relocated file.
+  if (toBeDeletedDir.exists()) {
+    let dirEntries = toBeDeletedDir.directoryEntries;
+    while (dirEntries.hasMoreElements()) {
+      let entry = dirEntries.nextFile;
+      if (entry.isFile() && entry.leafName.startsWith("moz")) {
+        relocatedFiles.push(entry);
+      }
     }
   }
   Assert.equal(

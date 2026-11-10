@@ -1,33 +1,32 @@
-From: Jan Grulich <jgrulich@redhat.com>
-Date: Tue, 18 Aug 2026 13:33:00 +0000
-Subject: Bug 2058627 - WebRTC backport: Screen capture: check n_datas before
- accessing buffer data planes r=pehrsons
+From: Michael Froman <mfroman@mozilla.com>
+Date: Tue, 15 Sep 2026 20:40:00 +0000
+Subject: Bug 1996020 - use I420Buffer::CreateOrNull in
+ VideoFrameBufferPool::CreateI420Buffer. r=bwc
 
-Return early from ProcessBuffer when spa_buffer->n_datas is zero
-to avoid out-of-bounds access on metadata-only buffers that carry
-no data planes.
+Looking at the crash reports, even after converting DesktopCaptureImpl::OnCaptureResult
+to use the VideoFrameBufferPool, we're still seeing occasional crashes
+in AlignedMalloc so use CreateOrNull so we don't crash in OOM situations.
 
-This is a simple backport of an WebRTC upstream change.
-
-Upstream commit: 3ce78cdbd865ad8837d1ffae21553791e8ec491d
-
-Differential Revision: https://phabricator.services.mozilla.com/D319390
-Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/939417654223c4bbd9a8465cb96c6b01d80cf092
+Differential Revision: https://phabricator.services.mozilla.com/D326269
+Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/93cb056a0c8220b5b364f9cd1204ac34bb0d163d
 ---
- .../desktop_capture/linux/wayland/shared_screencast_stream.cc  | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
+ common_video/video_frame_buffer_pool.cc | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
 
-diff --git a/modules/desktop_capture/linux/wayland/shared_screencast_stream.cc b/modules/desktop_capture/linux/wayland/shared_screencast_stream.cc
-index aa06e2f679..b42fa2e139 100644
---- a/modules/desktop_capture/linux/wayland/shared_screencast_stream.cc
-+++ b/modules/desktop_capture/linux/wayland/shared_screencast_stream.cc
-@@ -917,7 +917,8 @@ void SharedScreenCastStreamPrivate::ProcessBuffer(pw_buffer* buffer) {
-     }
-   }
+diff --git a/common_video/video_frame_buffer_pool.cc b/common_video/video_frame_buffer_pool.cc
+index 07d3fd00c8..dc204423a4 100644
+--- a/common_video/video_frame_buffer_pool.cc
++++ b/common_video/video_frame_buffer_pool.cc
+@@ -139,8 +139,10 @@ scoped_refptr<I420Buffer> VideoFrameBufferPool::CreateI420Buffer(int width,
+   if (buffers_.size() >= max_number_of_buffers_)
+     return nullptr;
+   // Allocate new buffer.
+-  scoped_refptr<I420Buffer> buffer =
+-      make_ref_counted<I420Buffer>(width, height);
++  scoped_refptr<I420Buffer> buffer = I420Buffer::CreateOrNull(width, height);
++  if (!buffer) {
++    return nullptr;
++  }
  
--  if (spa_buffer->datas[0].chunk->flags & SPA_CHUNK_FLAG_CORRUPTED) {
-+  if (spa_buffer->n_datas == 0 ||
-+      spa_buffer->datas[0].chunk->flags & SPA_CHUNK_FLAG_CORRUPTED) {
-     RTC_LOG(LS_INFO) << "Dropping buffer with corrupted or missing data";
-     if (observer_) {
-       observer_->OnBufferCorruptedData();
+   if (zero_initialize_)
+     buffer->InitializeData();

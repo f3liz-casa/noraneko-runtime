@@ -14,11 +14,10 @@ kind-dependencies:
     - release-bouncer-aliases
     - release-version-bump
     - release-mark-as-shipped
-    - push-bundle
+    - push-android
     - post-beetmover-components-dummy
 
 task-defaults:
-    run-on-repo-type: [hg]
     name: notify-release-drivers-ship
     description: Sends email to release-drivers telling release was shipped.
     run-on-projects: []

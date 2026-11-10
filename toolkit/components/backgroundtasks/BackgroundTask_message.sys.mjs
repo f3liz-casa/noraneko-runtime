@@ -106,7 +106,7 @@ function monkeyPatchRemoteSettingsClients({ experiments = [] }) {
   // Settings server, which will cause test failures. Additionally, return
   // `experiments` from both Nimbus collections. These collections each only
   // support a subset of features -- the secureExperiments collection, e.g.,
-  // only supports recipes that have at least one of `newtabTrainhopAddon`,
+  // only supports recipes that have at least one of
   // `newtabTrainhopAddonDeployment` and `prefFlips`, but the
   // `RemoteSettingsExperimentLoader` will filter out the recipes from each
   // collection based on their supported features.
@@ -236,7 +236,9 @@ async function handleCommandLine(commandLine) {
     console.log(`Saw --randomizationId: ${randomizationId}`);
     Services.prefs.setCharPref("app.normandy.user_id", randomizationId);
   }
-  outputInfo({ randomizationId: lazy.ClientEnvironmentBase.randomizationId });
+  outputInfo({
+    randomizationId: lazy.ClientEnvironmentBase.legacyRandomizationId,
+  });
 
   // Allow to override Nimbus experiments with `--experiments /path/to/data.json`.
   let experiments = commandLine.handleFlagWithParam(

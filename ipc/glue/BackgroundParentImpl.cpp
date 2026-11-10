@@ -504,6 +504,7 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvCreateWebTransportParent(
     const uint64_t& aBrowsingContextID, const IPCClientInfo& aClientInfo,
     const bool& aDedicated, const bool& aRequireUnreliable,
     const uint32_t& aCongestionControl, nsTArray<nsString>&& aProtocols,
+    nsTArray<WebTransportHeader>&& aHeaders,
     nsTArray<WebTransportHash>&& aServerCertHashes,
     Endpoint<PWebTransportParent>&& aParentEndpoint,
     CreateWebTransportParentResolver&& aResolver) {
@@ -526,8 +527,8 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvCreateWebTransportParent(
       new mozilla::dom::WebTransportParent();
   webt->Create(aURL, aPrincipal, aBrowsingContextID, aClientInfo, aDedicated,
                aRequireUnreliable, aCongestionControl, std::move(aProtocols),
-               std::move(aServerCertHashes), std::move(aParentEndpoint),
-               std::move(aResolver));
+               std::move(aHeaders), std::move(aServerCertHashes),
+               std::move(aParentEndpoint), std::move(aResolver));
   return IPC_OK();
 }
 
@@ -922,13 +923,14 @@ BackgroundParentImpl::AllocPCacheStorageParent(
                                               aPrincipalInfo);
 }
 
-PMessagePortParent* BackgroundParentImpl::AllocPMessagePortParent(
-    const nsID& aUUID, const nsID& aDestinationUUID,
-    const uint32_t& aSequenceID) {
+already_AddRefed<PMessagePortParent>
+BackgroundParentImpl::AllocPMessagePortParent(const nsID& aUUID,
+                                              const nsID& aDestinationUUID,
+                                              const uint32_t& aSequenceID) {
   AssertIsInMainProcess();
   AssertIsOnBackgroundThread();
 
-  return new MessagePortParent(aUUID);
+  return MakeAndAddRef<MessagePortParent>(aUUID);
 }
 
 mozilla::ipc::IPCResult BackgroundParentImpl::RecvPMessagePortConstructor(
@@ -942,16 +944,6 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvPMessagePortConstructor(
     return IPC_FAIL_NO_REASON(this);
   }
   return IPC_OK();
-}
-
-bool BackgroundParentImpl::DeallocPMessagePortParent(
-    PMessagePortParent* aActor) {
-  AssertIsInMainProcess();
-  AssertIsOnBackgroundThread();
-  MOZ_ASSERT(aActor);
-
-  delete mozilla::ipc::ActorCast<MessagePortParent>(aActor);
-  return true;
 }
 
 mozilla::ipc::IPCResult BackgroundParentImpl::RecvMessagePortForceClose(

@@ -4,6 +4,7 @@
 
 package org.mozilla.gecko;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.Resources;
@@ -308,6 +309,7 @@ public class GeckoThread extends Thread {
     setState(State.LIBS_READY);
   }
 
+  @SuppressLint("AppBundleLocaleChanges")
   private static void initGeckoEnvironment() {
     final Context context = GeckoAppShell.getApplicationContext();
     final Locale locale = Locale.getDefault();
@@ -380,7 +382,11 @@ public class GeckoThread extends Thread {
     }
   }
 
-  private static ArrayList<String> getEnvFromExtras(final Bundle extras) {
+  /**
+   * Extract environment variable from extras. The environment variables are stored in the extras as
+   * "env0", "env1", etc.
+   */
+  public static ArrayList<String> getEnvFromExtras(final Bundle extras) {
     if (extras == null) {
       return new ArrayList<>();
     }

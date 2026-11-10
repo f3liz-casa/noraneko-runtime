@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/** @import {Store} from "resource://newtab/lib/Store.sys.mjs" */
+
 /**
  * Picture of the Day widget - data flow overview
  *
@@ -33,6 +35,10 @@
  *   different image (onWallpaperUpload). Toggling wallpapers off in the Content
  *   section does not clear it (the picture stays selected) - the JSX just hides the
  *   checkmark while newtabWallpapers.user.enabled is off and shows it again on.
+ *
+ * Previous picture:
+ *   Merino also sends yesterday's picture as `previous`. While today's is the
+ *   wallpaper the widget shows that one instead, and setWallpaper() takes its date.
  *
  * Two distinct prefs: setAsWallpaper.enabled is the config gate (does the CTA
  * exist); wallpaperActive stores the published date of the picture that is the
@@ -80,6 +86,9 @@ const PREF_ENDPOINTS_ALLOWLIST = "discoverystream.endpoints";
  * source lacks them, so callers must treat them as optional.
  */
 export class PictureOfTheDayFeed {
+  /** @type {Store} */
+  store = null;
+
   constructor() {
     this.loaded = false;
     this.merino = null;
@@ -103,8 +112,7 @@ export class PictureOfTheDayFeed {
   }
 
   // Resolve the Merino endpoint, guarding it against the shared endpoint
-  // allowlist so a mis-set pref can't point the fetch at an arbitrary host
-  // (mirrors SportsFeed).
+  // allowlist so a mis-set pref can't point the fetch at an arbitrary host.
   getEndpoint() {
     const { values } = this.store.getState().Prefs;
     const endpoint = values[PREF_ENDPOINT];
@@ -194,7 +202,16 @@ export class PictureOfTheDayFeed {
       this.update({ error: error || "empty_response" });
       return;
     }
-    const entry = { ...picture, lastUpdated: this.Date().now() };
+    // Shown instead of today's picture while today's is the wallpaper. Needs its
+    // own date, since setWallpaper() reads an empty date as today's picture.
+    let previous = this.normalize(data.previous);
+    if (
+      !previous?.publishedDate ||
+      previous.publishedDate === picture.publishedDate
+    ) {
+      previous = null;
+    }
+    const entry = { ...picture, previous, lastUpdated: this.Date().now() };
     await this.cache.set("picture", entry);
     this.update(entry);
   }
@@ -225,6 +242,7 @@ export class PictureOfTheDayFeed {
           author: data.author ?? "",
           licenseLabel: data.licenseLabel ?? "",
           licenseUrl: data.licenseUrl ?? "",
+          previous: data.previous ?? null,
           lastUpdated: data.lastUpdated ?? null,
           error: data.error ?? null,
         },
@@ -238,7 +256,9 @@ export class PictureOfTheDayFeed {
   // wallpaper, and select it — the same end state as a manual Customize upload.
   // Takes the page that asked, so the save can be reported against it. Without
   // one the parent has nobody to report to and the event is dropped.
-  async setWallpaper(target = null) {
+  // `requestedDate` is the date of the picture the widget showed; "" means
+  // today's. A date matching neither picture is stale, so nothing is set.
+  async setWallpaper(target = null, requestedDate = "", win = null) {
     // The CTA is only shown when wallpapers and custom wallpapers are enabled,
     // so reaching here with either disabled means something dispatched the
     // action out of band.
@@ -251,7 +271,14 @@ export class PictureOfTheDayFeed {
         "PictureOfTheDayFeed.setWallpaper called while custom wallpapers are disabled"
       );
     }
-    const imageUrl = this.currentImageUrl;
+    const state = this.store.getState().PictureOfTheDay ?? {};
+    let picture = { ...state, imageUrl: this.currentImageUrl };
+    if (requestedDate && requestedDate === state.previous?.publishedDate) {
+      picture = state.previous;
+    } else if (requestedDate && requestedDate !== state.publishedDate) {
+      return;
+    }
+    const { imageUrl } = picture;
     if (!imageUrl) {
       return;
     }
@@ -263,8 +290,7 @@ export class PictureOfTheDayFeed {
     // it as unreliable. Merino localizes the description, so it is a real name
     // in the person's own language. Without one the picture falls back to
     // being numbered like any other saved image.
-    const { description = "", publishedDate = "" } =
-      this.store.getState().PictureOfTheDay ?? {};
+    const { description = "", publishedDate = "" } = picture;
     try {
       const response = await this.fetchImage(imageUrl);
       const contentType = response.headers?.get?.("content-type") || "";
@@ -278,13 +304,9 @@ export class PictureOfTheDayFeed {
       const blob = await response.blob();
       let theme = "light";
       try {
-        // calculateTheme samples luminance via createImageBitmap/OffscreenCanvas,
-        // which the sys.mjs global doesn't provide - use the parent's hidden DOM
-        // window, which does. Falls back to "light" if decoding fails.
-        theme = await lazy.calculateTheme(
-          Services.appShell.hiddenDOMWindow,
-          blob
-        );
+        // sys.mjs has no createImageBitmap or OffscreenCanvas, and the hidden
+        // window is macOS only, so decode with the window that asked.
+        theme = await lazy.calculateTheme(win, blob);
       } catch (e) {
         console.error("PictureOfTheDayFeed: theme calculation failed", e);
       }
@@ -306,12 +328,16 @@ export class PictureOfTheDayFeed {
       // the user's wallpaper display. The wallpaper feature pref
       // (newtabWallpapers.enabled) is deliberately left untouched: the "Set
       // wallpaper" CTA is only shown when it's already enabled, so we never
-      // force the feature on (product decision).
-      this.store.dispatch(ac.SetPref("newtabWallpapers.user.enabled", true));
-      this.store.dispatch(ac.SetPref("newtabWallpapers.wallpaper", "custom"));
-      this.store.dispatch(ac.SetPref("newtabWallpapers.initialWallpaper", ""));
+      // force the feature on (product decision). One transaction, because
+      // content re-renders on every pref broadcast: turning the display on
+      // before "custom" is selected paints whatever wallpaper was chosen last.
       this.store.dispatch(
-        ac.SetPref("widgets.pictureOfTheDay.wallpaperActive", publishedDate)
+        ac.SetMultiplePrefs({
+          "newtabWallpapers.wallpaper": "custom",
+          "newtabWallpapers.initialWallpaper": "",
+          "newtabWallpapers.user.enabled": true,
+          "widgets.pictureOfTheDay.wallpaperActive": publishedDate,
+        })
       );
     } catch (e) {
       console.error("PictureOfTheDayFeed: failed to set wallpaper", e);
@@ -323,6 +349,7 @@ export class PictureOfTheDayFeed {
       case PREF_WIDGETS_ENABLED:
       case PREF_ENABLED:
       case PREF_SYSTEM_ENABLED:
+      case "region":
       case "trainhopConfig": {
         const enabled = this.isEnabled();
         if (enabled && !this.loaded) {
@@ -370,7 +397,11 @@ export class PictureOfTheDayFeed {
         await this.onPrefChangedAction(action);
         break;
       case at.WIDGETS_PICTURE_SET_WALLPAPER:
-        await this.setWallpaper(action.meta?.fromTarget);
+        await this.setWallpaper(
+          action.meta?.fromTarget,
+          action.data?.publishedDate,
+          action._target?.window
+        );
         break;
       case at.WALLPAPER_UPLOAD:
         this.onWallpaperUpload();

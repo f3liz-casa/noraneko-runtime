@@ -58,6 +58,13 @@ SyncModuleLoader::SyncModuleLoader(SyncScriptLoader* aScriptLoader,
 
 SyncModuleLoader::~SyncModuleLoader() { MOZ_ASSERT(mLoadRequests.isEmpty()); }
 
+already_AddRefed<ScriptFetchOptions>
+SyncModuleLoader::CreateDefaultScriptFetchOptions() {
+  RefPtr<ScriptFetchOptions> options = ScriptFetchOptions::CreateDefault();
+  options->SetTriggeringPrincipal(GetGlobalObject()->PrincipalOrNull());
+  return options.forget();
+}
+
 already_AddRefed<ModuleLoadRequest> SyncModuleLoader::CreateRequest(
     JSContext* aCx, nsIURI* aURI, JS::Handle<JSObject*> aModuleRequest,
     JS::Handle<JS::Value> aHostDefined, JS::Handle<JS::Value> aPayload,
@@ -242,19 +249,22 @@ void SyncModuleLoader::OnModuleLoadComplete(ModuleLoadRequest* aRequest) {}
 
 nsresult SyncModuleLoader::ProcessRequests() {
   // Work list to drive module loader since this is all synchronous.
+  // Every queued request has an entry in the module map, so complete all of
+  // them even after a failure to remove those entries.
+  nsresult result = NS_OK;
   while (!mLoadRequests.isEmpty()) {
     RefPtr<ScriptLoadRequest> request = mLoadRequests.StealFirst();
     ModuleLoadRequest* moduleRequest = request->AsModuleRequest();
     OnFetchComplete(moduleRequest, NS_OK);
     if (!moduleRequest->mModuleScript) {
-      // Failed to create the module script, e.g. OOM. A compilation error
-      // leaves a module script with a parse error, so it doesn't stop us here.
-      mLoadRequests.CancelRequestsAndClear();
-      return NS_ERROR_FAILURE;
+      // Failed to create the module script, e.g. OOM, or the module graph was
+      // rejected. A compilation error leaves a module script with a parse
+      // error, so it doesn't stop us here.
+      result = NS_ERROR_FAILURE;
     }
   }
 
-  return NS_OK;
+  return result;
 }
 
 }  // namespace loader

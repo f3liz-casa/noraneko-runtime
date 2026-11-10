@@ -116,3 +116,27 @@ for k, v in (
 AllowCompilerWarnings()
 
 FINAL_LIBRARY = 'lgpllibs'
+
+LICENSES += ["libsoundtouch"]
+LICENSES["libsoundtouch"].title = "libsoundtouch License"
+LICENSES["libsoundtouch"].text = "LICENSE-NOTICE.txt"
+LICENSES["libsoundtouch"].notice = """
+<p>This license applies to certain files in the directory <code>media/libsoundtouch/src/</code>.
+            </p>
+"""
+
+LICENSED_UNDER += [
+    "libsoundtouch",
+]
+
+SOURCE_HEADERS += [
+	"AAFilter.h",
+	"cpu_detect.h",
+	"FIFOSampleBuffer.h",
+	"FIRFilter.h",
+	"InterpolateCubic.h",
+	"InterpolateLinear.h",
+	"InterpolateShannon.h",
+	"RateTransposer.h",
+	"TDStretch.h",
+]

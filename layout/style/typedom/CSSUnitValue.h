@@ -46,6 +46,8 @@ class CSSUnitValue final : public CSSNumericValue {
   static RefPtr<CSSUnitValue> Create(nsCOMPtr<nsISupports> aParent,
                                      const StyleUnitValue& aUnitValue);
 
+  const nsACString& Unit() const { return mUnit; }
+
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
 
@@ -80,6 +82,9 @@ class CSSUnitValue final : public CSSNumericValue {
 already_AddRefed<CSSUnitValue> MakeCSSUnitValue(
     nsCOMPtr<nsISupports> aParent, const StyleNumericType& aNumericType,
     double aValue, const nsACString& aUnit);
+
+already_AddRefed<CSSUnitValue> MakeCSSUnitValue(nsCOMPtr<nsISupports> aParent,
+                                                double aValue);
 
 }  // namespace dom
 }  // namespace mozilla

@@ -4,6 +4,8 @@ support-files = [
   "../../../../dom/security/test/csp/dummy.pdf",
 ]
 
+["browser_background_external_url.js"]
+
 ["browser_browserGlue_client_association_ping.js"]
 
 ["browser_browserGlue_fxa_client_info_ping.js"]
@@ -52,9 +54,6 @@ support-files = ["file_csp_module.sys.mjs"]
 ["browser_default_browser_prompt.js"]
 
 ["browser_default_webprotocol_handler_mailto.js"]
-skip-if = [
-  "os == 'win' && os_version == '11.26200' && asan", # Bug 2019745
-]
 run-if = [
   "os == 'win'",
 ]

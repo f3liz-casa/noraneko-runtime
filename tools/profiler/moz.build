@@ -87,6 +87,8 @@ elif CONFIG["OS_TARGET"] == "Linux" and CONFIG["TARGET_CPU"] in (
     "x86",
     "x86_64",
     "mips64",
+    "loongarch64",
+    "riscv64",
 ):
     UNIFIED_SOURCES += [
         "core/ProfilerCPUFreq-linux-android.cpp",
@@ -301,3 +303,12 @@ if CONFIG["CC_TYPE"] in ("clang", "gcc"):
 
 with Files("**"):
     BUG_COMPONENT = ("Core", "Gecko Profiler")
+
+LICENSED_UNDER += [
+    "chromium",
+]
+
+LICENSED_UNDER += ["vtune"]
+LICENSED_UNDER["vtune"].paths = [
+    "core/vtune",
+]

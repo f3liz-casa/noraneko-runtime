@@ -546,17 +546,12 @@ nsresult nsHttpConnection::Activate(nsAHttpTransaction* trans, uint32_t caps,
     if (mTlsHandshaker->NPNComplete()) {
       mExperienced = true;
     }
-    if (mBootstrappedTimingsSet) {
-      mBootstrappedTimingsSet = false;
-      nsHttpTransaction* hTrans = trans->QueryHttpTransaction();
-      if (hTrans) {
-        hTrans->BootstrapTimings(mBootstrappedTimings);
-        SetUrgentStartPreferred(hTrans->GetClassOfService().Flags() &
-                                nsIClassOfService::UrgentStart);
-      }
+    if (nsHttpTransaction* hTrans = trans->QueryHttpTransaction()) {
+      SetUrgentStartPreferred(hTrans->GetClassOfService().Flags() &
+                              nsIClassOfService::UrgentStart);
     }
-    mBootstrappedTimings = TimingStruct();
   }
+  HandOffConnectPhase(trans);
 
   if (caps & NS_HTTP_LARGE_KEEPALIVE) {
     mDefaultTimeoutFactor = StaticPrefs::network_http_largeKeepaliveFactor();
@@ -753,7 +748,8 @@ nsresult nsHttpConnection::AddTransaction(nsAHttpTransaction* httpTransaction,
 
   if (mSpdySession) {
     nsCOMPtr<nsIInterfaceRequestor> callbacks = GetCallbacks();
-    if (!mSpdySession->AddStream(httpTransaction, priority, callbacks)) {
+    RefPtr<ASpdySession> spdySession = mSpdySession;
+    if (!spdySession->AddStream(httpTransaction, priority, callbacks)) {
       MOZ_ASSERT(false);  // this cannot happen!
       httpTransaction->Close(NS_ERROR_ABORT);
       return NS_ERROR_FAILURE;
@@ -2410,9 +2406,6 @@ void nsHttpConnection::CheckForTraffic(bool check) {
 void nsHttpConnection::SetEvent(nsresult aStatus) {
   LOG(("nsHttpConnection::SetEvent [this=%p status=%" PRIx32 "]\n", this,
        static_cast<uint32_t>(aStatus)));
-  if (!mBootstrappedTimingsSet) {
-    mBootstrappedTimingsSet = true;
-  }
   switch (aStatus) {
     case NS_NET_STATUS_RESOLVING_HOST:
       mBootstrappedTimings.domainLookupStart = TimeStamp::Now();
@@ -2647,9 +2640,11 @@ void nsHttpConnection::HandshakeDoneInternal() {
 
   int16_t tlsVersion;
   tlsSocketControl->GetSSLVersionUsed(&tlsVersion);
-  mConnInfo->SetLessThanTls13(
-      (tlsVersion < nsITLSSocketControl::TLS_VERSION_1_3) &&
-      (tlsVersion != nsITLSSocketControl::SSL_VERSION_UNKNOWN));
+  mConnInfo = mConnInfo->Mutate()
+                  .SetLessThanTls13(
+                      (tlsVersion < nsITLSSocketControl::TLS_VERSION_1_3) &&
+                      (tlsVersion != nsITLSSocketControl::SSL_VERSION_UNKNOWN))
+                  .Finalize();
 #ifndef ANDROID
   mTlsHandshaker->EarlyDataTelemetry(tlsVersion, earlyDataAccepted,
                                      mContentBytesWritten0RTT);

@@ -1062,6 +1062,30 @@ SEC_PKCS7DecoderStart(SEC_PKCS7DecoderContentCallback cb, void *cb_arg,
     return p7dcx;
 }
 
+SECStatus
+SEC_PKCS7DecoderSetMaxInputSize(SEC_PKCS7DecoderContext *p7dcx,
+                                unsigned long max_input_size)
+{
+    if (!p7dcx || !p7dcx->dcx) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+        return SECFailure;
+    }
+    SEC_ASN1DecoderSetMaximumInputSize(p7dcx->dcx, max_input_size);
+    return SECSuccess;
+}
+
+SECStatus
+SEC_PKCS7DecoderSetMaxElementLen(SEC_PKCS7DecoderContext *p7dcx,
+                                 unsigned long max_element_len)
+{
+    if (!p7dcx || !p7dcx->dcx) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+        return SECFailure;
+    }
+    SEC_ASN1DecoderSetMaximumElementSize(p7dcx->dcx, max_element_len);
+    return SECSuccess;
+}
+
 /*
  * Do the next chunk of PKCS7 decoding.  If there is a problem, set
  * an error and return a failure status.  Note that in the case of
@@ -1119,11 +1143,20 @@ SEC_PKCS7DecoderFinish(SEC_PKCS7DecoderContext *p7dcx)
 
     sec_pkcs7_decoder_abort_digests(&p7dcx->worker);
     cinfo = p7dcx->cinfo;
+    p7dcx->cinfo = NULL;
     if (p7dcx->dcx != NULL) {
         if (SEC_ASN1DecoderFinish(p7dcx->dcx) != SECSuccess) {
             SEC_PKCS7DestroyContentInfo(cinfo);
             cinfo = NULL;
         }
+        p7dcx->dcx = NULL;
+    }
+    /* SEC_ASN1DecoderFinish reports success for a decoder that stopped on
+     * an error, so never hand back a message whose decoding was aborted. */
+    if (cinfo != NULL && p7dcx->error != 0) {
+        SEC_PKCS7DestroyContentInfo(cinfo);
+        cinfo = NULL;
+        PORT_SetError(p7dcx->error);
     }
     /* free any NSS data structures */
     if (p7dcx->worker.decryptobj) {
@@ -1174,7 +1207,11 @@ SEC_PKCS7DecoderAbort(SEC_PKCS7DecoderContext *p7dcx, int error)
         p7dcx->worker.decryptobj = NULL;
     }
 
-    SEC_ASN1DecoderAbort(p7dcx->dcx, error);
+    PORT_SetError(error);
+    p7dcx->error = error ? error : -1;
+    if (p7dcx->dcx != NULL) {
+        SEC_ASN1DecoderAbort(p7dcx->dcx, error);
+    }
 }
 
 /*
@@ -1477,6 +1514,9 @@ sec_pkcs7_verify_signature(SEC_PKCS7ContentInfo *cinfo,
         goto done;
     }
 
+    if (signerinfo->cert != NULL) {
+        CERT_DestroyCertificate(signerinfo->cert);
+    }
     signerinfo->cert = cert;
 
     /*

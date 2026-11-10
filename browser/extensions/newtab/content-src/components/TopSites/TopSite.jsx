@@ -28,6 +28,9 @@ import { TopSiteImpressionWrapper } from "./TopSiteImpressionWrapper";
 import { connect } from "react-redux";
 
 const NEWTAB_SOURCE = "newtab";
+const PREF_OHTTP_UNIFIED_ADS = "unifiedAds.ohttp.enabled";
+const PREF_OHTTP_UNIFIED_ADS_TILE_IMAGES =
+  "unifiedAds.tiles.ohttpImages.enabled";
 
 // Tilt so the lifted drag ghost reads as "picked up" (counter-clockwise).
 const DRAG_GHOST_ROTATION_DEG = -7.5;
@@ -201,6 +204,24 @@ export class TopSiteLink extends React.PureComponent {
     return colorArray[index];
   }
 
+  /**
+   * The favicon URL to render. Sponsored tiles are loaded over OHTTP
+   * through the moz-cached-ohttp protocol when enabled.
+   *
+   * @returns {string|undefined} The favicon URL.
+   */
+  getFaviconURL() {
+    const { link, ohttpSponsoredImagesEnabled } = this.props;
+    if (
+      isSponsored(link) &&
+      ohttpSponsoredImagesEnabled &&
+      link.favicon?.startsWith("https:")
+    ) {
+      return `moz-cached-ohttp://newtab-image/?url=${encodeURIComponent(link.favicon)}`;
+    }
+    return link.favicon;
+  }
+
   calculateStyle() {
     const { defaultStyle, link } = this.props;
 
@@ -241,11 +262,11 @@ export class TopSiteLink extends React.PureComponent {
       imageClassName = "top-site-icon rich-icon";
       imageStyle = {
         backgroundColor: link.backgroundColor,
-        backgroundImage: `url(${tippyTopIcon || link.favicon})`,
+        backgroundImage: `url(${tippyTopIcon || this.getFaviconURL()})`,
       };
     } else if (faviconSize >= MIN_SMALL_FAVICON_SIZE) {
       showSmallFavicon = true;
-      smallFaviconStyle = { backgroundImage: `url(${link.favicon})` };
+      smallFaviconStyle = { backgroundImage: `url(${this.getFaviconURL()})` };
     } else {
       selectedColor = this.generateColor();
       imageClassName = "";
@@ -311,7 +332,7 @@ export class TopSiteLink extends React.PureComponent {
               id: link.id,
               pos: link.pos,
               shim: link.shim && link.shim.impression,
-              advertiser: title.toLocaleLowerCase(),
+              advertiser_name: title.toLocaleLowerCase(),
             },
           ]}
           dispatch={this.props.dispatch}
@@ -327,7 +348,7 @@ export class TopSiteLink extends React.PureComponent {
             position: this.props.index,
             tile_id: link.sponsored_tile_id || -1,
             reporting_url: link.sponsored_impression_url,
-            advertiser: title.toLocaleLowerCase(),
+            advertiser_name: title.toLocaleLowerCase(),
             source: NEWTAB_SOURCE,
             visible_topsites: visibleTopSites,
             frecency_boosted: link.type === "frecency-boost",
@@ -351,8 +372,8 @@ export class TopSiteLink extends React.PureComponent {
             isPinned: this.props.link.isPinned,
             guid: this.props.link.guid,
             visible_topsites: visibleTopSites,
-            smartScores: this.props.link.scores,
-            smartWeights: this.props.link.weights,
+            smart_scores: this.props.link.scores,
+            smart_weights: this.props.link.weights,
             is_ad_eligible_position: this.props.link.is_ad_eligible_position,
           }}
           // For testing.
@@ -603,6 +624,9 @@ export class TopSite extends React.PureComponent {
           data: Object.assign(this.props.link, {
             event: { altKey, button, ctrlKey, metaKey, shiftKey },
             is_sponsored: !!this.props.link.sponsored_tile_id,
+            dwell_label: isSponsored(this.props.link)
+              ? "topsite_sponsored"
+              : "topsite_organic",
           }),
         })
       );
@@ -649,7 +673,7 @@ export class TopSite extends React.PureComponent {
               type: "click",
               position: this.props.link.pos,
               tile_id: this.props.link.id,
-              advertiser: title.toLocaleLowerCase(),
+              advertiser_name: title.toLocaleLowerCase(),
               source: NEWTAB_SOURCE,
               attribution: this.props.link.attribution,
             },
@@ -666,7 +690,7 @@ export class TopSite extends React.PureComponent {
               position: this.props.index,
               tile_id: this.props.link.sponsored_tile_id || -1,
               reporting_url: this.props.link.sponsored_click_url,
-              advertiser: title.toLocaleLowerCase(),
+              advertiser_name: title.toLocaleLowerCase(),
               source: NEWTAB_SOURCE,
               visible_topsites: this.props.visibleTopSites,
               frecency_boosted: this.props.link.type === "frecency-boost",
@@ -686,8 +710,8 @@ export class TopSite extends React.PureComponent {
               isPinned: this.props.link.isPinned,
               guid: this.props.link.guid,
               visible_topsites: this.props.visibleTopSites,
-              smartScores: this.props.link.scores,
-              smartWeights: this.props.link.weights,
+              smart_scores: this.props.link.scores,
+              smart_weights: this.props.link.weights,
             },
           })
         );
@@ -1020,6 +1044,12 @@ export class _TopSiteList extends React.PureComponent {
         this.props.Prefs.values.isPrivateBrowsingEnabled,
       platform: this.props.Prefs.values.platform,
       privacyInfoUrl: this.props.Prefs.values["privacyInfo.url"],
+      ohttpSponsoredImagesEnabled: !!(
+        this.props.Prefs.values[PREF_OHTTP_UNIFIED_ADS] &&
+        (this.props.Prefs.values[PREF_OHTTP_UNIFIED_ADS_TILE_IMAGES] ||
+          this.props.Prefs.values.trainhopConfig?.ohttpSponsoredTileImages
+            ?.enabled)
+      ),
     };
     const { decorations } = this.props;
     // We assign a key to each placeholder slot. We need it to be independent

@@ -2,20 +2,20 @@
 flags = "SCROLL_LINKED_EFFECTIVE"
 sub_properties = ["margin-top", "margin-right", "margin-bottom", "margin-left"]
 spec = "https://drafts.csswg.org/css-box/#propdef-margin"
-rule_types_allowed = ["style", "keyframe", "page", "scope", "page", "position-try"]
+rule_types_allowed = ["style", "keyframe", "page", "page", "position-try"]
 kind = "four_sides"
 allow_quirks = true
 
 [margin-block]
 sub_properties = ["margin-block-start", "margin-block-end"]
 spec = "https://drafts.csswg.org/css-logical/#propdef-margin-block"
-rule_types_allowed = ["style", "keyframe", "page", "scope", "position-try"]
+rule_types_allowed = ["style", "keyframe", "page", "position-try"]
 kind = "two_properties"
 
 [margin-inline]
 sub_properties = ["margin-inline-start", "margin-inline-end"]
 spec = "https://drafts.csswg.org/css-logical/#propdef-margin-inline"
-rule_types_allowed = ["style", "keyframe", "page", "scope", "position-try"]
+rule_types_allowed = ["style", "keyframe", "page", "position-try"]
 kind = "two_properties"
 
 [scroll-margin]
@@ -45,13 +45,13 @@ allow_quirks = true
 [padding-block]
 sub_properties = ["padding-block-start", "padding-block-end"]
 spec = "https://drafts.csswg.org/css-logical/#propdef-padding-block"
-rule_types_allowed = ["style", "keyframe", "page", "scope", "position-try"]
+rule_types_allowed = ["style", "keyframe", "page", "position-try"]
 kind = "two_properties"
 
 [padding-inline]
 sub_properties = ["padding-inline-start", "padding-inline-end"]
 spec = "https://drafts.csswg.org/css-logical/#propdef-padding-inline"
-rule_types_allowed = ["style", "keyframe", "page", "scope", "position-try"]
+rule_types_allowed = ["style", "keyframe", "page", "position-try"]
 kind = "two_properties"
 
 [scroll-padding]
@@ -269,19 +269,19 @@ spec = "https://drafts.csswg.org/css-backgrounds/#the-background"
 [inset]
 sub_properties = ["top", "right", "bottom", "left"]
 spec = "https://drafts.csswg.org/css-logical/#propdef-inset"
-rule_types_allowed = ["style", "keyframe", "scope", "position-try"]
+rule_types_allowed = ["style", "keyframe", "position-try"]
 kind = "four_sides"
 
 [inset-block]
 sub_properties = ["inset-block-start", "inset-block-end"]
 spec = "https://drafts.csswg.org/css-logical/#propdef-inset-block"
-rule_types_allowed = ["style", "keyframe", "scope", "position-try"]
+rule_types_allowed = ["style", "keyframe", "position-try"]
 kind = "two_properties"
 
 [inset-inline]
 sub_properties = ["inset-inline-start", "inset-inline-end"]
 spec = "https://drafts.csswg.org/css-logical/#propdef-inset-inline"
-rule_types_allowed = ["style", "keyframe", "scope", "position-try"]
+rule_types_allowed = ["style", "keyframe", "position-try"]
 kind = "two_properties"
 
 [contain-intrinsic-size]

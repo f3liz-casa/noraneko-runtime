@@ -346,11 +346,12 @@ bool CompositorBridgeChild::SendResumeAsync() {
   return PCompositorBridgeChild::SendResumeAsync();
 }
 
-bool CompositorBridgeChild::SendAdoptChild(const LayersId& id) {
+bool CompositorBridgeChild::SendAdoptChild(const LayersId& id,
+                                           const LayersId& embedderId) {
   if (!mCanSend) {
     return false;
   }
-  return PCompositorBridgeChild::SendAdoptChild(id);
+  return PCompositorBridgeChild::SendAdoptChild(id, embedderId);
 }
 
 bool CompositorBridgeChild::SendFlushRendering(
@@ -378,7 +379,7 @@ void CompositorBridgeChild::SetForceSyncFlushRendering(
 }
 
 bool CompositorBridgeChild::SendStartFrameTimeRecording(
-    const int32_t& bufferSize, uint32_t* startIndex) {
+    const uint32_t& bufferSize, uint32_t* startIndex) {
   if (!mCanSend) {
     return false;
   }

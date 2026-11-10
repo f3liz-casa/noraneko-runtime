@@ -4,16 +4,16 @@
 // license that can be found in the LICENSE file.
 
 use super::channel::decode_modular_channel;
-use crate::{
-    bit_reader::BitReader,
-    entropy_coding::decode::{Codes, SymbolReader, unpack_signed},
-    error::{Error, Result},
-    frame::modular::{
-        IMAGE_OFFSET, ModularChannel, Predictor, Tree, predict::clamped_gradient,
-        transforms::apply_local::meta_apply_local_transforms, tree::TreeNode,
-    },
-    headers::{JxlHeader, modular::GroupHeader},
-};
+use crate::bit_reader::BitReader;
+use crate::entropy_coding::decode::{Codes, SymbolReader, unpack_signed};
+use crate::error::{Error, Result};
+use crate::frame::modular::predict::clamped_gradient;
+use crate::frame::modular::transforms::apply_local::meta_apply_local_transforms;
+use crate::frame::modular::tree::TreeNode;
+use crate::frame::modular::{ModularChannel, ModularStorage, Predictor, ScratchSpace, Tree};
+use crate::headers::JxlHeader;
+use crate::headers::modular::GroupHeader;
+use crate::image::{BufferRecycler, ImageRectMut};
 
 // If we have at least this many bits still available to read,
 // we can be sure that none of the reads up to this point read garbage.
@@ -48,13 +48,14 @@ fn decode_fast_lossless(
     tree: &Tree,
     br: &mut BitReader,
     partial_decoded_buffers: Option<&mut usize>,
+    storage: ModularStorage,
 ) -> Result<()> {
     let mut rle_len: usize = 0;
     let mut rle_sym = 0;
 
     let mut last_safe_buf = 0;
     for (c, buf) in buffers.into_iter().enumerate() {
-        let (w, h) = buf.data.size();
+        let (w, h) = buf.size(storage);
         if w == 0 || h == 0 {
             continue;
         }
@@ -77,11 +78,8 @@ fn decode_fast_lossless(
             .uint(tree.histograms.map_context_to_cluster(id as usize));
         let lz_conf = tree.histograms.lz77_length_uint();
 
-        let buf = &mut buf.data;
-
-        let mut decode = {
-            #[inline(always)]
-            || {
+        macro_rules! handle_rle {
+            ($x: ident, $run: ident) => {
                 if rle_len > 0 {
                     rle_len -= 1;
                 } else {
@@ -94,36 +92,94 @@ fn decode_fast_lossless(
                     } else {
                         rle_sym = unpack_signed(sym_conf.read(sym, br));
                     }
-                };
-                rle_sym
+                }
+                let extra = rle_len.min(w - 1 - $x);
+                rle_len -= extra;
+                let $run = 1 + extra;
             }
-        };
-
-        let mut last = 0i32;
-        for p in buf.row_mut(0) {
-            // clamped gradient == left on the first row.
-            *p = last.wrapping_add(decode());
-            last = *p;
         }
 
-        for y in 1..h {
-            let [row, row_top] =
-                buf.distinct_full_rows_mut([y + IMAGE_OFFSET.1, y + IMAGE_OFFSET.1 - 1]);
+        macro_rules! decode_channel_rows {
+            ($pixel_ty:ty) => {{
+                let mut buf = ImageRectMut::<$pixel_ty>::from_raw(buf.data.as_rect_mut());
+                {
+                    let row = buf.row(0);
+                    let mut last = 0i32;
+                    let mut x = 0;
+                    while x < w {
+                        handle_rle!(x, run);
+                        if run == 1 {
+                            last = last.wrapping_add(rle_sym);
+                            row[x] = last as $pixel_ty;
+                        } else if rle_sym == 0 {
+                            row[x..x + run].fill(last as $pixel_ty);
+                        } else {
+                            for p in &mut row[x..x + run] {
+                                last = last.wrapping_add(rle_sym);
+                                *p = last as $pixel_ty;
+                            }
+                        }
+                        x += run;
+                    }
+                }
 
-            let mut left = row_top[0];
-            let mut topleft = left;
-            for (top, p) in row_top
-                .iter()
-                .copied()
-                .zip(row.iter_mut())
-                .skip(IMAGE_OFFSET.0)
-                .take(w)
-            {
-                let pred = clamped_gradient(left as i64, top as i64, topleft as i64);
-                *p = (pred + decode() as i64) as i32;
-                left = *p;
-                topleft = top;
-            }
+                for y in 1..h {
+                    let [row, row_top] = buf.distinct_rows_mut([y, y - 1]);
+
+                    let mut left = row_top[0] as i32;
+                    let mut topleft = left;
+                    let mut x = 0;
+                    while x < w {
+                        handle_rle!(x, run);
+                        if run == 1 {
+                            let top = row_top[x] as i32;
+                            let pred = clamped_gradient(left as i64, top as i64, topleft as i64);
+                            let val = (pred + rle_sym as i64) as i32;
+                            row[x] = val as $pixel_ty;
+                            left = val;
+                            topleft = top;
+                        } else if rle_sym == 0 {
+                            if left == topleft {
+                                row[x..x + run].copy_from_slice(&row_top[x..x + run]);
+                                left = row_top[x + run - 1] as i32;
+                                topleft = left;
+                            } else {
+                                for (&top_sample, p) in
+                                    row_top[x..x + run].iter().zip(&mut row[x..x + run])
+                                {
+                                    let top = top_sample as i32;
+                                    let val =
+                                        clamped_gradient(left as i64, top as i64, topleft as i64)
+                                            as i32;
+                                    *p = val as $pixel_ty;
+                                    left = val;
+                                    topleft = top;
+                                }
+                            }
+                        } else {
+                            let sym64 = rle_sym as i64;
+                            for (&top_sample, p) in
+                                row_top[x..x + run].iter().zip(&mut row[x..x + run])
+                            {
+                                let top = top_sample as i32;
+                                let pred =
+                                    clamped_gradient(left as i64, top as i64, topleft as i64);
+                                let val = (pred + sym64) as i32;
+                                *p = val as $pixel_ty;
+                                left = val;
+                                topleft = top;
+                            }
+                        }
+                        x += run;
+                    }
+                }
+            }};
+        }
+
+        if storage == ModularStorage::I16 {
+            decode_channel_rows!(i16);
+        } else {
+            decode_channel_rows!(i32);
         }
 
         if let Err(e) = br.check_for_error() {
@@ -139,18 +195,23 @@ fn decode_fast_lossless(
 
 // This function will decode a header and apply local transforms if a header is not given.
 // The intended use of passing a header is for the DcGlobal section.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::frame::modular) fn decode_modular_subbitstream(
     buffers: Vec<&mut ModularChannel>,
+    storage: ModularStorage,
     stream_id: usize,
     header: Option<GroupHeader>,
     global_tree: &Option<Tree>,
     br: &mut BitReader,
     partial_decoded_buffers: Option<&mut usize>,
+    scratch_space: &mut ScratchSpace,
+    recycler: &BufferRecycler,
+    level5_limits: bool,
 ) -> Result<()> {
     // Skip decoding if all grids are zero-sized.
     let is_empty = buffers
         .iter()
-        .all(|buffer| matches!(buffer.data.size(), (0, _) | (_, 0)));
+        .all(|buffer| matches!(buffer.size(storage), (0, _) | (_, 0)));
     if is_empty {
         return Ok(());
     }
@@ -167,8 +228,14 @@ pub(in crate::frame::modular) fn decode_modular_subbitstream(
                 // `buffer_storage` ought to outlive `buffers[..]`'s lifetime, which obviously breaks
                 // applying transforms later.
                 let new_bufs;
-                (new_bufs, transform_steps) =
-                    meta_apply_local_transforms(buffers, &mut buffer_storage, &h)?;
+                (new_bufs, transform_steps) = meta_apply_local_transforms(
+                    buffers,
+                    &mut buffer_storage,
+                    &h,
+                    storage,
+                    recycler,
+                    level5_limits,
+                )?;
                 (h, new_bufs)
             } else {
                 (h, buffers)
@@ -183,12 +250,18 @@ pub(in crate::frame::modular) fn decode_modular_subbitstream(
         let num_local_samples = buffers
             .iter()
             .map(|buf| {
-                let (width, height) = buf.channel_info().size;
+                let (width, height) = buf.channel_info(storage).size;
                 width * height
             })
             .sum::<usize>();
         let size_limit = (1024 + num_local_samples).min(1 << 20);
-        Some(Tree::read(br, size_limit)?)
+        Some(Tree::read(
+            br,
+            size_limit,
+            level5_limits,
+            "local modular tree nodes",
+            &mut scratch_space.lz77_window,
+        )?)
     } else {
         None
     };
@@ -200,29 +273,43 @@ pub(in crate::frame::modular) fn decode_modular_subbitstream(
 
     let image_width = buffers
         .iter()
-        .map(|info| info.channel_info().size.0)
+        .map(|info| info.channel_info(storage).size.0)
         .max()
         .unwrap_or(0);
 
     if can_decode_fast_lossless(tree) {
-        decode_fast_lossless(buffers, tree, br, partial_decoded_buffers)?
+        decode_fast_lossless(buffers, tree, br, partial_decoded_buffers, storage)?
     } else {
-        let mut reader = SymbolReader::new(&tree.histograms, br, Some(image_width))?;
+        let mut reader = SymbolReader::new(
+            &tree.histograms,
+            br,
+            Some(image_width),
+            &mut scratch_space.lz77_window,
+        )?;
 
         let mut last_safe_buf = 0;
         for i in 0..buffers.len() {
             // Keep channel numbering stable, but skip actually decoding empty channels.
             // This matches libjxl, which continues the loop without renumbering.
-            let (w, h) = buffers[i].data.size();
+            let (w, h) = buffers[i].size(storage);
             if w == 0 || h == 0 {
                 continue;
             }
             if br.total_bits_available() >= DECODE_SAFETY_MARGIN {
                 last_safe_buf = i;
             }
-            if let Err(e) =
-                decode_modular_channel(&mut buffers, i, stream_id, &header, tree, &mut reader, br)
-            {
+            if let Err(e) = decode_modular_channel(
+                &mut buffers,
+                i,
+                stream_id,
+                &header,
+                tree,
+                &mut reader,
+                br,
+                storage,
+                scratch_space,
+            ) {
+                reader.reclaim_lz77_scratch(&mut scratch_space.lz77_window);
                 if let Some(p) = partial_decoded_buffers {
                     *p = last_safe_buf;
                 }
@@ -230,13 +317,18 @@ pub(in crate::frame::modular) fn decode_modular_subbitstream(
             }
         }
 
+        reader.reclaim_lz77_scratch(&mut scratch_space.lz77_window);
         reader.check_final_state(&tree.histograms, br)?;
 
         drop(buffers);
     }
 
     for step in transform_steps.iter().rev() {
-        step.local_apply(&mut buffer_storage)?;
+        step.local_apply(&mut buffer_storage, scratch_space, storage, recycler)?;
+    }
+
+    for buf in buffer_storage {
+        buf.recycle(recycler);
     }
 
     Ok(())

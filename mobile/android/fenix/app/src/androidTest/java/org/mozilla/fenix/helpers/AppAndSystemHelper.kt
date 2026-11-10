@@ -46,6 +46,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import mozilla.appservices.places.BookmarkRoot
+import mozilla.components.browser.state.search.RegionState
 import mozilla.components.browser.storage.sync.PlacesBookmarksStorage
 import mozilla.components.browser.storage.sync.PlacesHistoryStorage
 import mozilla.components.feature.top.sites.TopSite
@@ -53,6 +54,7 @@ import mozilla.components.support.locale.LocaleManager.resetToSystemDefault
 import mozilla.components.support.locale.LocaleManager.setNewLocale
 import org.junit.Assert
 import org.junit.Assert.assertEquals
+import org.mozilla.fenix.Config
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.components.PermissionStorage
 import org.mozilla.fenix.customtabs.ExternalAppBrowserActivity
@@ -149,6 +151,51 @@ object AppAndSystemHelper {
                 }
             }
         }
+    }
+
+    /**
+     * The [File] handle for [fileName] in the device's public Downloads directory. Different implementation needed for
+     * newer API levels, as Environment.getExternalStorageDirectory() is deprecated starting with API 29.
+     */
+    private fun downloadedFileOnStorage(fileName: String): File =
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q) {
+            val storageManager = appContext.getSystemService(Context.STORAGE_SERVICE) as StorageManager
+            File(storageManager.storageVolumes[0].directory!!.path + "/Download/" + fileName)
+        } else {
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
+        }
+
+    /**
+     * Assert [fileName] no longer exists in the device's public Downloads directory. Deletion from device can lag the
+     * UI confirmation, so this polls briefly before failing.
+     */
+    fun assertDownloadedFileIsDeletedFromStorage(fileName: String) {
+        val file = downloadedFileOnStorage(fileName)
+        var attempts = 0
+        while (file.exists() && attempts < 5) {
+            Log.i(
+                TAG,
+                "assertDownloadedFileIsDeletedFromStorage: $fileName still present, waiting (try ${attempts + 1})",
+            )
+            Thread.sleep(1000)
+            attempts++
+        }
+        Assert.assertFalse(
+            "$TAG assertDownloadedFileIsDeletedFromStorage: $fileName still exists on device storage",
+            file.exists(),
+        )
+    }
+
+    /**
+     * Assert [fileName] still exists in the device's public Downloads directory. Used by the "only remove from download
+     * history" flow, which removes the list entry but must leave the file on disk.
+     */
+    fun assertDownloadedFileExistsOnStorage(fileName: String) {
+        val file = downloadedFileOnStorage(fileName)
+        Assert.assertTrue(
+            "$TAG assertDownloadedFileExistsOnStorage: $fileName does not exist on device storage",
+            file.exists(),
+        )
     }
 
     /**
@@ -955,5 +1002,20 @@ object AppAndSystemHelper {
         composeTestRule.waitForIdle()
         Log.i(TAG, "setScreenOrientation: Waited for the compose test rule to be idle.")
         Log.i(TAG, "setScreenOrientation: Orientation set to $orientation.")
+    }
+
+    /**
+     * Whether the default pinned shortcuts are expected on the homepage.
+     *
+     * Mirrors the condition in `DefaultPinnedSitesBinding`.
+     */
+    fun isDefaultPinnedShortcutsOnHomepage(): Boolean {
+        val region = appContext.components.core.store.state.search.region
+        val expected = region != null && (!Config.channel.isReleased || region != RegionState.Default)
+        Log.i(
+            TAG,
+            "isDefaultPinnedShortcutsOnHomepage: region=$region channel=${Config.channel} expected=$expected",
+        )
+        return expected
     }
 }

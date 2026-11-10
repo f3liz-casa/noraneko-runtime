@@ -49,6 +49,7 @@ import mozilla.components.support.base.feature.ViewBoundFeatureWrapper
 import mozilla.components.support.ktx.kotlin.isContentUrl
 import org.mozilla.fenix.GleanMetrics.Translations
 import org.mozilla.fenix.R
+import org.mozilla.fenix.browser.readermode.PowerSavingModeReaderViewBinding
 import org.mozilla.fenix.browser.store.BrowserScreenAction.ReaderModeStatusUpdated
 import org.mozilla.fenix.components.Components
 import org.mozilla.fenix.components.LensFeature
@@ -76,6 +77,8 @@ import org.mozilla.fenix.ext.requireComponents
 import org.mozilla.fenix.ext.runIfFragmentIsAttached
 import org.mozilla.fenix.home.HomeFragment
 import org.mozilla.fenix.ipprotection.store.Surface as IPProtectionSurface
+import org.mozilla.fenix.ipprotection.ui.IPProtectionBottomSheetFragment
+import org.mozilla.fenix.listentopage.ListenSheetIntegration
 import org.mozilla.fenix.nimbus.FxNimbus
 import org.mozilla.fenix.onboarding.OnboardingFragmentDirections
 import org.mozilla.fenix.onboarding.OnboardingReason
@@ -95,6 +98,8 @@ class BrowserFragment : BaseBrowserFragment(), UserInteractionHandler, SystemIns
     private val translationsBinding = ViewBoundFeatureWrapper<TranslationsBinding>()
     private val translationsBannerIntegration = ViewBoundFeatureWrapper<TranslationsBannerIntegration>()
     private val pdfToolsIntegration = ViewBoundFeatureWrapper<PdfToolsIntegration>()
+    private val listenSheetIntegration = ViewBoundFeatureWrapper<ListenSheetIntegration>()
+    private val powerSavingModeReaderViewBinding = ViewBoundFeatureWrapper<PowerSavingModeReaderViewBinding>()
     private val continuousOnboardingFeature = ViewBoundFeatureWrapper<ContinuousOnboardingFeature>()
     private var qrScanFenixFeature: ViewBoundFeatureWrapper<QrScanFenixFeature>? =
         ViewBoundFeatureWrapper<QrScanFenixFeature>()
@@ -165,6 +170,7 @@ class BrowserFragment : BaseBrowserFragment(), UserInteractionHandler, SystemIns
         initBrowserToolbarComposableUpdates(view)
         initTranslationsUpdates(context = context, rootView = view)
         initPdfTools(context = context, rootView = view)
+        initListenSheet(context = context, rootView = view)
         initContinuousOnboardingFeature()
 
         thumbnailsFeature.set(
@@ -289,15 +295,19 @@ class BrowserFragment : BaseBrowserFragment(), UserInteractionHandler, SystemIns
                         onReaderViewStatusChange = { available, active ->
                             browserScreenStore.dispatch(ReaderModeStatusUpdated(ReaderModeStatus(available, active)))
                         },
-                        onListenClicked = {
-                            context.components.core.store.state.selectedTab?.let { tab ->
-                                context.components.listenToPage.store.dispatch(
-                                    ListenAction.Session.ListenRequested(tabId = tab.id, url = tab.content.url)
-                                )
-                            }
-                        },
                     )
                 },
+            owner = this,
+            view = view,
+        )
+
+        powerSavingModeReaderViewBinding.set(
+            feature =
+                PowerSavingModeReaderViewBinding(
+                    browserStore = context.components.core.store,
+                    appStore = context.components.appStore,
+                    readerModeController = readerMenuController,
+                ),
             owner = this,
             view = view,
         )
@@ -355,6 +365,39 @@ class BrowserFragment : BaseBrowserFragment(), UserInteractionHandler, SystemIns
         )
     }
 
+    private fun initListenSheet(context: Context, rootView: View) {
+        val settings = context.components.settings
+        if (!settings.listenToPageFeatureFlagEnabled) {
+            return
+        }
+
+        listenSheetIntegration.set(
+            feature =
+                ListenSheetIntegration(
+                    container = binding.browserLayout,
+                    browserStore = context.components.core.store,
+                    listenStore = context.components.listenToPage.store,
+                    engineView = binding.engineView,
+                    isAddressBarAtBottom = settings.toolbarPosition == ToolbarPosition.BOTTOM,
+                    onListenClicked = {
+                        context.components.core.store.state.selectedTab?.let { tab ->
+                            context.components.listenToPage.store.dispatch(
+                                ListenAction.Session.ListenRequested(
+                                    tabId = tab.id,
+                                    url = tab.readerState.activeUrl ?: tab.content.url,
+                                )
+                            )
+                        }
+                    },
+                    onCustomizeReaderViewClicked = {
+                        context.components.appStore.dispatch(AppAction.ReaderViewAction.ReaderViewControlsShown)
+                    },
+                ),
+            owner = this,
+            view = rootView,
+        )
+    }
+
     private fun initContinuousOnboardingFeature() {
         ContinuousOnboardingFeature.register(
             fragment = this,
@@ -372,8 +415,7 @@ class BrowserFragment : BaseBrowserFragment(), UserInteractionHandler, SystemIns
                     )
             },
             navigateToIpProtection = {
-                findNavController()
-                    .navigate(BrowserFragmentDirections.actionGlobalIpProtectionDialog(IPProtectionSurface.BROWSER))
+                IPProtectionBottomSheetFragment.showPrompt(fragment = this, surface = IPProtectionSurface.BROWSER)
             },
         )
     }

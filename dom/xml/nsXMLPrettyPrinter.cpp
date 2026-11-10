@@ -49,8 +49,9 @@ nsresult nsXMLPrettyPrinter::PrettyPrint(Document* aDocument,
   NS_ENSURE_TRUE(rootElement, NS_ERROR_UNEXPECTED);
 
   // nsXMLContentSink should not ask us to pretty print an XML doc that comes
-  // with a CanAttachShadowDOM() == true root element, but just in case:
-  if (rootElement->CanAttachShadowDOM()) {
+  // with a CanAttachShadowDOM() == true root element or a root element that
+  // already has a shadow root, but just in case:
+  if (rootElement->CanAttachShadowDOM() || rootElement->GetShadowRoot()) {
     MOZ_DIAGNOSTIC_CRASH("We shouldn't be getting this root element");
     return NS_ERROR_UNEXPECTED;
   }
@@ -135,6 +136,7 @@ nsresult nsXMLPrettyPrinter::PrettyPrint(Document* aDocument,
   // Observe the document so we know when to switch to "normal" view
   aDocument->AddObserver(this);
   mDocument = aDocument;
+  mElement = do_GetWeakReference(rootElement);
 
   NS_ADDREF_THIS();
 
@@ -161,14 +163,14 @@ void nsXMLPrettyPrinter::MaybeUnhook(nsIContent* aContent) {
 
 void nsXMLPrettyPrinter::Unhook() {
   mDocument->RemoveObserver(this);
-  nsCOMPtr<Element> element = mDocument->GetDocumentElement();
+  nsCOMPtr<Element> element = do_QueryReferent(mElement);
 
   if (element) {
-    // Remove the shadow root
     element->UnattachShadow();
   }
 
   mDocument = nullptr;
+  mElement = nullptr;
 
   NS_RELEASE_THIS();
 }
@@ -199,6 +201,7 @@ void nsXMLPrettyPrinter::NodeWillBeDestroyed(nsINode* aNode) {
   MOZ_DIAGNOSTIC_ASSERT(mDocument == aNode);
   mDocument->RemoveMutationObserver(this);
   mDocument = nullptr;
+  mElement = nullptr;
   NS_RELEASE_THIS();
 }
 

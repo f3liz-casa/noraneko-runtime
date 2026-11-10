@@ -25,6 +25,11 @@ struct InvalidationTest {
     op: InvalidationOp,
     file1: PathBuf,
     file2: PathBuf,
+    /// Build the second display list with a fresh `DisplayListBuilder`, the way
+    /// a replaced content process would. Its interning slot numbering restarts,
+    /// so the receiver has to drop what the first builder interned before
+    /// applying anything (`DeltaAction::Reset`).
+    new_builder: bool,
 }
 
 fn parse_manifest(path: &Path) -> Vec<InvalidationTest> {
@@ -46,14 +51,25 @@ fn parse_manifest(path: &Path) -> Vec<InvalidationTest> {
         }
 
         let tokens: Vec<&str> = line.split_whitespace().collect();
-        if tokens.len() != 3 {
+        if tokens.len() < 3 || tokens.len() > 4 {
             panic!(
-                "{}:{}: expected 'OP file1 file2', got: {}",
+                "{}:{}: expected 'OP file1 file2 [new-builder]', got: {}",
                 path.display(),
                 line_num + 1,
                 line,
             );
         }
+
+        let new_builder = match tokens.get(3) {
+            None => false,
+            Some(&"new-builder") => true,
+            Some(other) => panic!(
+                "{}:{}: unknown option '{}', expected new-builder",
+                path.display(),
+                line_num + 1,
+                other,
+            ),
+        };
 
         let op = match tokens[0] {
             "==" => InvalidationOp::Equal,
@@ -70,6 +86,7 @@ fn parse_manifest(path: &Path) -> Vec<InvalidationTest> {
             op,
             file1: dir.join(tokens[1]),
             file2: dir.join(tokens[2]),
+            new_builder,
         });
     }
 
@@ -117,8 +134,11 @@ impl<'a> TestHarness<'a> {
         self.test_composite_nop();
         self.test_scroll_subpic();
         self.test_clip_promotion();
+        self.test_redundant_scroll_root();
         self.test_rounded_rect_intersection();
         self.test_promotion_shapes();
+        self.test_surface_sub_slice();
+        self.test_backdrop_sampled_margin();
 
         // Run manifest-based tests
         let manifest_path = PathBuf::from("invalidation/invalidation.list");
@@ -131,9 +151,11 @@ impl<'a> TestHarness<'a> {
 
     fn has_any_dirty_tile(pc_debug: &PictureCacheDebugInfo) -> bool {
         for slice_info in pc_debug.slices.values() {
-            for tile_info in slice_info.tiles.values() {
-                if matches!(tile_info, TileDebugInfo::Dirty(..)) {
-                    return true;
+            for tiles in &slice_info.sub_slices {
+                for tile_info in tiles.values() {
+                    if matches!(tile_info, TileDebugInfo::Dirty(..)) {
+                        return true;
+                    }
                 }
             }
         }
@@ -153,6 +175,9 @@ impl<'a> TestHarness<'a> {
 
             // Render file1 (baseline)
             self.render_yaml_path(&test.file1);
+            if test.new_builder {
+                self.wrench.drop_dl_builders();
+            }
             // Render file2 (the change)
             let results = self.render_yaml_path(&test.file2);
 
@@ -168,10 +193,11 @@ impl<'a> TestHarness<'a> {
                 InvalidationOp::NotEqual => "!=",
             };
 
+            let opts = if test.new_builder { " new-builder" } else { "" };
             if pass {
-                println!("PASS {} {} {}", op_str, file1_str, file2_str);
+                println!("PASS {} {} {}{}", op_str, file1_str, file2_str, opts);
             } else {
-                println!("FAIL {} {} {}", op_str, file1_str, file2_str);
+                println!("FAIL {} {} {}{}", op_str, file1_str, file2_str, opts);
                 failures += 1;
             }
         }
@@ -264,6 +290,26 @@ impl<'a> TestHarness<'a> {
         assert!(slices > 1, "Expected multiple slices");
     }
 
+    /// Ensure that a scroll frame which is only a scroll root by way of the
+    /// outermost-scroll-root fallback (no scrollable range, or below the
+    /// minimum scroll root size) does not start a picture cache slice, while
+    /// a real scroll root still does.
+    fn test_redundant_scroll_root(&mut self) {
+        let results = self.render_yaml("real_scroll_root");
+        assert!(
+            results.pc_debug.slices.len() > 1,
+            "Expected a real scroll root to get its own slice",
+        );
+
+        for name in ["redundant_scroll_root_small", "redundant_scroll_root_zero_range"] {
+            let results = self.render_yaml(name);
+            assert_eq!(
+                results.pc_debug.slices.len(), 1,
+                "Expected a single slice for {}", name,
+            );
+        }
+    }
+
     /// Ensure that two rounded-rect clips in the shared clip chain are combined
     /// into a single compositor clip with the correct intersected radii.
     fn test_rounded_rect_intersection(
@@ -273,10 +319,10 @@ impl<'a> TestHarness<'a> {
 
         let slice = results.pc_debug.slice(0);
 
-        // The two clips (outer: 400x400 r=20, inner: 400x350 r=15, both at origin)
-        // should be combined into a single compositor clip on the tile cache slice.
-        // The combined clip rect is the intersection (400x350), with the top corners
-        // taking the larger radius (20) and bottom corners the smaller (15).
+        // The two clips (outer: 400x400 r=20, inner: 400x350 r=20 on the top
+        // corners only, both at origin) should be combined into a single compositor
+        // clip on the tile cache slice. The combined clip rect is the intersection
+        // (400x350), with radius 20 on the top corners and none on the bottom.
         let clip = slice.compositor_clip.as_ref().expect(
             "Expected a compositor clip on the tile cache slice after combining two rounded rects"
         );
@@ -290,14 +336,23 @@ impl<'a> TestHarness<'a> {
         let expected_radius = BorderRadius {
             top_left: LayoutSize::new(20.0, 20.0),
             top_right: LayoutSize::new(20.0, 20.0),
-            bottom_left: LayoutSize::new(15.0, 15.0),
-            bottom_right: LayoutSize::new(15.0, 15.0),
+            bottom_left: LayoutSize::zero(),
+            bottom_right: LayoutSize::zero(),
             shape_top_left: 1.0,
             shape_top_right: 1.0,
             shape_bottom_left: 1.0,
             shape_bottom_right: 1.0,
         };
         assert_eq!(clip.radius, expected_radius, "Combined clip radii");
+
+        // Combining these two clips would give radius 20 on the top corners and 15
+        // on the bottom. Native compositors can only apply a single radius
+        // (bug 2079096), so only one of the clips may become the compositor clip.
+        let results = self.render_yaml("rounded_rect_intersect_mixed");
+        let clip = results.pc_debug.slice(0).compositor_clip.as_ref().expect(
+            "Expected one of the rounded rects to be the compositor clip"
+        );
+        assert_eq!(clip.radius, BorderRadius::uniform(clip.radius.top_left.width), "Uniform clip radii");
     }
 
     /// Check which rounded-rect clip shapes are accepted as compositor clips.
@@ -312,7 +367,7 @@ impl<'a> TestHarness<'a> {
         // (reftest yaml, whether the slice should end up with a compositor clip)
         let cases = [
             ("rounded-clip", true),
-            ("per-corner-radius", true),
+            ("single-radius-zero-corners", true),
             ("radius-clamped", true),
             ("two-clips-combined", true),
             ("rect-and-rounded", true),
@@ -322,6 +377,9 @@ impl<'a> TestHarness<'a> {
             // non-round corner shapes are rejected by can_use_fast_path_in.
             ("elliptical-radius", false),
             ("corner-shape", false),
+            // Representable by the compositing shader, but native compositors such
+            // as CoreAnimation can only apply a single radius (bug 2079096).
+            ("per-corner-radius", false),
             // A scroll frame is an axis-aligned translation, so it stays in the
             // root coordinate system and the clip is still promoted.
             ("scrolled-clip", true),
@@ -353,6 +411,51 @@ impl<'a> TestHarness<'a> {
                 name, expect_clip, has_clip,
             );
         }
+    }
+
+    /// Ensure a change inside an off-screen surface invalidates the tiles the
+    /// surface's picture is drawn into, when a compositor surface splits the
+    /// slice into sub-slices. The nested drop-shadow inflates the outer
+    /// picture's coverage into the compositor surface's area, which none of
+    /// its children reach on their own (bug 2077958).
+    fn test_surface_sub_slice(&mut self) {
+        self.render_yaml("surface_sub_slice_1");
+        let results = self.render_yaml("surface_sub_slice_2");
+        let slice = results.pc_debug.slice(0);
+
+        assert!(
+            slice.sub_slices.len() > 1,
+            "Expected the compositor surface to split the slice into sub-slices",
+        );
+
+        let offset = webrender::TileOffset::new(0, 0);
+        let states: Vec<_> = slice.sub_slices
+            .iter()
+            .filter_map(|tiles| tiles.get(&offset))
+            .collect();
+
+        assert!(
+            states.iter().any(|state| matches!(state, TileDebugInfo::Dirty(..))),
+            "Expected the changed content to dirty a tile: {:?}",
+            states,
+        );
+        assert!(
+            !states.iter().any(|state| state.is_valid()),
+            "A sub-slice tile drawing the picture stayed valid: {:?}",
+            states,
+        );
+    }
+
+    /// A backdrop-filter whose drop shadow samples content in another tile must
+    /// invalidate its own tile when only that content changes.
+    fn test_backdrop_sampled_margin(&mut self) {
+        self.render_yaml("backdrop_sampled_margin_1");
+        let results = self.render_yaml("backdrop_sampled_margin_2");
+
+        assert!(
+            matches!(results.pc_debug.slice(0).tile(0, 1), TileDebugInfo::Dirty(..)),
+            "Ensure the backdrop's tile is invalidated by a change to content its filter samples",
+        );
     }
 
     /// Render a YAML file by name (relative to invalidation/), and return the picture cache debug info

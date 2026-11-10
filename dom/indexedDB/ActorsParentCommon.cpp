@@ -63,7 +63,7 @@ class nsIFile;
 
 namespace mozilla::dom::indexedDB {
 
-static_assert(SNAPPY_VERSION == 0x010202);
+static_assert(SNAPPY_VERSION == 0x010300);
 
 using mozilla::ipc::IsOnBackgroundThread;
 
@@ -413,11 +413,11 @@ GetStructuredCloneReadInfoFromExternalBlob(
 
   Maybe<CipherKey> maybeKey;
 
-  if (aFileManager.IsInPrivateBrowsingMode()) {
-    nsCString fileKeyId;
-    fileKeyId.AppendInt(file.FileInfo().Id());
-
-    maybeKey = aFileManager.MutableCipherKeyManagerRef().Get(fileKeyId);
+  if (aFileManager.UsesEncryption()) {
+    QM_TRY_UNWRAP(maybeKey,
+                  aFileManager.MutableCipherKeyManagerRef().Get(
+                      aFileManager.CipherKeyIdForFile(file.FileInfo().Id())));
+    QM_TRY(OkIf(maybeKey.isSome()), Err(NS_ERROR_FAILURE));
   }
 
   auto data = JSStructuredCloneData{JS::StructuredCloneScope::DifferentProcess};

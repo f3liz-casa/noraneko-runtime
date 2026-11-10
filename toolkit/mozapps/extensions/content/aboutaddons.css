@@ -9,6 +9,14 @@
   --sidebar-width: var(--size-sidebar);
   --z-index-sticky-container: 5;
   --z-index-popup: 10;
+
+  /* Link-parameter used by the Nova theme preview svg to mirror itself,
+   * set on :root to ensure it is always defined, including inside the
+   * aboutaddons-themes-picker shadow DOM. */
+  --theme-preview-rtl-flip: none;
+  &:dir(rtl) {
+    --theme-preview-rtl-flip: scaleX(-1);
+  }
 }
 
 @media (max-width: 950px) {
@@ -233,6 +241,8 @@ message-bar-stack {
 /* Add-on cards */
 
 .addon.card {
+  --card-cover-image-padding: 0;
+
   margin-bottom: 16px;
   transition:
     opacity 150ms,
@@ -262,7 +272,7 @@ addon-card:not([expanded]) > .addon.card:hover {
 }
 
 addon-card[expanded] .addon.card {
-  padding-bottom: 0;
+  --card-padding-block-end: 0;
 }
 
 .addon-card-collapsed {
@@ -281,20 +291,32 @@ addon-list addon-card > .addon.card {
   margin-bottom: var(--space-small);
 }
 
-.addon-card-message,
-.update-postponed-bar {
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-  margin: 8px calc(var(--card-padding) * -1) calc(var(--card-padding) * -1);
+@media -moz-pref("browser.nova.enabled") {
+  .addon-card-message,
+  .update-postponed-bar {
+    margin-block-start: var(--card-padding);
+    /* Center the message bars icons vertically. */
+    --message-bar-icon-container-align-items: center;
+    --message-bar-icon-container-padding-block-start: calc(var(--message-bar-icon-container-padding) - var(--message-bar-icon-container-padding-offset));
+  }
 }
 
-/* Small-ish subtree */
-/* stylelint-disable-next-line stylelint-plugin-mozilla/no-has-selector */
-addon-card[expanded] .addon-card-message,
-addon-card[expanded] .update-postponed-bar,
-.update-postponed-bar:has(+ .addon-card-message:not([hidden])) {
-  border-radius: 0;
-  margin-bottom: 0;
+@media not -moz-pref("browser.nova.enabled") {
+  .addon-card-message,
+  .update-postponed-bar {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    margin: 8px calc(var(--card-padding) * -1) calc(var(--card-padding) * -1);
+  }
+
+  /* Small-ish subtree */
+  /* stylelint-disable-next-line stylelint-plugin-mozilla/no-has-selector */
+  addon-card[expanded] .addon-card-message,
+  addon-card[expanded] .update-postponed-bar,
+  .update-postponed-bar:has(+ .addon-card-message:not([hidden])) {
+    border-radius: 0;
+    margin-bottom: 0;
+  }
 }
 
 /* Small-ish subtree */
@@ -337,6 +359,16 @@ theme-preview {
    * the toolbar color is exactly the same as the theme card background
    * color). */
   border-bottom: var(--border-width) solid var(--border-color-deemphasized);
+
+  &:dir(rtl) {
+    transform: scaleX(-1);
+  }
+
+  /* The Nova theme preview svg mirrors itself through link-parameters, and so
+  * it must not be mirrored as a whole like the other theme preview images. */
+  &[src="chrome://mozapps/content/extensions/default-theme/preview-nova.svg"]:dir(rtl) {
+    transform: none;
+  }
 }
 
 .card-heading-icon {
@@ -416,7 +448,6 @@ theme-preview {
   background-image: url("chrome://global/skin/icons/trophy.svg");
   background-size: 14px;
   /* This color will be removed once the icons are updated for Nova. */
-  /* stylelint-disable-next-line stylelint-plugin-mozilla/no-base-design-tokens */
   fill: #ff9400;
 }
 

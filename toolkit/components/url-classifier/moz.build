@@ -99,3 +99,24 @@ if CONFIG["CC_TYPE"] == "gcc":
     ]
 
 include("/ipc/chromium/chromium-config.mozbuild")
+
+LICENSED_UNDER += ["chromium"]
+LICENSED_UNDER["chromium"].paths = [
+    "chromium",
+]
+
+SOURCE_HEADERS += [
+    "ChunkSet.h",
+    "Classifier.h",
+    "HashStore.h",
+    "nsCheckSummedOutputStream.h",
+    "nsUrlClassifierDBService.h",
+    "nsUrlClassifierInfo.h",
+    "nsUrlClassifierProxies.h",
+    "nsUrlClassifierStreamUpdater.h",
+    "nsUrlClassifierTestUtils.h",
+    "nsUrlClassifierUtils.h",
+    "ProtocolParser.h",
+    "RiceDeltaDecoder.h",
+    "UrlClassifierTelemetryUtils.h",
+]

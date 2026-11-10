@@ -32,8 +32,8 @@
 #  include "PDMFactory.h"
 #  include "WMFDecoderModule.h"
 #endif
-#ifdef MOZ_WIDGET_ANDROID
-#  include "mozilla/java/MediaDrmProxyWrappers.h"
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WMF_CDM)
+#  include "mozilla/gfx/gfxVars.h"
 #endif
 
 namespace mozilla::dom {
@@ -161,9 +161,12 @@ MediaKeySystemStatus MediaKeySystemAccess::GetKeySystemStatus(
 #ifdef MOZ_WIDGET_ANDROID
     } else if (Preferences::GetBool("media.mediadrm-widevinecdm.visible",
                                     false)) {
-      bool supported =
-          mozilla::java::MediaDrmProxy::IsSchemeSupported(keySystem);
-      if (!supported) {
+      media::DrmSchemeSupport support = gfx::gfxVars::WidevineSupport();
+      if (support == media::DrmSchemeSupport::Unknown) {
+        aOutMessage = "Waiting for MediaDrm Widevine support"_ns;
+        return MediaKeySystemStatus::Cdm_not_installed;
+      }
+      if (support != media::DrmSchemeSupport::Supported) {
         aOutMessage = nsLiteralCString(
             "KeySystem or Minimum API level not met for Widevine EME");
         return MediaKeySystemStatus::Cdm_not_supported;
@@ -338,6 +341,20 @@ static bool IsMFCDMAllowedByOrigin(const Maybe<nsCString>& aOrigin) {
       isFound ? "" : "by default ");
   return isAllowed;
 }
+
+// The media engine only decodes video in hardware, so it refuses every stream
+// when hardware video decoding is unavailable. Offering a CDM that lives in it
+// would let the page set keys for playback that cannot start.
+static bool CanUseHardwareVideoDecodingForMFCDM() {
+  if (gfx::gfxVars::CanUseHardwareVideoDecoding() ||
+      StaticPrefs::media_wmf_media_engine_bypass_gfx_blocklist()) {
+    return true;
+  }
+  EME_LOG(
+      "MediaKeySystemAccess::CanUseHardwareVideoDecodingForMFCDM, Media "
+      "Foundation CDMs are unavailable without hardware video decoding");
+  return false;
+}
 #endif
 
 static RefPtr<KeySystemConfig::SupportedConfigsPromise>
@@ -354,7 +371,8 @@ GetSupportedKeySystemConfigs(const nsAString& aKeySystem,
         aKeySystem, DecryptionInfo::Software, aIsPrivateBrowsing});
   }
 #ifdef MOZ_WMF_CDM
-  if (IsMFCDMAllowedByOrigin(aOrigin)) {
+  if (IsMFCDMAllowedByOrigin(aOrigin) &&
+      CanUseHardwareVideoDecodingForMFCDM()) {
     if (IsPlayReadyEnabled()) {
       // PlayReady software and hardware
       if (aKeySystem.EqualsLiteral(kPlayReadyKeySystemName) ||

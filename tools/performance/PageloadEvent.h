@@ -46,6 +46,7 @@ struct PageLoadDomainExtra;
   _(redirectTime, uint32_t)                    \
   _(responseTime, uint32_t)                    \
   _(sameOriginNav, bool)                       \
+  _(loadedInForeground, bool)                  \
   _(timeToRequestStart, uint32_t)              \
   _(tlsHandshakeTime, uint32_t)                \
   _(trrDomain, nsCString)                      \
@@ -75,7 +76,13 @@ namespace mozilla::performance::pageload_event {
  */
 enum UserFeature : uint32_t { USING_A11Y = 1 << 0 };
 
-enum DocumentFeature : uint32_t { FETCH_PRIORITY_IMAGES = 1 << 0 };
+enum DocumentFeature : uint32_t {
+  FETCH_PRIORITY_IMAGES = 1 << 0,
+  // Navigation was served a Speculation Rules prefetch.
+  NAVIGATIONAL_PREFETCH = 1 << 1,
+  // A prefetch candidate covered this navigation, in either experiment branch.
+  NAVIGATIONAL_PREFETCH_ELIGIBLE = 1 << 2,
+};
 
 enum AndroidIsolationCategory : uint32_t {
   OTHER = 0,

@@ -5,10 +5,15 @@
 #ifndef jit_mips64_MacroAssembler_mips64_h
 #define jit_mips64_MacroAssembler_mips64_h
 
+#include <type_traits>
+
 #include "jit/mips-shared/MacroAssembler-mips-shared.h"
 #include "jit/MoveResolver.h"
 #include "vm/BytecodeUtil.h"
 #include "wasm/WasmBuiltins.h"
+
+using js::wasm::FaultingCodeRange;
+using js::wasm::FaultingCodeRangePair;
 
 namespace js {
 namespace jit {
@@ -381,6 +386,39 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   void push(FloatRegister reg) { ma_push(reg); }
   void pop(Register reg) { ma_pop(reg); }
   void pop(FloatRegister reg) { ma_pop(reg); }
+
+  template <typename... Regs>
+  void pushRegs(const Regs&... regs) {
+    static_assert((std::is_convertible_v<Regs, Register> && ...));
+    static_assert(sizeof...(Regs) > 0);
+
+    if (((static_cast<Register>(regs) == StackPointer) || ...)) {
+      (ma_push(regs), ...);
+      return;
+    }
+
+    int32_t offset = int32_t(sizeof...(Regs) * sizeof(intptr_t));
+    ma_dsubu(StackPointer, StackPointer, Imm32(offset));
+    (storePtr(regs, Address(StackPointer, offset -= int32_t(sizeof(intptr_t)))),
+     ...);
+  }
+
+  template <typename... Regs>
+  void popRegs(const Regs&... regs) {
+    static_assert((std::is_convertible_v<Regs, Register> && ...));
+    static_assert(sizeof...(Regs) > 0);
+
+    if (((static_cast<Register>(regs) == StackPointer) || ...)) {
+      (ma_pop(regs), ...);
+      return;
+    }
+
+    int32_t offset = -int32_t(sizeof(intptr_t));
+    (loadPtr(Address(StackPointer, offset += int32_t(sizeof(intptr_t))), regs),
+     ...);
+    ma_daddu(StackPointer, StackPointer,
+             Imm32(int32_t(sizeof...(Regs) * sizeof(intptr_t))));
+  }
 
   // Emit a branch that can be toggled to a non-operation. On MIPS64 we use
   // "andi" instruction to toggle the branch.
@@ -757,12 +795,12 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
 
   void loadPrivate(const Address& address, Register dest);
 
-  void loadUnalignedDouble(const wasm::MemoryAccessDesc& access,
-                           const BaseIndex& src, Register temp,
-                           FloatRegister dest);
-  void loadUnalignedFloat32(const wasm::MemoryAccessDesc& access,
-                            const BaseIndex& src, Register temp,
-                            FloatRegister dest);
+  FaultingCodeRange loadUnalignedDouble(const wasm::MemoryAccessDesc& access,
+                                        const BaseIndex& src, Register temp,
+                                        FloatRegister dest);
+  FaultingCodeRange loadUnalignedFloat32(const wasm::MemoryAccessDesc& access,
+                                         const BaseIndex& src, Register temp,
+                                         FloatRegister dest);
 
   FaultingCodeRange store8(Register src, const Address& address);
   FaultingCodeRange store8(Register src, const BaseIndex& address);
@@ -819,12 +857,12 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   FaultingCodeRange storePtr(Register src, const BaseIndex& address);
   void storePtr(Register src, AbsoluteAddress dest);
 
-  void storeUnalignedFloat32(const wasm::MemoryAccessDesc& access,
-                             FloatRegister src, Register temp,
-                             const BaseIndex& dest);
-  void storeUnalignedDouble(const wasm::MemoryAccessDesc& access,
-                            FloatRegister src, Register temp,
-                            const BaseIndex& dest);
+  FaultingCodeRange storeUnalignedFloat32(const wasm::MemoryAccessDesc& access,
+                                          FloatRegister src, Register temp,
+                                          const BaseIndex& dest);
+  FaultingCodeRange storeUnalignedDouble(const wasm::MemoryAccessDesc& access,
+                                         FloatRegister src, Register temp,
+                                         const BaseIndex& dest);
 
   void moveDouble(FloatRegister src, FloatRegister dest) { as_movd(dest, src); }
 
@@ -851,12 +889,14 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
  protected:
   bool buildOOLFakeExitFrame(void* fakeReturnAddr);
 
-  void wasmLoadI64Impl(const wasm::MemoryAccessDesc& access,
-                       Register memoryBase, Register ptr, Register ptrScratch,
-                       Register64 output, Register tmp);
-  void wasmStoreI64Impl(const wasm::MemoryAccessDesc& access, Register64 value,
-                        Register memoryBase, Register ptr, Register ptrScratch,
-                        Register tmp);
+  FaultingCodeRange wasmLoadI64Impl(const wasm::MemoryAccessDesc& access,
+                                    Register memoryBase, Register ptr,
+                                    Register ptrScratch, Register64 output,
+                                    Register tmp);
+  FaultingCodeRange wasmStoreI64Impl(const wasm::MemoryAccessDesc& access,
+                                     Register64 value, Register memoryBase,
+                                     Register ptr, Register ptrScratch,
+                                     Register tmp);
 
  public:
   void lea(Operand addr, Register dest) {

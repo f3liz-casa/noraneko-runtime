@@ -227,9 +227,17 @@ const ProxyMessenger = {
   portPromises: new Map(),
 
   // Known endpoints of each open port.
-  /** @type {Map<number, object>} portId -> source actor. */
+  /**
+   * portId -> source actor.
+   *
+   * @type {Map<number, object>}
+   */
   portSources: new Map(),
-  /** @type {Map<number, Set<object>>} portId -> known receiver actors. */
+  /**
+   * portId -> known receiver actors.
+   *
+   * @type {Map<number, Set<object>>}
+   */
   portReceivers: new Map(),
 
   init() {
@@ -300,10 +308,18 @@ const ProxyMessenger = {
       let browser = top.embedderElement;
       let data =
         browser && apiManager.global.tabTracker.getBrowserData(browser);
+
+      let windowId = data?.windowId;
       if (data?.tabId > 0) {
         sender.tab = extension.tabManager.get(data.tabId, null)?.convert();
         // frameId is documented to only be set if sender.tab is set.
         sender.frameId = source.frameId;
+        // preferring windowId from tab over data.windowId
+        windowId ??= sender.tab?.windowId;
+      }
+
+      if (windowId > 0) {
+        sender.windowId = windowId;
       }
 
       if (currentWindowContext?.innerWindowId) {
@@ -527,7 +543,11 @@ GlobalManager = {
   extensionMap: new Map(),
   initialized: false,
 
-  /** @type {WeakMap<MozBrowser, object>} Extension Context init data. */
+  /**
+   * Extension Context init data.
+   *
+   * @type {WeakMap<MozBrowser, object>}
+   */
   frameData: new WeakMap(),
 
   init(extension) {
@@ -2610,6 +2630,8 @@ ChromeUtils.defineLazyGetter(ExtensionParent, "PlatformInfo", () => {
         arch = "x86-32";
       } else if (arch == "x86_64") {
         arch = "x86-64";
+      } else if (arch == "aarch64") {
+        arch = "arm64";
       }
       return arch;
     })(),

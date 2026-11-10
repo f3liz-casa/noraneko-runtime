@@ -1024,6 +1024,12 @@ SSL_OptionSet(PRFileDesc *fd, PRInt32 which, PRIntn val)
             break;
 
         case SSL_SUPPRESS_END_OF_EARLY_DATA:
+            /* DTLS has no EndOfEarlyData to suppress (RFC 9147, Section 5.6). */
+            if (IS_DTLS(ss) && val) {
+                PORT_SetError(SEC_ERROR_INVALID_ARGS);
+                rv = SECFailure;
+                break;
+            }
             ss->opt.suppressEndOfEarlyData = val;
             break;
 
@@ -4113,7 +4119,8 @@ ssl_NewKeyPair(SECKEYPrivateKey *privKey, SECKEYPublicKey *pubKey)
 sslKeyPair *
 ssl_GetKeyPairRef(sslKeyPair *keyPair)
 {
-    PR_ATOMIC_INCREMENT(&keyPair->refCount);
+    PRInt32 newCount = PR_ATOMIC_INCREMENT(&keyPair->refCount);
+    PORT_ReleaseAssert(newCount > 1);
     return keyPair;
 }
 
@@ -4125,6 +4132,7 @@ ssl_FreeKeyPair(sslKeyPair *keyPair)
     }
 
     PRInt32 newCount = PR_ATOMIC_DECREMENT(&keyPair->refCount);
+    PORT_ReleaseAssert(newCount >= 0);
     if (!newCount) {
         SECKEY_DestroyPrivateKey(keyPair->privKey);
         SECKEY_DestroyPublicKey(keyPair->pubKey);
@@ -4285,6 +4293,7 @@ ssl_NewSocket(PRBool makeLocks, SSLProtocolVariant protocolVariant)
     ss->opt = ssl_defaults;
     if (protocolVariant == ssl_variant_datagram) {
         ss->opt.enableRenegotiation = SSL_RENEGOTIATE_NEVER;
+        ss->opt.suppressEndOfEarlyData = PR_FALSE;
     }
     ss->opt.useSocks = PR_FALSE;
     ss->opt.noLocks = !makeLocks;
@@ -4703,7 +4712,19 @@ SSLExp_GetResumptionTokenInfo(const PRUint8 *tokenData, unsigned int tokenLen,
         return SECFailure;
     }
 
-    token.peerCert = CERT_DupCertificate(sid.peerCert);
+    /* |sid| only holds the peer certificate as DER; SSLResumptionTokenInfo is
+     * a public struct that hands out a CERTCertificate, so make one here. */
+    if (sid.peerCertDER.data) {
+        token.peerCert = CERT_NewTempCertificate(NULL, /* dbHandle */
+                                                 &sid.peerCertDER,
+                                                 NULL, PR_FALSE, PR_TRUE);
+        if (!token.peerCert) {
+            ssl_DestroySID(&sid, PR_FALSE);
+            return SECFailure;
+        }
+    } else {
+        token.peerCert = NULL;
+    }
 
     token.alpnSelectionLen = sid.u.ssl3.alpnSelection.len;
     token.alpnSelection = PORT_ZAlloc(token.alpnSelectionLen);

@@ -1,6 +1,7 @@
 #pragma once
 #include "parakeet.h"          // pk::Decoder
 #include "model_loader.hpp"
+#include "tdt.hpp"             // pk::TdtBeamToken
 #include "transcription.hpp"   // pk::Transcription
 
 #include <memory>
@@ -8,6 +9,14 @@
 #include <vector>
 
 namespace pk {
+
+// One text hypothesis returned by the opt-in offline TDT N-best path.
+struct NBestTranscription {
+    std::string text;
+    std::vector<TdtBeamToken> tokens;
+    float score = 0.0f;
+    float normalized_score = 0.0f;
+};
 
 // Load-once transcription context.
 //
@@ -65,6 +74,19 @@ public:
         Decoder decoder = Decoder::kDefault,
         const std::string& target_lang = "") const;
 
+    // Run mel + encoder + CTC head only, returning the log-prob matrix
+    // (row-major [T, vocab+1], already log-softmaxed) instead of decoded text —
+    // the seam external decoder stacks (e.g. pyctcdecode + KenLM) need. If
+    // `sample_rate != 16000` the audio is linearly resampled to 16 kHz first.
+    // `target_lang` as in transcribe_pcm (ignored by non-prompt models). Always
+    // runs the CTC head regardless of the model's preferred decoder; throws
+    // std::runtime_error if the model has no CTC head (e.g. a TDT/RNNT-only
+    // streaming model).
+    void transcribe_pcm_ctc_logits(const std::vector<float>& pcm, int sample_rate,
+                                   std::vector<float>& logits, int& T,
+                                   int& vocab_plus_1,
+                                   const std::string& target_lang = "") const;
+
     // Transcribe raw mono float PCM, returning the flat text plus per-word and
     // per-token timestamps + confidence (matching NeMo timestamps=True +
     // 'max_prob' confidence). If `sample_rate != 16000` the audio is linearly
@@ -80,6 +102,19 @@ public:
         Decoder decoder = Decoder::kDefault,
         const std::string& target_lang = "") const;
 
+    // Offline TDT beam search. These methods are intentionally separate from
+    // the greedy Decoder selector: they require a TDT duration table and return
+    // up to `nbest` ranked hypotheses with token emission frames/durations.
+    std::vector<NBestTranscription> transcribe_pcm_nbest(
+        const std::vector<float>& pcm, int sample_rate,
+        int beam_size, int nbest, bool score_norm = true,
+        const std::string& target_lang = "") const;
+
+    std::vector<NBestTranscription> transcribe_path_nbest(
+        const std::string& wav_path,
+        int beam_size, int nbest, bool score_norm = true,
+        const std::string& target_lang = "") const;
+
     // Batched timestamped transcription. Each clip is resampled to 16 kHz if
     // needed, all run through the batched encoder; decode + timestamp extraction
     // are per item. Returns one Transcription per input, in order.
@@ -93,6 +128,8 @@ public:
     // The underlying loaded GGUF. Exposed so the streaming C-API can build a
     // pk::StreamingSession (and a MelFrontend) over the same load-once model.
     const ModelLoader& loader() const { return loader_; }
+    // Bytes the loaded weights occupy, for memory reporting.
+    size_t weights_bytes() const { return loader_.weights_bytes(); }
 
     // Non-copyable (owns the GGUF mapping).
     Model(const Model&) = delete;
@@ -118,6 +155,18 @@ private:
     Transcription transcribe_16k_with_timestamps(
         const std::vector<float>& pcm16k, Decoder decoder,
         const std::string& target_lang = "") const;
+
+    std::vector<NBestTranscription> transcribe_16k_nbest(
+        const std::vector<float>& pcm16k, int beam_size, int nbest,
+        bool score_norm, const std::string& target_lang) const;
+
+    // Core orchestration for transcribe_pcm_ctc_logits: 16 kHz mono PCM -> CTC
+    // log-prob matrix. Mirrors transcribe_16k through the encoder, then runs
+    // the CTC head directly instead of decode_enc_out.
+    void transcribe_16k_ctc_logits(const std::vector<float>& pcm16k,
+                                   std::vector<float>& logits, int& T,
+                                   int& vocab_plus_1,
+                                   const std::string& target_lang = "") const;
 
     ModelLoader loader_;
 };

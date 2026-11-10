@@ -143,7 +143,6 @@
     .lists-title {
       color: var(--lists-text-color);
       display: block;
-      font-size: var(--font-size-small);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -526,7 +525,6 @@
       height: auto;
       width: 75px;
       -moz-context-properties: fill;
-      // stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens, declaration-property-value-disallowed-list
       fill: light-dark(#DADBDF, #3B3B43);
     }
   }

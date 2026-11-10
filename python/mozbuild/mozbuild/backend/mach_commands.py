@@ -64,7 +64,7 @@ def run(command_context, ide, no_interactive, args):
         # Then build the rest of the build dependencies by running the full
         # export target, because we can't do anything better.
         result = subprocess.run(
-            [sys.executable, "mach", "build", "pre-export", "export", "pre-compile"],
+            [sys.executable, "mach", "build", "analysis-prereqs"],
             check=False,
             cwd=command_context.topsrcdir,
         )
@@ -340,6 +340,8 @@ def rust_analyzer_config(command_context):
                 # build, so it can discover the files created when we run `./mach
                 # cargo check`.
                 "CARGO_TARGET_DIR": command_context.topobjdir,
+                "MOZ_TOPOBJDIR": command_context.topobjdir,
+                "MOZ_TOPSRCDIR": command_context.topsrcdir,
             },
             "buildScripts": {
                 "overrideCommand": cargo_check_command,

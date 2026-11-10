@@ -157,7 +157,7 @@ fn eager_pseudo_is_definitely_not_generated(
         return false;
     }
 
-    style.get_box().clone_display() == Display::None || style.ineffective_content_property()
+    *style.get_box().get_display() == Display::None || style.ineffective_content_property()
 }
 
 impl<'a, 'ctx, 'le, E> StyleResolverForElement<'a, 'ctx, 'le, E>
@@ -639,7 +639,12 @@ where
         primary_style: &Arc<ComputedValues>,
     ) -> Option<Arc<ComputedValues>> {
         let rule_node = primary_style.rules();
-        let without_transition_rules = RuleTree::remove_transition_rule_if_applicable(rule_node);
+        let without_transition_rules = self
+            .context
+            .shared
+            .stylist
+            .rule_tree()
+            .remove_transition_rule_if_applicable(rule_node);
         if without_transition_rules == *rule_node {
             // We don't have transition rule in this case, so return None to let
             // the caller use the original ComputedValues.

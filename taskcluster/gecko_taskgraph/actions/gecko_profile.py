@@ -38,6 +38,11 @@ SYMBOLS_DEPENDENCY = {
     "extract": False,
     "task": "<build-android-aarch64-shippable/opt>",
 }
+BUILD_SYMBOLS_DEPENDENCY = {
+    "artifact": "public/build/target.crashreporter-symbols.zip",
+    "extract": False,
+    "task": "<build>",
+}
 
 DEPENDANCY_TO_ADD_FOR_TASK_REFERENCE = [
     SIMPLEPERF_DEPENDENCY,
@@ -261,17 +266,17 @@ def geckoprofile_action(parameters, graph_config, input, task_group_id, task_id)
                     "test_platform", ""
                 )
                 if "macosx" in test_platform and "aarch64" in test_platform:
-                    samply_platform_toolchain = "toolchain-macosx64-aarch64-samply"
-                    node_toolchain = "toolchain-macosx64-aarch64-node-22"
+                    toolchain_platform = "macosx64-aarch64"
                 elif "macosx" in test_platform:
-                    samply_platform_toolchain = "toolchain-macosx64-samply"
-                    node_toolchain = "toolchain-macosx64-node-22"
+                    toolchain_platform = "macosx64"
                 elif "win" in test_platform:
-                    samply_platform_toolchain = "toolchain-win64-samply"
-                    node_toolchain = "toolchain-win64-node-22"
+                    toolchain_platform = "win64"
                 else:
-                    samply_platform_toolchain = "toolchain-linux64-samply"
-                    node_toolchain = "toolchain-linux64-node-22"
+                    toolchain_platform = "linux64"
+                samply_platform_toolchain = f"toolchain-{toolchain_platform}-samply"
+                node_toolchain = find_node_toolchain(
+                    full_task_graph, toolchain_platform
+                )
 
                 samply_platform_dependency = {
                     "artifact": "public/build/samply.tar.zst",
@@ -308,6 +313,11 @@ def geckoprofile_action(parameters, graph_config, input, task_group_id, task_id)
                     PROFILER_NODE_TOOLS_DEPENDENCY,
                     samply_platform_dependency,
                 ])
+                if "build" in dependencies and not any(
+                    fetch["artifact"].endswith("target.crashreporter-symbols.zip")
+                    for fetch in task_reference_full_taskgraph
+                ):
+                    task_reference_full_taskgraph.append(BUILD_SYMBOLS_DEPENDENCY)
                 full_task_graph.tasks[label].task["payload"]["env"]["MOZ_FETCHES"][
                     "task-reference"
                 ] = json.dumps(task_reference_full_taskgraph)
@@ -326,6 +336,24 @@ def geckoprofile_action(parameters, graph_config, input, task_group_id, task_id)
         else:
             logger.info(f"Could not find {label} on {push}. Skipping.")
     combine_task_graph_files(backfill_pushes)
+
+
+def find_node_toolchain(full_task_graph, toolchain_platform):
+    """
+    Return the label of the node toolchain for `toolchain_platform`. The label
+    is resolved from the given graph instead of being hardcoded, as backfilled
+    pushes may predate a node upgrade.
+    """
+    alias = f"{toolchain_platform}-node"
+    for task in full_task_graph.tasks.values():
+        if task.kind != "toolchain":
+            continue
+        aliases = task.attributes.get("toolchain-alias", [])
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        if alias in aliases:
+            return task.label
+    raise Exception(f"Could not find the {alias} toolchain in the task graph")
 
 
 def add_args_to_perf_command(payload_commands, extra_args=()):

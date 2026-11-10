@@ -13,14 +13,38 @@ exclude: true
 
 ⚠️  breaking change and deprecation notices
 
+## v160
+- The `content-disposition` header of the [`WebResponse`][65.15] passed to
+    [`ContentDelegate.onExternalResponse`][160.1] now contains a filename validated with the same
+    rules desktop applies when saving a download, instead of the header sent by the server.
+    ([bug 1822968]({{bugzilla}}1822968))
+- Added [`GeckoSessionSettings.Builder.pictureInPictureToken`][160.2] so the session created for a picture-in-picture request is opened in the browsing context group and content process of the video it clones. ([bug 2065579]({{bugzilla}}2065579))
+- Added experimental [`PictureInPictureController.SessionPictureInPicture.Delegate`][160.3], registered with [`GeckoSession.setPictureInPictureDelegate`][160.4], which is notified via [`onEnterPictureInPicture`][160.5] when Gecko wants a picture-in-picture window opened for a video. Added [`GeckoSession.getSessionPictureInPicture`][160.7], whose [`request`][160.6] asks Gecko for a window for the video the session last started playing. ([bug 2065581]({{bugzilla}}2065581))
+- Added experimental [`onExitPictureInPicture`][160.8] so the application is told when the picture-in-picture window it opened should be closed. ([bug 2065581]({{bugzilla}}2065581))
+- Added experimental [`setKeepActive`][160.9] so the application can keep a session active while a picture-in-picture window shows one of its videos. ([bug 2065581]({{bugzilla}}2065581))
+- ⚠️ Removed `IPProtectionController.SERVICE_STATE_OPTED_OUT`. Gecko does not report an opted-out IP Protection service state. ([bug 2082578]({{bugzilla}}2082578))
+
+[160.1]: {{javadoc_uri}}/GeckoSession.ContentDelegate.html#onExternalResponse(org.mozilla.geckoview.GeckoSession,org.mozilla.geckoview.WebResponse)
+[160.2]: {{javadoc_uri}}/GeckoSessionSettings.Builder.html#pictureInPictureToken(java.lang.String)
+[160.3]: {{javadoc_uri}}/PictureInPictureController.SessionPictureInPicture.Delegate.html
+[160.4]: {{javadoc_uri}}/GeckoSession.html#setPictureInPictureDelegate(org.mozilla.geckoview.PictureInPictureController.SessionPictureInPicture.Delegate)
+[160.5]: {{javadoc_uri}}/PictureInPictureController.SessionPictureInPicture.Delegate.html#onEnterPictureInPicture(org.mozilla.geckoview.GeckoSession,java.lang.String)
+[160.6]: {{javadoc_uri}}/PictureInPictureController.SessionPictureInPicture.html#request()
+[160.7]: {{javadoc_uri}}/GeckoSession.html#getSessionPictureInPicture()
+[160.8]: {{javadoc_uri}}/PictureInPictureController.SessionPictureInPicture.Delegate.html#onExitPictureInPicture(org.mozilla.geckoview.GeckoSession)
+[160.9]: {{javadoc_uri}}/PictureInPictureController.SessionPictureInPicture.html#setKeepActive(boolean)
+
 ## v157
 - Added [`GeckoSession.getPdfViewerEditor`][157.1] and
     [`PdfViewerController.SessionEditor.addSignature`][157.2] to place a signature on the PDF the
     session is displaying. The PDF viewer side is a stub until bug 2069045.
     ([bug 2069043]({{bugzilla}}2069043))
+- Added [`GeckoView.captureFullPage()`][157.3] and [`GeckoDisplay.captureFullPage`][157.4] to take screenshot of the full web page. Returns a [`GeckoResult`][65.25] that completes to a [`Bitmap`][67.17] containing a full scrollable screenshot of a web page.
 
 [157.1]: {{javadoc_uri}}/GeckoSession.html#getPdfViewerEditor()
 [157.2]: {{javadoc_uri}}/PdfViewerController.SessionEditor.html#addSignature(java.lang.String)
+[157.3]: {{javadoc_uri}}/GeckoView.html#captureFullPage()
+[157.4]: {{javadoc_uri}}/GeckoDisplay.html#capturePixels()
 
 ## v156
 - Updated [`GeckoSession.saveAsPdf`][156.1] to identify if the currently displayed browser item is a PDF JS page, if so, then save using PDF JS machinery. Otherwise, save the PDF through the Gecko print framework. ([bug 2064162]({{bugzilla}}2064162))
@@ -2082,4 +2106,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport(android.content.Context,android.os.Bundle,java.lang.String)
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: 89e5187777ce1bcb2f8eeaf93a81a5195b61e341
+[api-version]: a2a30400e084298e8b1eb6a7570971d3f03979fc

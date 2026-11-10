@@ -108,6 +108,90 @@ describe("MultiStageAboutWelcomeProton module", () => {
       assert.ok(wrapper.exists());
     });
 
+    describe("corner_image", () => {
+      const IMAGE_URL = "chrome://branding/content/icon16.png";
+      const RTL_IMAGE_URL = "chrome://branding/content/icon64.png";
+      const mountCornerImage = (cornerImage, content = {}) =>
+        mount(
+          <MultiStageProtonScreen
+            content={{
+              title: "test title",
+              corner_image: { imageURL: IMAGE_URL, ...cornerImage },
+              ...content,
+            }}
+          />
+        );
+
+      it("should anchor to the window for the fullscreen center-large layout", () => {
+        const wrapper = mountCornerImage(
+          { position: "top-left" },
+          { position: "center-large", fullscreen: true }
+        );
+        assert.ok(wrapper.find("main > .corner-image-container").exists());
+        assert.ok(wrapper.find("picture.corner-image.top-left").exists());
+      });
+
+      it("should anchor to the card for every other layout", () => {
+        const wrapper = mountCornerImage({ position: "bottom-left" });
+        assert.ok(
+          wrapper.find(".section-main > .corner-image-container").exists()
+        );
+        assert.ok(!wrapper.find("main > .corner-image-container").exists());
+      });
+
+      it("should not render without a corner_image", () => {
+        const wrapper = mount(
+          <MultiStageProtonScreen content={{ title: "test title" }} />
+        );
+        assert.ok(!wrapper.find(".corner-image-container").exists());
+      });
+
+      it("should fall back to bottom-right for an unsupported position", () => {
+        const wrapper = mountCornerImage({ position: "somewhere-else" });
+        assert.ok(wrapper.find("picture.corner-image.bottom-right").exists());
+      });
+
+      it("should resolve direction-relative positions against LTR", () => {
+        for (const [position, expected] of [
+          ["bottom-start", "bottom-left"],
+          ["bottom-end", "bottom-right"],
+          ["top-start", "top-left"],
+          ["top-end", "top-right"],
+        ]) {
+          const wrapper = mountCornerImage({ position });
+          assert.ok(
+            wrapper.find(`picture.corner-image.${expected}`).exists(),
+            `${position} resolves to ${expected}`
+          );
+        }
+      });
+
+      it("should only apply the entrance animation class where it is styled", () => {
+        const styled = mountCornerImage(
+          { entrance_animation: { type: "fade" } },
+          { position: "center-large", fullscreen: true }
+        );
+        assert.ok(styled.find("picture.corner-image.entrance-fade").exists());
+
+        const unstyled = mountCornerImage({
+          entrance_animation: { type: "fade" },
+        });
+        assert.ok(
+          !unstyled.find("picture.corner-image.entrance-fade").exists()
+        );
+      });
+
+      it("should keep the base image URL in LTR even with rtl overrides", () => {
+        const wrapper = mountCornerImage({
+          rtl: { imageURL: RTL_IMAGE_URL },
+        });
+        assert.equal(
+          wrapper.find("picture.corner-image img").prop("src"),
+          IMAGE_URL
+        );
+      });
+    });
+
     it("should render secondary section for split positioned screens", () => {
       const SCREEN_PROPS = {
         content: {
@@ -124,6 +208,158 @@ describe("MultiStageAboutWelcomeProton module", () => {
         "test subtitle"
       );
       assert.equal(wrapper.find("main").prop("pos"), "split");
+    });
+
+    it("should render secondary section for card-stack positioned screens", () => {
+      const SCREEN_PROPS = {
+        content: {
+          position: "card-stack",
+          title: "test title",
+          background: "url(test.svg)",
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      assert.ok(wrapper.exists());
+      assert.equal(wrapper.find("main").prop("pos"), "card-stack");
+      assert.ok(wrapper.find(".section-secondary").exists());
+    });
+
+    it("should render the front card layer only for card-stack screens", () => {
+      const cardStack = mount(
+        <MultiStageProtonScreen
+          content={{ position: "card-stack", title: "test title" }}
+        />
+      );
+      assert.ok(cardStack.find("main > .card-stack-front").exists());
+
+      const split = mount(
+        <MultiStageProtonScreen
+          content={{ position: "split", title: "test title" }}
+        />
+      );
+      assert.notOk(split.find(".card-stack-front").exists());
+    });
+
+    it("should render one back card per remaining card-stack screen, up to two", () => {
+      const countBackCards = (order, totalNumberOfScreens) => {
+        const wrapper = mount(
+          <MultiStageProtonScreen
+            content={{ position: "card-stack", title: "test title" }}
+            order={order}
+            totalNumberOfScreens={totalNumberOfScreens}
+          />
+        );
+        assert.ok(wrapper.find("main > .card-stack-front").exists());
+        return (
+          wrapper.find("main > .card-stack-layer-1").length +
+          wrapper.find("main > .card-stack-layer-2").length
+        );
+      };
+
+      assert.equal(countBackCards(0, 4), 2);
+      assert.equal(countBackCards(0, 3), 2);
+      assert.equal(countBackCards(1, 3), 1);
+      assert.equal(countBackCards(2, 3), 0);
+      assert.equal(countBackCards(0, 1), 0);
+    });
+
+    it("should mark only the initially shown card-stack screen as the initial card", () => {
+      const isInitialCard = props =>
+        mount(
+          <MultiStageProtonScreen
+            content={{ position: "card-stack", title: "test title" }}
+            {...props}
+          />
+        )
+          .find("main")
+          .prop("initial-card") === "";
+
+      assert.ok(isInitialCard({ isFirstScreen: true, previousOrder: -1 }));
+      assert.notOk(isInitialCard({ isFirstScreen: true, previousOrder: 1 }));
+      assert.notOk(isInitialCard({ isFirstScreen: false, previousOrder: 0 }));
+    });
+
+    it("should set data-theme from activeThemeId for card-stack screens", () => {
+      const wrapper = mount(
+        <MultiStageProtonScreen
+          content={{ position: "card-stack", title: "test title" }}
+          activeThemeId="nova-flare@mozilla.org"
+        />
+      );
+      assert.equal(
+        wrapper.find("main").prop("data-theme"),
+        "nova-flare@mozilla.org"
+      );
+    });
+
+    it("should not set data-theme for non-card-stack screens", () => {
+      const wrapper = mount(
+        <MultiStageProtonScreen
+          content={{ position: "split", title: "test title" }}
+          activeThemeId="nova-flare@mozilla.org"
+        />
+      );
+      assert.equal(wrapper.find("main").prop("data-theme"), null);
+    });
+
+    it("should render an image slot between title and subtitle for last-card screens", () => {
+      const SCREEN_PROPS = {
+        content: {
+          position: "card-stack",
+          layout: "last-card",
+          title: "test title",
+          subtitle: "test subtitle",
+          center_image: {
+            imageURL: "test.svg",
+            alt: "",
+          },
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      assert.ok(wrapper.exists());
+      assert.equal(wrapper.find("main").prop("layout"), "last-card");
+      const welcomeText = wrapper.find(".welcome-text").getDOMNode();
+      assert.equal(welcomeText.children[0].tagName, "H1");
+      assert.equal(welcomeText.children[1].className, "last-card-image");
+      assert.equal(welcomeText.children[2].tagName, "H2");
+      const img = wrapper.find(".last-card-image .center-image img");
+      assert.equal(img.prop("src"), "test.svg");
+    });
+
+    it("should size the last-card image slot from center_image width and height", () => {
+      const SCREEN_PROPS = {
+        content: {
+          position: "card-stack",
+          layout: "last-card",
+          title: "test title",
+          subtitle: "test subtitle",
+          center_image: {
+            imageURL: "test.svg",
+            alt: "",
+            width: "150px",
+            height: "90px",
+            marginBlock: "40px 0",
+          },
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      const slot = wrapper.find(".last-card-image").getDOMNode();
+      assert.equal(
+        slot.style.getPropertyValue("--last-card-image-width"),
+        "150px"
+      );
+      assert.equal(
+        slot.style.getPropertyValue("--last-card-image-height"),
+        "90px"
+      );
+      assert.equal(
+        slot.style.getPropertyValue("--last-card-picture-margin-block"),
+        "40px 0"
+      );
+      const picture = wrapper.find(".last-card-image .center-image");
+      assert.isUndefined(picture.prop("style")?.marginBlock);
+      const img = wrapper.find(".last-card-image .center-image img");
+      assert.isUndefined(img.prop("style")?.width);
     });
 
     it("should render secondary section with content background for split positioned screens", () => {
@@ -2093,6 +2329,127 @@ describe("MultiStageAboutWelcomeProton module", () => {
       );
 
       wrapper.unmount();
+    });
+  });
+
+  describe("Auto dismiss", () => {
+    let finishStub;
+    let telemetryStub;
+    let visibilityStub;
+
+    const mountScreen = autoDismiss =>
+      mount(
+        <MultiStageProtonScreen
+          content={{ title: "Last card" }}
+          autoDismiss={autoDismiss}
+          messageId="test-auto-dismiss"
+        />
+      );
+
+    const setVisibility = state => {
+      visibilityStub.value(state);
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+
+    beforeEach(() => {
+      finishStub = sandbox.stub();
+      window.AWFinish = finishStub;
+      telemetryStub = sandbox.stub(MultiStageUtils, "sendActionTelemetry");
+      visibilityStub = sandbox
+        .stub(document, "visibilityState")
+        .value("visible");
+    });
+
+    afterEach(() => {
+      delete window.AWFinish;
+    });
+
+    it("should not dismiss a screen without auto_dismiss", () => {
+      const wrapper = mountScreen(undefined);
+
+      clock.tick(60000);
+      sinon.assert.notCalled(finishStub);
+      sinon.assert.notCalled(telemetryStub);
+
+      wrapper.unmount();
+    });
+
+    ["6000", -1, 2 ** 31].forEach(time => {
+      it(`should ignore an invalid time of ${time}`, () => {
+        const wrapper = mountScreen({ after: time });
+
+        clock.tick(60000);
+        sinon.assert.notCalled(finishStub);
+
+        wrapper.unmount();
+      });
+    });
+
+    it("should dismiss once the configured time has passed", () => {
+      const wrapper = mountScreen({ after: 6000 });
+
+      clock.tick(5999);
+      sinon.assert.notCalled(finishStub);
+
+      clock.tick(1);
+      sinon.assert.calledOnce(finishStub);
+      sinon.assert.calledOnceWithExactly(
+        telemetryStub,
+        "test-auto-dismiss",
+        "auto_dismiss",
+        "AUTO_DISMISS"
+      );
+
+      wrapper.unmount();
+    });
+
+    it("should only dismiss once", () => {
+      const wrapper = mountScreen({ after: 6000 });
+
+      clock.tick(6000);
+      document.dispatchEvent(new Event("visibilitychange"));
+      clock.tick(6000);
+      sinon.assert.calledOnce(finishStub);
+      sinon.assert.calledOnce(telemetryStub);
+
+      wrapper.unmount();
+    });
+
+    it("should restart the countdown when the page becomes visible again", () => {
+      const wrapper = mountScreen({ after: 6000 });
+
+      clock.tick(5000);
+      setVisibility("hidden");
+      clock.tick(60000);
+      sinon.assert.notCalled(finishStub);
+
+      setVisibility("visible");
+      clock.tick(5999);
+      sinon.assert.notCalled(finishStub);
+
+      clock.tick(1);
+      sinon.assert.calledOnce(finishStub);
+
+      wrapper.unmount();
+    });
+
+    it("should not start the countdown while the page is hidden", () => {
+      visibilityStub.value("hidden");
+      const wrapper = mountScreen({ after: 6000 });
+
+      clock.tick(60000);
+      sinon.assert.notCalled(finishStub);
+
+      wrapper.unmount();
+    });
+
+    it("should stop the countdown when the screen unmounts", () => {
+      const wrapper = mountScreen({ after: 6000 });
+
+      clock.tick(5000);
+      wrapper.unmount();
+      clock.tick(60000);
+      sinon.assert.notCalled(finishStub);
     });
   });
 });

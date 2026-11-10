@@ -79,7 +79,7 @@ const AVAILABLE_SHIMS = [
     bug: "1713726",
     file: "google-ads.js",
     matches: [
-      "*://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js",
+      "*://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js*",
       {
         patterns: [
           "*://pagead2.googlesyndication.com/pagead/*.js*fcd=true",
@@ -156,7 +156,12 @@ const AVAILABLE_SHIMS = [
     name: "Amazon Ad System",
     bug: "1977375",
     file: "empty-shim.txt",
-    matches: ["*://aax.amazon-adsystem.com/e/dtb/bid/*/prebid*"],
+    matches: [
+      {
+        patterns: ["*://aax.amazon-adsystem.com/e/dtb/bid/*/prebid*"],
+        types: ["script", "xmlhttprequest"],
+      },
+    ],
     onlyIfBlockedByETP: true,
   },
   {
@@ -359,6 +364,15 @@ const AVAILABLE_SHIMS = [
     onlyIfBlockedByETP: true,
   },
   {
+    id: "GoogleDCMAds",
+    platform: "all",
+    name: "Google DCM Ads",
+    bug: "2071825",
+    file: "empty-script.js",
+    matches: ["*://www.googletagservices.com/dcm/dcmads.js*"],
+    onlyIfBlockedByETP: true,
+  },
+  {
     id: "GoogleIMA",
     platform: "all",
     name: "Google Interactive Media Ads",
@@ -412,11 +426,16 @@ const AVAILABLE_SHIMS = [
       "aucklandfc.co.nz",
     ],
     matches: [
-      "*://www.googletagservices.com/tag/js/gpt.js*",
-      "*://pagead2.googlesyndication.com/tag/js/gpt.js*",
-      "*://pagead2.googlesyndication.com/gpt/pubads_impl_*.js*",
-      "*://securepubads.g.doubleclick.net/tag/js/gpt.js*",
-      "*://securepubads.g.doubleclick.net/gpt/pubads_impl_*.js*",
+      {
+        patterns: [
+          "*://www.googletagservices.com/tag/js/gpt.js*",
+          "*://pagead2.googlesyndication.com/tag/js/gpt.js*",
+          "*://pagead2.googlesyndication.com/gpt/pubads_impl_*.js*",
+          "*://securepubads.g.doubleclick.net/tag/js/gpt.js*",
+          "*://securepubads.g.doubleclick.net/gpt/pubads_impl_*.js*",
+        ],
+        types: ["script", "xmlhttprequest"],
+      },
     ],
     onlyIfBlockedByETP: true,
   },
@@ -892,7 +911,6 @@ const AVAILABLE_SHIMS = [
     webExposedShimHelpers: [],
     needsShimHelpers: [
       "embedClicked",
-      "smartblockEmbedReplaced",
       "smartblockGetFluentString",
       "shouldShowEmbedContentInPlaceholders",
     ],
@@ -918,7 +936,6 @@ const AVAILABLE_SHIMS = [
     webExposedShimHelpers: [],
     needsShimHelpers: [
       "embedClicked",
-      "smartblockEmbedReplaced",
       "smartblockGetFluentString",
       "shouldShowEmbedContentInPlaceholders",
     ],
@@ -940,13 +957,34 @@ const AVAILABLE_SHIMS = [
     webExposedShimHelpers: [],
     needsShimHelpers: [
       "embedClicked",
-      "smartblockEmbedReplaced",
       "smartblockGetFluentString",
       "shouldShowEmbedContentInPlaceholders",
     ],
     isSmartblockEmbedShim: true,
     onlyIfBlockedByETP: true,
     unblocksOnOptIn: ["*://*.disqus.com/*", "*://*.disquscdn.com/*"],
+  },
+  {
+    id: "SendToNewsEmbed",
+    platform: "desktop",
+    name: "SendToNews embed placeholder",
+    bug: "1945659",
+    runFirst: "sendtonews-embed.js",
+    // Blank stub file just so we run the script above when the matched script
+    // files get blocked.
+    file: "empty-script.js",
+    matches: ["*://*.sendtonews.com/player3/embedcode.js*"],
+    logos: ["video-embed.svg"],
+    webExposedShimHelpers: [],
+    needsShimHelpers: [
+      "embedClicked",
+      "smartblockEmbedReplaced",
+      "smartblockGetFluentString",
+      "shouldShowEmbedContentInPlaceholders",
+    ],
+    isSmartblockEmbedShim: true,
+    onlyIfBlockedByETP: true,
+    unblocksOnOptIn: ["*://*.sendtonews.com/*"],
   },
   {
     id: "FingerpringJSBotd",
@@ -1011,7 +1049,6 @@ const AVAILABLE_SHIMS = [
     logos: ["x-logo.svg"],
     needsShimHelpers: [
       "embedClicked",
-      "smartblockEmbedReplaced",
       "smartblockGetFluentString",
       "shouldShowEmbedContentInPlaceholders",
     ],

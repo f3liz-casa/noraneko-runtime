@@ -353,6 +353,9 @@ devtools.jar:
     # Memory
     content/memory/index.xhtml (memory/index.xhtml)
 
+    # Settings
+    content/settings/index.html (settings/index.html)
+
     # Toolbox
     content/framework/toolbox-window.xhtml (framework/toolbox-window.xhtml)
     content/framework/toolbox-options.html (framework/toolbox-options.html)
@@ -473,6 +476,7 @@ devtools.jar:
     content/application/src/components/service-workers/Worker.css (application/src/components/service-workers/Worker.css)
     content/application/src/components/ui/UIButton.css (application/src/components/ui/UIButton.css)
     content/application/src/components/session-history/SessionHistory.css (application/src/components/session-history/SessionHistory.css)
+    content/application/src/components/speculative-loads/SpeculativeLoads.css (application/src/components/speculative-loads/SpeculativeLoads.css)
 
     # Anti tracking panel
     content/anti-tracking/index.html (anti-tracking/index.html)

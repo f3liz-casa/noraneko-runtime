@@ -154,34 +154,14 @@ add_task(async function test_firefoxhome_preferences_set() {
   });
 
   await BrowserTestUtils.withNewTab("about:preferences#home", async browser => {
-    const srdEnabled = Services.prefs.getBoolPref(
-      "browser.settings-redesign.enabled",
-      false
-    );
-    // Legacy uses XUL <checkbox preference=...> bound to a pref. The Settings
-    // Redesign exposes the same prefs through differently-named settings
-    // backed by moz-checkbox elements with the friendly setting id.
-    const data = srdEnabled
-      ? {
-          Search: "webSearch",
-          TopSites: "shortcuts",
-          SponsoredTopSites: "sponsoredShortcuts",
-          Highlights: "recentActivity",
-        }
-      : {
-          Search: "browser.newtabpage.activity-stream.showSearch",
-          TopSites: "browser.newtabpage.activity-stream.feeds.topsites",
-          SponsoredTopSites:
-            "browser.newtabpage.activity-stream.showSponsoredTopSites",
-          Highlights:
-            "browser.newtabpage.activity-stream.feeds.section.highlights",
-        };
+    const data = {
+      Search: "webSearch",
+      TopSites: "shortcuts",
+      SponsoredTopSites: "sponsoredShortcuts",
+      Highlights: "recentActivity",
+    };
     for (let [section, key] of Object.entries(data)) {
-      const el = srdEnabled
-        ? browser.contentDocument.getElementById(key)
-        : browser.contentDocument.querySelector(
-            `checkbox[preference='${key}']`
-          );
+      const el = browser.contentDocument.getElementById(key);
       ok(el, `${section} control should be in the DOM`);
       is(
         !!(el.disabled || el.hasAttribute("disabled")),
@@ -201,8 +181,6 @@ add_task(async function test_firefoxhome_preferences_set() {
 add_task(async function test_firefoxhome_widgets_blocked() {
   await SpecialPowers.pushPrefEnv({
     set: [
-      // Widget toggles only exist in the Settings Redesign UI.
-      ["browser.settings-redesign.enabled", true],
       // Stand in for a rollout that has made these two widgets available.
       ["browser.newtabpage.activity-stream.widgets.system.enabled", true],
       ["browser.newtabpage.activity-stream.widgets.system.lists.enabled", true],
@@ -210,6 +188,8 @@ add_task(async function test_firefoxhome_widgets_blocked() {
         "browser.newtabpage.activity-stream.widgets.system.clocks.enabled",
         true,
       ],
+      // With Nova, the widget toggles are nested under the Widgets toggle.
+      ["browser.newtabpage.activity-stream.widgets.enabled", true],
     ],
   });
 
@@ -223,19 +203,41 @@ add_task(async function test_firefoxhome_widgets_blocked() {
     },
   });
 
-  await BrowserTestUtils.withNewTab("about:preferences#home", async browser => {
-    let doc = browser.contentDocument;
-    let lists = await TestUtils.waitForCondition(() =>
-      doc.getElementById("setting-control-lists")
-    );
-    await lists.updateComplete;
-    ok(lists.disabled, "Blocked widget toggle is disabled");
-
-    let clocks = doc.getElementById("setting-control-clocks");
-    await clocks.updateComplete;
-    ok(!clocks.disabled, "Widget that was not blocked stays editable");
+  // The per-widget toggles are in the Customize panel, which this hash opens
+  // on its "Manage widgets" list.
+  let tab = await BrowserTestUtils.openNewForegroundTab({
+    gBrowser,
+    opening: "about:home#customize-widgets",
+    waitForStateStop: true,
   });
 
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async function () {
+    let lists = await ContentTaskUtils.waitForCondition(
+      () =>
+        content.document.querySelector(
+          "dialog.customize-menu[open] #lists-toggle"
+        ),
+      "Wait for the Lists toggle in the Customize panel"
+    );
+    // `disabled` is a lit reactive property, not a WebIDL attribute, so it is
+    // not visible through the Xray wrapper.
+    await ContentTaskUtils.waitForCondition(
+      () => lists.wrappedJSObject.disabled,
+      "Blocked widget toggle is disabled"
+    );
+    ok(lists.wrappedJSObject.disabled, "Blocked widget toggle is disabled");
+
+    let clocks = content.document.querySelector(
+      "dialog.customize-menu[open] #clocks-toggle"
+    );
+    ok(clocks, "Clock toggle is in the Customize panel");
+    ok(
+      !clocks.wrappedJSObject.disabled,
+      "Widget that was not blocked stays editable"
+    );
+  });
+
+  BrowserTestUtils.removeTab(tab);
   await setupPolicyEngineWithJson({
     policies: {
       FirefoxHome: {},
@@ -296,11 +298,6 @@ add_task(async function test_firefoxhome_customize_panel_locked() {
 });
 
 add_task(async function test_firefoxhome_support_firefox_sponsored_locked() {
-  // The supportFirefox setting only exists in the Settings Redesign UI.
-  await SpecialPowers.pushPrefEnv({
-    set: [["browser.settings-redesign.enabled", true]],
-  });
-
   await setupPolicyEngineWithJson({
     policies: {
       FirefoxHome: {

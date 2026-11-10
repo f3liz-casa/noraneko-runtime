@@ -5,13 +5,18 @@
 package org.mozilla.fenix.ui.efficiency.tests
 
 import org.junit.Test
+import org.mozilla.fenix.R
+import org.mozilla.fenix.customannotations.Critical
 import org.mozilla.fenix.customannotations.SmokeTest
 import org.mozilla.fenix.helpers.AppAndSystemHelper.enableOrDisableBackGestureNavigationOnDevice
+import org.mozilla.fenix.helpers.DataGenerationHelper.getStringResource
 import org.mozilla.fenix.helpers.MockBrowserDataHelper
 import org.mozilla.fenix.helpers.TestAssetHelper.genericAssets
 import org.mozilla.fenix.helpers.TestAssetHelper.getGenericAsset
+import org.mozilla.fenix.helpers.TestAssetHelper.tallPageAsset
 import org.mozilla.fenix.ui.efficiency.helpers.BaseTest
 import org.mozilla.fenix.ui.efficiency.helpers.SwipeDirection
+import org.mozilla.fenix.ui.efficiency.selectors.BrowserPageSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.HomeSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.SearchBarSelectors
 import org.mozilla.fenix.ui.efficiency.selectors.SettingsCustomizeSelectors
@@ -43,6 +48,26 @@ class NavigationToolbarTest : BaseTest() {
         on.browserPage.verifyUrl(firstWebPage.url.toString())
         on.browserPage.mozSwipeElement(ToolbarSelectors.TOOLBAR, SwipeDirection.LEFT, steps = 2)
         on.browserPage.verifyUrl(secondWebPage.url.toString())
+    }
+
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2728269
+    @Critical
+    @Test
+    fun verifyNavigationToOtherWebsitesWithinSameTabTest() {
+        val firstWebPage = mockWebServer.getGenericAsset(1)
+        val secondWebPage = mockWebServer.getGenericAsset(2)
+
+        on.browserPage.navigateToPage(firstWebPage.url.toString())
+        on.browserPage.verifyPageContent(firstWebPage.content)
+        on.browserPage.verifyUrl(firstWebPage.url.toString())
+        on.browserPage.verifyTabCounter("1")
+
+        // Entering a new URL in the same address bar navigates within the current tab; the tab
+        // counter must stay at 1, confirming no additional tab was opened.
+        on.browserPage.navigateToPage(secondWebPage.url.toString(), forceNavigation = true)
+        on.browserPage.verifyPageContent(secondWebPage.content)
+        on.browserPage.verifyUrl(secondWebPage.url.toString())
+        on.browserPage.verifyTabCounter("1")
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/3135067
@@ -100,5 +125,40 @@ class NavigationToolbarTest : BaseTest() {
             .verifyExistingOpenTabs(webPages[0].title, secondPage.title)
             .mozClick(TabDrawerSelectors.TAB_ITEM_WITH_TITLE(secondPage.title))
         on.browserPage.verifyPageContent(secondPage.content)
+    }
+
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/3333198
+    @Critical
+    @Test
+    fun verifyTheTabStripTabsCounterShortcutMenuCloseTabTest() {
+        val website = mockWebServer.getGenericAsset(1)
+
+        composeRule.activityRule.applySettingsExceptions {
+            it.isTabStripEnabled = true
+        }
+
+        on.browserPage.navigateToPage(website.url.toString()).verifyPageContent(website.content)
+
+        on.browserPage.mozLongClick(ToolbarSelectors.TAB_COUNTER)
+        on.toolbar.mozVerifyElementsByGroup(ToolbarSelectors.Group.TAB_COUNTER_SHORTCUT_MENU)
+
+        on.browserPage.mozClick(ToolbarSelectors.TAB_COUNTER_SHORTCUT_CLOSE_TAB)
+        on.browserPage.mozVerify(
+            BrowserPageSelectors.SNACKBAR_MESSAGE_COMPOSE(getStringResource(R.string.snackbar_tab_closed))
+        )
+    }
+
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/570165
+    @Critical
+    @Test
+    fun verifyNavigationToolbarIsDynamicWhileSetToTopTest() {
+        val tallPage = mockWebServer.tallPageAsset
+
+        on.browserPage
+            .navigateToPage(tallPage.url.toString())
+            .verifyPageContent(tallPage.content)
+            .mozVerify(ToolbarSelectors.TOOLBAR)
+        on.browserPage.scrollWebContent(SwipeDirection.UP).mozWaitUntilAbsent(ToolbarSelectors.TOOLBAR)
+        on.browserPage.scrollWebContent(SwipeDirection.DOWN).mozVerify(ToolbarSelectors.TOOLBAR)
     }
 }

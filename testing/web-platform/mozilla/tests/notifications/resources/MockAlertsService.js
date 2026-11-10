@@ -27,10 +27,37 @@ function mockServicesChromeScript() {
 
   const mockAlertsService = {
     showAlertWithCallbacks(alert, callbacks) {
+      // Remove properties of object that can't be sent across process boundary.
+      function sanitizeObject(object) {
+        if (object === null) {
+          return null;
+        }
+        const sanitized = {};
+        for (let [key, value] of Object.entries(object)) {
+          // Send spec of nsIURI.
+          if (value?.spec) {
+            value = value.spec;
+          }
+          if (typeof value === "function") {
+            continue;
+          }
+          if (typeof value === "object") {
+            value = sanitizeObject(value);
+          }
+          sanitized[key] = value;
+        }
+        return sanitized;
+      }
+      // data about this alert that can be queried by the content process
+      // with getNotificationData().
+      const data = sanitizeObject(alert);
+      data.body = data.text; // for consistency with Notification
+      data.actions = alert.actions.map(sanitizeObject);
       activeNotifications[alert.name] = {
         callbacks,
         title: alert.title,
         image: alert.image,
+        data,
       };
 
       // fake async alert show event
@@ -146,6 +173,10 @@ function mockServicesChromeScript() {
     Object.keys(activeNotifications)
   );
 
+  addMessageListener("mock-alert-service:get-notification-data", () =>
+    Object.values(activeNotifications).map(value => value.data)
+  );
+
   addMessageListener("mock-alert-service:get-icon-image", id => {
     let image = activeNotifications[id].image;
     if (!image) {
@@ -245,11 +276,24 @@ const MockAlertsService = {
       "mock-alert-service:get-notification-ids"
     );
   },
-  async getIconImage(id) {
+  async getNotificationData() {
     return await this._chromeScript.sendQuery(
+      "mock-alert-service:get-notification-data"
+    );
+  },
+  async getIconImage(id) {
+    const pngData = await this._chromeScript.sendQuery(
       "mock-alert-service:get-icon-image",
       id
     );
+    if (!pngData) {
+      return null;
+    }
+    const imageDecoder = new ImageDecoder({ type: "image/png", data: pngData });
+    const {image} = await imageDecoder.decode();
+    const rgba = new Uint8Array(image.allocationSize());
+    image.copyTo(rgba, {format: "RGBA"});
+    return rgba;
   },
   async setHistory(ids) {
     return await this._chromeScript.sendQuery(

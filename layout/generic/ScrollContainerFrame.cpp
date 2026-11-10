@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <cmath>    // for std::abs(float/double)
 #include <cstdlib>  // for std::abs(int/long)
-#include <tuple>    // for std::tie
 
 #include "DisplayItemClip.h"
 #include "GeckoProfiler.h"
@@ -36,19 +35,16 @@
 #include "mozilla/EventStateManager.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MathAlgorithms.h"
-#include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/PresState.h"
 #include "mozilla/ReflowInput.h"
 #include "mozilla/SVGOuterSVGFrame.h"
-#include "mozilla/ScopeExit.h"
+#include "mozilla/ScrollState.h"
 #include "mozilla/ScrollbarPreferences.h"
 #include "mozilla/ScrollingMetrics.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_bidi.h"
-#include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_general.h"
-#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_mousewheel.h"
 #include "mozilla/StaticPrefs_toolkit.h"
@@ -63,12 +59,10 @@
 #include "mozilla/dom/HTMLOptionElement.h"
 #include "mozilla/dom/NodeInfo.h"
 #include "mozilla/dom/ScrollTimeline.h"
-#include "mozilla/gfx/gfxVars.h"
 #include "mozilla/intl/BidiEmbeddingLevel.h"
 #include "mozilla/layers/APZCCallbackHelper.h"
 #include "mozilla/layers/APZPublicUtils.h"
 #include "mozilla/layers/AxisPhysicsMSDModel.h"
-#include "mozilla/layers/AxisPhysicsModel.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "mozilla/layers/ScrollLinkedEffectDetector.h"
 #include "mozilla/layers/ScrollingInteractionContext.h"
@@ -88,13 +82,11 @@
 #include "nsHTMLDocument.h"
 #include "nsIDocumentViewer.h"
 #include "nsIFrameInlines.h"
-#include "nsILayoutHistoryState.h"
 #include "nsINode.h"
 #include "nsIScrollbarMediator.h"
 #include "nsIXULRuntime.h"
 #include "nsLayoutUtils.h"
 #include "nsListControlFrame.h"
-#include "nsNameSpaceManager.h"
 #include "nsNodeInfoManager.h"
 #include "nsPlaceholderFrame.h"
 #include "nsPresContext.h"
@@ -166,25 +158,21 @@ static ScrollDirections GetOverflowChange(const nsRect& aCurScrolledRect,
  * ScrollEvents are one-shot runnables; the refresh driver drops them after
  * running them.
  */
-class ScrollContainerFrame::ScrollEvent : public Runnable {
+class ScrollEvent : public Runnable {
  public:
   NS_DECL_NSIRUNNABLE
-  explicit ScrollEvent(ScrollContainerFrame* aHelper);
-  void Revoke() { mHelper = nullptr; }
-  UniquePtr<ProfileChunkedBuffer> mBacktrace;
+  explicit ScrollEvent(RefPtr<nsINode> aTarget)
+      : Runnable("ScrollEvent"), mTarget(std::move(aTarget)) {}
 
- private:
-  ScrollContainerFrame* mHelper;
+ protected:
+  const RefPtr<nsINode> mTarget;
+  UniquePtr<ProfileChunkedBuffer> mBacktrace = profiler_capture_backtrace();
 };
 
-class ScrollContainerFrame::ScrollEndEvent : public Runnable {
+class ScrollEndEvent : public ScrollEvent {
  public:
   NS_DECL_NSIRUNNABLE
-  explicit ScrollEndEvent(ScrollContainerFrame* aHelper);
-  void Revoke() { mHelper = nullptr; }
-
- private:
-  ScrollContainerFrame* mHelper;
+  using ScrollEvent::ScrollEvent;
 };
 
 class ScrollContainerFrame::AsyncScrollPortEvent : public Runnable {
@@ -291,7 +279,6 @@ ScrollContainerFrame::ScrollContainerFrame(ComputedStyle* aStyle,
       mSuppressScrollbarRepaints(false),
       mIsUsingMinimumScaleSize(false),
       mMinimumScaleSizeChanged(false),
-      mProcessingScrollEvent(false),
       mApzAnimationRequested(false),
       mApzAnimationTriggeredByScriptRequested(false),
       mReclampVVOffsetInReflowFinished(false),
@@ -342,7 +329,22 @@ void ScrollContainerFrame::ScrollbarActivityStopped() const {
   }
 }
 
+void ScrollContainerFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
+                                nsIFrame* aPrevInFlow) {
+  nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
+  MOZ_ASSERT(aContent);
+  MOZ_ASSERT(aContent->IsElement());
+  if (UniquePtr state = aContent->AsElement()->TakeSavedScrollState()) {
+    RestoreState(*state);
+  }
+}
+
 void ScrollContainerFrame::Destroy(DestroyContext& aContext) {
+  if (Maybe<ScrollState> state = SaveState();
+      state && !PresShell()->IsDestroying()) {
+    mContent->AsElement()->SetSavedScrollState(MakeUnique<ScrollState>(*state));
+  }
+
   DestroyAbsoluteFrames(aContext);
   if (mIsRoot) {
     PresShell()->ResetVisualViewportOffset();
@@ -382,12 +384,6 @@ void ScrollContainerFrame::Destroy(DestroyContext& aContext) {
     mScrollActivityTimer = nullptr;
   }
   RemoveObservers();
-  if (mScrollEvent) {
-    mScrollEvent->Revoke();
-  }
-  if (mScrollEndEvent) {
-    mScrollEndEvent->Revoke();
-  }
   nsContainerFrame::Destroy(aContext);
 }
 
@@ -761,8 +757,8 @@ bool ScrollContainerFrame::TryLayout(ScrollReflowInput& aState,
   // That case also happens to have no APZ and no MVM, so we use that as a
   // way to detect the scenario. Bug 1648669 tracks removing this clause.
   if (mIsRoot && presShell->GetMobileViewportManager()) {
-    visualViewportSize = nsLayoutUtils::CalculateCompositionSizeForFrame(
-        this, false, &layoutSize);
+    visualViewportSize =
+        nsLayoutUtils::CalculateCompositionSizeForFrame(this, &layoutSize);
     visualViewportSize =
         Max(nsSize(0, 0), visualViewportSize - scrollbarGutterSize);
 
@@ -1706,7 +1702,6 @@ a11y::AccType ScrollContainerFrame::AccessibleType() {
 
 NS_QUERYFRAME_HEAD(ScrollContainerFrame)
   NS_QUERYFRAME_ENTRY(nsIAnonymousContentCreator)
-  NS_QUERYFRAME_ENTRY(nsIStatefulFrame)
   NS_QUERYFRAME_ENTRY(nsIScrollbarMediator)
   NS_QUERYFRAME_ENTRY(ScrollContainerFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
@@ -2492,7 +2487,7 @@ void ScrollContainerFrame::ScrollToCSSPixels(const CSSPoint& aScrollPosition,
   // 'this' might be destroyed here
 }
 
-void ScrollContainerFrame::ScrollToCSSPixelsForApz(
+bool ScrollContainerFrame::ScrollToCSSPixelsForApz(
     const CSSPoint& aScrollPosition, ScrollSnapTargetIds&& aLastSnapTargetIds,
     const APZScrollGeneration& aGenerationOnApz) {
   mScrollGenerationOnApz = aGenerationOnApz;
@@ -2500,11 +2495,13 @@ void ScrollContainerFrame::ScrollToCSSPixelsForApz(
   nscoord halfRange = nsPresContext::CSSPixelsToAppUnits(1000);
   nsRect range(pt.x - halfRange, pt.y - halfRange, 2 * halfRange - 1,
                2 * halfRange - 1);
+  AutoWeakFrame weakFrame(this);
   ScrollToWithOrigin(
       pt, &range,
       ScrollOperationParams{ScrollMode::Instant, ScrollOrigin::Apz,
                             std::move(aLastSnapTargetIds)});
   // 'this' might be destroyed here
+  return weakFrame.IsAlive();
 }
 
 CSSIntPoint ScrollContainerFrame::GetRoundedScrollPositionCSSPixels() {
@@ -3366,16 +3363,12 @@ void ScrollContainerFrame::ScrollToImpl(
   presContext->RecordInteractionTime(
       nsPresContext::InteractionType::ScrollInteraction, TimeStamp::Now());
 
-  PostScrollEvent();
-  // If this is a viewport scroll, this could affect the relative offset
-  // between layout and visual viewport, so we might have to fire a visual
-  // viewport scroll event as well.
-  if (mIsRoot) {
-    if (auto* window = nsGlobalWindowInner::Cast(
-            PresContext()->Document()->GetInnerWindow())) {
-      window->VisualViewport()->PostScrollEvent(
-          presContext->PresShell()->GetVisualViewportOffset(), curPos);
-    }
+  // Session history only restores the root scroll position; a non-root restore
+  // re-establishes a position across a reframe, so nothing scrolled.
+  const bool restoringNonRootScrollPosition =
+      aOrigin == ScrollOrigin::Restore && !mIsRoot;
+  if (!restoringNonRootScrollPosition) {
+    PostScrollEvent(curPos);
   }
 
   // Schedule the scroll-timelines linked to its scrollable frame.
@@ -3595,7 +3588,7 @@ void ScrollContainerFrame::AppendScrollPartsTo(nsDisplayListBuilder* aBuilder,
       continue;
     }
 
-    nsDisplayList list(aBuilder);
+    nsDisplayList list;
     partList.SerializeWithCorrectZOrder(&list, scrollPart->GetContent());
 
     if (createLayer) {
@@ -3726,7 +3719,7 @@ void ScrollContainerFrame::MaybeCreateTopLayerAndWrapRootItems(
   }
   nsIFrame* rootStyleFrame = GetFrameForStyle();
 
-  nsDisplayList rootResultList(aBuilder);
+  nsDisplayList rootResultList;
   bool serializedList = false;
   auto SerializeList = [&] {
     if (!serializedList) {
@@ -4074,26 +4067,33 @@ void ScrollContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   // the corners where we have a scrollbar.
   nsRectCornerRadii radii;
   const bool haveRadii = GetPaddingBoxBorderRadii(radii);
-  if (mIsRoot) {
-    clipRect.SizeTo(nsLayoutUtils::CalculateCompositionSizeForFrame(
-        this, true /* aSubtractScrollbars */,
-        nullptr /* aOverrideScrollPortSize */,
-        // With the dynamic toolbar, this CalculateCompositionSizeForFrame call
-        // basically expands the region being covered up by the dynamic toolbar,
-        // but if the root scroll container is not scrollable, e.g. the root
-        // element has `overflow: hidden` or `position: fixed`, the function
-        // doesn't expand the region since expanding the region in such cases
-        // will prevent the content from restoring zooming to 1.0 zoom level
-        // such as bug 1652190. That said, this `clipRect` which will be used
-        // for the async zoom container needs to be expanded because zoomed-in
-        // contents can be scrollable __visually__ so that the region under the
-        // dynamic toolbar area will be revealed.
-        nsLayoutUtils::IncludeDynamicToolbar::Force));
+  if (isRootContent) {
+    const nsSize compositionSize =
+        nsLayoutUtils::CalculateCompositionSizeForFrame(
+            this, nullptr /* aOverrideScrollPortSize */,
+            // With the dynamic toolbar, this CalculateCompositionSizeForFrame
+            // call basically expands the region being covered up by the dynamic
+            // toolbar, but if the root scroll container is not scrollable, e.g.
+            // the root element has `overflow: hidden` or `position: fixed`, the
+            // function doesn't expand the region since expanding the region in
+            // such cases will prevent the content from restoring zooming to 1.0
+            // zoom level such as bug 1652190. That said, this `clipRect` which
+            // will be used for the async zoom container needs to be expanded
+            // because zoomed-in contents can be scrollable __visually__ so that
+            // the region under the dynamic toolbar area will be revealed.
+            nsLayoutUtils::IncludeDynamicToolbar::Force);
+    // The composition bounds include the area under the root scrollbars, which
+    // are painted on top of the content if non-overlay. Intersect them with the
+    // layout viewport so that zoomed-in content can be seen under non-opaque
+    // scrollbars, but content outside of it can't.
+    clipRect = nsRect(aBuilder->ToReferenceFrame(this), compositionSize);
+    clipRect = clipRect.Intersect(
+        ViewportUtils::LayoutToVisual(scrollPortClip, PresShell()));
 
     // The composition size is essentially in visual coordinates.
     // If we are hit-testing in layout coordinates, transform the clip rect
     // to layout coordinates to match.
-    if (aBuilder->IsRelativeToLayoutViewport() && isRootContent) {
+    if (aBuilder->IsRelativeToLayoutViewport()) {
       clipRect = ViewportUtils::VisualToLayout(clipRect, PresShell());
     }
   }
@@ -4337,8 +4337,8 @@ void ScrollContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     // APZ's fallback behaviour of scrolling the enclosing scroll frame
     // would violate the specified overscroll-behavior.
     auto overscroll = GetOverscrollBehaviorInfo();
-    if (overscroll.mBehaviorX != OverscrollBehavior::Auto ||
-        overscroll.mBehaviorY != OverscrollBehavior::Auto) {
+    if (overscroll.mBehaviorX != StyleOverscrollBehavior::Auto ||
+        overscroll.mBehaviorY != StyleOverscrollBehavior::Auto) {
       info += CompositorHitTestFlags::eRequiresTargetConfirmation;
     }
 
@@ -4829,8 +4829,8 @@ nsSize ScrollContainerFrame::GetVisualViewportSize() const {
 
 nsPoint ScrollContainerFrame::GetVisualViewportOffset() const {
   if (mIsRoot) {
-    auto* presShell = PresShell();
-    if (auto pendingUpdate = presShell->GetPendingVisualScrollUpdate()) {
+    auto* ps = PresShell();
+    if (auto pendingUpdate = ps->GetPendingVisualScrollUpdate()) {
       // The pending visual scroll update on the PresShell contains a raw,
       // unclamped offset (basically, whatever was passed to ScrollToVisual()).
       // It will be clamped on the APZ side, but if we use it as the
@@ -4840,7 +4840,9 @@ nsPoint ScrollContainerFrame::GetVisualViewportOffset() const {
       return GetScrollRangeForUserInputEvents().ClampPoint(
           pendingUpdate->mVisualScrollOffset);
     }
-    return presShell->GetVisualViewportOffset();
+    if (ps->IsVisualViewportOffsetSet()) {
+      return ps->GetVisualViewportOffset();
+    }
   }
   return GetScrollPosition();
 }
@@ -5564,22 +5566,24 @@ void ScrollContainerFrame::PostOrDeferScrollEndEvent() {
 }
 
 void ScrollContainerFrame::PostScrollEndEvent() {
-  if (mScrollEndEvent) {
+  auto* ps = PresShell();
+  if (mScrollEndEventGeneration == ps->GetScrollEventGeneration()) {
     return;
   }
 
   // If this is the rood document and is not an iframe, we may need to post
   // a scrollend event to the VisualViewport.
   if (mIsRoot && PresContext()->IsRootContentDocumentCrossProcess() &&
-      PresShell()->IsVisualViewportOffsetSet()) {
+      ps->IsVisualViewportOffsetSet()) {
     if (auto* window = nsGlobalWindowInner::Cast(
             PresContext()->Document()->GetInnerWindow())) {
       window->VisualViewport()->PostScrollEndEvent();
     }
   }
 
-  // The ScrollEndEvent constructor registers itself.
-  mScrollEndEvent = MakeRefPtr<ScrollEndEvent>(this);
+  RefPtr event = MakeRefPtr<ScrollEndEvent>(
+      ScrollEventTargetNode(RootTargetsDocument::Yes));
+  mScrollEndEventGeneration = ps->PostScrollEvent(event);
 }
 
 RefPtr<nsINode> ScrollContainerFrame::ScrollEventTargetNode(
@@ -5588,20 +5592,6 @@ RefPtr<nsINode> ScrollContainerFrame::ScrollEventTargetNode(
     return PresContext()->Document();
   }
   return mContent.get();
-}
-
-void ScrollContainerFrame::FireScrollEndEvent() {
-  MOZ_ASSERT(mScrollEndEvent);
-  mScrollEndEvent->Revoke();
-  mScrollEndEvent = nullptr;
-
-  RefPtr<nsPresContext> presContext = PresContext();
-  nsEventStatus status = nsEventStatus_eIgnore;
-  WidgetGUIEvent event(true, eScrollend, nullptr);
-  event.mFlags.mBubbles = mIsRoot;
-  event.mFlags.mCancelable = false;
-  RefPtr<nsINode> target = ScrollEventTargetNode(RootTargetsDocument::Yes);
-  EventDispatcher::Dispatch(target, presContext, &event, nullptr, &status);
 }
 
 void ScrollContainerFrame::ReloadChildFrames() {
@@ -5657,13 +5647,15 @@ already_AddRefed<Element> ScrollContainerFrame::MakeScrollbar(
 #endif  // DEBUG
 
   if (aVertical) {
-    e->SetAttr(kNameSpaceID_None, nsGkAtoms::vertical, u"true"_ns, false);
+    e->SetAttr(kNameSpaceID_None, nsGkAtoms::vertical, u"true"_ns, false,
+               IsKnownNewAttr::Yes);
   }
 
   if (mIsRoot) {
     e->SetProperty(nsGkAtoms::docLevelNativeAnonymousContent,
                    reinterpret_cast<void*>(true));
-    e->SetAttr(kNameSpaceID_None, nsGkAtoms::root, u"true"_ns, false);
+    e->SetAttr(kNameSpaceID_None, nsGkAtoms::root, u"true"_ns, false,
+               IsKnownNewAttr::Yes);
 
     // Don't bother making style caching take [root] styles into account.
     aKey = AnonymousContentKey::None;
@@ -5793,7 +5785,7 @@ nsresult ScrollContainerFrame::CreateAnonymousContent(
         dir.AssignLiteral("bottom");
         if (!IsScrollbarOnRight()) {
           mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::flip, u""_ns,
-                                   false);
+                                   false, IsKnownNewAttr::Yes);
         }
         break;
       case StyleResize::Both:
@@ -5806,7 +5798,8 @@ nsresult ScrollContainerFrame::CreateAnonymousContent(
       default:
         NS_WARNING("only resizable types should have resizers");
     }
-    mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::dir, dir, false);
+    mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::dir, dir, false,
+                             IsKnownNewAttr::Yes);
     aElements.AppendElement(mResizerContent);
   }
 
@@ -5824,7 +5817,7 @@ nsresult ScrollContainerFrame::CreateAnonymousContent(
           nsGkAtoms::docLevelNativeAnonymousContent,
           reinterpret_cast<void*>(true));
       mScrollCornerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::root,
-                                    u"true"_ns, false);
+                                    u"true"_ns, false, IsKnownNewAttr::Yes);
 
       // Don't bother making style caching take [root="true"] styles into
       // account.
@@ -6090,82 +6083,67 @@ void ScrollContainerFrame::EnableOverlayScrollbars() {
 
 /* ============= Scroll events ========== */
 
-ScrollContainerFrame::ScrollEvent::ScrollEvent(ScrollContainerFrame* aHelper)
-    : Runnable("ScrollContainerFrame::ScrollEvent"), mHelper(aHelper) {
-  mHelper->PresShell()->PostScrollEvent(this);
-}
-
 // TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230, bug 1535398)
-MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP
-ScrollContainerFrame::ScrollEvent::Run() {
-  if (mHelper) {
-    mHelper->FireScrollEvent();
-  }
-  return NS_OK;
-}
-
-ScrollContainerFrame::ScrollEndEvent::ScrollEndEvent(
-    ScrollContainerFrame* aHelper)
-    : Runnable("ScrollContainerFrame::ScrollEndEvent"), mHelper(aHelper) {
-  mHelper->PresShell()->PostScrollEvent(this);
-}
-
-MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP
-ScrollContainerFrame::ScrollEndEvent::Run() {
-  if (mHelper) {
-    mHelper->FireScrollEndEvent();
-  }
-  return NS_OK;
-}
-
-void ScrollContainerFrame::FireScrollEvent() {
-  RefPtr<nsIContent> content = GetContent();
-  RefPtr<nsPresContext> presContext = PresContext();
-  MOZ_ASSERT(mScrollEvent);
-  UniquePtr<ProfileChunkedBuffer> backtrace =
-      std::move(mScrollEvent->mBacktrace);
+MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP ScrollEvent::Run() {
+  RefPtr<nsPresContext> pc = mTarget->OwnerDoc()->GetPresContext();
   AutoProfilerTracing scrollEventMarker(
-      "FireScrollEvent", geckoprofiler::category::GRAPHICS,
-      std::move(backtrace),
+      "ScrollEvent::Run", geckoprofiler::category::GRAPHICS,
+      std::move(mBacktrace),
       geckoprofiler::markers::detail::
-          profiler_get_inner_window_id_from_docshell(
-              presContext->GetDocShell()));
-  mScrollEvent->Revoke();
-  mScrollEvent = nullptr;
+          profiler_get_inner_window_id_from_docshell(pc ? pc->GetDocShell()
+                                                        : nullptr));
 
-  bool oldProcessing = mProcessingScrollEvent;
-  AutoWeakFrame weakFrame(this);
-  auto RestoreProcessingScrollEvent = mozilla::MakeScopeExit([&] {
-    if (weakFrame.IsAlive()) {  // Otherwise `this` will be dead too.
-      mProcessingScrollEvent = oldProcessing;
-    }
-  });
+  Maybe<layers::ScrollLinkedEffectDetector> detector;
+  if (pc) {
+    // TODO: Do we want this for scrollend?
+    detector.emplace(pc->Document(), pc->RefreshDriver()->MostRecentRefresh());
+  }
 
-  mProcessingScrollEvent = true;
-
-  WidgetGUIEvent event(true, eScroll, nullptr);
   nsEventStatus status = nsEventStatus_eIgnore;
-  // Fire viewport scroll events at the document (where they
-  // will bubble to the window)
-  mozilla::layers::ScrollLinkedEffectDetector detector(
-      content->GetComposedDoc(),
-      presContext->RefreshDriver()->MostRecentRefresh());
-  RefPtr target = ScrollEventTargetNode(RootTargetsDocument::Yes);
+  WidgetGUIEvent event(true, eScroll, nullptr);
   // scroll events fired at elements don't bubble (although scroll events
   // fired at documents do, to the window)
-  event.mFlags.mBubbles = mIsRoot;
-  EventDispatcher::Dispatch(target, presContext, &event, nullptr, &status);
+  event.mFlags.mBubbles = !mTarget->IsElement();
+  EventDispatcher::Dispatch(MOZ_KnownLive(mTarget), pc, &event, nullptr,
+                            &status);
+  return NS_OK;
 }
 
-void ScrollContainerFrame::PostScrollEvent() {
-  if (mScrollEvent) {
+MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP ScrollEndEvent::Run() {
+  RefPtr<nsPresContext> pc = mTarget->OwnerDoc()->GetPresContext();
+  AutoProfilerTracing scrollEventMarker(
+      "ScrollEndEvent::Run", geckoprofiler::category::GRAPHICS,
+      std::move(mBacktrace),
+      geckoprofiler::markers::detail::
+          profiler_get_inner_window_id_from_docshell(pc ? pc->GetDocShell()
+                                                        : nullptr));
+  nsEventStatus status = nsEventStatus_eIgnore;
+  WidgetGUIEvent event(true, eScrollend, nullptr);
+  event.mFlags.mBubbles = !mTarget->IsElement();
+  event.mFlags.mCancelable = false;
+  EventDispatcher::Dispatch(MOZ_KnownLive(mTarget), pc, &event, nullptr,
+                            &status);
+  return NS_OK;
+}
+
+void ScrollContainerFrame::PostScrollEvent(const nsPoint& aOldScrollPosition) {
+  auto* ps = PresShell();
+  if (mScrollEventGeneration == ps->GetScrollEventGeneration()) {
     return;
   }
-
-  // The ScrollEvent constructor registers itself.
-  mScrollEvent = MakeRefPtr<ScrollEvent>(this);
-  // Capture stack trace now rather when FireScrollEvent runs async
-  mScrollEvent->mBacktrace = profiler_capture_backtrace();
+  // If this is a viewport scroll, this could affect the relative offset
+  // between layout and visual viewport, so we might have to fire a visual
+  // viewport scroll event as well.
+  if (mIsRoot) {
+    if (auto* window = nsGlobalWindowInner::Cast(
+            PresContext()->Document()->GetInnerWindow())) {
+      window->VisualViewport()->PostScrollEvent(ps->GetVisualViewportOffset(),
+                                                aOldScrollPosition);
+    }
+  }
+  RefPtr event =
+      MakeRefPtr<ScrollEvent>(ScrollEventTargetNode(RootTargetsDocument::Yes));
+  mScrollEventGeneration = ps->PostScrollEvent(event);
 }
 
 // TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230, bug 1535398)
@@ -6365,6 +6343,10 @@ void ScrollContainerFrame::UpdateMinimumScaleSize(
 
   Document* doc = pc->Document();
   MOZ_ASSERT(doc, "The document should be valid");
+  if (doc->HasViewportSizeOverrideForMiniWindow()) {
+    // The override fixes the layout viewport size, so don't grow it.
+    return;
+  }
   if (doc->GetFullscreenElement()) {
     // Don't use the minimum scale size in the case of fullscreen state.
     // FIXME: 1508177: We will no longer need this.
@@ -6816,8 +6798,8 @@ void ScrollContainerFrame::LayoutScrollbars(ScrollReflowInput& aState,
 
   nsSize compositionSize = mScrollPort.Size();
   if (overlayScrollBarsOnRoot) {
-    compositionSize = nsLayoutUtils::CalculateCompositionSizeForFrame(
-        this, false, &compositionSize);
+    compositionSize =
+        nsLayoutUtils::CalculateCompositionSizeForFrame(this, &compositionSize);
   }
 
   nsPresContext* presContext = mScrolledFrame->PresContext();
@@ -6922,11 +6904,17 @@ void ScrollContainerFrame::LayoutScrollbars(ScrollReflowInput& aState,
 
     nsRect r;
     r.width = std::max(std::max(r.width, scrollbarSize), resizerMinSize.width);
-    r.x = scrollbarOnLeft ? aInsideBorderArea.x
-                          : aInsideBorderArea.XMost() - r.width;
     r.height =
         std::max(std::max(r.height, scrollbarSize), resizerMinSize.height);
-    r.y = aInsideBorderArea.YMost() - r.height;
+
+    // Get scrollbar insets specified via -moz-scrollbar-inset-{inline,block}.
+    // These are used to position the resizer within rounded corners.
+    const nsMargin scrollbarInset = ScrollbarInsets();
+
+    r.x = scrollbarOnLeft
+              ? aInsideBorderArea.x + scrollbarInset.left
+              : aInsideBorderArea.XMost() - r.width - scrollbarInset.right;
+    r.y = aInsideBorderArea.YMost() - r.height - scrollbarInset.bottom;
 
     LayoutScrollbarPartAtRect(aState, resizerRI, r);
   }
@@ -7446,13 +7434,7 @@ void ScrollContainerFrame::ResetScrollInfoIfNeeded(
   mInScrollingGesture = aInScrollingGesture;
 }
 
-UniquePtr<PresState> ScrollContainerFrame::SaveState() {
-  nsIScrollbarMediator* mediator = do_QueryFrame(GetScrolledFrame());
-  if (mediator) {
-    // child handles its own scroll state, so don't bother saving state here
-    return nullptr;
-  }
-
+Maybe<ScrollState> ScrollContainerFrame::SaveState() {
   // Don't store a scroll state if we never have been scrolled or restored
   // a previous scroll state, and we're not in the middle of a smooth scroll.
   auto scrollAnimationState = ScrollAnimationState();
@@ -7461,10 +7443,10 @@ UniquePtr<PresState> ScrollContainerFrame::SaveState() {
       scrollAnimationState.contains(AnimationState::APZPending) ||
       scrollAnimationState.contains(AnimationState::APZRequested);
   if (!mHasBeenScrolled && !mDidHistoryRestore && !isScrollAnimating) {
-    return nullptr;
+    return Nothing();
   }
 
-  UniquePtr<PresState> state = NewPresState();
+  ScrollState state;
   bool allowScrollOriginDowngrade =
       !nsLayoutUtils::CanScrollOriginClobberApz(mLastScrollOrigin) ||
       mAllowScrollOriginDowngrade;
@@ -7488,19 +7470,65 @@ UniquePtr<PresState> ScrollContainerFrame::SaveState() {
   if (mRestorePos.y != -1 && pt == mLastPos) {
     pt = mRestorePos;
   }
-  state->scrollState() = pt;
-  state->allowScrollOriginDowngrade() = allowScrollOriginDowngrade;
+  state.mScrollPosition = pt;
+  state.mAllowScrollOriginDowngrade = allowScrollOriginDowngrade;
+  state.mScrollEventGeneration = mScrollEventGeneration;
+  state.mScrollEndEventGeneration = mScrollEndEventGeneration;
   if (mIsRoot) {
     // Only save resolution properties for root scroll frames
-    state->resolution() = PresShell()->GetResolution();
+    state.mResolution = PresShell()->GetResolution();
   }
-  return state;
+  return Some(state);
 }
 
-NS_IMETHODIMP ScrollContainerFrame::RestoreState(PresState* aState) {
-  mRestorePos = aState->scrollState();
+static bool GetStateKey(nsIContent* aContent, nsACString& aKey) {
+  if (!aContent) {
+    return false;
+  }
+  nsContentUtils::GenerateStateKey(aContent, aContent->GetUncomposedDoc(),
+                                   aKey);
+  return !aKey.IsEmpty();
+}
+
+void ScrollContainerFrame::SaveState(nsILayoutHistoryState* aState) {
+  MOZ_ASSERT(aState);
+  Maybe<ScrollState> state = SaveState();
+  if (!state) {
+    return;
+  }
+  nsAutoCString key;
+  if (!GetStateKey(mContent, key)) {
+    return;
+  }
+  UniquePtr presState = NewPresState();
+  presState->scrollState() = state->mScrollPosition;
+  presState->allowScrollOriginDowngrade() = state->mAllowScrollOriginDowngrade;
+  presState->resolution() = state->mResolution;
+  aState->AddState(key, std::move(presState));
+}
+
+void ScrollContainerFrame::RestoreState(nsILayoutHistoryState* aState) {
+  MOZ_ASSERT(aState);
+  MOZ_ASSERT(aState->HasStates());
+  nsAutoCString key;
+  if (!GetStateKey(mContent, key)) {
+    return;
+  }
+  UniquePtr state = aState->TakeState(key);
+  if (!state || mDidHistoryRestore) {
+    return;
+  }
+  ScrollState scrollState;
+  scrollState.mScrollPosition = state->scrollState();
+  scrollState.mAllowScrollOriginDowngrade = state->allowScrollOriginDowngrade();
+  scrollState.mResolution = state->resolution();
+  RestoreState(scrollState);
+}
+
+void ScrollContainerFrame::RestoreState(const ScrollState& aState) {
+  mRestorePos = aState.mScrollPosition;
   MOZ_ASSERT(mLastScrollOrigin == ScrollOrigin::None);
-  mAllowScrollOriginDowngrade = aState->allowScrollOriginDowngrade();
+  mAllowScrollOriginDowngrade = aState.mAllowScrollOriginDowngrade;
   // When restoring state, we promote mLastScrollOrigin to a stronger value
   // from the default of eNone, to restore the behaviour that existed when
   // the state was saved. If mLastScrollOrigin was a weaker value previously,
@@ -7512,18 +7540,19 @@ NS_IMETHODIMP ScrollContainerFrame::RestoreState(PresState* aState) {
   // future or if we tinker with this code more.
   mLastScrollOrigin = ScrollOrigin::Other;
   mDidHistoryRestore = true;
+  mScrollEventGeneration = aState.mScrollEventGeneration;
+  mScrollEndEventGeneration = aState.mScrollEndEventGeneration;
   mLastPos = mScrolledFrame ? GetLogicalVisualViewportOffset() : nsPoint(0, 0);
   SCROLLRESTORE_LOG("%p: RestoreState, set mRestorePos=%s mLastPos=%s\n", this,
                     ToString(mRestorePos).c_str(), ToString(mLastPos).c_str());
 
   // Resolution properties should only exist on root scroll frames.
-  MOZ_ASSERT(mIsRoot || aState->resolution() == 1.0);
+  MOZ_ASSERT(mIsRoot || aState.mResolution == 1.0f);
 
   if (mIsRoot) {
     PresShell()->SetResolutionAndScaleTo(
-        aState->resolution(), ResolutionChangeOrigin::MainThreadRestore);
+        aState.mResolution, ResolutionChangeOrigin::MainThreadRestore);
   }
-  return NS_OK;
 }
 
 void ScrollContainerFrame::PostScrolledAreaEvent() {
@@ -7554,6 +7583,8 @@ void ScrollContainerFrame::FireScrolledAreaEvent() {
   nsIContent* content = GetContent();
 
   event.mArea = mScrolledFrame->ScrollableOverflowRectRelativeToParent();
+  event.mFlags.mOnlyChromeDispatch =
+      !StaticPrefs::layout_scrolled_area_changed_content_enabled();
   if (RefPtr<Document> doc = content->GetUncomposedDoc()) {
     EventDispatcher::Dispatch(doc, presContext, &event, nullptr);
   }
@@ -7853,7 +7884,10 @@ static void CollectScrollPositionsForSnap(
   }
 
   auto processFrame = [&](nsIFrame* f, ContainingBlockContext aCtx) {
-    if (aCtx == ContainingBlockContext::Direct) {
+    // A fragmented box has a single snap area covering all its fragments, so
+    // only the first fragment contributes snap positions.
+    if (aCtx == ContainingBlockContext::Direct &&
+        nsLayoutUtils::IsFirstContinuationOrIBSplitSibling(f)) {
       const nsStyleDisplay* styleDisplay = f->StyleDisplay();
       if (styleDisplay->mScrollSnapAlign.inline_ !=
               StyleScrollSnapAlignKeyword::None ||

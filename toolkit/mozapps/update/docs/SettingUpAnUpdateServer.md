@@ -51,7 +51,7 @@ MARs are signed by Mozilla and so you cannot really build an "official"
 MAR yourself. This is a security measure designed to prevent anyone from
 serving malicious updates. If you want to use a locally-built MAR, the
 copy of Firefox being updated will need to be built to allow un-signed
-MARs. See {ref}`Building Firefox <Firefox Contributors' Quick Reference>`
+MARs. See {doc}`Building Firefox </contributing/contribution_quickref>`
 for more information on building Firefox locally. In order to use a locally
 built MAR, you will need to put this line in the mozconfig file in root of the
 build directory (create it if it does not exist):
@@ -92,7 +92,7 @@ substituting `<obj dir>`, `<MAR output path>`, `<version>` and
 ```bash
 ./mach package
 touch "<obj dir>/dist/firefox/precomplete"
-MAR="<obj dir>/dist/host/bin/mar.exe" MOZ_PRODUCT_VERSION=<version> MAR_CHANNEL_ID=<channel> ./tools/update-packaging/make_full_update.sh <MAR output path> "<obj dir>/dist/firefox"
+MAR="<obj dir>/dist/host/bin/mar.exe" MOZ_PRODUCT_VERSION=<version> MAR_CHANNEL_ID=<channel> ./tools/update-packaging/make_full_update.sh <MAR output path> "<obj dir>/dist/firefox" firefox
 ```
 
 For macOS you should use these commands:
@@ -100,7 +100,7 @@ For macOS you should use these commands:
 ```bash
 ./mach package
 touch "<obj dir>/dist/firefox/Firefox.app/Contents/Resources/precomplete"
-MAR="<obj dir>/dist/host/bin/mar.exe" MOZ_PRODUCT_VERSION=<version> MAR_CHANNEL_ID=<channel> ./tools/update-packaging/make_full_update.sh <MAR output path> "<obj dir>/dist/firefox/Firefox.app"
+MAR="<obj dir>/dist/host/bin/mar.exe" MOZ_PRODUCT_VERSION=<version> MAR_CHANNEL_ID=<channel> ./tools/update-packaging/make_full_update.sh <MAR output path> "<obj dir>/dist/firefox/Firefox.app" firefox
 ```
 
 For a local build, `<channel>` can be `default`, and `<version>`

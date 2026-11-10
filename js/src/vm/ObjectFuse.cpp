@@ -174,6 +174,11 @@ void ObjectFuse::handleTeleportingProtoMutation(JSContext* cx) {
   invalidateAllDependentIonScripts(cx, "proto mutation");
 }
 
+void ObjectFuse::handleGlobalLexicalMutation(JSContext* cx) {
+  bumpGeneration();
+  invalidateAllDependentIonScripts(cx, "global lexical mutation");
+}
+
 void ObjectFuse::handleShadowedGlobalProperty(JSContext* cx,
                                               PropertyInfo prop) {
   if (isUntrackedProperty(prop)) {
@@ -208,6 +213,12 @@ size_t ObjectFuse::sizeOfIncludingThis(
     result += iter.get().value().sizeOfExcludingThis(mallocSizeOf);
   }
   return result;
+}
+
+ObjectFuseMap::ObjectFuseMap(JS::Zone* zone) : objectFuses_(zone) {
+#ifdef DEBUG
+  zone_ = zone;
+#endif
 }
 
 ObjectFuse* ObjectFuseMap::getOrCreate(JSContext* cx, NativeObject* obj) {

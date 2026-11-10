@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "AudioSegment.h"
@@ -3533,8 +3534,8 @@ already_AddRefed<MediaSink> MediaDecoderStateMachine::CreateAudioSink() {
 
   auto audioSinkCreator = [s = RefPtr<MediaDecoderStateMachine>(this), this]() {
     MOZ_ASSERT(OnTaskQueue());
-    UniquePtr<AudioSink> audioSink{new AudioSink(
-        mTaskQueue, mAudioQueue, Info().mAudio, mShouldResistFingerprinting)};
+    auto audioSink = std::make_unique<AudioSink>(
+        mTaskQueue, mAudioQueue, Info().mAudio, mShouldResistFingerprinting);
     mAudibleListener.DisconnectIfExists();
     mAudibleListener = audioSink->AudibleEvent().Connect(
         mTaskQueue, this, &MediaDecoderStateMachine::AudioAudibleChanged);
@@ -3895,11 +3896,16 @@ void MediaDecoderStateMachine::BufferedRangeUpdated() {
                       MEDIA_PLAYBACK);
   MOZ_ASSERT(OnTaskQueue());
 
-  // While playing an unseekable stream of unknown duration, mDuration
-  // is updated as we play. But if data is being downloaded
-  // faster than played, mDuration won't reflect the end of playable data
-  // since we haven't played the frame at the end of buffered data. So update
-  // mDuration here as new data is downloaded to prevent such a lag.
+  // Buffered data doesn't establish a duration for an unbounded resource.
+  if (!mIsMSE && IsLiveStream() &&
+      (mDuration.Ref().isNothing() || mDuration.Ref()->IsInfinite())) {
+    return;
+  }
+
+  // A duration estimate updated during playback can lag behind the end of
+  // playable data when downloading is faster than playback. Update mDuration
+  // as new data is downloaded so it includes buffered frames that haven't
+  // been played yet.
   if (mBuffered.Ref().IsInvalid()) {
     return;
   }
@@ -4259,7 +4265,7 @@ void MediaDecoderStateMachine::EnqueueFirstFrameLoadedEvent() {
   MediaDecoderEventVisibility visibility =
       firstFrameBeenLoaded ? MediaDecoderEventVisibility::Suppressed
                            : MediaDecoderEventVisibility::Observable;
-  mFirstFrameLoadedEvent.Notify(UniquePtr<MediaInfo>(new MediaInfo(Info())),
+  mFirstFrameLoadedEvent.Notify(std::make_unique<MediaInfo>(Info()),
                                 visibility);
 }
 

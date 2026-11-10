@@ -31,9 +31,7 @@ tab-groups-list {
 
   /* emulate a <toolbarseparator> */
   hr {
-    /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
     width: -moz-available;
-    /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
     margin: var(--panel-separator-padding);
     /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
     border-width: 1px 0 0 0;
@@ -66,6 +64,12 @@ tab-groups-list {
     fill: var(--tab-group-background-color);
     /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
     stroke: var(--tab-group-background-color);
+    /* This icon is intentionally sized between existing icon-size tokens. */
+    /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
+    width: 22px;
+    /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
+    height: 22px;
+    content: url("chrome://browser/skin/tabbrowser/tab-group-label-22.svg");
   }
 
   &.tab-group-icon-closed {
@@ -92,9 +96,7 @@ tab-groups-list {
   > img,
   > p,
   > moz-button {
-    /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
     margin: var(--panel-menuitem-margin);
-    /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens */
     padding: var(--panel-menuitem-padding);
   }
 }

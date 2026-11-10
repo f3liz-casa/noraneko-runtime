@@ -3,7 +3,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 MOCHITEST_MANIFESTS += ["test/mochitest.toml"]
-BROWSER_CHROME_MANIFESTS += ["test/browser.toml"]
+# perftest.toml is a browser-chrome manifest whose tests are disabled there:
+# they only ever run under `mach perftest`.
+BROWSER_CHROME_MANIFESTS += ["test/browser.toml", "test/perftest.toml"]
 
 GENERATED_FILES += [
     "SpeechRecognitionModelDisplayInfo.sys.mjs",
@@ -66,8 +68,12 @@ XPCOM_MANIFESTS += [
     "components.conf",
 ]
 
+# MOZ_SRC_FILES doesn't support generated files.
 EXTRA_JS_MODULES += [
     "!SpeechRecognitionModelDisplayInfo.sys.mjs",
+]
+
+MOZ_SRC_FILES += [
     "SpeechRecognitionFeature.sys.mjs",
 ]
 
@@ -78,3 +84,12 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] != "android":
 include("/ipc/chromium/chromium-config.mozbuild")
 
 FINAL_LIBRARY = "xul"
+
+LICENSED_UNDER += [
+    "chromium",
+]
+
+SOURCE_HEADERS += [
+    "SpeechModelDownloadPermissionRequest.h",
+    "SpeechModelResolver.h",
+]

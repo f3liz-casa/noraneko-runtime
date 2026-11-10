@@ -119,13 +119,8 @@ uint32_t nsLookAndFeel::SystemColorFilter() {
   return key.GetValueAsDword(u"FilterType"_ns).valueOr(0);
 }
 
-nsLookAndFeel::nsLookAndFeel() {
-  glean::widget::touch_enabled_device
-      .EnumGet(static_cast<glean::widget::TouchEnabledDeviceLabel>(
-          WinUtils::IsTouchDeviceSupportPresent()))
-      .Add();
-}
-
+// {Con/De}structor in .cpp as mColorFilterWatcher needs KeyWatcher definition
+nsLookAndFeel::nsLookAndFeel() = default;
 nsLookAndFeel::~nsLookAndFeel() = default;
 
 void nsLookAndFeel::NativeInit() { EnsureInit(); }
@@ -257,7 +252,10 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
                                                 : NS_RGB(0xf9, 0xf9, 0xfb);
         }
       } else {
-        aColor = GetColorForSysColorIndex(COLOR_MENU);
+        // Map Menu to Window to match Windows explorer rendering of menus, and
+        // to allow users to customize menu backgrounds in Settings dialog. This
+        // color is set with Background. (See Bug 2037167 for context)
+        aColor = GetColorForSysColorIndex(COLOR_WINDOW);
       }
       return NS_OK;
     }
@@ -413,7 +411,10 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
         aColor = kNonNativeMenuText;
         return NS_OK;
       }
-      idx = COLOR_MENUTEXT;
+      // Map MenuText to WindowText to match Windows explorer rendering of
+      // menus, and to allow users to customize menu backgrounds in Settings
+      // dialog. This color is set with Text. (See Bug 2037167 for context)
+      idx = COLOR_WINDOWTEXT;
       break;
     case ColorID::Scrollbar:
       idx = COLOR_SCROLLBAR;

@@ -85,7 +85,6 @@ class nsILoadGroup;
 class nsIRunnable;
 class nsISerialEventTarget;
 class nsITimer;
-class nsRange;
 
 namespace mozilla::dom {
 
@@ -589,6 +588,20 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   bool HasAudio() const { return mMediaInfo.HasAudio(); }
 
   virtual bool IsVideo() const { return false; }
+
+  bool IsLazyLoading() const { return mLazyLoading; }
+
+  enum class StartLoad : bool { No, Yes };
+
+  // Starts observing the element for lazy media loading.
+  void SetLazyLoading();
+
+  // Stops lazy media loading and optionally starts the deferred load.
+  void StopLazyLoading(StartLoad);
+
+  void SetLoading(const nsAString& aLoading, ErrorResult& aError) {
+    SetHTMLAttr(nsGkAtoms::loading, aLoading, aError);
+  }
 
   bool HasVideo() const { return mMediaInfo.HasVideo(); }
 
@@ -1901,6 +1914,15 @@ class HTMLMediaElement : public nsGenericHTMLElement,
 
   Visibility mVisibilityState = Visibility::Untracked;
 
+  // Internal state for the media lazy-loading steps:
+  // https://html.spec.whatwg.org/multipage/media.html#lazy-loading-attributes
+  // True while the element is registered for lazy loading and its load is
+  // deferred.
+  bool mLazyLoading = false;
+  // True once lazy loading has been performed; prevents re-activation after
+  // seek or explicit load().
+  bool mLazyLoadingCompleted = false;
+
  public:
   // This function will be called whenever a text track that is in a media
   // element's list of text tracks has its text track mode change value
@@ -1973,7 +1995,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // Runners whose Run() method is called remove themselves from this list.
   // We keep track of these because the load algorithm resolves/rejects all
   // already-dispatched pending play promises.
-  nsTArray<nsResolveOrRejectPendingPlayPromisesRunner*>
+  nsTArray<RefPtr<nsResolveOrRejectPendingPlayPromisesRunner>>
       mPendingPlayPromisesRunners;
 
   // A pending seek promise which is created at Seek() method call and is

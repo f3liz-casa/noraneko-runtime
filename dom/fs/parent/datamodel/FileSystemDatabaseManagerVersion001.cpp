@@ -503,6 +503,9 @@ FileSystemDatabaseManagerVersion001::FileSystemDatabaseManagerVersion001(
                       quota::Client::FILESYSTEM),
       mFilesOfUnknownUsage(-1) {}
 
+FileSystemDatabaseManagerVersion001::~FileSystemDatabaseManagerVersion001() =
+    default;
+
 /* static */
 nsresult FileSystemDatabaseManagerVersion001::RescanTrackedUsages(
     const FileSystemConnection& aConnection,
@@ -1284,7 +1287,7 @@ nsresult FileSystemDatabaseManagerVersion001::UpdateCachedQuotaUsage(
                 mFileManager->GetFile(aFileId).mapErr(toNSResult));
 
   RefPtr<quota::QuotaObject> quotaObject = quotaManager->GetQuotaObject(
-      quota::PERSISTENCE_TYPE_DEFAULT, mClientMetadata,
+      mClientMetadata.mPersistenceType, mClientMetadata,
       quota::Client::FILESYSTEM, fileObj, aOldUsage);
   MOZ_ASSERT(quotaObject);
 

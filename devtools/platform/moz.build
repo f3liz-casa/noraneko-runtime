@@ -20,7 +20,7 @@ XPCOM_MANIFESTS += [
     "components.conf",
 ]
 
-EXTRA_JS_MODULES += [
+MOZ_SRC_FILES += [
     "jsdebugger.sys.mjs",
 ]
 
@@ -29,3 +29,8 @@ EXTRA_JS_MODULES += [
 DIST_SUBDIR = ""
 
 FINAL_LIBRARY = "xul"
+
+SOURCE_HEADERS += [
+    "JSDebugger.h",
+    "nsJSInspector.h",
+]

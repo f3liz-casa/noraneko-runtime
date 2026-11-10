@@ -10,6 +10,7 @@ prefs = [
   "browser.urlbar.trustPanel.featureGate=false",
   "sidebar.revamp=false",
   "browser.tabs.groups.alternateMenu=true",
+  "browser.toolbars.tab-groups.enabled=true",
 ]
 
 ["browser_1003588_no_specials_in_panel.js"]
@@ -41,11 +42,6 @@ tags = "overflowable-toolbar"
 ["browser_1856572_ensure_Fluent_works_in_customizeMode.js"]
 # Bug 1856572: Causes a drag-drop native loop assertion failure on debug
 # MacOS builds in browser_876926_customize_mode_wrapping.js
-skip-if = [
-  "os == 'mac' && os_version == '10.15' && arch == 'x86_64'",
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64'",
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64' && debug",
-]
 
 ["browser_1880230_hideInNonPrivateBrowsing.js"]
 
@@ -55,9 +51,6 @@ tags = "overflowable-toolbar"
 ["browser_873501_handle_specials.js"]
 
 ["browser_876926_customize_mode_wrapping.js"]
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # bug 1921617
-]
 
 ["browser_876944_customize_mode_create_destroy.js"]
 
@@ -68,18 +61,12 @@ skip-if = [
 ["browser_877447_skip_missing_ids.js"]
 
 ["browser_878452_drag_to_panel.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1961559
-]
 
 ["browser_884402_customize_from_overflow.js"]
 tags = "overflowable-toolbar"
 
 ["browser_885052_customize_mode_observers_disabed.js"]
 tags = "fullscreen"
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # Bug 1781368
-]
 
 ["browser_885530_showInPrivateBrowsing.js"]
 
@@ -113,9 +100,6 @@ skip-if = [
 ["browser_918049_skipintoolbarset_dnd.js"]
 
 ["browser_923857_customize_mode_event_wrapping_during_reset.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64' && opt && socketprocess_networking", # Bug 1961545
-]
 
 ["browser_927717_customize_drag_empty_toolbar.js"]
 
@@ -172,9 +156,6 @@ support-files = ["dummy_history_item.html"]
 ["browser_947914_button_zoomReset.js"]
 skip-if = [
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && debug && socketprocess_networking", # Bug 1775671
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && opt",
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64' && debug", # Bug 1775671
-  "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && debug", # Bug 1775671
 ]
 
 ["browser_947987_removable_default.js"]
@@ -194,9 +175,6 @@ tags = "overflowable-toolbar"
 ["browser_963639_customizing_attribute_non_customizable_toolbar.js"]
 
 ["browser_968565_insert_before_hidden_items.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64' && opt", # Bug 1961547
-]
 
 ["browser_969427_recreate_destroyed_widget_after_reset.js"]
 
@@ -246,7 +224,6 @@ skip-if = [
 ["browser_993322_widget_notoolbar.js"]
 skip-if = [
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && swgl && verify-standalone",
-  "os == 'win' && os_version == '11.26100' && arch == 'x86' && opt && verify-standalone",
   "os == 'win' && os_version == '11.26200' && arch == 'x86' && opt && verify-standalone",
 ]
 
@@ -294,6 +271,8 @@ support-files = ["file_embedded_document.html"]
 ["browser_currentset_post_reset.js"]
 
 ["browser_customization_context_menus.js"]
+
+["browser_customize_telemetry.js"]
 
 ["browser_customizemode_contextmenu_menubuttonstate.js"]
 
@@ -372,9 +351,6 @@ tags = "fullscreen"
 ["browser_panelUINotifications_novaUpdateBanner.js"]
 
 ["browser_panel_keyboard_navigation.js"]
-skip-if = [
-  "nova", # Bug 2058027
-]
 
 ["browser_panel_locationSpecific.js"]
 
@@ -439,9 +415,6 @@ support-files = ["browser_shareurl.html"]
 ["browser_sidebar_toggle.js"]
 
 ["browser_switch_to_customize_mode.js"]
-skip-if = [
-  "os == 'win' && os_version == '11.26200' && asan", # Bug 2019745
-]
 
 ["browser_synced_tabs_menu.js"]
 fail-if = [
@@ -472,11 +445,5 @@ skip-if = [
 ["browser_vertical_tabs_default_area.js"]
 
 ["browser_widget_animation.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64' && opt", # Bug 1961548
-]
 
 ["browser_widget_recreate_events.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64' && opt", # Bug 1961546
-]

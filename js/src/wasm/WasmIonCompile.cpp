@@ -1902,6 +1902,9 @@ class FunctionCompiler {
         || (js::jit::CPUInfo::IsAVX2Present() &&
             (viewType == Scalar::Uint8 || viewType == Scalar::Uint16 ||
              viewType == Scalar::Float32))
+#  elif defined(JS_CODEGEN_LOONG64)
+        || viewType == Scalar::Uint8 || viewType == Scalar::Uint16 ||
+        viewType == Scalar::Float32
 #  endif
     ) {
       access.setSplatSimd128Load();
@@ -2343,7 +2346,7 @@ class FunctionCompiler {
 #endif
       case ABIArg::GPR:
       case ABIArg::FPU:
-        return callState->regArgs.append(MWasmCallBase::Arg(arg.reg(), argDef));
+        return callState->regArgs.emplaceBack(arg.reg(), argDef);
       case ABIArg::Stack: {
         auto* mir =
             MWasmStackArg::New(alloc(), arg.offsetFromArgBase(), argDef);
@@ -2439,8 +2442,8 @@ class FunctionCompiler {
       return true;
     }
 
-    if (!callState->regArgs.append(
-            MWasmCallBase::Arg(AnyRegister(InstanceReg), instancePointer_))) {
+    if (!callState->regArgs.emplaceBack(AnyRegister(InstanceReg),
+                                        instancePointer_)) {
       return false;
     }
 
@@ -3865,8 +3868,7 @@ class FunctionCompiler {
     }
 
     pendingBlocks_[absolute].hint = branchHint;
-    return pendingBlocks_[absolute].patches.append(
-        ControlFlowPatch(ins, index));
+    return pendingBlocks_[absolute].patches.emplaceBack(ins, index);
   }
 
   [[nodiscard]] bool br(uint32_t relativeDepth, const DefVector& values) {
@@ -5602,31 +5604,78 @@ class FunctionCompiler {
     MDefinition* ref = values.back();
     MOZ_ASSERT(ref->type() == MIRType::WasmAnyRef);
 
-    MDefinition* success = refTest(ref, destType);
-    if (!success) {
+    // We generally want to emit an MWasmRefTest, an MTest, and an MWasmRefCast
+    // along the test-success branch. The cast is immovable but should be a
+    // no-op 100% of the time because of our test/cast optimizations.
+
+    MDefinition* refTestSuccess = refTest(ref, destType);
+    if (!refTestSuccess) {
       return false;
     }
 
-    MTest* test;
-    if (onSuccess) {
-      test = MTest::New(alloc(), success, nullptr, fallthroughBlock);
-      if (!test || !addControlFlowPatch(test, labelRelativeDepth,
-                                        MTest::TrueBranchIndex, branchHint)) {
-        return false;
-      }
-    } else {
-      test = MTest::New(alloc(), success, fallthroughBlock, nullptr);
+    if (!onSuccess) {
+      // For br_on_cast_fail, the fallthrough path gets the MWasmRefCast
+      // (because the cast succeeded) and we don't need to do anything fancy for
+      // the success path.
+
+      MTest* test =
+          MTest::New(alloc(), refTestSuccess, fallthroughBlock, nullptr);
       if (!test || !addControlFlowPatch(test, labelRelativeDepth,
                                         MTest::FalseBranchIndex, branchHint)) {
         return false;
       }
+      if (!pushDefs(values)) {
+        return false;
+      }
+      curBlock_->end(test);
+      curBlock_ = fallthroughBlock;
+
+      MDefinition* cast = refCast(ref, destType);
+      if (!cast) {
+        return false;
+      }
+      iter().setResult(cast);
+
+      return true;
     }
 
-    if (!pushDefs(values)) {
+    // For br_on_cast, the fallthrough uses the original ref (since the cast
+    // failed), while the success has a new block containing only the
+    // MWasmRefCast.
+
+    MBasicBlock* successBlock = nullptr;
+    if (!newBlock(curBlock_, &successBlock)) {
       return false;
     }
 
+    MTest* test =
+        MTest::New(alloc(), refTestSuccess, successBlock, fallthroughBlock);
+    if (!test) {
+      return false;
+    }
     curBlock_->end(test);
+    curBlock_ = successBlock;
+
+    MDefinition* cast = refCast(ref, destType);
+    if (!cast) {
+      return false;
+    }
+
+    DefVector castValues;
+    if (!castValues.appendAll(values)) {
+      return false;
+    }
+    castValues.back() = cast;
+    if (!pushDefs(castValues)) {
+      return false;
+    }
+
+    MGoto* jump = MGoto::New(alloc());
+    if (!jump || !addControlFlowPatch(jump, labelRelativeDepth,
+                                      MGoto::TargetIndex, branchHint)) {
+      return false;
+    }
+    curBlock_->end(jump);
     curBlock_ = fallthroughBlock;
     return true;
   }
@@ -5823,6 +5872,7 @@ class FunctionCompiler {
   bool emitResumeThrowRef();
   bool emitSwitch();
   bool emitGuardSuspending();
+  bool emitExternToCont();
 #endif
   bool emitGetLocal();
   bool emitSetLocal();
@@ -9853,6 +9903,17 @@ bool FunctionCompiler::emitGuardSuspending() {
   return true;
 }
 
+bool FunctionCompiler::emitExternToCont() {
+  uint32_t contTypeIndex;
+  MDefinition* ref;
+  if (!iter().readExternToCont(&contTypeIndex, &ref)) {
+    return false;
+  }
+
+  iter().setResult(ref);
+  return true;
+}
+
 #endif  // ENABLE_WASM_JSPI
 
 bool FunctionCompiler::emitBodyExprs() {
@@ -11025,6 +11086,8 @@ bool FunctionCompiler::emitBodyExprs() {
 #ifdef ENABLE_WASM_JSPI
           case uint32_t(MozOp::GuardSuspending):
             CHECK(emitGuardSuspending());
+          case uint32_t(MozOp::ExternToCont):
+            CHECK(emitExternToCont());
 #endif  // ENABLE_WASM_JSPI
 
           default:

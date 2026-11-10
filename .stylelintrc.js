@@ -32,6 +32,8 @@ module.exports = {
     "stylelint-use-logical",
   ],
   ignoreFiles,
+  reportNeedlessDisables: true,
+  reportUnscopedDisables: true,
   rules: {
     /* Disabled because of `-moz-element(#foo)` which gets misparsed. */
     "color-no-invalid-hex": null,
@@ -279,7 +281,6 @@ module.exports = {
     // unrelated errors in the same query.
     "media-query-no-invalid": null,
     "stylelint-plugin-mozilla/media-query-no-invalid": true,
-    "stylelint-plugin-mozilla/no-background-without-text-color": true,
     "stylelint-plugin-mozilla/no-base-design-tokens": true,
     "stylelint-plugin-mozilla/no-has-selector": true,
     "stylelint-plugin-mozilla/use-design-tokens": true,
@@ -426,6 +427,7 @@ module.exports = {
         "browser/fxr/**",
         // Android does not use design tokens
         "mobile/android/**",
+        "toolkit/themes/mobile/global/aboutLicense.css",
         // Docs do not use design tokens
         "docs/**",
         // DOM does not use design tokens
@@ -434,6 +436,8 @@ module.exports = {
         "layout/**",
         // Testing does not use design tokens
         "testing/**",
+        "**/test/**",
+        "**/tests/**",
         // UA Widgets should not use design tokens
         "toolkit/themes/shared/colorpicker-common.css",
         "toolkit/themes/shared/colorpicker.css",

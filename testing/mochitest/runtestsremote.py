@@ -98,6 +98,7 @@ class MochiRemote(MochitestDesktop):
         self.appName = options.remoteappname
         self.appActivity = options.appActivity
         self.device.stop_application(self.appName)
+        self.isolatedProcess = options.isolated_process
         if self.device.process_exist(self.appName):
             self.log.warning("unable to kill %s before running tests!" % self.appName)
 
@@ -327,6 +328,10 @@ class MochiRemote(MochitestDesktop):
         # MOZ_UPLOAD_DIR available to the browser environment so that tests
         # can use it as though they were running on the host.
         browserEnv["MOZ_UPLOAD_DIR"] = self.remoteMozLog
+
+        if self.isolatedProcess:
+            browserEnv["MOZ_ANDROID_CONTENT_SERVICE_ISOLATED_PROCESS"] = "1"
+
         return browserEnv
 
     def runApp(
@@ -396,7 +401,9 @@ class MochiRemote(MochitestDesktop):
             % str(datetime.datetime.now() - startTime)
         )
 
-        lastTestSeen = currentManifest or "Main app process exited normally"
+        # mozcrash records this verbatim as the crash's `test`, so it has to be the
+        # test that was running; a manifest path can never be matched back to one.
+        lastTestSeen = rpm.test_in_flight or currentManifest
 
         crashed = self.check_for_crashes(symbolsPath, lastTestSeen)
         if crashed:
@@ -406,7 +413,7 @@ class MochiRemote(MochitestDesktop):
         self.countfail += rpm.counts["fail"]
         self.counttodo += rpm.counts["todo"]
 
-        return status, lastTestSeen
+        return status, lastTestSeen or "Main app process exited normally"
 
     def check_for_crashes(self, symbols_path, last_test_seen):
         """

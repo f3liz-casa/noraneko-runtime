@@ -137,8 +137,25 @@ function displayDns(data) {
   let trr_url_tbody = document.createElement("tbody");
   trr_url_tbody.id = "dns_trr_url";
   let trr_url = document.createElement("tr");
-  trr_url.appendChild(col(Services.dns.currentTrrURI));
-  trr_url.appendChild(col(Services.dns.currentTrrMode));
+  let current_trr_uri = Services.dns.currentTrrURI;
+  let current_trr_mode = Services.dns.currentTrrMode;
+  switch (current_trr_mode) {
+    case Ci.nsIDNSService.MODE_NATIVEONLY:
+    case Ci.nsIDNSService.MODE_TRROFF:
+      current_trr_mode = "Off";
+      current_trr_uri = "";
+      break;
+    case Ci.nsIDNSService.MODE_TRRFIRST:
+      current_trr_mode = "TRR first";
+      break;
+    case Ci.nsIDNSService.MODE_TRRONLY:
+      current_trr_mode = "TRR only";
+      break;
+    default:
+      break;
+  }
+  trr_url.appendChild(col(current_trr_uri));
+  trr_url.appendChild(col(current_trr_mode));
   trr_url_tbody.appendChild(trr_url);
   let prevURL = document.getElementById("dns_trr_url");
   prevURL.parentNode.replaceChild(trr_url_tbody, prevURL);
@@ -308,6 +325,39 @@ function sumSSLTokensLengths(entries) {
     totalDecompressed += entry.decompressedLength;
   }
   return { totalToken, totalCompressed, totalDecompressed };
+}
+
+function countSSLTokensCerts(entries) {
+  let distinctCerts = new Map();
+  let references = 0;
+  let totalBytes = 0;
+
+  let updateCertStats = der => {
+    if (!der || !der.length) {
+      return;
+    }
+    references++;
+    totalBytes += der.length;
+    distinctCerts.set(sslTokensBytesFingerprint(der), der.length);
+  };
+
+  for (let entry of entries) {
+    updateCertStats(entry.serverCertDER);
+    entry.succeededCertChainDER?.forEach(updateCertStats);
+    entry.handshakeCertDER?.forEach(updateCertStats);
+  }
+
+  let distinctBytes = 0;
+  for (let bytes of distinctCerts.values()) {
+    distinctBytes += bytes;
+  }
+
+  return {
+    distinct: distinctCerts.size,
+    references,
+    distinctBytes,
+    totalBytes,
+  };
 }
 
 // expirationTime is a PRTime (microseconds since the Unix epoch).
@@ -687,6 +737,22 @@ function buildSSLTokensSummary(data) {
       }
     );
     container.appendChild(compressionSpan);
+  }
+
+  let certs = countSSLTokensCerts(data.entries);
+  if (certs.references) {
+    let certsSpan = document.createElement("span");
+    document.l10n.setAttributes(
+      certsSpan,
+      "about-networking-ssl-tokens-summary-certs",
+      {
+        distinct: certs.distinct,
+        references: certs.references,
+        distinctBytes: certs.distinctBytes,
+        totalBytes: certs.totalBytes,
+      }
+    );
+    container.appendChild(certsSpan);
   }
 
   // network.ssl_tokens_cache_capacity is in kilobytes.

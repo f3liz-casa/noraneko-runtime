@@ -12,18 +12,28 @@ task-defaults:
 geckoview-junit:
     description: "Geckoview junit run"
     suite: geckoview-junit
-    variants: ["geckoview-fission", "no-fission", "geckoview-zygote"]
-    treeherder-symbol: gv-junit
+    variants:
+        - geckoview-isolated-process
+        - geckoview-zygote
+    treeherder-symbol: gv-junit()
+    treeherder-group-variants: true
     loopback-video: true
     target: geckoview-androidTest.apk
-    max-run-time: 3600
+    max-run-time:
+        by-test-platform:
+            .*-ccov.*/.*|.*/debug.*: 5400
+            default: 3600
     run-on-projects:
         by-variant:
-            geckoview-fission: ['trunk']
-            no-fission: built-projects
             geckoview-zygote: []
-            default: []
+            geckoview-isolated-process:
+                by-test-platform:
+                    android-em.*-ccov/opt: built-projects
+                    android-em.*/debug: built-projects
+                    default: []
+            default: built-projects
     tier: default
+    chunks: 4
     mozharness:
         script: android_emulator_unittest.py
         config:
@@ -32,7 +42,12 @@ geckoview-junit:
                     - android/android_common.py
                     - android/android14-x86_64.py
         extra-options:
-            - --test-suite=geckoview-junit
+            by-test-platform:
+                .*-ccov.*/.*|.*/debug.*:
+                    - --test-suite=geckoview-junit
+                    - --max-time=4800
+                default:
+                    - --test-suite=geckoview-junit
 
 telemetry-tests-client:
     description: "Telemetry tests client run"
@@ -59,6 +74,7 @@ test-verify:
     allow-software-gl-layers: false
     variants:
         - no-fission
+        - geckoview-isolated-process+no-fission
     run-on-projects:
         by-variant:
             no-fission:
@@ -70,6 +86,11 @@ test-verify:
                     .*-wayland.*: []
                     # do not run on mozilla-central, beta or release: usually just confirms earlier results
                     android.*: ['integration']
+                    default: []
+            geckoview-isolated-process+no-fission:
+                by-test-platform:
+                    # do not run on mozilla-central, beta or release: usually just confirms earlier results
+                    android.*/debug: ['integration']
                     default: []
             default:
                 by-test-platform:
@@ -206,6 +227,10 @@ test-coverage:
         by-test-platform:
             .*-ccov.*: built-projects
             default: []
+    target:
+        by-test-platform:
+            android-em.*: geckoview-test_runner.apk
+            default: null
     tier: 2
     mozharness:
         script:

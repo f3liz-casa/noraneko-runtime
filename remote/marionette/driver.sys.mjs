@@ -2660,7 +2660,8 @@ export class GeckoDriver {
 
         this.#currentSession = new lazy.WebDriverSession(
           capabilities,
-          this.#sessionConfigFlags
+          this.#sessionConfigFlags,
+          { useDedicatedContainer: lazy.Marionette.isDynamicStartRunning }
         );
         this.#currentSession.capabilities.delete("webSocketUrl");
       }
@@ -2737,7 +2738,7 @@ export class GeckoDriver {
         this.#dialog = lazy.modal.findPrompt(this.#curBrowser);
       }
 
-      lazy.registerCommandsActor(this.currentSession.id);
+      lazy.registerCommandsActor(this.currentSession);
       lazy.enableEventsActor();
 
       Services.obs.addObserver(this.#observer, TOPIC_BROWSER_READY);
@@ -3011,13 +3012,10 @@ export class GeckoDriver {
     );
 
     const browsingContext = this.#curBrowser.tab.linkedBrowser.browsingContext;
-    const printSettings = await lazy.print.getPrintSettings(settings);
-    const binaryString = await lazy.print.printToBinaryString(
-      browsingContext,
-      printSettings
-    );
+    const printSettings = lazy.print.getPrintSettings(settings);
+    const bytes = await lazy.print.printToBytes(browsingContext, printSettings);
 
-    return btoa(binaryString);
+    return bytes.toBase64();
   }
 
   /**

@@ -17,6 +17,10 @@ dictionary WebTransportOptions {
   sequence<WebTransportHash> serverCertificateHashes;
   WebTransportCongestionControl congestionControl = "default";
   sequence<DOMString> protocols = [];
+  // The spec says "= {}", but the WebIDL parser cannot coerce {} to a union
+  // containing a record.  See bug 2081884.
+  HeadersInit headers;
+  ReadableStreamType datagramsReadableType;
 };
 
 enum WebTransportCongestionControl {
@@ -42,29 +46,31 @@ dictionary WebTransportSendOptions {
 dictionary WebTransportSendStreamOptions : WebTransportSendOptions {
 };
 
-/* https://w3c.github.io/webtransport/#web-transport-stats */
+/* https://w3c.github.io/webtransport/#web-transport-connection-stats */
 
-dictionary WebTransportStats {
-  DOMHighResTimeStamp timestamp;
+dictionary WebTransportConnectionStats {
   unsigned long long bytesSent;
+  unsigned long long bytesSentOverhead;
+  unsigned long long bytesAcknowledged;
   unsigned long long packetsSent;
+  unsigned long long bytesLost;
   unsigned long long packetsLost;
-  unsigned long numOutgoingStreamsCreated;
-  unsigned long numIncomingStreamsCreated;
   unsigned long long bytesReceived;
   unsigned long long packetsReceived;
   DOMHighResTimeStamp smoothedRtt;
   DOMHighResTimeStamp rttVariation;
   DOMHighResTimeStamp minRtt;
-  WebTransportDatagramStats datagrams;
+  required WebTransportDatagramStats datagrams;
+  unsigned long long? estimatedSendRate = null;
+  boolean atSendCapacity = false;
 };
 
-/* https://w3c.github.io/webtransport/#web-transport-stats%E2%91%A0 */
+/* https://w3c.github.io/webtransport/#web-transport-datagram-stats */
 
 dictionary WebTransportDatagramStats {
-  DOMHighResTimeStamp timestamp;
-  unsigned long long expiredOutgoing;
   unsigned long long droppedIncoming;
+  unsigned long long expiredIncoming;
+  unsigned long long expiredOutgoing;
   unsigned long long lostOutgoing;
 };
 
@@ -76,13 +82,15 @@ interface WebTransport {
   constructor(USVString url, optional WebTransportOptions options = {});
 
   [NewObject]
-  Promise<WebTransportStats> getStats();
+  Promise<WebTransportConnectionStats> getStats();
   [NewObject]
   Promise<Uint8Array> exportKeyingMaterial(BufferSource label,
-                                            optional BufferSource context);
+                                            BufferSource context,
+                                            unsigned long outputLength);
   readonly attribute Promise<undefined> ready;
   readonly attribute WebTransportReliabilityMode reliability;
   readonly attribute WebTransportCongestionControl congestionControl;
+  [SameObject] readonly attribute Headers? responseHeaders;
   readonly attribute DOMString protocol;
   readonly attribute Promise<WebTransportCloseInfo> closed;
   readonly attribute Promise<undefined> draining;
@@ -105,6 +113,8 @@ interface WebTransport {
 
   [NewObject, Throws]
   WebTransportSendGroup createSendGroup();
+
+  static readonly attribute boolean supportsReliableOnly;
 };
 
 enum WebTransportReliabilityMode {

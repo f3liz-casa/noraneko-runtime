@@ -17,6 +17,8 @@ class nsILocalFileMac;
 @class NSSavePanel;
 
 class nsFilePicker final : public nsBaseFilePicker {
+  friend class FilePickerTest;
+
  public:
   nsFilePicker();
   using nsIFilePicker::ResultCode;
@@ -63,6 +65,12 @@ class nsFilePicker final : public nsBaseFilePicker {
                         nsIFilePickerShownCallback* aCallback);
   void PresentFolderPanel(nsIFilePickerShownCallback* aCallback);
   void PresentSavePanel(nsIFilePickerShownCallback* aCallback);
+
+  // Called when an open or folder panel is dismissed. Invokes aCallback on a
+  // later main-thread turn, first filtering mFiles through Content Analysis
+  // when that applies to this picker.
+  void FinishOpenOrFolderPanel(nsIFilePickerShownCallback* aCallback,
+                               ResultCode aResult);
 
   // Presents aPanel asynchronously using the best available AppKit API: as a
   // sheet attached to the parent widget's NSWindow when one exists, otherwise

@@ -24,7 +24,10 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] != "android":
     DIRS += [
         "backends/llama",
         "ipc",
+        "textgeneration",
     ]
+    if CONFIG["ENABLE_TESTS"]:
+        TEST_DIRS += ["tests/gtest"]
 
 XPCSHELL_TESTS_MANIFESTS += ["tests/xpcshell/xpcshell.toml"]
 
@@ -43,6 +46,7 @@ XPIDL_SOURCES += [
 
 MOZ_SRC_FILES += [
     "MLModelHubService.sys.mjs",
+    "textgeneration/TextGenerationEngine.sys.mjs",
 ]
 
 UNIFIED_SOURCES += [
@@ -50,6 +54,7 @@ UNIFIED_SOURCES += [
 ]
 
 EXPORTS.mozilla.ml += [
+    "MLProfilerMarkers.h",
     "MLUtils.h",
 ]
 
@@ -72,3 +77,14 @@ XPIDL_MODULE = "ml"
 include("/ipc/chromium/chromium-config.mozbuild")
 
 FINAL_LIBRARY = "xul"
+
+LICENSED_UNDER += ["apache"]
+LICENSED_UNDER["apache"].paths = [
+    "vendor/openai/dist/openai.mjs",
+    "vendor/transformers.js",
+]
+if CONFIG["NIGHTLY_BUILD"]:
+    LICENSED_UNDER["apache"].paths += [
+        "vendor/openai/dist/openai-dev.mjs",
+        "vendor/transformers-dev.js",
+    ]

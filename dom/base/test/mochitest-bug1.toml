@@ -4,6 +4,7 @@ prefs = [
   "formhelper.autozoom.force-disable.test-only=true",
   "network.http.referer.sendFromRefresh=false",
   "plugins.rewrite_youtube_embeds=true",
+  # Bug 2077709
   "dom.navigation.navigationRateLimit.count=0",
 ]
 support-files = [
@@ -426,12 +427,6 @@ skip-if = [
 ]
 
 ["test_bug426646.html"]
-skip-if = [
-  "http2",
-  "http3",
-]
-
-["test_bug428847.html"]
 skip-if = [
   "http2",
   "http3",

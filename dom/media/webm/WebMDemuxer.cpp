@@ -374,6 +374,12 @@ nsresult WebMDemuxer::SetAudioCodecInfo(nestegg* aContext, int aTrackId,
   // TODO: This is already the format WebM stores them in. Would be nice
   // to avoid having libnestegg split them only for us to pack them again,
   // but libnestegg does not give us an API to access this data directly.
+  // Codecs without CodecPrivate data (e.g. MP3) yield no headers. Return
+  // early here, otherwise headers[0] below would read out of bounds.
+  if (headers.IsEmpty()) {
+    return NS_OK;
+  }
+
   RefPtr<MediaByteBuffer> audioCodecSpecificBlob =
       GetAudioCodecSpecificBlob(mInfo.mAudio.mCodecSpecificConfig);
   if (headers.Length() > 1) {
@@ -622,6 +628,7 @@ nsresult WebMDemuxer::ReadMetadata() {
       mSeekPreroll = params.seek_preroll;
       mInfo.mAudio.mRate = rate;
       mInfo.mAudio.mChannels = params.channels;
+      SetOpusOutputChannels(mInfo.mAudio);
 
       uint64_t duration = 0;
       r = nestegg_duration(context, &duration);
@@ -782,26 +789,33 @@ nsresult WebMDemuxer::GetNextPacket(TrackInfo::TrackType aType,
   int64_t next_tstamp = INT64_MIN;
   auto calculateNextTimestamp =
       [&](auto pushPacket, Maybe<int64_t>* lastFrameTime,
-          int64_t defaultDuration, int64_t trackEndTime) {
+          int64_t defaultDuration, int64_t trackEndTime, bool dtsMatchesPts) {
         MOZ_ASSERT(lastFrameTime);
-        if (next_holder) {
+        // Matroska blocks carry presentation timestamps in decode order. On
+        // tracks where decode order differs from presentation order (e.g.
+        // HEVC with B-frames) neither the peeked packet nor the previous
+        // packet is a presentation neighbour, so a peeked timestamp must not
+        // feed endTime calculation there. Fall through to the container
+        // duration instead.
+        RefPtr<NesteggPacketHolder> packet = next_holder;
+        if (dtsMatchesPts && next_holder) {
           next_tstamp = next_holder->Timestamp();
-          (this->*pushPacket)(next_holder);
         } else if (duration >= 0) {
           next_tstamp = tstamp + duration;
         } else if (defaultDuration >= 0) {
           next_tstamp = tstamp + defaultDuration;
-        } else if (lastFrameTime->isSome()) {
-          // This is a poor estimate, and overestimation overlaps the subsequent
-          // block, which can cause cause removal of subsequent frames from
-          // MediaSource buffers.
+        } else if (dtsMatchesPts && lastFrameTime->isSome()) {
+          // The delta to the previous block is a duration only in decoder
+          // order. This is a poor estimate, and overestimation overlaps the
+          // subsequent block, which can cause cause removal of subsequent
+          // frames from MediaSource buffers.
           next_tstamp = tstamp + (tstamp - lastFrameTime->value());
         } else if (mVideoFrameEndTimeBeforeReset) {
           WEBM_DEBUG("Setting next timestamp to be {} us",
                      mVideoFrameEndTimeBeforeReset->ToMicroseconds());
           next_tstamp = mVideoFrameEndTimeBeforeReset->ToMicroseconds();
         } else if (mIsMediaSource) {
-          (this->*pushPacket)(holder);
+          packet = holder;
         } else {
           // If we can't get frame's duration, it means either we need to wait
           // for more data for MSE case or this is the last frame for file
@@ -817,19 +831,27 @@ nsresult WebMDemuxer::GetNextPacket(TrackInfo::TrackType aType,
           }
           next_tstamp = std::max<int64_t>(tstamp, trackEndTime);
         }
+        // The peeked packet was consumed from the queue above. Requeue it
+        // unless the MSE branch replaced it with the current packet above,
+        // or the frame would be dropped.
+        if (packet) {
+          (this->*pushPacket)(packet);
+        }
         *lastFrameTime = Some(tstamp);
       };
 
   if (aType == TrackInfo::kAudioTrack) {
     calculateNextTimestamp(&WebMDemuxer::PushAudioPacket, &mLastAudioFrameTime,
                            mAudioDefaultDuration,
-                           mInfo.mAudio.mDuration.ToMicroseconds());
+                           mInfo.mAudio.mDuration.ToMicroseconds(),
+                           /* dtsMatchesPts */ true);
   } else {
     WEBM_DEBUG("next_holder {} mLastVideoFrameTime {}", next_holder ? 'Y' : 'N',
                mLastVideoFrameTime ? 'Y' : 'N');
     calculateNextTimestamp(&WebMDemuxer::PushVideoPacket, &mLastVideoFrameTime,
                            mVideoDefaultDuration,
-                           mInfo.mVideo.mDuration.ToMicroseconds());
+                           mInfo.mVideo.mDuration.ToMicroseconds(),
+                           mVideoDecodeOrderIsPresentationOrder);
   }
 
   if (mIsMediaSource && next_tstamp == INT64_MIN) {
@@ -916,7 +938,7 @@ nsresult WebMDemuxer::GetNextPacket(TrackInfo::TrackType aType,
       if (discardPadding < 0) {
         // This will ensure decoding will error out, and the file is rejected.
         sample->mDuration = TimeUnit::Invalid();
-      } else {
+      } else if (mAudioCodec == NESTEGG_CODEC_OPUS) {
         TimeUnit padding = TimeUnit::FromNanoseconds(discardPadding);
         const int samples = opus_packet_get_nb_samples(
             sample->Data(), AssertedCast<int32_t>(sample->Size()),
@@ -943,6 +965,18 @@ nsresult WebMDemuxer::GetNextPacket(TrackInfo::TrackType aType,
           } else {
             sample->mDuration = packetDuration - padding;
           }
+        }
+      } else if (mAudioCodec == NESTEGG_CODEC_MP3) {
+        TimeUnit padding = TimeUnit::FromNanoseconds(discardPadding);
+        if (padding > sample->mDuration || mProcessedDiscardPadding) {
+          WEBM_DEBUG(
+              "Padding larger than packet duration, flagging packet for "
+              "error (padding: {}, duration: {}, already processed: {})",
+              padding.ToString().get(), sample->mDuration.ToString().get(),
+              mProcessedDiscardPadding ? "true" : "false");
+          sample->mDuration = TimeUnit::Invalid();
+        } else {
+          sample->mDuration -= padding;
         }
       }
       mProcessedDiscardPadding = true;

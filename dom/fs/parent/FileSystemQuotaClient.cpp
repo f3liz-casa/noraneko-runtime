@@ -27,6 +27,21 @@ FileSystemQuotaClient::FileSystemQuotaClient() {
   ::mozilla::ipc::AssertIsOnBackgroundThread();
 }
 
+RefPtr<FileSystemCipherKeyManager>
+FileSystemQuotaClient::GetOrCreateCipherKeyManager(
+    const quota::OriginMetadata& aOriginMetadata) {
+  quota::AssertIsOnIOThread();
+
+  if (!aOriginMetadata.mIsPrivate) {
+    return nullptr;
+  }
+
+  return mCipherKeyManagers.LookupOrInsertWith(aOriginMetadata.mOrigin, [] {
+    return FileSystemCipherKeyManager::CreateEphemeral(
+        "FileSystemCipherKeyManager");
+  });
+}
+
 quota::Client::Type FileSystemQuotaClient::GetType() {
   return quota::Client::Type::FILESYSTEM;
 }
@@ -54,9 +69,18 @@ Result<quota::UsageInfo, nsresult> FileSystemQuotaClient::InitOrigin(
     }
   }
 
+  Maybe<FileSystemCipherKey> maybeCipherKey;
+  if (const RefPtr<FileSystemCipherKeyManager> cipherKeyManager =
+          GetOrCreateCipherKeyManager(aOriginMetadata)) {
+    QM_TRY_UNWRAP(FileSystemCipherKey cipherKey,
+                  cipherKeyManager->Ensure(kDatabaseCipherKeyId));
+    maybeCipherKey = Some(cipherKey);
+  }
+
   QM_TRY_INSPECT(
       const ResultConnection& conn,
-      data::GetStorageConnection(aOriginMetadata, /* aDirectoryLockId */ -1)
+      data::GetStorageConnection(aOriginMetadata,
+                                 /* aDirectoryLockId */ -1, maybeCipherKey)
           .mapErr(toNSResult));
 
   QM_TRY(MOZ_TO_RESULT(
@@ -88,8 +112,8 @@ Result<quota::UsageInfo, nsresult> FileSystemQuotaClient::GetUsageForOrigin(
     const AtomicBool& /* aCanceled */) {
   quota::AssertIsOnIOThread();
 
-  MOZ_ASSERT(aPersistenceType ==
-             quota::PersistenceType::PERSISTENCE_TYPE_DEFAULT);
+  MOZ_ASSERT(aPersistenceType == quota::PERSISTENCE_TYPE_DEFAULT ||
+             aPersistenceType == quota::PERSISTENCE_TYPE_PRIVATE);
 
   quota::QuotaManager* quotaManager = quota::QuotaManager::Get();
   MOZ_ASSERT(quotaManager);
@@ -105,11 +129,30 @@ Result<quota::UsageInfo, nsresult> FileSystemQuotaClient::GetUsageForOrigin(
 void FileSystemQuotaClient::OnOriginClearCompleted(
     const quota::OriginMetadata& aOriginMetadata) {
   quota::AssertIsOnIOThread();
+
+  if (!aOriginMetadata.mIsPrivate) {
+    return;
+  }
+
+  if (auto entry = mCipherKeyManagers.Lookup(aOriginMetadata.mOrigin)) {
+    entry.Data()->Invalidate();
+    entry.Remove();
+  }
 }
 
 void FileSystemQuotaClient::OnRepositoryClearCompleted(
     quota::PersistenceType aPersistenceType) {
   quota::AssertIsOnIOThread();
+
+  if (aPersistenceType != quota::PERSISTENCE_TYPE_PRIVATE) {
+    return;
+  }
+
+  for (const auto& cipherKeyManager : mCipherKeyManagers.Values()) {
+    cipherKeyManager->Invalidate();
+  }
+
+  mCipherKeyManagers.Clear();
 }
 
 void FileSystemQuotaClient::ReleaseIOThreadObjects() {

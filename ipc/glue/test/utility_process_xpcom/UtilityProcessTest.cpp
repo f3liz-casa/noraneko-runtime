@@ -42,13 +42,15 @@ static SandboxingKind FindUtilityProcessWithActor(
 
   for (size_t i = 0; i < SandboxingKind::COUNT; ++i) {
     auto sbKind = static_cast<SandboxingKind>(i);
-    if (!utilityProc->Process(sbKind)) {
+    RefPtr<UtilityProcessKeepAlive> keepAlive =
+        utilityProc->GetSharedKeepAlive(sbKind);
+    if (!keepAlive) {
       continue;
     }
     if (aActorName.isNothing()) {
       return sbKind;
     }
-    for (auto actor : utilityProc->GetActors(sbKind)) {
+    for (auto actor : utilityProc->GetActors(keepAlive->GetProcessParent())) {
       if (actor == aActorName.ref()) {
         return sbKind;
       }
@@ -130,8 +132,11 @@ UtilityProcessTest::StartProcess(const nsTArray<nsCString>& aActorsToRegister,
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
           [promise, utilityProc, actors = std::move(actors)] {
+            RefPtr<UtilityProcessKeepAlive> keepAlive =
+                utilityProc->GetSharedKeepAlive(
+                    SandboxingKind::GENERIC_UTILITY);
             RefPtr<UtilityProcessParent> utilityParent =
-                utilityProc->GetProcessParent(SandboxingKind::GENERIC_UTILITY);
+                keepAlive ? keepAlive->GetProcessParent() : nullptr;
             Maybe<int32_t> utilityPid =
                 utilityProc->ProcessPid(SandboxingKind::GENERIC_UTILITY);
             for (size_t i = 0; i < actors.Length(); ++i) {
@@ -184,29 +189,23 @@ UtilityProcessTest::UntilChildProcessDead(
 
   // Get a fresh handle to the child process with the specified PID.
   mozilla::UniqueFileHandle handle;
-  {
-    bool failed = false;
-    GeckoChildProcessHost::GetAll([&](GeckoChildProcessHost* aProc) {
-      if (handle || failed) {
-        return;
-      }
-      if (aProc->GetChildProcessId() != pid) {
-        return;
-      }
-
-      HANDLE handle_ = nullptr;
-      if (!::DuplicateHandle(
-              ::GetCurrentProcess(), aProc->GetChildProcessHandle(),
-              ::GetCurrentProcess(), &handle_, SYNCHRONIZE, FALSE, 0)) {
-        failed = true;
-      } else {
-        handle.reset(handle_);
-      }
-    });
-
-    if (failed || !handle) {
-      return NS_ERROR_FAILURE;
+  for (auto& proc : GeckoChildProcessHost::GetAll()) {
+    if (proc->GetChildProcessId() != pid) {
+      continue;
     }
+
+    HANDLE handle_ = nullptr;
+    if (!::DuplicateHandle(::GetCurrentProcess(), proc->GetChildProcessHandle(),
+                           ::GetCurrentProcess(), &handle_, SYNCHRONIZE, FALSE,
+                           0)) {
+      return NS_ERROR_FAILURE;
+    } else {
+      handle.reset(handle_);
+      break;
+    }
+  }
+  if (!handle) {
+    return NS_ERROR_FAILURE;
   }
 
   // Create and attach the resolver for the promise, giving the handle over to

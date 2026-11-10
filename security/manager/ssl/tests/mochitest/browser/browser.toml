@@ -31,7 +31,6 @@ skip-if = [
 # fundamentally incompatible with verify due to how NSS handles deleting
 # certificates.
 skip-if = [
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64' && debug && msix && verify-standalone",
   "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && debug && msix && verify-standalone",
   "socketprocess_networking",
 ]
@@ -50,11 +49,6 @@ skip-if = [
 ["browser_downloadCert_ui.js"]
 
 ["browser_editCACertTrust.js"]
-# An earlier attempt at landing this test resulted in frequent intermittent
-# failures, almost entirely on Linux. See Bug 1309519.
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'",
-]
 
 ["browser_exportP12_passwordUI.js"]
 

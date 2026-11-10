@@ -211,6 +211,9 @@ void Http3TunnelStreamBase::SetResponseHeaders(
   MOZ_ASSERT(mRecvState == BEFORE_HEADERS ||
              mRecvState == READING_INTERIM_HEADERS);
   mFlatResponseHeaders.AppendElements(aResponseHeaders);
+  if (!interim) {
+    mSavedFlatResponseHeaders.AppendElements(aResponseHeaders);
+  }
   mRecvState = (interim) ? READING_INTERIM_HEADERS : READING_HEADERS;
 }
 
@@ -337,7 +340,10 @@ uint64_t Http3WebTransportSession::GetStreamId() const {
 void Http3WebTransportSession::Close(nsresult aResult) {
   LOG(("Http3WebTransportSession::Close %p", this));
   if (RefPtr<WebTransportSessionEventListener> listener = TakeListener()) {
-    listener->OnSessionClosed(NS_SUCCEEDED(aResult), 0, ""_ns);
+    mozilla::dom::WebTransportStatsData emptyStats;
+    nsCOMPtr<nsIWebTransportSessionStats> statsWrapper =
+        new WebTransportSessionStatsWrapper(emptyStats);
+    listener->OnSessionClosed(NS_SUCCEEDED(aResult), 0, ""_ns, statsWrapper);
   }
   if (mTransaction) {
     mTransaction->Close(aResult);
@@ -353,7 +359,21 @@ void Http3WebTransportSession::Close(nsresult aResult) {
 }
 
 void Http3WebTransportSession::OnClosePending() {
-  mSession->CloseWebTransport(mStreamId, mStatus, mReason);
+  // Capture stats at the moment of close
+  mozilla::dom::WebTransportStatsData stats;
+  if (mSession->CloseWebTransport(mStreamId, mStatus, mReason, stats)) {
+    mCachedStats = stats;
+  }
+}
+
+void Http3WebTransportSession::OnSessionClosedWithStats(
+    bool aCleanly, uint32_t aStatus, const nsACString& aReason,
+    const mozilla::dom::WebTransportStatsData& aStats) {
+  // Cache stats for server-initiated close
+  mCachedStats = aStats;
+
+  // Call the existing OnSessionClosed which uses cached stats
+  OnSessionClosed(aCleanly, aStatus, aReason);
 }
 
 void Http3WebTransportSession::OnSessionClosed(bool aCleanly, uint32_t aStatus,
@@ -363,7 +383,10 @@ void Http3WebTransportSession::OnSessionClosed(bool aCleanly, uint32_t aStatus,
     mTransaction = nullptr;
   }
   if (RefPtr<WebTransportSessionEventListener> listener = TakeListener()) {
-    listener->OnSessionClosed(aCleanly, aStatus, aReason);
+    // Use cached stats captured at close time
+    nsCOMPtr<nsIWebTransportSessionStats> statsWrapper =
+        new WebTransportSessionStatsWrapper(mCachedStats);
+    listener->OnSessionClosed(aCleanly, aStatus, aReason, statsWrapper);
   }
   mRecvState = RECV_DONE;
   mSendState = SEND_DONE;
@@ -384,12 +407,64 @@ void Http3WebTransportSession::CloseSession(uint32_t aStatus,
   if ((mRecvState != CLOSE_PENDING) && (mRecvState != RECV_DONE)) {
     mStatus = aStatus;
     mReason = aReason;
+
+    // Capture stats before clearing the listener (client-initiated close)
+    if (mSession->CloseWebTransport(mStreamId, mStatus, mReason,
+                                    mCachedStats)) {
+      // Stats captured successfully
+    }
+
+    // Notify listener with cached stats before clearing it
+    RefPtr<WebTransportSessionEventListener> listener = GetListener();
+    if (listener) {
+      nsCOMPtr<nsIWebTransportSessionStats> statsWrapper =
+          new WebTransportSessionStatsWrapper(mCachedStats);
+      listener->OnSessionClosed(true, mStatus, mReason, statsWrapper);
+    }
+
     mSession->ConnectSlowConsumer(this);
     mRecvState = CLOSE_PENDING;
     mSendState = SEND_DONE;
   }
   RefPtr<WebTransportSessionEventListener> listener = TakeListener();
   // let it drop
+}
+
+bool Http3WebTransportSession::CloseSessionAndGetStats(
+    uint32_t aStatus, const nsACString& aReason,
+    mozilla::dom::WebTransportStatsData& aStats) {
+  LOG(("Http3WebTransportSession::CloseSessionAndGetStats stream=%llu",
+       (unsigned long long)mStreamId));
+  if ((mRecvState != CLOSE_PENDING) && (mRecvState != RECV_DONE)) {
+    // Match CloseSession()'s state-transition contract: mStatus/mReason must
+    // be set before entering CLOSE_PENDING, since OnClosePending() (invoked
+    // from WriteSegments() once ConnectSlowConsumer() schedules a revisit)
+    // uses them for its own CloseWebTransport() call that drives mRecvState
+    // to RECV_DONE. Without this, that call used stale (default) mStatus/
+    // mReason, and without ConnectSlowConsumer() the stream was never
+    // revisited at all, leaving it stuck at CLOSE_PENDING (Done() never
+    // becomes true, so Http3Session::CloseStreamInternal() never removes it).
+    mStatus = aStatus;
+    mReason = aReason;
+
+    // Get stats from neqo before closing
+    if (mSession->CloseWebTransport(mStreamId, mStatus, mReason, aStats)) {
+      LOG(("  Got stats: bytesSent=%llu, bytesReceived=%llu",
+           (unsigned long long)aStats.bytesSent(),
+           (unsigned long long)aStats.bytesReceived()));
+      mCachedStats = aStats;
+      RefPtr<WebTransportSessionEventListener> listener =
+          TakeListener();  // drop it
+      mSession->ConnectSlowConsumer(this);
+      mRecvState = CLOSE_PENDING;
+      mSendState = SEND_DONE;
+      return true;
+    }
+    LOG(("  CloseWebTransport failed"));
+  } else {
+    LOG(("  Wrong state: mRecvState=%d", mRecvState));
+  }
+  return false;
 }
 
 void Http3WebTransportSession::CreateOutgoingBidirectionalStream(
@@ -480,11 +555,21 @@ Http3WebTransportSession::OnIncomingWebTransportStream(
 void Http3WebTransportSession::SendDatagram(nsTArray<uint8_t>&& aData,
                                             uint64_t aTrackingId,
                                             uint64_t aSendGroupId,
-                                            int64_t aSendOrder) {
+                                            int64_t aSendOrder,
+                                            TimeStamp aTimestamp) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG(("Http3WebTransportSession::SendDatagram this=%p, sendGroup=%" PRIu64
        ", sendOrder=%" PRId64,
        this, aSendGroupId, aSendOrder));
+  // Any other state means the session has either not activated yet or is
+  // tearing down, and discarding the datagram without reporting an outcome is
+  // safe in both cases. Content cannot reach the first: it only sends once
+  // WebTransport has resolved [[Ready]] and handed the datagram algorithms its
+  // actor, which is later than the activation that gets us here. For the
+  // second, every transition to SEND_DONE reports the close to the listener,
+  // or drops it because content closed the session itself; either way content
+  // runs WebTransportDatagramDuplexStream::Cleanup(), which settles the
+  // write() promise this datagram belongs to.
   if (mSendState != PROCESSING_DATAGRAM) {
     return;
   }
@@ -501,7 +586,8 @@ void Http3WebTransportSession::SendDatagram(nsTArray<uint8_t>&& aData,
   //
   // This means the datagram is actually transmitted after one event loop
   // cycle (the async dispatch in ForceSend/MaybeForceSendIO).
-  mSession->SendDatagram(this, aData, aTrackingId, aSendGroupId, aSendOrder);
+  mSession->SendDatagram(this, aData, aTrackingId, aSendGroupId, aSendOrder,
+                         aTimestamp);
   mSession->StreamHasDataToWrite(this);
 }
 
@@ -532,13 +618,60 @@ void Http3WebTransportSession::GetMaxDatagramSize() {
 
 nsresult Http3WebTransportSession::ExportKeyingMaterial(
     const nsTArray<uint8_t>& aLabel, const nsTArray<uint8_t>& aContext,
-    nsTArray<uint8_t>& aKeyingMaterial) {
+    uint32_t aOutputLength, nsTArray<uint8_t>& aKeyingMaterial) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   if (mRecvState != ACTIVE) {
     return NS_ERROR_NOT_CONNECTED;
   }
-  return mSession->ExportWebTransportKeyingMaterial(mStreamId, aLabel, aContext,
-                                                    aKeyingMaterial);
+  return mSession->ExportWebTransportKeyingMaterial(
+      mStreamId, aLabel, aContext, aOutputLength, aKeyingMaterial);
+}
+
+void Http3WebTransportSession::SetDatagramMaxBufferedDatagrams(
+    uint32_t aMaxBufferedDatagrams) {
+  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  LOG(
+      ("Http3WebTransportSession::SetDatagramMaxBufferedDatagrams this=%p "
+       "max=%" PRIu32,
+       this, aMaxBufferedDatagrams));
+  if (mRecvState != ACTIVE) {
+    return;
+  }
+
+  mSession->SetDatagramMaxBufferedDatagrams(mStreamId, aMaxBufferedDatagrams);
+}
+
+void Http3WebTransportSession::SetDatagramMaxAge(double aMaxAge) {
+  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  LOG(("Http3WebTransportSession::SetDatagramMaxAge this=%p age=%f", this,
+       aMaxAge));
+  if (mRecvState != ACTIVE) {
+    return;
+  }
+
+  mSession->SetDatagramMaxAge(mStreamId, aMaxAge);
+}
+
+void Http3WebTransportSession::GetStats() {
+  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  RefPtr<WebTransportSessionEventListener> listener = GetListener();
+  if (!listener) {
+    // No one to report to either way.
+    return;
+  }
+
+  mozilla::dom::WebTransportStatsData stats;
+  if (mRecvState != ACTIVE ||
+      !mSession->GetWebTransportSessionStats(mStreamId, stats)) {
+    // Report the failure explicitly, so a pending getStats() request doesn't
+    // hang forever waiting for a callback that will never come.
+    listener->OnStatsAvailable(nullptr);
+    return;
+  }
+
+  nsCOMPtr<nsIWebTransportSessionStats> statsWrapper =
+      new WebTransportSessionStatsWrapper(stats);
+  listener->OnStatsAvailable(statsWrapper);
 }
 
 void Http3WebTransportSession::GetNegotiatedProtocol(nsACString& aProtocol) {
@@ -550,6 +683,57 @@ void Http3WebTransportSession::GetNegotiatedProtocol(nsACString& aProtocol) {
   mSession->GetWebTransportSessionProtocol(mStreamId, aProtocol);
 }
 
+void ParseFlatWebTransportResponseHeaders(const nsTArray<uint8_t>& aFlatHeaders,
+                                          nsTArray<nsCString>& aNames,
+                                          nsTArray<nsCString>& aValues) {
+  // Format: "HTTP/3 200\r\nname: value\r\n\r\n"
+  const char* data = reinterpret_cast<const char*>(aFlatHeaders.Elements());
+  uint32_t len = aFlatHeaders.Length();
+  uint32_t pos = 0;
+
+  // Skip status line
+  while (pos + 1 < len && !(data[pos] == '\r' && data[pos + 1] == '\n')) {
+    ++pos;
+  }
+  pos += 2;
+
+  // Parse header lines
+  while (pos < len) {
+    uint32_t lineStart = pos;
+    while (pos + 1 < len && !(data[pos] == '\r' && data[pos + 1] == '\n')) {
+      ++pos;
+    }
+    uint32_t lineLen = pos - lineStart;
+    pos += 2;
+
+    if (lineLen == 0) break;
+
+    const char* line = data + lineStart;
+    uint32_t sep = 0;
+    while (sep + 1 < lineLen && !(line[sep] == ':' && line[sep + 1] == ' ')) {
+      ++sep;
+    }
+    if (sep + 1 >= lineLen) continue;
+
+    nsCString name(line, sep);
+    // https://w3c.github.io/webtransport/#process-a-webtransport-fetch-response
+    // Step 6: Delete "wt-protocol" from responseHeaders before exposing them
+    // to script; it is a negotiation-only header (see .protocol instead).
+    if (name.LowerCaseEqualsLiteral("wt-protocol")) {
+      continue;
+    }
+
+    aNames.AppendElement(name);
+    aValues.AppendElement(nsCString(line + sep + 2, lineLen - sep - 2));
+  }
+}
+
+void Http3WebTransportSession::GetResponseHeaders(
+    nsTArray<nsCString>& aNames, nsTArray<nsCString>& aValues) {
+  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  ParseFlatWebTransportResponseHeaders(mSavedFlatResponseHeaders, aNames,
+                                       aValues);
+}
 nsresult Http3WebTransportSession::RegisterSendGroup(uint64_t aGroupId) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   if (mRecvState != ACTIVE) {
@@ -573,24 +757,26 @@ void Http3WebTransportSession::OnOutgoingDatagramOutCome(
 }
 
 void Http3WebTransportSession::OnStreamStopSending(uint64_t aId,
-                                                   nsresult aError) {
-  LOG(("OnStreamStopSending id:%" PRId64, aId));
+                                                   uint64_t aErrorCode) {
+  LOG(("OnStreamStopSending id:%" PRId64 " errorCode:%" PRIu64, aId,
+       aErrorCode));
   RefPtr<WebTransportSessionEventListener> listener = GetListener();
   if (!listener) {
     return;
   }
 
-  listener->OnStopSending(aId, aError);
+  listener->OnStopSending(aId, aErrorCode);
 }
 
-void Http3WebTransportSession::OnStreamReset(uint64_t aId, nsresult aError) {
-  LOG(("OnStreamReset id:%" PRId64, aId));
+void Http3WebTransportSession::OnStreamReset(uint64_t aId,
+                                             uint64_t aErrorCode) {
+  LOG(("OnStreamReset id:%" PRId64 " errorCode:%" PRIu64, aId, aErrorCode));
   RefPtr<WebTransportSessionEventListener> listener = GetListener();
   if (!listener) {
     return;
   }
 
-  listener->OnResetReceived(aId, aError);
+  listener->OnResetReceived(aId, aErrorCode);
 }
 
 }  // namespace mozilla::net

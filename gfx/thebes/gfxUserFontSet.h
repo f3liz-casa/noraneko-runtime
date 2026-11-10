@@ -35,12 +35,12 @@
 #include "gfxFontFeatures.h"      // for gfxFontFeature
 #include "gfxFontSrcPrincipal.h"  // for gfxFontSrcPrincipal
 #include "gfxFontSrcURI.h"        // for gfxFontSrcURI
+#include "gfxFontVariations.h"    // for gfxFontVariation
 #include "mozilla/Assertions.h"  // for AssertionConditionType, MOZ_ASSERT_HELPER2, MOZ_ASSERT, MOZ_ASSERT_UNREACHABLE, MOZ_ASSER...
-#include "mozilla/HashFunctions.h"      // for HashBytes, HashGeneric
-#include "mozilla/TimeStamp.h"          // for TimeStamp
-#include "mozilla/gfx/FontVariation.h"  // for FontVariation
-#include "nsDebug.h"                    // for NS_WARNING
-#include "nsIReferrerInfo.h"            // for nsIReferrerInfo
+#include "mozilla/HashFunctions.h"  // for HashBytes, HashGeneric
+#include "mozilla/TimeStamp.h"      // for TimeStamp
+#include "nsDebug.h"                // for NS_WARNING
+#include "nsIReferrerInfo.h"        // for nsIReferrerInfo
 
 class gfxFont;
 class gfxUserFontSet;
@@ -264,6 +264,7 @@ struct gfxUserFontAttributes {
 class gfxUserFontSet {
   friend class gfxUserFontEntry;
   friend class gfxOTSMessageContext;
+  friend class gfxPlatformFontList;
 
  public:
   using FontWidth = mozilla::FontWidth;
@@ -474,10 +475,10 @@ class gfxUserFontSet {
       }
 
       static uint32_t HashVariations(
-          const nsTArray<mozilla::gfx::FontVariation>& aVariations) {
+          const nsTArray<gfxFontVariation>& aVariations) {
         return mozilla::HashBytes(
             aVariations.Elements(),
-            aVariations.Length() * sizeof(mozilla::gfx::FontVariation));
+            aVariations.Length() * sizeof(gfxFontVariation));
       }
 
       RefPtr<gfxFontSrcURI> mURI;
@@ -562,6 +563,11 @@ class gfxUserFontSet {
   // true when rules using local names need to be redone
   bool mRebuildLocalRules;
 
+  // Set when this font-set is being destroyed, to prevent re-adding it to the
+  // gfxPlatformFontList's list of active font sets.
+  // Guarded by the platform font-list lock.
+  bool mDestroying = false;
+
   // performance stats
   uint32_t mDownloadCount;
   uint64_t mDownloadSize;
@@ -601,7 +607,24 @@ class gfxUserFontEntry : public gfxFontEntry {
 
   gfxFont* CreateFontInstance(const gfxFontStyle* aFontStyle) override;
 
-  gfxFontEntry* GetPlatformFontEntry() const { return mPlatformFontEntry; }
+  void SetPlatformFontEntry(RefPtr<gfxFontEntry>&& aFontEntry)
+      MOZ_EXCLUDES(mLock) {
+    mozilla::AutoWriteLock lock(mLock);
+    mPlatformFontEntry = std::move(aFontEntry);
+  }
+
+  already_AddRefed<gfxFontEntry> GetPlatformFontEntry() const
+      MOZ_EXCLUDES(mLock) {
+    mozilla::AutoReadLock lock(mLock);
+    return do_AddRef(mPlatformFontEntry);
+  }
+
+  // Return whether this user font entry's actual platform font is aOther.
+  bool PlatformFontEntryEquals(const gfxFontEntry* aOther) const
+      MOZ_EXCLUDES(mLock) {
+    mozilla::AutoReadLock lock(mLock);
+    return mPlatformFontEntry == aOther;
+  }
 
   // is the font loading or loaded, or did it fail?
   UserFontLoadState LoadState() const { return mUserFontLoadState; }
@@ -701,7 +724,8 @@ class gfxUserFontEntry : public gfxFontEntry {
 
   // attempt to load the next resource in the src list.
   void LoadNextSrc();
-  void ContinueLoad();
+  void DoContinueLoad();
+  void ScheduleContinueLoad();
   void DoLoadNextSrc(bool aIsContinue);
 
   // change the load state
@@ -802,7 +826,7 @@ class gfxUserFontEntry : public gfxFontEntry {
   bool mUnsupportedFormat;
   mozilla::StyleFontDisplay mFontDisplay;  // timing of userfont fallback
 
-  RefPtr<gfxFontEntry> mPlatformFontEntry;
+  RefPtr<gfxFontEntry> mPlatformFontEntry MOZ_GUARDED_BY(mLock);
   nsTArray<gfxFontFaceSrc> mSrcList;
   uint32_t mCurrentSrcIndex;  // index of src item to be loaded next
   // This field is managed by the nsFontFaceLoader. In the destructor and

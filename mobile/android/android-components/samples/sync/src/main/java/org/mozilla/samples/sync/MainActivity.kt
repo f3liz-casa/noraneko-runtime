@@ -9,12 +9,10 @@ import android.text.method.ScrollingMovementMethod
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import mozilla.appservices.fxaclient.FxaServer
 import mozilla.components.browser.storage.sync.PlacesBookmarksStorage
 import mozilla.components.browser.storage.sync.PlacesHistoryStorage
@@ -41,6 +39,7 @@ import mozilla.components.concept.sync.TabPrivacy
 import mozilla.components.lib.dataprotect.SecureAbove22Preferences
 import mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient
 import mozilla.components.service.fxa.FxaAuthData
+import mozilla.components.service.fxa.FxaService
 import mozilla.components.service.fxa.ServerConfig
 import mozilla.components.service.fxa.manager.FxaAccountManager
 import mozilla.components.service.fxa.sync.GlobalSyncableStoreProvider
@@ -123,7 +122,7 @@ class MainActivity :
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        enableEdgeToEdge()
+        WindowCompat.enableEdgeToEdge(window)
         window.setupPersistentInsets()
 
         AppServicesInitializer.init(AppServicesInitializer.Config(null))
@@ -133,7 +132,12 @@ class MainActivity :
 
         findViewById<View>(R.id.buttonSignIn).setOnClickListener {
             lifecycleScope.launch {
-                accountManager.beginAuthentication(entrypoint = SampleFxAEntryPoint.HomeMenu)?.let { openWebView(it) }
+                accountManager
+                    .beginAuthentication(
+                        service = FxaService.Sync.identifier,
+                        entrypoint = SampleFxAEntryPoint.HomeMenu,
+                    )
+                    ?.let { openWebView(it) }
             }
         }
 
@@ -438,7 +442,7 @@ class MainActivity :
                     binding.syncStatus.text = getString(R.string.sync_idle)
 
                     val historyResultTextView: TextView = findViewById(R.id.historySyncResult)
-                    val visitedCount = withContext(Dispatchers.IO) { historyStorage.value.getVisited().size }
+                    val visitedCount = historyStorage.value.getVisited().size
                     // visitedCount is passed twice: to get the correct plural form, and then as
                     // an argument for string formatting.
                     historyResultTextView.text =
@@ -451,24 +455,22 @@ class MainActivity :
                     val bookmarksResultTextView: TextView = findViewById(R.id.bookmarksSyncResult)
                     bookmarksResultTextView.setHorizontallyScrolling(true)
                     bookmarksResultTextView.movementMethod = ScrollingMovementMethod.getInstance()
+                    val bookmarksRoot = bookmarksStorage.value.getTree("root________", recursive = true).getOrNull()
+
                     bookmarksResultTextView.text =
-                        withContext(Dispatchers.IO) {
-                            val bookmarksRoot =
-                                bookmarksStorage.value.getTree("root________", recursive = true).getOrNull()
-                            if (bookmarksRoot == null) {
-                                getString(R.string.no_bookmarks_root)
-                            } else {
-                                var bookmarksRootAndChildren = "BOOKMARKS\n"
-                                fun addTreeNode(node: BookmarkNode, depth: Int) {
-                                    val desc = " ".repeat(depth * 2) + "${node.title} - ${node.url} (${node.guid})\n"
-                                    bookmarksRootAndChildren += desc
-                                    node.children?.forEach {
-                                        addTreeNode(it, depth + 1)
-                                    }
+                        if (bookmarksRoot == null) {
+                            getString(R.string.no_bookmarks_root)
+                        } else {
+                            var bookmarksRootAndChildren = "BOOKMARKS\n"
+                            fun addTreeNode(node: BookmarkNode, depth: Int) {
+                                val desc = " ".repeat(depth * 2) + "${node.title} - ${node.url} (${node.guid})\n"
+                                bookmarksRootAndChildren += desc
+                                node.children?.forEach {
+                                    addTreeNode(it, depth + 1)
                                 }
-                                addTreeNode(bookmarksRoot, 0)
-                                bookmarksRootAndChildren
                             }
+                            addTreeNode(bookmarksRoot, 0)
+                            bookmarksRootAndChildren
                         }
                 }
             }

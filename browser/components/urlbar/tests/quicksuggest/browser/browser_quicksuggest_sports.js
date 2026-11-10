@@ -68,8 +68,10 @@ add_setup(async function () {
     ],
   });
 
+  UrlbarTestUtils.stubLocale("en-US");
   registerCleanupFunction(() => {
     UrlbarTestUtils.stubNowZonedDateTime(null);
+    UrlbarTestUtils.stubLocale(null);
   });
 });
 
@@ -714,6 +716,7 @@ add_task(async function resultMenu() {
       "urlbar-result-menu-dont-show-sports2",
       "urlbar-result-menu-manage-firefox-suggest2",
       "urlbar-result-menu-learn-more2",
+      "urlbar-view-context-menu-skip-menu-with-tab",
     ],
     "The result menu should contain the expected commands"
   );
@@ -840,12 +843,22 @@ async function doOneTest({ expectedItems }) {
             "Child element should have expected attribute: " +
               JSON.stringify({ childName, attr })
           );
-          Assert.equal(
-            child.getAttribute(attr),
-            value,
-            "Child element attribute should have expected value: " +
-              JSON.stringify({ childName, attr })
-          );
+
+          if (childNamePrefix.endsWith("image")) {
+            UrlbarTestUtils.checkImageUrl(
+              child.getAttribute(attr),
+              UrlbarTestUtils.makeMozRemoteImageUrl(value),
+              "Child image attribute should have expected value: " +
+                JSON.stringify({ childName, attr })
+            );
+          } else {
+            Assert.equal(
+              child.getAttribute(attr),
+              value,
+              "Child element attribute should have expected value: " +
+                JSON.stringify({ childName, attr })
+            );
+          }
         }
       }
 

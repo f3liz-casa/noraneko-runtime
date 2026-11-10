@@ -23,7 +23,8 @@ function loginList() {
 /**
  * Initialize logins and set prefs needed for the test.
  */
-add_task(async function test_initialize() {
+add_setup(async function test_initialize() {
+  Services.fog.testResetFOG();
   Services.prefs.setBoolPref("signon.showAutoCompleteFooter", true);
   registerCleanupFunction(() => {
     Services.prefs.clearUserPref("signon.showAutoCompleteFooter");
@@ -56,24 +57,27 @@ add_task(async function test_autocomplete_footer_onclick() {
         return !EventUtils.isHidden(footer);
       }, "Waiting for footer to become visible");
 
+      Services.fog.testResetFOG();
       let openingFunc = () => EventUtils.synthesizeMouseAtCenter(footer, {});
       let passwordManager = await openPasswordManager(openingFunc, false);
 
       info("Password Manager was opened");
+
+      Assert.equal(
+        Glean.autocomplete.recordInteraction.testGetValue(),
+        null,
+        "The footer does not record a secondary action interaction"
+      );
 
       Assert.ok(
         !passwordManager.filterValue,
         "Search string should not be set to filter logins"
       );
 
-      // open_management
-      await LoginTestUtils.telemetry.waitForEventCount(1);
-
-      // Check event telemetry recorded when opening management UI
-      TelemetryTestUtils.assertEvents(
-        [["pwmgr", "open_management", "autocomplete"]],
-        { category: "pwmgr", method: "open_management" },
-        { clear: true, process: "content" }
+      await Services.fog.testFlushAllChildren();
+      Assert.equal(
+        1,
+        Glean.pwmgr.openManagementAutocomplete.testGetValue().length
       );
 
       await passwordManager.close();
@@ -116,14 +120,54 @@ add_task(async function test_autocomplete_footer_keydown() {
       );
 
       // Check event telemetry recorded when opening management UI
-      TelemetryTestUtils.assertEvents(
-        [["pwmgr", "open_management", "autocomplete"]],
-        { category: "pwmgr", method: "open_management" },
-        { clear: true, process: "content" }
+      await Services.fog.testFlushAllChildren();
+      Assert.equal(
+        2,
+        Glean.pwmgr.openManagementAutocomplete.testGetValue().length
       );
 
       await passwordManager.close();
       await closePopup(popup);
     }
+  );
+});
+
+add_task(async function test_show_logins_recorded_once_per_open() {
+  Services.fog.testResetFOG();
+  let url = TEST_ORIGIN + BASIC_FORM_PAGE_PATH;
+  await BrowserTestUtils.withNewTab(
+    { gBrowser, url },
+    async function (browser) {
+      let popup = document.getElementById("PopupAutoComplete");
+      await openACPopup(popup, browser, "#form-basic-username");
+
+      // Typing narrows the results while the popup stays open. The parent-side
+      // matchCount changing is the barrier that the redraw was processed.
+      let initialCount = popup.view.matchCount;
+      await BrowserTestUtils.synthesizeKey("u", {}, browser);
+      await BrowserTestUtils.synthesizeKey("x", {}, browser);
+      await TestUtils.waitForCondition(
+        () => popup.view.matchCount != initialCount,
+        "waiting for the popup to redraw with the narrowed results"
+      );
+      await closePopup(popup);
+
+      await SpecialPowers.spawn(browser, [], () => {
+        const field = content.document.querySelector("#form-basic-username");
+        field.value = "";
+        field.blur();
+      });
+      await openACPopup(popup, browser, "#form-basic-username");
+      await closePopup(popup);
+    }
+  );
+
+  await Services.fog.testFlushAllChildren();
+  const events = Glean.formAutocomplete.showLogins.testGetValue() ?? [];
+  Assert.equal(events.length, 1, "one event recorded when the popup opened");
+  Assert.greaterOrEqual(
+    Number(events[0].extra.value),
+    0,
+    "the event carries the time until the popup was shown"
   );
 });

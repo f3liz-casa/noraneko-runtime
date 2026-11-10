@@ -18,6 +18,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   NonPrivateTabs: "resource:///modules/OpenTabs.sys.mjs",
   OpenTabsController: "resource:///modules/OpenTabsController.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  SessionStore:
+    "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
   SidebarCollapsedWindows:
     "moz-src:///browser/components/sidebar/SidebarCollapsedWindows.sys.mjs",
   SidebarTreeView:
@@ -297,7 +299,7 @@ export class SidebarOpenTabs extends SidebarPage {
     const headerL10nId = isCurrent
       ? "sidebar-opentabs-current-window-header"
       : "sidebar-opentabs-window-header";
-    const windowId = win.__SSi;
+    const windowId = lazy.SessionStore.getWindowId(win);
     const expanded = !lazy.SidebarCollapsedWindows.isCollapsed(win);
     return html`
       <moz-card
@@ -406,28 +408,22 @@ export class SidebarOpenTabs extends SidebarPage {
         href="chrome://browser/content/sidebar/sidebar-opentabs.css"
       />
       <div class="sidebar-panel">
-        <sidebar-panel-header
-          data-l10n-id="sidebar-menu-open-tabs-header"
-          data-l10n-attrs="heading"
-          view="viewOpenTabsSidebar"
-        >
-          <div class="options-container">
-            <moz-input-search
-              data-l10n-id="firefoxview-search-text-box-tabs"
-              data-l10n-attrs="placeholder"
-              @MozInputSearch:search=${this.onSearchQuery}
-            ></moz-input-search>
-            <moz-button
-              class="menu-button"
-              @click=${this.openMenu}
-              data-l10n-id="sidebar-options-menu-button"
-              aria-haspopup="menu"
-              aria-expanded="false"
-              type="icon ghost"
-              iconsrc="chrome://global/skin/icons/more.svg"
-            ></moz-button>
-          </div>
-        </sidebar-panel-header>
+        <div class="options-container">
+          <moz-input-search
+            data-l10n-id="firefoxview-search-text-box-tabs"
+            data-l10n-attrs="placeholder"
+            @MozInputSearch:search=${this.onSearchQuery}
+          ></moz-input-search>
+          <moz-button
+            class="menu-button"
+            @click=${this.openMenu}
+            data-l10n-id="sidebar-options-menu-button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            type="icon ghost"
+            iconsrc="chrome://global/skin/icons/more.svg"
+          ></moz-button>
+        </div>
         <div class="sidebar-panel-scrollable-content">
           ${this.searchQuery
             ? this.#searchResultsTemplate()

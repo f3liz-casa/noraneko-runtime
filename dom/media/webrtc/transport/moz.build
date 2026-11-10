@@ -19,3 +19,74 @@ include("/tools/fuzzing/libfuzzer-config.mozbuild")
 
 if CONFIG["FUZZING_INTERFACES"]:
     TEST_DIRS += ["fuzztest"]
+
+LICENSED_UNDER += ["libjingle"]
+LICENSED_UNDER["libjingle"].paths = [
+    "sigslot.h",
+]
+
+LICENSED_UNDER += ["nicer"]
+LICENSED_UNDER["nicer"].paths = [
+    "third_party/nICEr",
+]
+
+LICENSED_UNDER += ["nrappkit"]
+LICENSED_UNDER["nrappkit"].paths = [
+    "third_party/nrappkit",
+]
+
+LICENSED_UNDER += ["nrappkit-cont-1"]
+LICENSED_UNDER["nrappkit-cont-1"].paths = [
+    "third_party/nrappkit",
+]
+
+LICENSED_UNDER += ["nrappkit-cont-2"]
+LICENSED_UNDER["nrappkit-cont-2"].paths = [
+    "third_party/nrappkit/src/port/generic/include/sys/queue.h",
+]
+
+LICENSED_UNDER += ["nrappkit-cont-3"]
+LICENSED_UNDER["nrappkit-cont-3"].paths = [
+    "third_party/nrappkit/src/util/util.cpp",
+]
+
+LICENSED_UNDER += ["praton1"]
+LICENSED_UNDER["praton1"].paths = [
+    "third_party/nrappkit/src/util/util.cpp",
+]
+
+LICENSED_UNDER += ["ucal"]
+LICENSED_UNDER["ucal"].paths = [
+    "third_party/nICEr/src/stun/addrs.cpp",
+]
+
+SOURCE_HEADERS += [
+    "dtlsidentity.h",
+    "logging.h",
+    "m_cpp_utils.h",
+    "mediapacket.h",
+    "nr_socket_proxy_config.h",
+    "nr_socket_prsock.h",
+    "nr_socket_tcp.h",
+    "nricecandidate.h",
+    "nricectx.h",
+    "nricemediastream.h",
+    "nriceresolver.h",
+    "nriceresolverfake.h",
+    "nricestunaddr.h",
+    "nrinterfaceprioritizer.h",
+    "rlogconnector.h",
+    "runnable_utils.h",
+    "simpletokenbucket.h",
+    "SrtpFlow.h",
+    "stun_socket_filter.h",
+    "test_nr_socket.h",
+    "transportflow.h",
+    "transportlayer.h",
+    "transportlayerdtls.h",
+    "transportlayerice.h",
+    "transportlayerlog.h",
+    "transportlayerloopback.h",
+    "transportlayersrtp.h",
+    "WebrtcTCPSocketWrapper.h",
+]

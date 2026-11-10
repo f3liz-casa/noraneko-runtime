@@ -17,7 +17,78 @@ class Harness(SingleTestMixin):
         self.per_test_coverage = per_test_coverage
 
 
-class TestTestSummaryLogs(unittest.TestCase):
+class TestChunkSuites(unittest.TestCase):
+    def chunk(self, suites, total_chunks, this_chunk):
+        harness = Harness()
+        harness.suites = suites
+        return harness._chunk_suites(total_chunks, this_chunk)
+
+    def test_chunks_together_cover_each_test_once(self):
+        tests = ["test_%02d.js" % i for i in range(23)]
+        seen = []
+        for n in range(1, 4):
+            seen.extend(self.chunk({"xpcshell": list(tests)}, 3, n).get("xpcshell", []))
+
+        self.assertEqual(sorted(seen), sorted(tests))
+        self.assertEqual(len(seen), len(set(seen)))
+
+    def test_chunk_does_not_depend_on_insertion_order(self):
+        """find_modified_tests builds the suites by iterating a set, whose
+        order varies between processes, so two tasks of the same push would
+        otherwise slice different lists."""
+        tests = ["test_%02d.js" % i for i in range(23)]
+
+        self.assertEqual(
+            self.chunk({"xpcshell": list(tests)}, 3, 2),
+            self.chunk({"xpcshell": list(reversed(tests))}, 3, 2),
+        )
+
+    def test_tests_are_split_across_suites(self):
+        suites = {"mochitest-plain": ["b.js", "a.js"], "xpcshell": ["d.js", "c.js"]}
+
+        self.assertEqual(
+            self.chunk(dict(suites), 2, 1), {"mochitest-plain": ["a.js", "b.js"]}
+        )
+        self.assertEqual(self.chunk(dict(suites), 2, 2), {"xpcshell": ["c.js", "d.js"]})
+
+    def test_a_single_chunk_runs_everything(self):
+        suites = {"xpcshell": ["b.js", "a.js"]}
+
+        self.assertEqual(self.chunk(suites, 1, 1), {"xpcshell": ["a.js", "b.js"]})
+
+
+class TestIndexedLogs(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(suffix=".mozharness")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_verify_mode_gives_each_run_distinct_logs(self):
+        harness = Harness(verify_enabled=True)
+        first_raw, first_errors = harness.get_indexed_logs(self.dir, "mochitest-plain")
+        second_raw, second_errors = harness.get_indexed_logs(
+            self.dir, "mochitest-plain"
+        )
+
+        self.assertEqual(os.path.basename(first_raw), "mochitest-plain-test1_raw.log")
+        self.assertEqual(
+            os.path.basename(first_errors), "mochitest-plain-test1_errorsummary.log"
+        )
+        self.assertEqual(os.path.basename(second_raw), "mochitest-plain-test2_raw.log")
+        self.assertEqual(
+            os.path.basename(second_errors), "mochitest-plain-test2_errorsummary.log"
+        )
+
+    def test_logs_are_unindexed_outside_verify_mode(self):
+        harness = Harness()
+        raw, errors = harness.get_indexed_logs(self.dir, "xpcshell")
+
+        self.assertEqual(os.path.basename(raw), "xpcshell_raw.log")
+        self.assertEqual(os.path.basename(errors), "xpcshell_errorsummary.log")
+
+
+class TestTestSummaryFile(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(suffix=".mozharness")
 
@@ -28,83 +99,37 @@ class TestTestSummaryLogs(unittest.TestCase):
     def summary(self):
         return os.path.join(self.dir, "summary.jsonl")
 
-    def write_part(self, harness, contents):
-        with open(harness.test_summary_file, "w", encoding="utf-8") as fh:
-            fh.write(contents)
+    def test_suite_without_opt_in_gets_no_summary(self):
+        harness = Harness()
+
+        path = harness.query_test_summary_file(self.dir, {"run_filename": "run.py"})
+
+        self.assertIsNone(path)
+        self.assertFalse(os.path.exists(self.summary))
+
+    def test_suite_opting_in_gets_the_task_summary(self):
+        harness = Harness()
+
+        path = harness.query_test_summary_file(self.dir, {"test_summary": True})
+
+        self.assertEqual(path, self.summary)
+
+    def test_stale_summary_is_replaced_once_per_task(self):
+        harness = Harness(verify_enabled=True)
+        with open(self.summary, "w", encoding="utf-8") as fh:
+            fh.write('{"action": "test_start", "test": "stale"}\n')
+
+        harness.query_test_summary_file(self.dir, {"test_summary": True})
+        self.assertEqual(self.read_summary(), [])
+
+        with open(self.summary, "a", encoding="utf-8") as fh:
+            fh.write('{"action": "test_start", "test": "first run"}\n')
+        harness.query_test_summary_file(self.dir, {"test_summary": True})
+        self.assertEqual([r["test"] for r in self.read_summary()], ["first run"])
 
     def read_summary(self):
         with open(self.summary, encoding="utf-8") as fh:
-            return fh.read()
-
-    def test_verify_mode_gives_each_run_a_distinct_summary(self):
-        harness = Harness(verify_enabled=True)
-        _, _, first = harness.get_indexed_logs(self.dir, "mochitest-plain")
-        _, _, second = harness.get_indexed_logs(self.dir, "mochitest-plain")
-
-        self.assertEqual(
-            os.path.basename(first), "mochitest-plain-test1_testsummary.jsonl"
-        )
-        self.assertEqual(
-            os.path.basename(second), "mochitest-plain-test2_testsummary.jsonl"
-        )
-
-    def test_summary_is_unindexed_outside_verify_mode(self):
-        harness = Harness()
-        _, _, path = harness.get_indexed_logs(self.dir, "xpcshell")
-
-        self.assertEqual(os.path.basename(path), "xpcshell_testsummary.jsonl")
-        self.assertEqual(harness.test_summary_file, path)
-
-    def test_parts_are_concatenated_in_order_and_removed(self):
-        harness = Harness(verify_enabled=True)
-
-        harness.get_indexed_logs(self.dir, "xpcshell")
-        first = harness.test_summary_file
-        self.write_part(harness, '{"action": "test_start", "test": "a"}\n')
-        harness.append_test_summary(self.dir)
-
-        harness.get_indexed_logs(self.dir, "xpcshell")
-        second = harness.test_summary_file
-        self.write_part(harness, '{"action": "test_start", "test": "b"}\n')
-        harness.append_test_summary(self.dir)
-
-        tests = [json.loads(line)["test"] for line in self.read_summary().splitlines()]
-        self.assertEqual(tests, ["a", "b"])
-        self.assertFalse(os.path.exists(first))
-        self.assertFalse(os.path.exists(second))
-        self.assertIsNone(harness.test_summary_file)
-
-    def test_missing_part_is_a_noop(self):
-        harness = Harness()
-        harness.get_indexed_logs(self.dir, "reftest")
-
-        harness.append_test_summary(self.dir)
-
-        self.assertFalse(os.path.exists(self.summary))
-        self.assertIsNone(harness.test_summary_file)
-
-    def test_part_without_trailing_newline_does_not_glue(self):
-        harness = Harness(verify_enabled=True)
-
-        harness.get_indexed_logs(self.dir, "mochitest-plain")
-        self.write_part(harness, '{"action": "test_start", "test": "a"}')
-        harness.append_test_summary(self.dir)
-
-        harness.get_indexed_logs(self.dir, "mochitest-plain")
-        self.write_part(harness, '{"action": "test_start", "test": "b"}\n')
-        harness.append_test_summary(self.dir)
-
-        lines = self.read_summary().splitlines()
-        self.assertEqual([json.loads(line)["test"] for line in lines], ["a", "b"])
-
-    def test_empty_part_does_not_create_a_summary(self):
-        harness = Harness()
-        harness.get_indexed_logs(self.dir, "xpcshell")
-        self.write_part(harness, "")
-
-        harness.append_test_summary(self.dir)
-
-        self.assertFalse(os.path.exists(self.summary))
+            return [json.loads(line) for line in fh]
 
 
 if __name__ == "__main__":

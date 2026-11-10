@@ -47,7 +47,6 @@
 #include "api/scoped_refptr.h"
 #include "api/task_queue/task_queue_base.h"
 #include "api/transport/bitrate_settings.h"
-#include "api/transport/rtp/rtp_source.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
 #include "api/video/video_frame.h"
@@ -168,9 +167,6 @@ class FakeAudioReceiveStream final : public AudioReceiveStreamInterface {
   int GetBaseMinimumPlayoutDelayMs() const override {
     return base_mininum_playout_delay_ms_;
   }
-  std::vector<RtpSource> GetSources() const override {
-    return std::vector<RtpSource>();
-  }
   AudioMixer::Source* source() override {
     // TODO(b/397376626): Add a Fake AudioMixer::Source
     return nullptr;
@@ -281,10 +277,6 @@ class FakeVideoReceiveStream final : public VideoReceiveStreamInterface {
 
   void SetStats(const VideoReceiveStreamInterface::Stats& stats);
 
-  std::vector<RtpSource> GetSources() const override {
-    return std::vector<RtpSource>();
-  }
-
   int base_mininum_playout_delay_ms() const {
     return base_mininum_playout_delay_ms_;
   }
@@ -334,6 +326,10 @@ class FakeVideoReceiveStream final : public VideoReceiveStreamInterface {
       std::map<int, int> associated_payload_types) override {
     config_.rtp.rtx_associated_payload_types =
         std::move(associated_payload_types);
+  }
+
+  void SetDecoders(std::vector<Decoder> decoders) override {
+    config_.decoders = std::move(decoders);
   }
 
   void SetRawPayloadTypes(std::set<int> raw_payload_types) override {

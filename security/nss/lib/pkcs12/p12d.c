@@ -55,6 +55,11 @@ struct sec_PKCS12SafeContentsContextStr {
 
     /* if the safe contents is nested, the parent is pointed to here. */
     sec_PKCS12SafeContentsContext *nestedSafeContentsCtx;
+
+    /* nesting depth of this safe contents; the top-level authenticatedSafe
+     * is 0 and each nested safeContents increments it.
+     */
+    unsigned int nestingDepth;
 };
 
 /* opaque decoder context structure.  information for decoding a pkcs 12
@@ -141,7 +146,42 @@ struct SEC_PKCS12DecoderContextStr {
     sec_PKCS12SafeBag **keyList; /* used by ...IterateNext() */
     unsigned int iteration;
     SEC_PKCS12DecoderItem decitem;
+
+    /* limits applied to every decoder context created while decoding this
+     * PFX; each is only used once the caller has set it */
+    unsigned long maxInputSize;
+    PRBool maxInputSizeSet;
+    unsigned long maxElementLen;
+    PRBool maxElementLenSet;
 };
+
+/* apply the caller's limits to an inner ASN.1 decoder context.  The content
+ * an inner decoder sees is a substring of what was fed to the PFX decoder,
+ * so the caller's limits can be passed down unchanged. */
+static void
+sec_pkcs12_decoder_set_limits(SEC_PKCS12DecoderContext *p12dcx,
+                              SEC_ASN1DecoderContext *a1dcx)
+{
+    if (p12dcx->maxInputSizeSet) {
+        SEC_ASN1DecoderSetMaximumInputSize(a1dcx, p12dcx->maxInputSize);
+    }
+    if (p12dcx->maxElementLenSet) {
+        SEC_ASN1DecoderSetMaximumElementSize(a1dcx, p12dcx->maxElementLen);
+    }
+}
+
+/* apply the caller's limits to an inner PKCS#7 decoder context */
+static void
+sec_pkcs12_decoder_set_p7_limits(SEC_PKCS12DecoderContext *p12dcx,
+                                 SEC_PKCS7DecoderContext *p7dcx)
+{
+    if (p12dcx->maxInputSizeSet) {
+        SEC_PKCS7DecoderSetMaxInputSize(p7dcx, p12dcx->maxInputSize);
+    }
+    if (p12dcx->maxElementLenSet) {
+        SEC_PKCS7DecoderSetMaxElementLen(p7dcx, p12dcx->maxElementLen);
+    }
+}
 
 /* forward declarations of functions that are used when decoding
  * safeContents bags which are nested and when decoding the
@@ -500,6 +540,8 @@ sec_pkcs12_decoder_safe_contents_notify(void *arg, PRBool before,
             p12dcx->errorValue = PORT_GetError();
             goto loser;
         }
+        sec_pkcs12_decoder_set_limits(p12dcx,
+                                      safeContentsCtx->currentSafeBagA1Dcx);
 
         /* set the notify and filter procs so that the safe bag
          * data gets sent to the proper location when decoding.
@@ -590,6 +632,8 @@ sec_pkcs12_decoder_safe_contents_init_decode(SEC_PKCS12DecoderContext *p12dcx,
         p12dcx->errorValue = PORT_GetError();
         goto loser;
     }
+    sec_pkcs12_decoder_set_limits(p12dcx,
+                                  safeContentsCtx->safeContentsA1Dcx);
 
     /* set the safeContents notify procedure to look for
      * and start the decode of safeBags.
@@ -657,6 +701,14 @@ loser:
     }
 }
 
+/* Bound the number of nested safeContents that may be decoded.  Each level
+ * creates a new ASN.1 decoder context, so the SEC_ASN1D_MAX_DEPTH structural
+ * limit does not apply across levels; without this bound a crafted file can
+ * drive unbounded recursion and exhaust the stack.  No known producer nests
+ * safeContents more than one level deep, so a single level is permitted.
+ */
+#define SEC_PKCS12_MAX_NESTING_DEPTH 1
+
 /* whenever a new safeContentsSafeBag is encountered, we need
  * to init a safeContentsContext.
  */
@@ -670,12 +722,22 @@ sec_pkcs12_decoder_begin_nested_safe_contents(sec_PKCS12SafeContentsContext
         return SECFailure;
     }
 
+    if (safeContentsCtx->nestingDepth >= SEC_PKCS12_MAX_NESTING_DEPTH) {
+        PORT_SetError(SEC_ERROR_PKCS12_CORRUPT_PFX_STRUCTURE);
+        safeContentsCtx->p12dcx->error = PR_TRUE;
+        safeContentsCtx->p12dcx->errorValue =
+            SEC_ERROR_PKCS12_CORRUPT_PFX_STRUCTURE;
+        return SECFailure;
+    }
+
     safeContentsCtx->nestedSafeContentsCtx =
         sec_pkcs12_decoder_safe_contents_init_decode(safeContentsCtx->p12dcx,
                                                      PR_TRUE);
     if (!safeContentsCtx->nestedSafeContentsCtx) {
         return SECFailure;
     }
+    safeContentsCtx->nestedSafeContentsCtx->nestingDepth =
+        safeContentsCtx->nestingDepth + 1;
 
     /* set up new filter proc */
     SEC_ASN1DecoderSetNotifyProc(
@@ -809,6 +871,7 @@ sec_pkcs12_decoder_asafes_notify(void *arg, PRBool before, void *dest,
             p12dcx->errorValue = PORT_GetError();
             goto loser;
         }
+        sec_pkcs12_decoder_set_p7_limits(p12dcx, p12dcx->currentASafeP7Dcx);
         SEC_ASN1DecoderSetFilterProc(p12dcx->aSafeA1Dcx,
                                      sec_pkcs12_decoder_wrap_p7_update,
                                      p12dcx->currentASafeP7Dcx, PR_TRUE);
@@ -905,6 +968,7 @@ sec_pkcs12_decode_start_asafes_cinfo(SEC_PKCS12DecoderContext *p12dcx)
         p12dcx->errorValue = PORT_GetError();
         goto loser;
     }
+    sec_pkcs12_decoder_set_limits(p12dcx, p12dcx->aSafeA1Dcx);
 
     /* set the notify function */
     SEC_ASN1DecoderSetNotifyProc(p12dcx->aSafeA1Dcx,
@@ -918,6 +982,7 @@ sec_pkcs12_decode_start_asafes_cinfo(SEC_PKCS12DecoderContext *p12dcx)
         p12dcx->errorValue = PORT_GetError();
         goto loser;
     }
+    sec_pkcs12_decoder_set_p7_limits(p12dcx, p12dcx->aSafeP7Dcx);
 
     /* open the temp file for writing, if the digest functions were set */
     if (p12dcx->dOpen && (*p12dcx->dOpen)(p12dcx->dArg, PR_FALSE) != SECSuccess) {
@@ -1285,7 +1350,22 @@ SEC_PKCS12DecoderSetMaxElementLen(SEC_PKCS12DecoderContext *p12dcx,
     if (!p12dcx || p12dcx->error) {
         return SECFailure;
     }
+    p12dcx->maxElementLen = maxLen;
+    p12dcx->maxElementLenSet = PR_TRUE;
     SEC_ASN1DecoderSetMaximumElementSize(p12dcx->pfxA1Dcx, maxLen);
+    return SECSuccess;
+}
+
+SECStatus
+SEC_PKCS12DecoderSetMaxInputSize(SEC_PKCS12DecoderContext *p12dcx,
+                                 unsigned long maxInputSize)
+{
+    if (!p12dcx || p12dcx->error) {
+        return SECFailure;
+    }
+    p12dcx->maxInputSize = maxInputSize;
+    p12dcx->maxInputSizeSet = PR_TRUE;
+    SEC_ASN1DecoderSetMaximumInputSize(p12dcx->pfxA1Dcx, maxInputSize);
     return SECSuccess;
 }
 
@@ -1500,6 +1580,9 @@ SEC_PKCS12DecoderVerify(SEC_PKCS12DecoderContext *p12dcx)
     rv = SEC_ASN1DecoderFinish(p12dcx->pfxA1Dcx);
     p12dcx->pfxA1Dcx = NULL;
     if (rv != SECSuccess) {
+        /* The PFX is incomplete, so the bags are too. */
+        p12dcx->errorValue = PORT_GetError();
+        p12dcx->error = PR_TRUE;
         return rv;
     }
 #ifdef UNSAFE_FUZZER_MODE
@@ -2662,7 +2745,7 @@ SEC_PKCS12DecoderGetCerts(SEC_PKCS12DecoderContext *p12dcx)
     sec_PKCS12SafeBag **safeBags;
     int i;
 
-    if (!p12dcx || !p12dcx->safeBags || !p12dcx->safeBags[0]) {
+    if (!p12dcx || p12dcx->error || !p12dcx->safeBags || !p12dcx->safeBags[0]) {
         PORT_SetError(SEC_ERROR_INVALID_ARGS);
         return NULL;
     }

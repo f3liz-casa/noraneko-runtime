@@ -41,3 +41,33 @@ SOURCES["DoubleToString.cpp"].flags += ["-Wno-implicit-fallthrough"]
 
 if CONFIG["FUZZING_JS_FUZZILLI"]:
     include("/tools/fuzzing/libfuzzer-config.mozbuild")
+
+LICENSED_UNDER += [
+    "unicode",
+]
+
+SOURCE_HEADERS += [
+    "CompleteFile.h",
+    "DefaultLocale.h",
+    "Denormals.h",
+    "DiagnosticAssertions.h",
+    "DifferentialTesting.h",
+    "DoubleToString.h",
+    "EnumFlags.h",
+    "GetPidProvider.h",
+    "Identifier.h",
+    "LanguageId.h",
+    "Memory.h",
+    "NativeStack.h",
+    "Poison.h",
+    "PolicyAllocator.h",
+    "PortableMath.h",
+    "RandomSeed.h",
+    "StringBuilder.h",
+    "StructuredSpewer.h",
+    "Text.h",
+    "TrailingArray.h",
+    "Unicode.h",
+    "UnicodeNonBMP.h",
+    "WindowsWrapper.h",
+]

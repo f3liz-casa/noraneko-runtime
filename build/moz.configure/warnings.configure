@@ -21,7 +21,6 @@ def warnings_as_errors(warnings_as_errors):
 set_config("WARNINGS_AS_ERRORS", warnings_as_errors)
 
 not_clang_cl = depends(c_compiler)(lambda c: c.type != "clang-cl")
-not_clang = depends(c_compiler)(lambda c: c.type != "clang")
 not_clang_based = depends(c_compiler)(lambda c: c.type not in ("clang", "clang-cl"))
 
 # GCC/Clang warnings:
@@ -333,6 +332,7 @@ check_and_add_warning(
     ),
     min_clang_version="4.0.0",
 )
+check_and_add_warning("-Wthread-safety-pointer", min_clang_version="21.0.0")
 
 # Warn if APIs are used without available() checks on macOS.
 check_and_add_warning(

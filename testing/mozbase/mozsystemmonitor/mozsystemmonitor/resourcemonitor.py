@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 import warnings
-from collections import OrderedDict, namedtuple
+from collections import deque, namedtuple
 from contextlib import contextmanager
 
 # Common prefix in log lines from a Gecko process: "[Child|Parent <pid>: <thread>]"
@@ -58,7 +58,8 @@ _WARNING_RE = re.compile(
 )
 
 _ASSERTION_RE = re.compile(
-    _PROC_PREFIX_COMMA
+    r"\x07?"
+    + _PROC_PREFIX_COMMA
     + r" ###!!! ASSERTION: (?P<message>.*?), file (?P<file>[^:]+):(?P<line>\d+)\s*$"
 )
 
@@ -245,6 +246,25 @@ def _poll(pipe, poll_interval=0.1):
         return True
 
 
+def _process_sampling_interval(poll_interval):
+    """Return the minimum interval, in seconds, between samples of the running
+    processes, or None if they shouldn't be sampled.
+
+    MOZ_PROCESS_SAMPLING sets that interval. Sampling processes is expensive
+    when there are many of them, so a larger interval trades the precision of
+    their start and end times for less overhead. 0 disables process sampling,
+    and a value that isn't a number samples them along with everything else.
+    """
+    value = os.environ.get("MOZ_PROCESS_SAMPLING")
+    if not value:
+        return None
+    try:
+        interval = float(value)
+    except ValueError:
+        return poll_interval
+    return interval if interval > 0 else None
+
+
 def _collect(pipe, poll_interval):
     """Collects system metrics.
 
@@ -253,7 +273,10 @@ def _collect(pipe, poll_interval):
     """
 
     processes = []
-    sample_processes = "MOZ_PROCESS_SAMPLING" in os.environ
+    process_sampling_interval = _process_sampling_interval(poll_interval)
+    known_processes = dict()
+    # Processes that were already running when monitoring started.
+    initial_processes = set()
 
     try:
         # Establish initial values.
@@ -270,18 +293,37 @@ def _collect(pipe, poll_interval):
 
         sleep_interval = poll_interval
 
-        known_processes = dict()
+        last_process_sample = None
 
         def update_known_processes():
-            nonlocal known_processes
+            nonlocal known_processes, last_process_sample
 
-            if not sample_processes:
+            if process_sampling_interval is None:
                 return
+            now = time.monotonic()
+            # Polls are not evenly spaced, so allow for half a poll of slack
+            # to not skip polls when the interval is a multiple of it.
+            if (
+                last_process_sample is not None
+                and now - last_process_sample + poll_interval / 2
+                < process_sampling_interval
+            ):
+                return
+            last_process_sample = now
 
             updated_known_processes = dict()
             for p in psutil.process_iter():
                 pid = p.pid
-                create_time = p.create_time()
+                try:
+                    with p.oneshot():
+                        create_time = p.create_time()
+                        # Zombies have exited, they just haven't been waited
+                        # for by their parent yet.
+                        if p.status() == psutil.STATUS_ZOMBIE:
+                            continue
+                except psutil.Error:
+                    # The process exited or isn't accessible.
+                    continue
                 # If the process creation time does not match, a new process reused a pid.
                 if pid in known_processes and create_time == known_processes[pid][0]:
                     updated_known_processes[pid] = known_processes[pid]
@@ -290,6 +332,13 @@ def _collect(pipe, poll_interval):
                     cmd = []
                     try:
                         cmd = p.cmdline()
+                    except psutil.AccessDenied:
+                        # e.g. processes from other users on Windows and
+                        # macOS, whose name is usually still available.
+                        try:
+                            cmd = [p.name()]
+                        except Exception as e:
+                            cmd = ["exception", str(e)]
                     except Exception as e:
                         cmd = ["exception", str(e)]
                     ppid = 0
@@ -305,6 +354,9 @@ def _collect(pipe, poll_interval):
             known_processes = updated_known_processes
 
         update_known_processes()
+        initial_processes = {
+            (pid, create_time) for pid, (create_time, _, _) in known_processes.items()
+        }
 
         while not _poll(pipe, poll_interval=sleep_interval):
             io = get_disk_io_counters()
@@ -358,9 +410,16 @@ def _collect(pipe, poll_interval):
             sleep_interval = max(poll_interval / 2, poll_interval - collection_overhead)
 
     except Exception as e:
-        warnings.warn("_collect failed: %s" % e)
+        warnings.warn(f"_collect failed: {e}")
 
     finally:
+        # Record the processes that started while monitoring and are still
+        # running.
+        stop_time = time.time()
+        for pid, (create_time, cmd, ppid) in known_processes.items():
+            if (pid, create_time) not in initial_processes:
+                processes.append((pid, create_time, stop_time, cmd, ppid))
+
         for pid, create_time, end_time, cmd, ppid in processes:
             if len(cmd) > 0:
                 cmd[0] = os.path.basename(cmd[0])
@@ -393,6 +452,34 @@ SystemResourceUsage = namedtuple(
     "SystemResourceUsage",
     ["start", "end", "cpu_times", "cpu_percent", "io", "net_io", "virt", "swap"],
 )
+
+
+class _AssertionFallbackLogger:
+    """Logger-like sink for the line-based AssertionFailureParser: the
+    actions it would emit become markers instead."""
+
+    def __init__(self, monitor):
+        self._monitor = monitor
+
+    def assertion_failure(self, **data):
+        self._monitor._record_line_assertion(data)
+
+
+def _ubsan_key(data):
+    """Identity of a UBSan report, shared by the ubsan_error action and the
+    line-based fallback so the two can be matched."""
+    return (data.get("file"), data.get("lineno"), data.get("column"), data["message"])
+
+
+class _UBSanFallbackLogger:
+    """Logger-like sink for the line-based UBSanErrorParser: the actions it
+    would emit become markers instead."""
+
+    def __init__(self, monitor):
+        self._monitor = monitor
+
+    def ubsan_error(self, **data):
+        self._monitor._record_line_ubsan(data)
 
 
 class SystemResourceMonitor:
@@ -472,7 +559,7 @@ class SystemResourceMonitor:
     def _format_percent(value):
         return str(round(value, 1)) + "%"
 
-    def __init__(self, poll_interval=1.0, metadata={}):
+    def __init__(self, poll_interval=1.0, metadata=None):
         """Instantiate a system resource monitor instance.
 
         The instance is configured with a poll interval. This is the interval
@@ -485,7 +572,7 @@ class SystemResourceMonitor:
         self.markers = []
         self.processes = []
         self.measurements = []
-        self.phases = OrderedDict()
+        self.phases = {}
 
         self._active_phases = {}
         self._active_markers = {}
@@ -499,6 +586,36 @@ class SystemResourceMonitor:
         # console.trace: line waiting for follow-up stack frames; flushed when
         # a non-frame process_output line arrives or the monitor stops.
         self._pending_console_trace = None
+        # Line-based fallback for harnesses that do not emit assertion_failure
+        # actions: assembles assertion headers and their stack frames out of
+        # process_output lines. An assertion_failure action for the same
+        # assertion supersedes the pending line-based report.
+        self._assertion_parser = None
+        try:
+            from moztest.assertions import AssertionFailureParser
+        except ImportError:
+            pass
+        else:
+            self._assertion_parser = AssertionFailureParser(
+                _AssertionFallbackLogger(self)
+            )
+        # (message, file, lineno) of assertion_failure actions that found no
+        # pending line-based report, so that one completing later is dropped.
+        self._recent_assertion_actions = deque(maxlen=32)
+        # Line-based fallback for harnesses that do not emit ubsan_error
+        # actions: assembles UBSan reports out of process_output lines. A
+        # ubsan_error action for the same report supersedes the pending
+        # line-based one.
+        self._ubsan_parser = None
+        try:
+            from moztest.ubsan import UBSanErrorParser
+        except ImportError:
+            pass
+        else:
+            self._ubsan_parser = UBSanErrorParser(_UBSanFallbackLogger(self))
+        # Keys of ubsan_error actions that found no pending line-based
+        # report, so that one completing later is dropped.
+        self._recent_ubsan_actions = deque(maxlen=32)
         # Multi-line console.<method>: body (Message:/Stack:/frames) waiting
         # to be assembled into a single marker. Tuple of
         # (name, timestamp, marker_data, phase, prefix_body) where phase
@@ -519,6 +636,8 @@ class SystemResourceMonitor:
         self._drain_timer = None
         self._pipe_lock = threading.Lock()
 
+        if metadata is None:
+            metadata = {}
         self.metadata = metadata
         # "hg:<host>/<repo>:" prefix and revision parsed once from the profile
         # metadata's sourceURL, used to wrap repo-relative frame paths into
@@ -544,7 +663,7 @@ class SystemResourceMonitor:
             virt = psutil.virtual_memory()
             swap = psutil.swap_memory()
         except Exception as e:
-            warnings.warn("psutil failed to run: %s" % e)
+            warnings.warn(f"psutil failed to run: {e}")
             return
 
         self._cpu_cores = len(cpu_percent)
@@ -658,6 +777,10 @@ class SystemResourceMonitor:
         self._flush_leak_logs()
         self._flush_pending_console_trace()
         self._flush_pending_multiline_console()
+        if self._assertion_parser is not None:
+            self._assertion_parser.flush()
+        if self._ubsan_parser is not None:
+            self._ubsan_parser.flush()
 
         if self._stream_file:
             self._stream_file.close()
@@ -749,7 +872,7 @@ class SystemResourceMonitor:
                 ) = self._pipe.recv()
             except Exception as e:
                 if not self._stopped:
-                    warnings.warn("failed to receive data: %s" % e)
+                    warnings.warn(f"failed to receive data: {e}")
                 break
 
             if start_time == "process":
@@ -778,8 +901,7 @@ class SystemResourceMonitor:
                 self._stream_measurement(m)
             except Exception:
                 warnings.warn(
-                    "failed to read the received data: %s"
-                    % str((
+                    "failed to read the received data: {}".format((
                         start_time,
                         end_time,
                         io_diff,
@@ -1002,8 +1124,11 @@ class SystemResourceMonitor:
             f"{self._frame_file_prefix}{cleaned}:{self._frame_file_rev}",
         )
 
-    def _parse_process_output(self, line, timestamp, test_name):
+    def _parse_process_output(self, line, timestamp, test_name, process=None):
         """Parse a single process_output line and emit a typed marker if it matches a known pattern.
+
+        `process` identifies the output stream the line came from, so that
+        multi-line reports from interleaved streams are kept apart.
 
         Returns True if the line produced a specialized marker, False otherwise.
         """
@@ -1078,7 +1203,17 @@ class SystemResourceMonitor:
             self._add_event("C++ warning", timestamp, marker_data)
             return True
 
-        if m := _ASSERTION_RE.match(line):
+        if self._ubsan_parser is not None and self._ubsan_parser.log(
+            line, pid=process, test=test_name, time=timestamp
+        ):
+            return True
+
+        if self._assertion_parser is not None:
+            if self._assertion_parser.log(
+                line, pid=process, test=test_name, time=timestamp
+            ):
+                return True
+        elif m := _ASSERTION_RE.match(line):
             display, frame_file = self._clean_frame_file(m["file"])
             marker_data = {
                 "type": "cppDebug",
@@ -1408,7 +1543,7 @@ class SystemResourceMonitor:
             line = data.get("data")
             test_name = data.get("test")
             if line and SystemResourceMonitor.instance._parse_process_output(
-                line, timestamp, test_name
+                line, timestamp, test_name, process=data.get("process")
             ):
                 # Line was parsed into a specialized marker; nothing else to do.
                 return
@@ -1418,13 +1553,30 @@ class SystemResourceMonitor:
         else:
             # test_status and log actions
             status = (data.get("status") or data.get("level")).upper()
+            # mozlog omits "expected" when the result was the expected one, so
+            # an absent key is what marks a todo(), a fails-if, or a hit on an
+            # expectation file. Harnesses that will retry a failing test rewrite
+            # "expected" to match, and flag it with "will_retry".
+            expected = data.get("expected")
+            as_expected = (
+                expected is None or expected.upper() == status
+            ) and not data.get("extra", {}).get("will_retry")
             marker_name = status
 
             # Determine color based on status
             if status == "PASS":
-                marker_data["color"] = "green"
+                if as_expected:
+                    marker_data["color"] = "green"
+                else:
+                    # A todo() that passed; this fails the test.
+                    marker_name = "UNEXPECTED-PASS"
+                    marker_data["color"] = "orange"
             elif status == "FAIL":
-                marker_data["color"] = "orange"
+                if as_expected:
+                    marker_name = "KNOWN-FAIL"
+                    marker_data["color"] = "yellow"
+                else:
+                    marker_data["color"] = "orange"
             elif status == "ERROR":
                 marker_data["color"] = "red"
 
@@ -1656,6 +1808,148 @@ class SystemResourceMonitor:
             SystemResourceMonitor.record_event("TSan Error", timestamp, marker_data)
 
     @staticmethod
+    def assertion_failure(data):
+        """Record a native assertion failure.
+
+        Args:
+            data: Dictionary containing assertion_failure data including:
+                  - "kind": "MOZ_ASSERT", "MOZ_CRASH", "NS_ASSERTION" or "NS_ABORT"
+                  - "message": asserted condition or crash reason
+                  - "file", "lineno": source location (optional)
+                  - "pid", "process_type", "thread": asserting process (optional)
+                  - "fatal": whether the process aborts (optional)
+                  - "stack": list of profiler-format frame dicts (optional)
+                  - "test": test name (optional)
+                  - "time": timestamp in milliseconds
+
+        The same assertion may be pending in the line-based fallback fed by
+        process_output lines; the structured action wins.
+        """
+        if not SystemResourceMonitor.instance:
+            return
+
+        monitor = SystemResourceMonitor.instance
+        timestamp = monitor.get_monotonic_time_from_data(data)
+
+        key = (data["message"], data.get("file"), data.get("lineno"))
+        if not (monitor._assertion_parser and monitor._assertion_parser.discard(key)):
+            monitor._recent_assertion_actions.append(key)
+        monitor._emit_assertion_marker(timestamp, data)
+
+    def _record_line_assertion(self, data):
+        key = (data["message"], data.get("file"), data.get("lineno"))
+        if key in self._recent_assertion_actions:
+            self._recent_assertion_actions.remove(key)
+            return
+        self._emit_assertion_marker(data.pop("time", time.monotonic()), data)
+
+    def _emit_assertion_marker(self, timestamp, data):
+        fatal = bool(data.get("fatal"))
+        marker_data = {
+            "type": "AssertionFailure",
+            "kind": data["kind"],
+            "message": data["message"],
+            "color": "red" if fatal else "orange",
+        }
+        if fatal:
+            marker_data["fatal"] = True
+        frame_file = None
+        if file_ := data.get("file"):
+            marker_data["file"], frame_file = self._clean_frame_file(file_)
+        lineno = data.get("lineno")
+        if lineno is not None:
+            marker_data["line"] = lineno
+        for source, target in (
+            ("pid", "pid"),
+            ("process_type", "process"),
+            ("thread", "thread"),
+            ("test", "test"),
+        ):
+            if value := data.get(source):
+                marker_data[target] = value
+        if stack := data.get("stack"):
+            rewritten = []
+            for frame in stack:
+                if "file" in frame:
+                    rewritten.append({
+                        **frame,
+                        "file": self._clean_frame_file(frame["file"])[1],
+                    })
+                else:
+                    rewritten.append(frame)
+            marker_data["stack"] = rewritten
+        elif frame_file and lineno is not None:
+            marker_data["stack"] = [{"file": frame_file, "line": lineno}]
+        self._add_event(data["kind"], timestamp, marker_data)
+
+    @staticmethod
+    def ubsan_error(data):
+        """Record an UndefinedBehaviorSanitizer report.
+
+        Args:
+            data: Dictionary containing ubsan_error data including:
+                  - "kind": check kind (e.g. "undefined-behavior")
+                  - "message": the "runtime error:" message
+                  - "file", "lineno", "column": source location (optional)
+                  - "stack": list of profiler-format frame dicts (optional)
+                  - "scope": identifier for the browser session, e.g. a
+                             directory name (optional)
+                  - "test": test name (optional)
+                  - "time": timestamp in milliseconds
+
+        The same report may be pending in the line-based fallback fed by
+        process_output lines; the structured action wins.
+        """
+        if not SystemResourceMonitor.instance:
+            return
+
+        monitor = SystemResourceMonitor.instance
+        timestamp = monitor.get_monotonic_time_from_data(data)
+
+        key = _ubsan_key(data)
+        if not (monitor._ubsan_parser and monitor._ubsan_parser.discard(key)):
+            monitor._recent_ubsan_actions.append(key)
+        monitor._emit_ubsan_marker(timestamp, data)
+
+    def _record_line_ubsan(self, data):
+        key = _ubsan_key(data)
+        if key in self._recent_ubsan_actions:
+            self._recent_ubsan_actions.remove(key)
+            return
+        self._emit_ubsan_marker(data.pop("time", time.monotonic()), data)
+
+    def _emit_ubsan_marker(self, timestamp, data):
+        marker_data = {
+            "type": "UBSanError",
+            "kind": data["kind"],
+            "message": data["message"],
+            "color": "orange",
+        }
+        frame_file = None
+        if file_ := data.get("file"):
+            marker_data["file"], frame_file = self._clean_frame_file(file_)
+        lineno = data.get("lineno")
+        if lineno is not None:
+            marker_data["line"] = lineno
+        for key in ("column", "scope", "test"):
+            if data.get(key) is not None:
+                marker_data[key] = data[key]
+        if stack := data.get("stack"):
+            rewritten = []
+            for frame in stack:
+                if "file" in frame:
+                    rewritten.append({
+                        **frame,
+                        "file": self._clean_frame_file(frame["file"])[1],
+                    })
+                else:
+                    rewritten.append(frame)
+            marker_data["stack"] = rewritten
+        elif frame_file and lineno is not None:
+            marker_data["stack"] = [{"file": frame_file, "line": lineno}]
+        self._add_event("UBSan Error", timestamp, marker_data)
+
+    @staticmethod
     def mozleak_object(data):
         """Record a per-process per-class leaked object event.
 
@@ -1834,10 +2128,10 @@ class SystemResourceMonitor:
                 end_time = t
 
         if start_time is None:
-            raise Exception("Could not find start event: %s" % start_event)
+            raise Exception(f"Could not find start event: {start_event}")
 
         if end_time is None:
-            raise Exception("Could not find end event: %s" % end_event)
+            raise Exception(f"Could not find end event: {end_event}")
 
         return self.range_usage(start_time, end_time)
 
@@ -2298,6 +2592,44 @@ class SystemResourceMonitor:
                             "label": "Stack",
                             "format": "string",
                         },
+                    ],
+                },
+                {
+                    "name": "AssertionFailure",
+                    "tooltipLabel": "{marker.data.kind}: {marker.data.message}",
+                    "tableLabel": "{marker.data.kind}: {marker.data.message} — {marker.data.file}:{marker.data.line}",
+                    "chartLabel": "{marker.data.message}",
+                    "display": ["marker-chart", "marker-table"],
+                    "colorField": "color",
+                    "data": [
+                        {"key": "kind", "label": "Kind", "format": "string"},
+                        {"key": "message", "label": "Message", "format": "string"},
+                        {"key": "file", "format": "string", "hidden": True},
+                        {"key": "line", "format": "integer", "hidden": True},
+                        {"key": "fatal", "label": "Fatal", "format": "string"},
+                        {"key": "process", "label": "Process", "format": "string"},
+                        {"key": "pid", "label": "Process ID", "format": "integer"},
+                        {"key": "thread", "label": "Thread", "format": "string"},
+                        {"key": "test", "label": "Test", "format": "string"},
+                        {"key": "color", "hidden": True},
+                    ],
+                },
+                {
+                    "name": "UBSanError",
+                    "tooltipLabel": "{marker.data.message}",
+                    "tableLabel": "{marker.data.message} — {marker.data.file}:{marker.data.line}",
+                    "chartLabel": "{marker.data.message}",
+                    "display": ["marker-chart", "marker-table"],
+                    "colorField": "color",
+                    "data": [
+                        {"key": "kind", "label": "Kind", "format": "string"},
+                        {"key": "message", "label": "Message", "format": "string"},
+                        {"key": "file", "format": "string", "hidden": True},
+                        {"key": "line", "format": "integer", "hidden": True},
+                        {"key": "column", "format": "integer", "hidden": True},
+                        {"key": "scope", "label": "Scope", "format": "string"},
+                        {"key": "test", "label": "Test", "format": "string"},
+                        {"key": "color", "hidden": True},
                     ],
                 },
                 {

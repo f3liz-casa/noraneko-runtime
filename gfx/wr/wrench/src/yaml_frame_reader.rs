@@ -354,6 +354,7 @@ pub struct YamlFrameReader {
     frame_count: u32,
 
     display_lists: Vec<DisplayList>,
+    enforce_embed_policy: bool,
 
     watch_source: bool,
     list_resources: bool,
@@ -413,6 +414,7 @@ impl YamlFrameReader {
             aux_dir: yaml_path.parent().unwrap().to_owned(),
             frame_count: 0,
             display_lists: Vec::new(),
+            enforce_embed_policy: false,
             scroll_offsets: HashMap::new(),
             transform_properties: Vec::new(),
             font_render_mode: None,
@@ -447,6 +449,11 @@ impl YamlFrameReader {
 
     pub fn yaml_path(&self) -> &PathBuf {
         &self.yaml_path
+    }
+
+    /// The number of transactions sent so far.
+    pub fn frame_count(&self) -> u32 {
+        self.frame_count
     }
 
     pub fn new_from_args(args: &clap::ArgMatches) -> YamlFrameReader {
@@ -503,6 +510,20 @@ impl YamlFrameReader {
         self.reset();
 
         self.parse_transform_properties(&yaml);
+        self.enforce_embed_policy = yaml["enforce-embed-policy"].as_bool().unwrap_or(false);
+
+        // Pipelines to remove before this frame's display lists are set. Sent
+        // as its own transaction, with no display list and so no scene rebuild,
+        // which is what a pipeline removal looks like coming from Gecko.
+        if let Some(removed) = yaml["remove-pipelines"].as_vec() {
+            let mut txn = Transaction::new();
+            for pipeline in removed {
+                txn.remove_pipeline(
+                    pipeline.as_pipeline_id().expect("remove-pipelines takes pipeline ids"),
+                );
+            }
+            wrench.api.send_transaction(wrench.document_id, txn);
+        }
 
         if let Some(pipelines) = yaml["pipelines"].as_vec() {
             for pipeline in pipelines {
@@ -623,6 +644,7 @@ impl YamlFrameReader {
             present,
             send_transaction,
             render_offscreen: offscreen,
+            embed_policy: yaml["embed-policy"].as_embed_policy(),
         });
 
         assert_eq!(self.spatial_id_stack.len(), 1);
@@ -1754,6 +1776,8 @@ impl YamlFrameReader {
                 ("scrollbar-container", PrimitiveFlags::IS_SCROLLBAR_CONTAINER),
                 ("prefer-compositor-surface", PrimitiveFlags::PREFER_COMPOSITOR_SURFACE),
                 ("checkerboard-background", PrimitiveFlags::CHECKERBOARD_BACKGROUND),
+                ("antialiased", PrimitiveFlags::ANTIALISED),
+                ("rasterized-for-rect", PrimitiveFlags::RASTERIZED_FOR_RECT),
             ] {
                 if let Some(value) = item[key].as_bool() {
                     flags.set(flag, value);
@@ -2365,6 +2389,7 @@ impl WrenchThing for YamlFrameReader {
                 self.display_lists.clone(),
                 &self.scroll_offsets,
                 &self.transform_properties,
+                self.enforce_embed_policy,
             );
         } else {
             wrench.refresh();

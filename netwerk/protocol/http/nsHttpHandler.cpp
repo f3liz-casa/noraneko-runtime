@@ -425,7 +425,8 @@ nsresult nsHttpHandler::Init() {
             port = tmp;
           }
         }
-        mAltSvcMappingTemptativeMap.InsertOrUpdate(
+        auto map = mAltSvcMappingTemptativeMap.Lock();
+        map->InsertOrUpdate(
             host, MakeUnique<nsCString>(nsPrintfCString("h3=:%d", port)));
       }
     }
@@ -503,7 +504,6 @@ nsresult nsHttpHandler::Init() {
     // register the handler object as a weak callback as we don't need to worry
     // about shutdown ordering.
     obsService->AddObserver(this, "profile-change-net-teardown", true);
-    obsService->AddObserver(this, "profile-change-net-restore", true);
     obsService->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, true);
     obsService->AddObserver(this, "net:clear-active-logins", true);
     obsService->AddObserver(this, "net:prune-dead-connections", true);
@@ -686,8 +686,9 @@ nsresult nsHttpHandler::AddAcceptAndDictionaryHeaders(
       // Note: this is async; the lambda can happen later
       // aCallback will now be owned by GetDictionaryFor
       guard.release();
+      RefPtr<LoadContextInfo> lci = GetLoadContextInfo(aChan);
       mDictionaryCache->GetDictionaryFor(
-          aURI, aType, aChan, aSuspend,
+          aURI, aType, lci, aChan, aSuspend,
           [self = RefPtr(this), aRequest, aCallback](
               bool aNeedsResume, DictionaryCacheEntry* aDict) {
             if (!aDict) {
@@ -1796,7 +1797,8 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
                                &ratio);
     if (NS_SUCCEEDED(rv)) {
       if (ratio > 0 && ratio < 1) {
-        mFocusedWindowTransactionRatio = ratio;
+        auto lockedRatio = mFocusedWindowTransactionRatio.Lock();
+        *lockedRatio = ratio;
       } else {
         NS_WARNING("Wrong value for focused_window_transaction_ratio");
       }
@@ -2012,15 +2014,16 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     rv = Preferences::GetCString(HTTP_PREF("http3.alt-svc-mapping-for-testing"),
                                  altSvcMappings);
     if (NS_SUCCEEDED(rv)) {
+      auto map = mAltSvcMappingTemptativeMap.Lock();
       if (altSvcMappings.IsEmpty()) {
-        mAltSvcMappingTemptativeMap.Clear();
+        map->Clear();
       } else {
         for (const nsACString& tokenSubstring :
              nsCCharSeparatedTokenizer(altSvcMappings, ',').ToRange()) {
           nsAutoCString token{tokenSubstring};
           int32_t index = token.Find(";");
           if (index != kNotFound) {
-            mAltSvcMappingTemptativeMap.InsertOrUpdate(
+            map->InsertOrUpdate(
                 Substring(token, 0, index),
                 MakeUnique<nsCString>(Substring(token, index + 1)));
           }
@@ -2351,11 +2354,6 @@ nsHttpHandler::Observe(nsISupports* subject, const char* topic,
     }
 
     mActivityDistributor = nullptr;
-  } else if (!strcmp(topic, "profile-change-net-restore")) {
-    // initialize connection manager
-    rv = InitConnectionMgr();
-    MOZ_ASSERT(NS_SUCCEEDED(rv));
-    mAltSvcCache = MakeUnique<AltSvcCache>();
   } else if (!strcmp(topic, "net:clear-active-logins")) {
     mAuthCache->ClearAll();
     mPrivateAuthCache->ClearAll();
@@ -2463,9 +2461,7 @@ nsHttpHandler::Observe(nsISupports* subject, const char* topic,
   } else if (!strcmp(topic, "idle-daily")) {
     // Submit the local-network-access ping once per day
     if (XRE_IsParentProcess()) {
-#if defined(EARLY_BETA_OR_EARLIER)  // Submit custom telemetry ping.
       glean_pings::LocalNetworkAccess.Submit();
-#endif
     }
   }
   return NS_OK;
@@ -2567,10 +2563,10 @@ nsresult nsHttpHandler::SpeculativeConnectInternal(
     ci = new nsHttpConnectionInfo(host, port, ""_ns, username, nullptr,
                                   originAttributes, aURI->SchemeIs("https"));
   }
-  ci->SetAnonymous(anonymous);
-  if (originAttributes.IsPrivateBrowsing()) {
-    ci->SetPrivate(true);
-  }
+  ci = ci->Mutate()
+           .SetAnonymous(anonymous)
+           .SetPrivate(originAttributes.IsPrivateBrowsing())
+           .Finalize();
 
   if (mDebugObservations) {
     // this is basically used for test coverage of an otherwise 'hintable'
@@ -2597,7 +2593,7 @@ nsresult nsHttpHandler::SpeculativeConnectInternal(
 
   bool fetchHTTPSRR = EchConfigEnabled();
   if (StaticPrefs::network_http_happy_eyeballs_enabled()) {
-    ci->SetHappyEyeballsEnabled(true);
+    ci = ci->Mutate().SetHappyEyeballsEnabled(true).Finalize();
     // When HE is enabled, HTTPS RR lookups are handled by
     // HappyEyeballsConnectionAttempt.
     fetchHTTPSRR = false;
@@ -2620,8 +2616,7 @@ nsresult nsHttpHandler::SpeculativeConnect(nsHttpConnectionInfo* ci,
                                   NS_ConvertUTF8toUTF16(debugHashKey).get());
     }
   }
-  RefPtr<nsHttpConnectionInfo> clone = ci->Clone();
-  return mConnMgr->SpeculativeConnect(clone, callbacks, caps, aTrans);
+  return mConnMgr->SpeculativeConnect(ci, callbacks, caps, aTrans);
 }
 
 NS_IMETHODIMP
@@ -2731,8 +2726,9 @@ nsHttpHandler::EnsureHSTSDataReadyNative(
   auto func = [callback(aCallback)](bool aResult, nsresult aStatus) {
     callback->DoCallback(aResult);
   };
-  rv = NS_ShouldSecureUpgrade(uri, nullptr, nullptr, false, originAttributes,
-                              shouldUpgrade, std::move(func), willCallback);
+  rv = NS_ShouldSecureUpgrade(uri, nullptr, nullptr, nullptr, false,
+                              originAttributes, shouldUpgrade, std::move(func),
+                              willCallback);
   if (NS_FAILED(rv) || !willCallback) {
     aCallback->DoCallback(false);
     return rv;
@@ -2834,8 +2830,7 @@ bool nsHttpHandler::IsBeforeLastActiveTabLoadOptimization(
   return !lastTimestamp->IsNull() && when <= *lastTimestamp;
 }
 
-void nsHttpHandler::ExcludeHttp2OrHttp3Internal(
-    const nsHttpConnectionInfo* ci) {
+void nsHttpHandler::ExcludeHttp2OrHttp3Internal(nsHttpConnectionInfo* ci) {
   if (ci->GetHappyEyeballsEnabled()) {
     return;
   }
@@ -2846,7 +2841,7 @@ void nsHttpHandler::ExcludeHttp2OrHttp3Internal(
   if (XRE_IsSocketProcess()) {
     MOZ_ASSERT(OnSocketThread());
 
-    RefPtr<nsHttpConnectionInfo> cinfo = ci->Clone();
+    RefPtr<nsHttpConnectionInfo> cinfo = ci;
     NS_DispatchToMainThread(NS_NewRunnableFunction(
         "nsHttpHandler::ExcludeHttp2OrHttp3Internal",
         [cinfo{std::move(cinfo)}]() {
@@ -2877,7 +2872,7 @@ void nsHttpHandler::ExcludeHttp2OrHttp3Internal(
   }
 }
 
-void nsHttpHandler::ExcludeHttp2(const nsHttpConnectionInfo* ci) {
+void nsHttpHandler::ExcludeHttp2(nsHttpConnectionInfo* ci) {
   ExcludeHttp2OrHttp3Internal(ci);
 }
 
@@ -2886,7 +2881,7 @@ bool nsHttpHandler::IsHttp2Excluded(const nsHttpConnectionInfo* ci) {
   return mExcludedHttp2Origins.Contains(ci->GetOrigin());
 }
 
-void nsHttpHandler::ExcludeHttp3(const nsHttpConnectionInfo* ci) {
+void nsHttpHandler::ExcludeHttp3(nsHttpConnectionInfo* ci) {
   // TODO: exclude HTTP/3 for proxy connection properly.
   if (ci->IsHttp3ProxyConnection()) {
     return;
@@ -3031,6 +3026,7 @@ void nsHttpHandler::SetHttpHandlerInitArgs(const HttpHandlerInitArgs& aArgs) {
   mCompatFirefox = aArgs.mCompatFirefox();
   mCompatDevice = aArgs.mCompatDevice();
   mDeviceModelId = aArgs.mDeviceModelId();
+  mUserAgentIsDirty = true;
 }
 
 void nsHttpHandler::SetDeviceModelId(const nsACString& aModelId) {
@@ -3042,7 +3038,7 @@ void nsHttpHandler::MaybeAddAltSvcForTesting(
     nsIURI* aUri, const nsACString& aUsername, bool aPrivateBrowsing,
     nsIInterfaceRequestor* aCallbacks,
     const OriginAttributes& aOriginAttributes) {
-  if (!IsHttp3Enabled() || mAltSvcMappingTemptativeMap.IsEmpty()) {
+  if (!IsHttp3Enabled()) {
     return;
   }
 
@@ -3056,17 +3052,23 @@ void nsHttpHandler::MaybeAddAltSvcForTesting(
     return;
   }
 
-  nsCString* map = mAltSvcMappingTemptativeMap.Get(originHost);
-  if (map) {
-    int32_t originPort = 80;
-    aUri->GetPort(&originPort);
-    LOG(("nsHttpHandler::MaybeAddAltSvcForTesting for %s map: %s",
-         originHost.get(), PromiseFlatCString(*map).get()));
-    AltSvcMapping::ProcessHeader(*map, nsCString("https"), originHost,
-                                 originPort, aUsername, aPrivateBrowsing,
-                                 aCallbacks, nullptr, 0, aOriginAttributes,
-                                 nullptr, true);
+  nsCString map;
+  {
+    auto mappings = mAltSvcMappingTemptativeMap.Lock();
+    nsCString* found = mappings->Get(originHost);
+    if (!found) {
+      return;
+    }
+    map = *found;
   }
+
+  int32_t originPort = 80;
+  aUri->GetPort(&originPort);
+  LOG(("nsHttpHandler::MaybeAddAltSvcForTesting for %s map: %s",
+       originHost.get(), map.get()));
+  AltSvcMapping::ProcessHeader(map, "https"_ns, originHost, originPort,
+                               aUsername, aPrivateBrowsing, aCallbacks, nullptr,
+                               0, aOriginAttributes, nullptr, true);
 }
 
 bool nsHttpHandler::EchConfigEnabled(bool aIsHttp3) {

@@ -8,6 +8,7 @@
 #include "ImageTypes.h"
 #include "MediaData.h"
 #include "TimeUnits.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Variant.h"
@@ -78,7 +79,9 @@ struct AacCodecSpecificData {
 
   // The total number of frames of the media, that is, excluding the encoder
   // delay and the padding of the last packet, that must be discarded.
-  uint64_t mMediaFrameCount{0};
+  // Unset when the exact count is unknown (e.g. Matroska has no frame table
+  // and counting would require reading the whole file).
+  Maybe<uint64_t> mMediaFrameCount;
 
   // The bytes of the ES_Descriptor field parsed out of esds box. We store
   // this as a blob as some decoders want this.
@@ -128,6 +131,7 @@ struct Mp3CodecSpecificData final {
 struct OpusCodecSpecificData {
   bool operator==(const OpusCodecSpecificData& rhs) const {
     return mContainerCodecDelayFrames == rhs.mContainerCodecDelayFrames &&
+           mOutputChannels == rhs.mOutputChannels &&
            *mHeadersBinaryBlob == *rhs.mHeadersBinaryBlob;
   }
   // The codec delay (aka pre-skip) in audio frames.
@@ -143,6 +147,13 @@ struct OpusCodecSpecificData {
   // A binary blob of opus header data, specifically the Identification Header.
   // See https://datatracker.ietf.org/doc/html/rfc7845.html#section-5.1
   RefPtr<MediaByteBuffer> mHeadersBinaryBlob{new MediaByteBuffer};
+
+  // The number of channels the audio will be rendered as, which may be fewer
+  // than the stream has when playback is configured to downmix. Opus codes
+  // wide stereo using intensity stereo phase inversion, which cancels itself
+  // out once the two channels are mixed together, so a decoder must disable
+  // it when this is 1.
+  uint32_t mOutputChannels{0};
 };
 
 struct VorbisCodecSpecificData {

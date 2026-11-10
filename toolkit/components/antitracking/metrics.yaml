@@ -41,8 +41,6 @@ contentblocking:
       This scalar reports the value of the content blocking category pref
       (0 = "standard", 1 = "strict", 2 = "custom", 3 = some other value,
       this is not supported).
-      This metric was generated to correspond to the Legacy Telemetry
-      scalar contentblocking.category.
     bugs:
       - https://bugzil.la/1529425
     data_reviews:
@@ -51,14 +49,11 @@ contentblocking:
       - privacy-team@mozilla.org
     expires: never
     unit: content blocking category
-    telemetry_mirror: CONTENTBLOCKING_CATEGORY
 
   cryptomining_blocking_enabled:
     type: boolean
     description: >
       True if cryptominer blocking is enabled globally at startup.
-      This metric was generated to correspond to the Legacy Telemetry
-      scalar contentblocking.cryptomining_blocking_enabled.
     bugs:
       - https://bugzil.la/1522919
     data_reviews:
@@ -66,14 +61,11 @@ contentblocking:
     notification_emails:
       - privacy-team@mozilla.org
     expires: never
-    telemetry_mirror: CONTENTBLOCKING_CRYPTOMINING_BLOCKING_ENABLED
 
   fingerprinting_blocking_enabled:
     type: boolean
     description: >
       True if fingerprinter blocking is enabled globally at startup.
-      This metric was generated to correspond to the Legacy Telemetry
-      scalar contentblocking.fingerprinting_blocking_enabled.
     bugs:
       - https://bugzil.la/1522919
     data_reviews:
@@ -81,14 +73,11 @@ contentblocking:
     notification_emails:
       - privacy-team@mozilla.org
     expires: never
-    telemetry_mirror: CONTENTBLOCKING_FINGERPRINTING_BLOCKING_ENABLED
 
   trackers_blocked_count:
     type: counter
     description: >
       A count of the number of tracking events blocked.
-      This metric was generated to correspond to the Legacy Telemetry
-      scalar contentblocking.trackers_blocked_count.
     bugs:
       - https://bugzil.la/1577030
       - https://bugzil.la/1610894
@@ -102,7 +91,6 @@ contentblocking:
     notification_emails:
       - privacy-team@mozilla.org
     expires: never
-    telemetry_mirror: CONTENTBLOCKING_TRACKERS_BLOCKED_COUNT
 
   canvas_fingerprinting_per_tab2:
     type: labeled_counter
@@ -117,7 +105,7 @@ contentblocking:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1847990
     notification_emails:
       - seceng-telemetry@mozilla.com
-    expires: 165
+    expires: 170
 
   canvas_fingerprinting_type_text_by_source_per_tab2:
     type: dual_labeled_counter
@@ -155,7 +143,7 @@ contentblocking:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1847990
     notification_emails:
       - seceng-telemetry@mozilla.com
-    expires: 165
+    expires: 170
 
   canvas_fingerprinting_type_alias_by_source_per_tab2:
     type: dual_labeled_counter
@@ -192,7 +180,7 @@ contentblocking:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1847990
     notification_emails:
       - seceng-telemetry@mozilla.com
-    expires: 165
+    expires: 170
 
   font_fingerprinting_per_tab:
     type: labeled_counter
@@ -211,7 +199,7 @@ contentblocking:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1946406
     notification_emails:
       - seceng-telemetry@mozilla.com
-    expires: 160
+    expires: 170
 
   storage_access_granted_count:
     type: labeled_counter
@@ -298,7 +286,6 @@ contentblocking:
       - emz@mozilla.com
       - seceng-telemetry@mozilla.com
     expires: never
-    telemetry_mirror: h#QUERY_STRIPPING_COUNT
 
   query_stripping_param_count:
     type: custom_distribution
@@ -321,7 +308,6 @@ contentblocking:
       - emz@mozilla.com
       - seceng-telemetry@mozilla.com
     expires: never
-    telemetry_mirror: QUERY_STRIPPING_PARAM_COUNT
 
   query_stripping_count_by_param:
     type: labeled_counter
@@ -364,7 +350,6 @@ contentblocking:
       - emz@mozilla.com
       - seceng-telemetry@mozilla.com
     expires: never
-    telemetry_mirror: h#QUERY_STRIPPING_COUNT_BY_PARAM
 
   email_tracker_count:
     type: labeled_counter
@@ -583,9 +568,6 @@ cookie_purging:
     type: custom_distribution
     description: >
       The number of origins that were purged during one run of cookie purging.
-
-      This metric was generated to correspond to the Legacy Telemetry
-      exponential histogram COOKIE_PURGING_ORIGINS_PURGED.
     range_min: 1
     range_max: 500
     bucket_count: 30
@@ -602,15 +584,11 @@ cookie_purging:
     notification_emails:
       - privacy-team@mozilla.org
     expires: never
-    telemetry_mirror: COOKIE_PURGING_ORIGINS_PURGED
 
   trackers_with_user_interaction:
     type: custom_distribution
     description: >
       The number of trackers that had user interaction at the time of purging.
-
-      This metric was generated to correspond to the Legacy Telemetry
-      exponential histogram COOKIE_PURGING_TRACKERS_WITH_USER_INTERACTION.
     range_min: 1
     range_max: 500
     bucket_count: 30
@@ -627,7 +605,6 @@ cookie_purging:
     notification_emails:
       - privacy-team@mozilla.org
     expires: never
-    telemetry_mirror: COOKIE_PURGING_TRACKERS_WITH_USER_INTERACTION
 
   trackers_user_interaction_remaining_days:
     type: timing_distribution
@@ -635,9 +612,6 @@ cookie_purging:
       The time remaining until expiration per user interaction permissions of
       trackers at the time of purging, in days (one record per tracker, not
       averaged).
-
-      This metric was generated to correspond to the Legacy Telemetry linear
-      histogram COOKIE_PURGING_TRACKERS_USER_INTERACTION_REMAINING_DAYS.
     time_unit: day
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1630053
@@ -650,16 +624,12 @@ cookie_purging:
     notification_emails:
       - privacy-team@mozilla.org
     expires: never
-    telemetry_mirror: COOKIE_PURGING_TRACKERS_USER_INTERACTION_REMAINING_DAYS
 
   duration:
     type: timing_distribution
     description: >
       Time spent per daily cookie purging activity, in milliseconds. This
       measures the time for all batch iterations of that day.
-
-      This metric was generated to correspond to the Legacy Telemetry
-      exponential histogram COOKIE_PURGING_DURATION_MS.
     time_unit: millisecond
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1630053
@@ -672,16 +642,12 @@ cookie_purging:
     notification_emails:
       - privacy-team@mozilla.org
     expires: never
-    telemetry_mirror: COOKIE_PURGING_DURATION_MS
 
   interval_hours:
     type: timing_distribution
     description: >
       How much time (in hours) passed between the current cookie purging
       activity and the one before that (cookie purging is run on 'daily idle')
-
-      This metric was generated to correspond to the Legacy Telemetry linear
-      histogram COOKIE_PURGING_INTERVAL_HOURS.
     time_unit: hour
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1630053
@@ -694,4 +660,3 @@ cookie_purging:
     notification_emails:
       - privacy-team@mozilla.org
     expires: never
-    telemetry_mirror: COOKIE_PURGING_INTERVAL_HOURS

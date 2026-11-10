@@ -8,6 +8,7 @@
 #include <functional>
 
 #include "mozilla/Mutex.h"
+#include "mozilla/dom/PWebTransport.h"
 #include "nsIChannelEventSink.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIRedirectResultListener.h"
@@ -89,7 +90,7 @@
  * Http3WebTransportSession if the closing of the session is initiated on the
  * main thread. OnStartRequest and OnStopRequest will be called on the main
  * thread. The session negotiation can have 2 outcomes:
- * - If both calls, i.e. OnStartRequest an OnStopRequest, indicate that the
+ * - If both calls, i.e. OnStartRequest and OnStopRequest, indicate that the
  * request has succeeded and mState is NEGOTIATING_SUCCEEDED, the
  * mListener->OnSessionReady will be called during OnStopRequest.
  * - Otherwise, mListener->OnSessionClosed will be called, the state transferred
@@ -145,6 +146,9 @@ class WebTransportSessionProxy final
 
   WebTransportSessionProxy();
 
+  bool CloseSessionAndGetStats(uint32_t aStatus, const nsACString& aReason,
+                               mozilla::dom::WebTransportStatsData& aStats);
+
  private:
   ~WebTransportSessionProxy();
 
@@ -172,15 +176,25 @@ class WebTransportSessionProxy final
                       WebTransportSessionBase* aSession, bool aBidi);
   void SendDatagramInternal(const RefPtr<WebTransportSessionBase>& aSession,
                             nsTArray<uint8_t>&& aData, uint64_t aTrackingId,
-                            uint64_t aSendGroupId, int64_t aSendOrder);
+                            uint64_t aSendGroupId, int64_t aSendOrder,
+                            TimeStamp aTimestamp);
   void NotifyDatagramReceived(nsTArray<uint8_t>&& aData);
   void GetMaxDatagramSizeInternal(
       const RefPtr<WebTransportSessionBase>& aSession);
   void OnMaxDatagramSizeInternal(uint64_t aSize);
+  void OnDrainingInternal();
+  void GetStatsInternal(const RefPtr<WebTransportSessionBase>& aSession);
+  void OnStatsAvailableInternal(
+      const Maybe<mozilla::dom::WebTransportStatsData>& aStats);
   void OnOutgoingDatagramOutComeInternal(
       uint64_t aId, WebTransportSessionEventListener::DatagramOutcome aOutCome);
-  void OnStopSendingInternal(uint64_t aStreamId, nsresult aError);
-  void OnResetReceivedInternal(uint64_t aStreamId, nsresult aError);
+  void OnStopSendingInternal(uint64_t aStreamId, uint64_t aErrorCode);
+  void OnResetReceivedInternal(uint64_t aStreamId, uint64_t aErrorCode);
+  void SetDatagramMaxBufferedDatagramsInternal(
+      const RefPtr<WebTransportSessionBase>& aSession,
+      uint32_t aMaxBufferedDatagrams);
+  void SetDatagramMaxAgeInternal(
+      const RefPtr<WebTransportSessionBase>& aSession, double aMaxAge);
 
   nsCOMPtr<nsIChannel> mChannel;
   uint64_t mHttpChannelID = 0;
@@ -192,6 +206,8 @@ class WebTransportSessionProxy final
   uint32_t mCloseStatus MOZ_GUARDED_BY(mMutex) = 0;
   nsCString mReason MOZ_GUARDED_BY(mMutex);
   nsCString mProtocol MOZ_GUARDED_BY(mMutex);
+  nsTArray<nsCString> mResponseHeaderNames MOZ_GUARDED_BY(mMutex);
+  nsTArray<nsCString> mResponseHeaderValues MOZ_GUARDED_BY(mMutex);
   nsTArray<nsString> mOfferedProtocols MOZ_GUARDED_BY(mMutex);
   bool mCleanly MOZ_GUARDED_BY(mMutex) = false;
   bool mStopRequestCalled MOZ_GUARDED_BY(mMutex) = false;
@@ -205,6 +221,10 @@ class WebTransportSessionProxy final
       MOZ_GUARDED_BY(mMutex);
   bool mDedicatedConnection = false;  // for WebTranport
   nsIWebTransport::HTTPVersion mHTTPVersion = nsIWebTransport::HTTPVersion::h3;
+
+  // Cached stats for when connection is closed (spec requirement)
+  bool mHasCachedStats MOZ_GUARDED_BY(mMutex) = false;
+  mozilla::dom::WebTransportStatsData mCachedStats MOZ_GUARDED_BY(mMutex);
 };
 
 }  // namespace mozilla::net

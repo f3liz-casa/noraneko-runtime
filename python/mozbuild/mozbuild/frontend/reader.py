@@ -33,6 +33,7 @@ from io import StringIO
 from itertools import chain
 
 import mozpack.path as mozpath
+import mozshellutil
 from mozpack.files import FileFinder
 
 from mozbuild.backend.configenvironment import ConfigEnvironment
@@ -68,6 +69,10 @@ from .sandbox import (
 
 def log(logger, level, action, params, formatter):
     logger.log(level, formatter, extra={"action": action, "params": params})
+
+
+def _init_gyp_worker(env):
+    os.environ.update(env)
 
 
 class EmptyConfig:
@@ -842,6 +847,9 @@ class BuildReader:
             "testing/mozbase/moztest/tests/data",
             # Ignore object directories.
             "obj*",
+            # Ignore scratch directories that can hold whole checkouts.
+            "artifacts",
+            ".claude/worktrees",
         }
 
         # Also ignore any other directories that could be objdirs, but don't
@@ -865,7 +873,20 @@ class BuildReader:
             # (as well as inexistent in older versions). So we cap ourselves
             # to 60, see https://bugs.python.org/issue26903#msg365886.
             max_workers = min(max_workers, 60)
-        self._gyp_worker_pool = ProcessPoolExecutor(max_workers=max_workers)
+        # The NSS gyp configuration uses CC and CFLAGS to determine the
+        # floating-point ABI on arm. Only set them in the gyp worker processes,
+        # as leaking them into our own environment would affect any other
+        # command spawned later by the same mach invocation (e.g. gradle
+        # rerunning configure, bug 2072855).
+        gyp_env = {
+            "CC": mozshellutil.quote(*config.substs.get("CC", ())),
+            "CFLAGS": mozshellutil.quote(*config.substs.get("CC_BASE_FLAGS", ())),
+        }
+        self._gyp_worker_pool = ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_init_gyp_worker,
+            initargs=(gyp_env,),
+        )
         self._gyp_processors = []
         self._execution_time = 0.0
         self._file_count = 0
@@ -1197,6 +1218,25 @@ class BuildReader:
         hook = config.substs.get("MOZ_BUILD_HOOK")
         if hook:
             sandbox.exec_file(hook, becomes_current_path=False)
+
+        # Add all EXPORTS to SOURCE_HEADERS
+        if exports := context.get("EXPORTS"):
+            exported_headers = {
+                hdr
+                for _, v in exports.walk()
+                for hdr in v
+                if hdr.endswith((".h", ".hpp"))
+            }
+            for source_header in sandbox["SOURCE_HEADERS"]:
+                if source_header in exported_headers:
+                    raise SandboxValidationError(
+                        f"SOURCE_HEADERS lists {source_header} which is already listed in EXPORTS",
+                        context,
+                    )
+
+            exported_headers = sorted(exported_headers, key=str.lower)
+            sandbox["SOURCE_HEADERS"] += exported_headers
+
         self._execution_time += time.monotonic() - time_start
         self._file_count += len(context.all_paths)
 

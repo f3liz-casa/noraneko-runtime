@@ -15,36 +15,52 @@ import androidx.compose.ui.tooling.preview.PreviewLightDark
 import mozilla.components.compose.base.LinkTextState
 import mozilla.components.compose.base.PromoCard
 import mozilla.components.compose.base.PromoCardColors
+import mozilla.components.compose.base.modifier.onShown
+import org.mozilla.fenix.GleanMetrics.CollectionsMigration
 import org.mozilla.fenix.R
 import org.mozilla.fenix.theme.FirefoxTheme
 
 /**
  * Collections to tab groups migration card.
  *
- * @param onClick Invoked when the user clicks on the "View my tab groups" link.
+ * @param source The [CollectionsMigrationPromoSource] where the card is shown.
  * @param modifier The [Modifier] to be applied to the [PromoCard].
+ * @param onClick Invoked when the user clicks on the "View my tab groups" link. When null, the link is not shown.
+ * @param onDismiss Invoked when the user clicks the close button. When null, the close button is not shown.
  */
 @Composable
 fun CollectionsMigrationPromoCard(
-    onClick: () -> Unit,
+    source: CollectionsMigrationPromoSource,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null,
 ) {
     val linkText = stringResource(R.string.collections_migration_homepage_card_link)
 
     PromoCard(
         description = stringResource(R.string.collections_migration_homepage_card_message),
-        modifier = modifier,
+        modifier =
+            modifier.onShown(
+                threshold = 0.5f,
+                onVisible = {
+                    CollectionsMigration.promoImpression.record(
+                        CollectionsMigration.PromoImpressionExtra(source = source.telemetryName)
+                    )
+                },
+            ),
         title = stringResource(R.string.collections_migration_homepage_banner_title),
         footer =
-            linkText to
-                LinkTextState(
-                    text = linkText,
-                    url = "",
-                    onClick = { onClick() },
-                ),
+            onClick?.let { onLinkClick ->
+                linkText to
+                    LinkTextState(
+                        text = linkText,
+                        url = "",
+                        onClick = { onLinkClick() },
+                    )
+            },
         illustration = {
             Image(
-                painter = painterResource(R.drawable.mozac_ic_kit_tab_groups),
+                painter = painterResource(id = R.drawable.mozac_ic_kit_tab_groups_list_view),
                 contentDescription = null,
             )
         },
@@ -54,6 +70,7 @@ fun CollectionsMigrationPromoCard(
                 backgroundColor = MaterialTheme.colorScheme.primaryContainer,
                 actionsTextColor = MaterialTheme.colorScheme.tertiary,
             ),
+        onDismiss = onDismiss,
     )
 }
 
@@ -61,6 +78,14 @@ fun CollectionsMigrationPromoCard(
 @PreviewLightDark
 private fun CollectionsMigrationPromoCardPreview() {
     FirefoxTheme {
-        CollectionsMigrationPromoCard(onClick = {})
+        CollectionsMigrationPromoCard(source = CollectionsMigrationPromoSource.HOMEPAGE, onClick = {})
+    }
+}
+
+@Composable
+@PreviewLightDark
+private fun CollectionsMigrationPromoCardWithCloseButtonPreview() {
+    FirefoxTheme {
+        CollectionsMigrationPromoCard(source = CollectionsMigrationPromoSource.TABS_TRAY, onDismiss = {})
     }
 }

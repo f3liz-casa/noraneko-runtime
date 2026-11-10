@@ -760,6 +760,11 @@ static bool ProvidesTitle(const Accessible* aAccessible, nsString& aName) {
   return @NO;
 }
 
+- (NSNumber*)moxGrabbed {
+  NSString* grabbed = utils::GetAccAttr(self, nsGkAtoms::aria_grabbed);
+  return @([grabbed isEqualToString:@"true"]);
+}
+
 - (NSNumber*)moxExpanded {
   return @([self stateWithMask:states::EXPANDED] != 0);
 }
@@ -983,7 +988,32 @@ static bool ProvidesTitle(const Accessible* aAccessible, nsString& aName) {
     return nil;
   }
 
-  return nsCocoaUtils::ToNSString(shortcut);
+  // Rename the Meta and Alt keys to the labels printed on Apple keyboards.
+  nsAutoString platformShortcut;
+  auto processAndAppendKey = [&](const nsAString& aKey) {
+    if (aKey.LowerCaseEqualsLiteral("meta")) {
+      platformShortcut.AppendLiteral("Command");
+    } else if (aKey.LowerCaseEqualsLiteral("alt")) {
+      platformShortcut.AppendLiteral("Option");
+    } else {
+      platformShortcut.Append(aKey);
+    }
+  };
+  uint32_t keyStart = 0;
+  for (uint32_t i = 0; i < shortcut.Length(); i++) {
+    char16_t currChar = shortcut[i];
+    if (currChar == '+' || nsCoreUtils::IsWhitespace(currChar)) {
+      // If we've hit a delimiter, fetch the preceding key, convert it, and
+      // append it.
+      processAndAppendKey(Substring(shortcut, keyStart, i - keyStart));
+      platformShortcut.Append(currChar);
+      keyStart = i + 1;
+    }
+  }
+  // Handle the final key
+  processAndAppendKey(Substring(shortcut, keyStart));
+
+  return nsCocoaUtils::ToNSString(platformShortcut);
 }
 
 #ifndef RELEASE_OR_BETA
@@ -1047,7 +1077,9 @@ static bool ProvidesTitle(const Accessible* aAccessible, nsString& aName) {
 
 - (void)moxPerformScrollToVisible {
   MOZ_ASSERT(mGeckoAccessible);
-  mGeckoAccessible->ScrollTo(nsIAccessibleScrollType::SCROLL_TYPE_ANYWHERE);
+  if (RefPtr<Accessible> acc = mGeckoAccessible) {
+    acc->ScrollTo(nsIAccessibleScrollType::SCROLL_TYPE_ANYWHERE);
+  }
 }
 
 - (void)moxPerformShowMenu {

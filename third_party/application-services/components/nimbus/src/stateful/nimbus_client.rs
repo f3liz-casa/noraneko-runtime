@@ -286,15 +286,24 @@ impl NimbusClient {
         let db = self.db()?;
         let mut writer = db.write()?;
         let mut state = self.mutable_state.lock().unwrap();
-        set_experiment_participation(db, &mut writer, user_participating)?;
+        let was_participating = set_experiment_participation(db, &mut writer, user_participating)?;
 
-        let existing_experiments: Vec<Experiment> =
-            db.get_store(StoreId::Experiments).collect_all(&writer)?;
-        let events = self.evolve_experiments(db, &mut writer, &mut state, &existing_experiments)?;
-        let res = self.end_initialize(db, writer, &mut state);
-        self.record_enrollment_status_telemetry(&mut state)?;
-        res?;
-        Ok(events)
+        if was_participating != user_participating {
+            if !user_participating {
+                self.metrics_handler.record_studies_opt_out();
+            }
+
+            let existing_experiments: Vec<Experiment> =
+                db.get_store(StoreId::Experiments).collect_all(&writer)?;
+            let events =
+                self.evolve_experiments(db, &mut writer, &mut state, &existing_experiments)?;
+            let res = self.end_initialize(db, writer, &mut state);
+            self.record_enrollment_status_telemetry(&mut state)?;
+            res?;
+            Ok(events)
+        } else {
+            Ok(vec![])
+        }
     }
 
     pub fn set_rollout_participation(
@@ -304,15 +313,24 @@ impl NimbusClient {
         let db = self.db()?;
         let mut writer = db.write()?;
         let mut state = self.mutable_state.lock().unwrap();
-        set_rollout_participation(db, &mut writer, user_participating)?;
+        let was_participating = set_rollout_participation(db, &mut writer, user_participating)?;
 
-        let existing_experiments: Vec<Experiment> =
-            db.get_store(StoreId::Experiments).collect_all(&writer)?;
-        let events = self.evolve_experiments(db, &mut writer, &mut state, &existing_experiments)?;
-        let res = self.end_initialize(db, writer, &mut state);
-        self.record_enrollment_status_telemetry(&mut state)?;
-        res?;
-        Ok(events)
+        if was_participating != user_participating {
+            if !user_participating {
+                self.metrics_handler.record_rollouts_opt_out();
+            }
+
+            let existing_experiments: Vec<Experiment> =
+                db.get_store(StoreId::Experiments).collect_all(&writer)?;
+            let events =
+                self.evolve_experiments(db, &mut writer, &mut state, &existing_experiments)?;
+            let res = self.end_initialize(db, writer, &mut state);
+            self.record_enrollment_status_telemetry(&mut state)?;
+            res?;
+            Ok(events)
+        } else {
+            Ok(vec![])
+        }
     }
 
     pub fn get_active_experiments(&self) -> Result<Vec<EnrolledExperiment>> {
@@ -1110,45 +1128,6 @@ impl NimbusStringHelper {
         }
     }
 }
-
-#[cfg(feature = "stateful-uniffi-bindings")]
-uniffi::custom_type!(JsonObject, String, {
-    remote,
-    try_lift: |val| {
-        let json: Value = serde_json::from_str(&val)?;
-
-        match json.as_object() {
-            Some(obj) => Ok(obj.clone()),
-            _ => Err(uniffi::deps::anyhow::anyhow!(
-                "Unexpected JSON-non-object in the bagging area"
-            )),
-        }
-    },
-    lower: |obj| serde_json::Value::Object(obj).to_string(),
-});
-
-#[cfg(feature = "stateful-uniffi-bindings")]
-uniffi::custom_type!(PrefValue, String, {
-    remote,
-    try_lift: |val| {
-        // Raw strings that are not valid JSON (e.g. pref values read directly from Gecko)
-        // should be treated as JSON string values.
-        let json: Value = match serde_json::from_str(&val) {
-            Ok(json) => json,
-            Err(_) => Value::String(val),
-        };
-        let is_valid_pref_type = json.is_string() || json.is_boolean()
-            || (json.is_number() && !json.is_f64()) || json.is_null();
-        if is_valid_pref_type {
-            Ok(json)
-        } else {
-            Err(anyhow::anyhow!(format!("Value {} is not a string, boolean, number, or null, or is a float", json)))
-        }
-    },
-    lower: |val| {
-        val.to_string()
-    }
-});
 
 #[cfg(feature = "stateful-uniffi-bindings")]
 uniffi::include_scaffolding!("nimbus");

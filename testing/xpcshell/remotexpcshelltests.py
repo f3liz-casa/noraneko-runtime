@@ -10,6 +10,7 @@ import posixpath
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from argparse import Namespace
@@ -30,6 +31,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 
 class RemoteProcessMonitor:
     processStatus = []
+    _launchLock = threading.Lock()
 
     def __init__(self, package, device, log, remoteLogFile):
         self.package = package
@@ -55,27 +57,28 @@ class RemoteProcessMonitor:
         self.device.pkill(self.process_name, sig=9, attempts=1)
 
     def launch_service(self, extra_args, env, selectedProcess, test_name=None):
-        if not self.device.process_exist(self.package):
-            # Make sure the main app is running, this should help making the
-            # tests get foreground priority scheduling.
-            self.device.launch_activity(
-                self.package,
-                intent="org.mozilla.geckoview.test_runner.XPCSHELL_TEST_MAIN",
-                activity_name="TestRunnerActivity",
-            )
-            # Newer Androids require that background services originate from
-            # active apps, so wait here until the test runner is the top
-            # activity.
-            retries = 20
-            top = self.device.get_top_activity(timeout=60)
-            while top != self.package and retries > 0:
-                self.log.info(
-                    "%s | Checking that %s is the top activity."
-                    % (test_name, self.package)
+        with self._launchLock:
+            if not self.device.process_exist(self.package):
+                # Make sure the main app is running, this should help making the
+                # tests get foreground priority scheduling.
+                self.device.launch_activity(
+                    self.package,
+                    intent="org.mozilla.geckoview.test_runner.XPCSHELL_TEST_MAIN",
+                    activity_name="TestRunnerActivity",
                 )
+                # Newer Androids require that background services originate from
+                # active apps, so wait here until the test runner is the top
+                # activity.
+                retries = 20
                 top = self.device.get_top_activity(timeout=60)
-                time.sleep(1)
-                retries -= 1
+                while top != self.package and retries > 0:
+                    self.log.info(
+                        "%s | Checking that %s is the top activity."
+                        % (test_name, self.package)
+                    )
+                    top = self.device.get_top_activity(timeout=60)
+                    time.sleep(1)
+                    retries -= 1
 
         self.process_name = self.package + (":xpcshell%d" % selectedProcess)
 
@@ -346,7 +349,11 @@ class RemoteXPCShellTestThread(xpcshell.XPCShellTestThread):
         with mozfile.TemporaryDirectory() as dumpDir:
             self.device.pull(self.remoteMinidumpDir, dumpDir)
             crashed = mozcrash.log_crashes(
-                self.log, dumpDir, symbols_path, test=test_name
+                self.log,
+                dumpDir,
+                symbols_path,
+                test=test_name,
+                quiet=self.crashAsPass or self.retry,
             )
         return crashed
 
@@ -408,6 +415,7 @@ class XPCShellRemote(xpcshell.XPCShellTests):
         )
         mozinfo.info["os_version"] = os_version
         mozinfo.info["is_emulator"] = self.device._device_serial.startswith("emulator-")
+        mozinfo.info["isolated_process"] = options["isolated_process"]
 
         self.localBin = options["localBin"]
         self.pathMapping = []
@@ -430,6 +438,7 @@ class XPCShellRemote(xpcshell.XPCShellTests):
         self.remoteDebugger = options["debugger"]
         self.remoteDebuggerArgs = options["debuggerArgs"]
         self.testingModulesDir = options["testingModulesDir"]
+        self.isolatedProcess = options["isolated_process"]
 
         self.initDir(self.remoteTmpDir)
         self.initDir(self.profileDir)
@@ -556,6 +565,9 @@ class XPCShellRemote(xpcshell.XPCShellTests):
         self.env["XPCSHELL_TEST_TEMP_DIR"] = self.remoteTmpDir
         self.env["MOZ_ANDROID_DATA_DIR"] = self.remoteBinDir
         self.env["MOZ_IN_AUTOMATION"] = "1"
+
+        if self.isolatedProcess:
+            self.env["MOZ_ANDROID_CONTENT_SERVICE_ISOLATED_PROCESS"] = "1"
 
         # Guard against intermittent failures to retrieve abi property;
         # without an abi, xpcshell cannot find greprefs.js and crashes.

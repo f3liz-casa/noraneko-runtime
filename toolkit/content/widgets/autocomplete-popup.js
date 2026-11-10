@@ -547,6 +547,7 @@
             secondary = {
               type: secondaryAction.type,
               label: secondaryAction.label,
+              tooltip: secondaryAction.tooltip,
             };
             // Route each secondary action back to its provider through the
             // parent actor, identifying a menu action by its index (a single
@@ -693,6 +694,14 @@
       if (!rowItem?.activateSecondaryAction()) {
         this._setSecondaryActionFocused(false);
       }
+      return true;
+    }
+
+    maybeLeaveSecondaryAction() {
+      if (!this._secondaryActionFocused) {
+        return false;
+      }
+      this._setSecondaryActionFocused(false);
       return true;
     }
 

@@ -10,18 +10,18 @@ safe.
 A hash table lookup may change the internal organization of the hash
 table (to speed up future lookups).
 
-- [Hash Table Types and Constants](#Hash_Table_Types_and_Constants)
-- [Hash Table Functions](#Hash_Table_Functions)
+- [Hash Table Types and Constants](#hash-table-types-and-constants)
+- [Hash Table Functions](#hash-table-functions)
 
 (hash-table-types-and-constants)=
 
 # Hash Table Types and Constants
 
 > - `PLHashEntry`
-> - {ref}`PLHashTable`
+> - {doc}`plhashtable`
 > - `PLHashNumber`
 > - `PLHashFunction`
-> - {ref}`PLHashComparator`
+> - {doc}`plhashcomparator`
 > - `PLHashEnumerator`
 > - `PLHashAllocOps`
 
@@ -29,12 +29,12 @@ table (to speed up future lookups).
 
 # Hash Table Functions
 
-> - {ref}`PL_NewHashTable`
-> - {ref}`PL_HashTableDestroy`
-> - {ref}`PL_HashTableAdd`
-> - {ref}`PL_HashTableRemove`
-> - {ref}`PL_HashTableLookup`
-> - {ref}`PL_HashTableEnumerateEntries`
-> - {ref}`PL_HashString`
-> - {ref}`PL_CompareStrings`
-> - {ref}`PL_CompareValues`
+> - {doc}`pl_newhashtable`
+> - {doc}`pl_hashtabledestroy`
+> - {doc}`pl_hashtableadd`
+> - {doc}`pl_hashtableremove`
+> - {doc}`pl_hashtablelookup`
+> - {doc}`pl_hashtableenumerateentries`
+> - {doc}`pl_hashstring`
+> - {doc}`pl_comparestrings`
+> - {doc}`pl_comparevalues`

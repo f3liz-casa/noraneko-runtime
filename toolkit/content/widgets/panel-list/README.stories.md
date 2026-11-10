@@ -235,6 +235,25 @@ attribute.
 </panel-list>
 ```
 
+### Keyboard shortcuts
+
+Setting the `shortcut` attribute shows a keyboard shortcut after the label. The
+shortcut text is part of the item's accessible name.
+
+```html
+<panel-list>
+  <panel-item shortcut="Ctrl+N">New</panel-item>
+  <panel-item shortcut="Ctrl+S">Save</panel-item>
+</panel-list>
+```
+
+```html story
+<panel-list stay-open open>
+  <panel-item shortcut="Ctrl+N">New</panel-item>
+  <panel-item shortcut="Ctrl+S">Save</panel-item>
+</panel-list>
+```
+
 ### Matching anchor width
 
 When using the `panel-list` like a `select` dropdown, it's nice to have it match

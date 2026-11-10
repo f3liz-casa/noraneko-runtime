@@ -4,10 +4,7 @@
 
 package org.mozilla.gecko.media;
 
-import android.media.MediaCrypto;
-import android.media.MediaDrm;
 import android.util.Log;
-import java.util.ArrayList;
 import java.util.UUID;
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.mozglue.JNIObject;
@@ -15,45 +12,11 @@ import org.mozilla.gecko.mozglue.JNIObject;
 public final class MediaDrmProxy {
   private static final String LOGTAG = "GeckoMediaDrmProxy";
   private static final boolean DEBUG = false;
-  private static final UUID WIDEVINE_SCHEME_UUID =
-      new UUID(0xedef8ba979d64aceL, 0xa3c827dcd51d21edL);
-
-  private static final String WIDEVINE_KEY_SYSTEM = "com.widevine.alpha";
-  @WrapForJNI private static final String AAC = "audio/mp4a-latm";
-  @WrapForJNI private static final String AVC = "video/avc";
-  @WrapForJNI private static final String AV1 = "video/av01";
-  @WrapForJNI private static final String VORBIS = "audio/vorbis";
-  @WrapForJNI private static final String VP8 = "video/x-vnd.on2.vp8";
-  @WrapForJNI private static final String VP9 = "video/x-vnd.on2.vp9";
-  @WrapForJNI private static final String OPUS = "audio/opus";
-  @WrapForJNI private static final String FLAC = "audio/flac";
-
-  public static final ArrayList<MediaDrmProxy> sProxyList = new ArrayList<MediaDrmProxy>();
 
   // A flag to avoid using the native object that has been destroyed.
   private boolean mDestroyed;
   private GeckoMediaDrm mImpl;
   private String mDrmStubId;
-
-  @WrapForJNI
-  public static boolean isSchemeSupported(final String keySystem) {
-    if (keySystem.equals(WIDEVINE_KEY_SYSTEM)) {
-      return MediaDrm.isCryptoSchemeSupported(WIDEVINE_SCHEME_UUID)
-          && MediaCrypto.isCryptoSchemeSupported(WIDEVINE_SCHEME_UUID);
-    }
-    if (DEBUG) Log.d(LOGTAG, "isSchemeSupported key sytem = " + keySystem);
-    return false;
-  }
-
-  @WrapForJNI
-  public static boolean IsCryptoSchemeSupported(final String keySystem, final String container) {
-    if (keySystem.equals(WIDEVINE_KEY_SYSTEM)) {
-      return MediaDrm.isCryptoSchemeSupported(WIDEVINE_SCHEME_UUID, container);
-    }
-    if (DEBUG)
-      Log.d(LOGTAG, "cannot decrypt key sytem = " + keySystem + ", container = " + container);
-    return false;
-  }
 
   // Interface for callback to native.
   public interface Callbacks {
@@ -198,7 +161,6 @@ public final class MediaDrmProxy {
           RemoteManager.getInstance().createRemoteMediaDrmBridge(keySystem, mDrmStubId);
       mImpl = new RemoteMediaDrmBridge(remoteBridge);
       mImpl.setCallbacks(new MediaDrmProxyCallbacks(this, nativeCallbacks));
-      sProxyList.add(this);
     } catch (final Exception e) {
       Log.e(LOGTAG, "Constructing MediaDrmProxy ... error", e);
     }
@@ -253,19 +215,6 @@ public final class MediaDrmProxy {
     }
   }
 
-  // Get corresponding MediaCrypto object by a generated UUID for MediaCodec.
-  // Will be called on MediaFormatReader's TaskQueue.
-  @WrapForJNI
-  public static MediaCrypto getMediaCrypto(final String stubId) {
-    for (final MediaDrmProxy proxy : sProxyList) {
-      if (proxy.getStubId().equals(stubId)) {
-        return proxy.getMediaCryptoFromBridge();
-      }
-    }
-    if (DEBUG) Log.d(LOGTAG, " NULL crypto ");
-    return null;
-  }
-
   @WrapForJNI // Called when natvie object is destroyed.
   private void destroy() {
     if (DEBUG) Log.d(LOGTAG, "destroy!! Native object is destroyed.");
@@ -278,11 +227,6 @@ public final class MediaDrmProxy {
 
   private void release() {
     if (DEBUG) Log.d(LOGTAG, "release");
-    sProxyList.remove(this);
     mImpl.release();
-  }
-
-  private MediaCrypto getMediaCryptoFromBridge() {
-    return mImpl != null ? mImpl.getMediaCrypto() : null;
   }
 }

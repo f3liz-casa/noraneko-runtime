@@ -165,6 +165,24 @@ export class ASRouterParentProcessMessageHandler {
       case msg.AW_ADD_SCREEN_IMPRESSION: {
         return ASRouterScreenUtils.addScreenImpression(data);
       }
+      case msg.AW_GET_ACTIVE_THEME_ID: {
+        return Promise.resolve(
+          Services.prefs.getStringPref("extensions.activeThemeID", "")
+        );
+      }
+      case msg.AW_WAIT_FOR_MIGRATION_CLOSE: {
+        return new Promise(resolve => {
+          const topics = [
+            "MigrationWizard:Closed",
+            "MigrationWizard:Destroyed",
+          ];
+          const observer = () => {
+            topics.forEach(t => Services.obs.removeObserver(observer, t));
+            resolve();
+          };
+          topics.forEach(t => Services.obs.addObserver(observer, t));
+        });
+      }
       default: {
         return Promise.reject(new Error(`Unknown message received: ${name}`));
       }

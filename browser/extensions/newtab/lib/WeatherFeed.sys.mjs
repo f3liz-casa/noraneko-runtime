@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/** @import {Store} from "resource://newtab/lib/Store.sys.mjs" */
+
 import { WEATHER_OPTIN_REGIONS } from "./ActivityStream.sys.mjs";
 
 const lazy = {};
@@ -36,6 +38,9 @@ const PREF_WIDGETS_WEATHER_ENABLED = "widgets.weather.enabled";
  * A feature that periodically fetches weather suggestions from Merino for HNT.
  */
 export class WeatherFeed {
+  /** @type {Store} */
+  store = null;
+
   constructor() {
     this.loaded = false;
     this.merino = null;
@@ -73,12 +78,15 @@ export class WeatherFeed {
       ? values[PREF_WIDGETS_WEATHER_ENABLED]
       : values[PREF_SHOW_WEATHER];
     const systemValue = values[PREF_SYSTEM_SHOW_WEATHER];
-    const experimentValue = values.trainhopConfig?.weather?.enabled || false;
+    const experimentValue =
+      values.trainhopConfig?.widgetWeather?.visible ||
+      values.trainhopConfig?.weather?.enabled ||
+      false;
     return userValue && (systemValue || experimentValue);
   }
 
   async init() {
-    await this.loadWeather(true /* isStartup */);
+    await this.loadWeather();
   }
 
   stopFetching() {
@@ -132,7 +140,7 @@ export class WeatherFeed {
     this.update();
   }
 
-  async loadWeather(isStartup = false) {
+  async loadWeather() {
     const cachedData = (await this.cache.get()) || {};
     const { weather, locationData } = cachedData;
 
@@ -145,7 +153,7 @@ export class WeatherFeed {
       !weather?.lastUpdated ||
       !(this.Date().now() - weather.lastUpdated < WEATHER_UPDATE_TIME)
     ) {
-      await this.fetch(isStartup);
+      await this.fetch();
     } else if (!this.lastUpdated) {
       this.suggestions = weather.suggestions;
       this.hourlyForecasts = weather.hourlyForecasts || [];
@@ -340,7 +348,8 @@ export class WeatherFeed {
           const { values: prefValues } = this.store.getState().Prefs;
           const optInRequired =
             prefValues["system.showWeatherOptIn"] ||
-            prefValues.trainhopConfig?.weather?.weatherOptInEnabled;
+            (prefValues.trainhopConfig?.widgetWeather?.weatherOptInEnabled ??
+              prefValues.trainhopConfig?.weather?.weatherOptInEnabled);
           // @nova-cleanup(remove-conditional): Remove the PREF_NOVA_ENABLED guard
           // once the legacy widget is gone; the opt-in fetch gate should then apply
           // unconditionally. The guard exists because the legacy widget renders its
@@ -382,7 +391,8 @@ export class WeatherFeed {
             (values["widgets.system.weatherForecast.enabled"] ||
               values.trainhopConfig?.widgets?.weatherForecastEnabled)) ||
             values["widgets.system.weather.enabled"] ||
-            values.trainhopConfig?.widgets?.weatherEnabled);
+            values.trainhopConfig?.widgets?.weatherEnabled ||
+            values.trainhopConfig?.widgetWeather?.visible);
 
         const [reportResult, hourlyResult] = await Promise.all([
           this.merino.fetchWeatherReport({

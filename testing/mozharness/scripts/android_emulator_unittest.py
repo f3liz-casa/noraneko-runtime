@@ -75,6 +75,15 @@ class AndroidEmulatorTest(
                 },
             ],
             [
+                ["--max-time"],
+                {
+                    "action": "store",
+                    "dest": "max_time",
+                    "default": None,
+                    "help": "Max time in seconds to wait for the test suite (runjunit only)",
+                },
+            ],
+            [
                 ["--enable-xorigin-tests"],
                 {
                     "action": "store_true",
@@ -149,6 +158,15 @@ class AndroidEmulatorTest(
                 },
             ],
             [
+                ["--enable-isolated-process"],
+                {
+                    "action": "store_true",
+                    "dest": "isolated_process",
+                    "default": False,
+                    "help": "Run the tests with content service isolated process enabled.",
+                },
+            ],
+            [
                 ["--repeat"],
                 {
                     "action": "store",
@@ -216,6 +234,7 @@ class AndroidEmulatorTest(
         self.this_chunk = c.get("this_chunk")
         self.total_chunks = c.get("total_chunks")
         self.timeout_factor = c.get("timeout_factor")
+        self.max_time = c.get("max_time")
         self.xre_path = None
         self.device_serial = "emulator-5554"
         self.log_raw_level = c.get("log_raw_level")
@@ -229,6 +248,7 @@ class AndroidEmulatorTest(
         self.enable_isolated_zygote_process = c.get("enable_isolated_zygote_process")
         self.extra_prefs = c.get("extra_prefs")
         self.test_tags = c.get("test_tags")
+        self.isolated_process = c.get("isolated_process")
 
     def query_abs_dirs(self):
         if self.abs_dirs:
@@ -306,7 +326,7 @@ class AndroidEmulatorTest(
             ),
         ]
 
-        raw_log_file, error_summary_file, test_summary_file = self.get_indexed_logs(
+        raw_log_file, error_summary_file = self.get_indexed_logs(
             dirs["abs_blob_upload_dir"], self.test_suite
         )
 
@@ -328,7 +348,6 @@ class AndroidEmulatorTest(
             "log_tbpl_level": self.log_tbpl_level,
             "log_raw_level": self.log_raw_level,
             "error_summary_file": error_summary_file,
-            "test_summary_file": test_summary_file,
             "xpcshell_extra": c.get("xpcshell_extra", ""),
             "gtest_dir": os.path.join(dirs["abs_test_install_dir"], "gtest"),
         }
@@ -379,6 +398,9 @@ class AndroidEmulatorTest(
             )
         cmd.extend([f"--setpref={p}" for p in self.extra_prefs])
 
+        if c["isolated_process"]:
+            cmd.append("--enable-isolated-process")
+
         if not (self.verify_enabled or self.per_test_coverage):
             if user_paths or self.test_tags:
                 if user_paths:
@@ -393,6 +415,8 @@ class AndroidEmulatorTest(
 
         if self.timeout_factor is not None:
             cmd.extend(["--timeout-factor", self.timeout_factor])
+        if self.max_time is not None:
+            cmd.extend(["--max-time", self.max_time])
 
         if category not in SUITE_NO_E10S:
             if category in SUITE_DEFAULT_E10S and not c["e10s"]:
@@ -563,6 +587,10 @@ class AndroidEmulatorTest(
                     config=self.config,
                     log_obj=self.log_obj,
                     error_list=[],
+                    test_summary_file=self.query_test_summary_file(
+                        self.query_abs_dirs()["abs_blob_upload_dir"],
+                        self.config["suite_definitions"][suite_category],
+                    ),
                 )
 
                 if "reftest" in suite_category:
@@ -574,12 +602,14 @@ class AndroidEmulatorTest(
                     )
                     parser.formatter = ref_formatter.ReftestFormatter()
 
-                self.run_command(final_cmd, cwd=cwd, env=env, output_parser=parser)
-                self.append_test_summary(self.query_abs_dirs()["abs_blob_upload_dir"])
-                tbpl_status, log_level, summary = parser.evaluate_parser(
-                    0, previous_summary=summary
-                )
-                parser.append_tinderboxprint_line(self.test_suite)
+                try:
+                    self.run_command(final_cmd, cwd=cwd, env=env, output_parser=parser)
+                    tbpl_status, log_level, summary = parser.evaluate_parser(
+                        0, previous_summary=summary
+                    )
+                    parser.append_tinderboxprint_line(self.test_suite)
+                finally:
+                    parser.finish()
 
                 self.info("##### %s log ends" % self.test_suite)
 

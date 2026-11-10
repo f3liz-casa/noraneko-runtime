@@ -338,6 +338,11 @@ def basic_bindgen_cflags(
         ],
     }.get(target.os, [])
 
+    # bindgen passes the windows-gnullvm Rust target to clang unchanged, which
+    # clang rejects. https://github.com/rust-lang/rust-bindgen/pull/3505
+    if target.abi == "mingw":
+        args.append(f"--target={target.alias}")
+
     if compiler_info.type == "clang-cl":
         args += [
             # To enable the builtin __builtin_offsetof so that CRT wouldn't
@@ -370,3 +375,13 @@ def bindgen_cflags(base_flags, extra_flags):
 
 
 set_config("BINDGEN_SYSTEM_FLAGS", bindgen_cflags)
+
+
+# Force the target down to all bindgen callers, even those that may not
+# read BINDGEN_SYSTEM_FLAGS some way or another.
+@depends(bindgen_cflags)
+def bindgen_extra_clang_args(flags):
+    return [f for f in flags or [] if f.startswith("--target=")]
+
+
+set_config("BINDGEN_EXTRA_CLANG_ARGS", bindgen_extra_clang_args)

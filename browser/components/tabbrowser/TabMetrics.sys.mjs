@@ -35,6 +35,9 @@ const METRIC_SOURCE = Object.freeze({
   CTRL_TAB: "ctrl_tab",
   // The Smart Window "Group my tabs" suggestion panel.
   SMART_WINDOW_GROUP_SUGGESTIONS: "smartwindow_group_suggestions",
+  // The Smart Window "Tasks" panel.
+  SMART_WINDOW_TASKS: "smartwindow_tasks",
+  APP_MENU_GROUP_LIST: "appmenu_group_list",
   UNKNOWN: "unknown",
 });
 

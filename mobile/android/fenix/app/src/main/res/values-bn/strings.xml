@@ -53,11 +53,7 @@
   <string name="home_screen_shortcut_open_new_tab_2">নতুন ট্যাব</string>
   <!-- Shortcut action to open new private tab -->
   <string name="home_screen_shortcut_open_new_private_tab_2">নতুন ব্যক্তিগত ট্যাব</string>
-  <!--
-    Browser Fragment
-
-    Content description (not visible, for screen readers etc.): Navigate backward (browsing history)
-  -->
+  <!-- Content description (not visible, for screen readers etc.): Navigate backward (browsing history) -->
   <string name="browser_menu_back">পিছনে</string>
   <!-- Content description (not visible, for screen readers etc.): Navigate forward (browsing history) -->
   <string name="browser_menu_forward">সামনে</string>
@@ -123,13 +119,25 @@
   <string name="search_widget_text_long">ওয়েবে সন্ধান করুন</string>
   <!-- Content description (not visible, for screen readers etc.): Voice search -->
   <string name="search_widget_voice">কণ্ঠে অনুসন্ধান</string>
+  <!-- Content description (not visible, for screen readers etc.): Button in the search widget that starts a search in a private tab -->
+  <string name="search_widget_private_search">গোপন অনুসন্ধান</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for private search and for voice search -->
+  <string name="search_bar_widget_description">প্রাইভেট ও ভয়েস সার্চ সংবলিত সার্চ বার</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for image search, private search and voice search -->
+  <string name="search_bar_with_lens_widget_description">ছবি, প্রাইভেট ও ভয়েস সার্চ সংবলিত সার্চ বার</string>
+  <!-- Widget description in the widget picker screen for the compact search bar widget -->
+  <string name="compact_search_bar_widget_description">সংক্ষিপ্ত সার্চ বার</string>
   <!--
     Preferences
 
     Title for the settings page
   -->
   <string name="settings">সেটিংস</string>
-  <!-- Preference category for general settings -->
+  <!--
+    Preferences
+
+    Preference category for general settings
+  -->
   <string name="preferences_category_general">সাধারণ</string>
   <!-- Preference category for all links about Fenix -->
   <string name="preferences_category_about">সম্পর্কে</string>
@@ -775,4 +783,10 @@
   <string name="confirm_clear_permissions_site">আপনি কি নিশ্চিত যে আপনি এই সাইটের জন্য সব অনুমতি সাফ করতে চান?</string>
   <!-- Positive action of a dialog asking to delete -->
   <string name="dialog_delete_positive">মুছে ফেলুন</string>
+  <!--
+    PDF viewer toolbar and buttons
+
+    Content description for accessibility (used by screen readers): Description for the button that triggers the start of a signature workflow on the PDF displayed on the screen.
+  -->
+  <string name="pdf_tools_sign_content_description_2">স্বাক্ষর যোগ করুন</string>
 </resources>

@@ -5,14 +5,15 @@
 
 ChromeUtils.defineESModuleGetters(this, {
   BackgroundUpdate: "resource://gre/modules/BackgroundUpdate.sys.mjs",
-  MigrationUtils: "resource:///modules/MigrationUtils.sys.mjs",
+  MigrationUtils:
+    "moz-src:///browser/components/migration/MigrationUtils.sys.mjs",
   PermissionTestUtils: "resource://testing-common/PermissionTestUtils.sys.mjs",
   TestUtils: "resource://testing-common/TestUtils.sys.mjs",
   WindowsLaunchOnLogin:
     "resource://gre/modules/launchonlogin/WindowsLaunchOnLogin.sys.mjs",
 });
 
-const STARTUP_PANE = SRD_PREF_VALUE ? "paneHome" : "paneGeneral";
+const STARTUP_PANE = "paneHome";
 
 add_task(async function test_check_uncheck_checkbox() {
   await ExperimentAPI.ready();

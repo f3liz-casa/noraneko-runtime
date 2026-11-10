@@ -19,11 +19,19 @@ transforms:
 # https://wiki.mozilla.org/Sheriffing/Job_Visibility_Policy
 
 task-defaults:
-    run-on-repo-type: [hg]
+    priority:
+        by-project:
+            autoland: high
+            mozilla-central: medium
+            default: null
     attributes:
         retrigger: true
     use-python: system
     use-uv: true
+    use-caches:
+        by-test-platform:
+            windows.*: [checkout, pip]
+            default: [checkout, pip, uv]
     require-signed-extensions:
         by-release-type:
             release|esr.*: true
@@ -58,7 +66,7 @@ task-defaults:
                     - android-sdk-macos
                     - android-system-image-arm64-macos
                     - android-avd-arm64-macos
-                    - macosx64-jdk-repack
+                    - macosx64-aarch64-jdk-repack
                     - macosx64-aarch64-minidump-stackwalk
                     - macosx64-aarch64-fix-stacks
                     - linux64-hostutils

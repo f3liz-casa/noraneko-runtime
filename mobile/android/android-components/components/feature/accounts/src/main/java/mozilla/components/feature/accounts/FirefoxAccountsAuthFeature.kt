@@ -10,6 +10,7 @@ import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import mozilla.appservices.fxaclient.contentUrl
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.request.RequestInterceptor
 import mozilla.components.concept.sync.FxAEntryPoint
@@ -38,15 +39,17 @@ class FirefoxAccountsAuthFeature(
      *
      * @param context [Context] The application context
      * @param entrypoint [FxAEntryPoint] The Firefox Accounts feature/entrypoint that is launching authentication
+     * @param service The FxA service being authenticated into
      * @param scopes [Set<String>] The oAuth scopes being requested
      */
     fun beginAuthentication(
         context: Context,
         entrypoint: FxAEntryPoint,
+        service: String,
         scopes: Set<String> = emptySet(),
     ) {
         beginAuthenticationAsync(context) {
-            accountManager.beginAuthentication(entrypoint = entrypoint, authScopes = scopes)
+            accountManager.beginAuthentication(service = service, entrypoint = entrypoint, authScopes = scopes)
         }
     }
 
@@ -56,31 +59,50 @@ class FirefoxAccountsAuthFeature(
      * @param context [Context] The application context
      * @param pairingUrl [String] The pairing URL retrieved from the QR scanner
      * @param entrypoint [FxAEntryPoint] The Firefox Accounts feature/entrypoint that is launching
+     * @param service The FxA service being authenticated into
      * @param scopes [Set<String>] The oAuth scopes being requested authentication
      */
     fun beginPairingAuthentication(
         context: Context,
         pairingUrl: String,
         entrypoint: FxAEntryPoint,
+        service: String,
         scopes: Set<String> = emptySet(),
     ) {
-        beginAuthenticationAsync(context) {
-            accountManager.beginAuthentication(pairingUrl, entrypoint = entrypoint, scopes)
+        beginAuthenticationAsync(
+            context,
+            // Pairing initiation can fail for any reason the state machine reports (the user
+            // backs out of the QR camera, scans an invalid code, or a transient error). Fall
+            // back to a normal sync sign-in that still carries the entrypoint, instead of a
+            // bare URL that sends the user to Account Settings.
+            fallbackAuthentication = {
+                accountManager.beginAuthentication(service = service, entrypoint = entrypoint, authScopes = scopes)
+            },
+        ) {
+            accountManager.beginAuthentication(
+                service = service,
+                pairingUrl = pairingUrl,
+                entrypoint = entrypoint,
+                authScopes = scopes,
+            )
         }
     }
 
-    private fun beginAuthenticationAsync(context: Context, beginAuthentication: suspend () -> String?) {
+    private fun beginAuthenticationAsync(
+        context: Context,
+        fallbackAuthentication: suspend () -> String? = { null },
+        beginAuthentication: suspend () -> String?,
+    ) {
         CoroutineScope(coroutineContext).launch {
-            // FIXME return a fallback URL provided by Config...
-            // https://github.com/mozilla-mobile/android-components/issues/2496
-            val authUrl = beginAuthentication() ?: "https://accounts.firefox.com/signin"
-
             // TODO
             // We may fail to obtain an authentication URL, for example due to transient network errors.
-            // If that happens, open up a fallback URL in order to present some kind of a "no network"
-            // UI to the user.
-            // It's possible that the underlying problem will go away by the time the tab actually
-            // loads, resulting in a confusing experience.
+            // The fallback does not help then, because it fails for the same reason. The server sign-in
+            // URL below is a last resort, and the account manager does not honour it because it did not
+            // start that flow. Instead, present some kind of a "no network" UI to the user.
+            val authUrl =
+                beginAuthentication()
+                    ?: fallbackAuthentication()
+                    ?: "${accountManager.serverConfig.server.contentUrl()}/signin"
 
             onBeginAuthentication(context, authUrl)
         }

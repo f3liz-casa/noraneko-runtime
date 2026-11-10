@@ -17,13 +17,10 @@ use std::{
     ptr::{null, null_mut},
 };
 use windows_sys::Win32::{
-    Foundation::{
-        CloseHandle, DuplicateHandle, DUPLICATE_SAME_ACCESS, FALSE, HANDLE, INVALID_HANDLE_VALUE,
-        TRUE,
-    },
+    Foundation::{CloseHandle, FALSE, TRUE},
     System::Threading::{
-        CreateProcessW, GetCurrentProcess, GetCurrentProcessId, CREATE_UNICODE_ENVIRONMENT,
-        DETACHED_PROCESS, PROCESS_INFORMATION, STARTUPINFOW,
+        CreateProcessW, GetCurrentProcessId, CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS,
+        PROCESS_INFORMATION, STARTUPINFOW,
     },
 };
 
@@ -82,13 +79,13 @@ impl CrashHelperClient {
     ) -> Result<ProcessHandle> {
         // SAFETY: `GetCurrentProcessId()` takes no arguments and should always work
         let pid = OsString::from(unsafe { GetCurrentProcessId() }.to_string());
-        let handle = clone_current_process_handle()?;
+        let handle = ProcessHandle::current_process()?;
 
         let mut cmd_line = escape_cmd_line_arg(&program);
         cmd_line.push(" ");
         cmd_line.push(escape_cmd_line_arg(&pid));
         cmd_line.push(" ");
-        cmd_line.push(escape_cmd_line_arg(breakpad_data.as_ref()));
+        cmd_line.push(escape_cmd_line_arg(&breakpad_data.serialize()));
         cmd_line.push(" ");
         cmd_line.push(escape_cmd_line_arg(&minidump_path));
         cmd_line.push(" ");
@@ -146,30 +143,6 @@ impl CrashHelperClient {
     ) -> Option<ProcessRendezVous> {
         None
     }
-}
-
-// Clone the handle to the current process into an inheritable handle
-fn clone_current_process_handle() -> Result<ProcessHandle> {
-    let mut handle: HANDLE = INVALID_HANDLE_VALUE;
-    let res = unsafe {
-        DuplicateHandle(
-            GetCurrentProcess(),
-            GetCurrentProcess(),
-            GetCurrentProcess(),
-            &mut handle,
-            /* dwDesiredAccess */ 0,
-            /* bInheritHandle */ TRUE,
-            DUPLICATE_SAME_ACCESS,
-        )
-    };
-
-    if res == 0 {
-        bail!("Could not clone the process handle");
-    }
-
-    Ok(ProcessHandle(unsafe {
-        OwnedHandle::from_raw_handle(handle as RawHandle)
-    }))
 }
 
 /// Escape an argument so that it is suitable for use in the command line

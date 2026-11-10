@@ -67,6 +67,8 @@ static constexpr Register RegExpSearcherRegExpReg{Registers::invalid_reg};
 static constexpr Register RegExpSearcherStringReg{Registers::invalid_reg};
 static constexpr Register RegExpSearcherLastIndexReg{Registers::invalid_reg};
 
+static constexpr Register BailoutStubHandlerReg{Registers::invalid_reg};
+
 // Uses |invalid_reg2| to avoid static_assert failures.
 static constexpr Register JSReturnReg_Type{Registers::invalid_reg2};
 static constexpr Register JSReturnReg_Data{Registers::invalid_reg2};
@@ -176,6 +178,8 @@ class Assembler : public AssemblerShared {
     MOZ_CRASH();
   }
   static uint32_t PatchWrite_NearCallSize() { MOZ_CRASH(); }
+
+  static uint32_t NopSize() { MOZ_CRASH(); }
 
   static void ToggleToJmp(CodeLocationLabel) { MOZ_CRASH(); }
   static void ToggleToCmp(CodeLocationLabel) { MOZ_CRASH(); }

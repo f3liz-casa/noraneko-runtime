@@ -24,6 +24,7 @@ add_task(async function test_site_exclusion_feature_pref_disabled() {
   Services.perms.removeByType(PERM_NAME);
 
   sandbox.stub(IPPProxyManager, "state").value(IPPProxyStates.ACTIVE);
+  sandbox.stub(IPPProxyManager, "mode").value(IPPMode.MODE_FULL);
 
   let tab = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
@@ -255,7 +256,7 @@ add_task(async function test_site_exclusion_toggle_pressed_isExclusion() {
 
 /**
  * Tests the site exclusion toggle dispatches the expected events, calls
- * the appropriate IPPExceptionsManager methods, and correctly updates the toolbar button icon.
+ * the appropriate IPPPermissionRules methods, and correctly updates the toolbar button icon.
  */
 add_task(
   async function test_site_exclusion_on_toggle_events_and_toolbar_icon() {
@@ -266,8 +267,9 @@ add_task(
       isReady: true,
     });
 
-    let setExclusionSpy = sandbox.spy(IPPExceptionsManager, "setExclusion");
+    let setRuleSpy = sandbox.spy(IPPPermissionRules, "setRule");
     sandbox.stub(IPPProxyManager, "state").value(IPPProxyStates.ACTIVE);
+    sandbox.stub(IPPProxyManager, "mode").value(IPPMode.MODE_FULL);
 
     // Open a new foreground tab
     let tab = await BrowserTestUtils.openNewForegroundTab(
@@ -311,13 +313,13 @@ add_task(
 
     Assert.ok(true, "Disable VPN protection for site event was dispatched");
     Assert.ok(
-      setExclusionSpy.calledOnce,
-      "IPPExceptionsManager.setExclusion should be called after disabling VPN"
+      setRuleSpy.calledOnce,
+      "IPPPermissionRules.setRule should be called after disabling VPN"
     );
     Assert.strictEqual(
-      setExclusionSpy.firstCall.args[1],
-      true,
-      "IPPExceptionsManager.setExclusion should be called with shouldExclude=true"
+      setRuleSpy.firstCall.args[1],
+      IPPPrincipalRules.EXCLUDED,
+      "IPPPermissionRules.setRule should be called with EXCLUDED"
     );
     Assert.ok(
       toolbarButton.classList.contains("ipprotection-excluded"),
@@ -334,13 +336,13 @@ add_task(
 
     Assert.ok(true, "Enable VPN protection for site event was dispatched");
     Assert.ok(
-      setExclusionSpy.calledTwice,
-      "IPPExceptionsManager.setExclusion should be called two times now"
+      setRuleSpy.calledTwice,
+      "IPPPermissionRules.setRule should be called two times now"
     );
     Assert.strictEqual(
-      setExclusionSpy.secondCall.args[1],
-      false,
-      "IPPExceptionsManager.setExclusion should be called with shouldExclude=false"
+      setRuleSpy.secondCall.args[1],
+      IPPPrincipalRules.DEFAULT,
+      "IPPPermissionRules.setRule should be called with DEFAULT to clear it"
     );
     Assert.ok(
       toolbarButton.classList.contains("ipprotection-on"),
@@ -369,6 +371,7 @@ add_task(
     });
 
     sandbox.stub(IPPProxyManager, "state").value(IPPProxyStates.ACTIVE);
+    sandbox.stub(IPPProxyManager, "mode").value(IPPMode.MODE_FULL);
 
     const PROTECTED_SITE = "https://example.com";
     const EXCLUDED_SITE = "https://example.org";
@@ -462,6 +465,7 @@ add_task(async function test_site_exclusion_updates_on_navigation_same_tab() {
   });
 
   sandbox.stub(IPPProxyManager, "state").value(IPPProxyStates.ACTIVE);
+  sandbox.stub(IPPProxyManager, "mode").value(IPPMode.MODE_FULL);
 
   const PROTECTED_SITE = "https://example.com";
   const EXCLUDED_SITE = "https://example.org";
@@ -549,6 +553,7 @@ add_task(async function test_site_exclusion_updates_on_tab_switch() {
   });
 
   sandbox.stub(IPPProxyManager, "state").value(IPPProxyStates.ACTIVE);
+  sandbox.stub(IPPProxyManager, "mode").value(IPPMode.MODE_FULL);
 
   const PROTECTED_SITE = "https://example.com";
   const EXCLUDED_SITE = "https://example.org";
@@ -686,8 +691,9 @@ add_task(async function test_site_exclusion_toggle_privileged_page() {
     isReady: true,
   });
 
-  sandbox.stub(IPPExceptionsManager, "canManage").returns(false);
+  sandbox.stub(IPPSiteRuleManager, "canManage").returns(false);
   sandbox.stub(IPPProxyManager, "state").value(IPPProxyStates.ACTIVE);
+  sandbox.stub(IPPProxyManager, "mode").value(IPPMode.MODE_FULL);
 
   let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, ABOUT_PAGE);
 

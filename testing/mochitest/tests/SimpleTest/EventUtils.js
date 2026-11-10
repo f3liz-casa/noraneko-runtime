@@ -657,13 +657,17 @@ function _maybeSynthesizeDragOver(left, top, aEvent, aWindow) {
  * @property {boolean} [isWidgetEventSynthesized] - Controls WidgetMouseEvent.mReason value.
  * @property {boolean} [metaKey] - If set to `true`, the Meta key will
  *     be considered pressed.
+ * @property {number} [movementX] - Raw movement delta, standing in for the delta a
+ *     platform widget reports while the native pointer is locked. Must be specified
+ *     together with `movementY`.
+ * @property {number} [movementY] - See `movementX`.
  * @property {number} [pressure=0] - Touch input pressure (0.0 -> 1.0).
  * @property {boolean} [shiftKey] - If set to `true`, the Shift key will
  *     be considered pressed.
  * @property {string} [type] - Event type to synthesize. If not specified
  *     a `mousedown` followed by a `mouseup` are performed.
  *
- * @see nsIDOMWindowUtils.sendMouseEvent
+ * @see SynthesizeMouseEventData defined in Window.webidl
  */
 
 /**
@@ -793,6 +797,8 @@ function synthesizeMouseAtPoint(
           modifiers,
           pressure: aEvent.pressure,
           inputSource,
+          movementX: aEvent.movementX,
+          movementY: aEvent.movementY,
         },
         {
           isDOMEventSynthesized,
@@ -814,6 +820,8 @@ function synthesizeMouseAtPoint(
           modifiers,
           pressure: aEvent.pressure,
           inputSource,
+          movementX: aEvent.movementX,
+          movementY: aEvent.movementY,
         },
         {
           isDOMEventSynthesized,
@@ -834,6 +842,8 @@ function synthesizeMouseAtPoint(
           modifiers,
           pressure: aEvent.pressure,
           inputSource,
+          movementX: aEvent.movementX,
+          movementY: aEvent.movementY,
         },
         {
           isDOMEventSynthesized,
@@ -3553,7 +3563,16 @@ function startDragSession(aWindow, aDropEffect) {
       throw new Error(`${aDropEffect} is an invalid drop effect value`);
   }
 
-  ds.startDragSessionForTests(aWindow, dropAction);
+  try {
+    ds.startDragSessionForTests(aWindow, dropAction);
+  } catch (e) {
+    if (e.name == "NS_ERROR_NOT_AVAILABLE") {
+      throw new Error(
+        "Cannot start a drag session: the drag service is suppressed; a previous test may have left the mouse button pressed"
+      );
+    }
+    throw e;
+  }
 }
 
 /**
@@ -3961,6 +3980,7 @@ async function synthesizePlainDragAndDrop(aParams) {
     let srcSession = srcWindowUtils.dragSession;
     if (!srcSession) {
       if (expectCancelDragStart) {
+        this.AccessibilityUtils?.suppressClickHandling(true);
         synthesizeMouse(
           srcElement,
           finalX,
@@ -3968,6 +3988,7 @@ async function synthesizePlainDragAndDrop(aParams) {
           { type: "mouseup", id },
           srcWindow
         );
+        this.AccessibilityUtils?.suppressClickHandling(false);
         return;
       }
       throw new Error("drag hasn't been started by the operation");

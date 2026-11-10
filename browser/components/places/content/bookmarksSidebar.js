@@ -62,10 +62,6 @@ window.addEventListener("load", () => {
   );
 
   document
-    .getElementById("sidebar-panel-close")
-    .addEventListener("click", closeSidebarPanel);
-
-  document
     .getElementById("placesCommands")
     .addEventListener("command", event => {
       let label;
@@ -180,14 +176,6 @@ window.addEventListener("unload", () => {
     PlacesUIUtils.lastContextMenuCommand = null;
   }
 });
-
-function closeSidebarPanel(e) {
-  e.preventDefault();
-  let view = e.target.getAttribute("view");
-  window.browsingContext.embedderWindowGlobal.browsingContext.window.SidebarController.toggle(
-    view
-  );
-}
 
 window.addEventListener("SidebarFocused", () =>
   document.getElementById("search-box").focus()

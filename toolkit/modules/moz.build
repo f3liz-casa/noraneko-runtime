@@ -200,6 +200,7 @@ EXTRA_JS_MODULES += [
     "PrivateBrowsingUtils.sys.mjs",
     "ProcessType.sys.mjs",
     "ProfileAge.sys.mjs",
+    "ProfileKekPassword.sys.mjs",
     "Region.sys.mjs",
     "RemotePageAccessManager.sys.mjs",
     "ResetProfile.sys.mjs",
@@ -343,6 +344,7 @@ for var in (
     "MOZ_UPDATE_AGENT",
     "MOZ_BITS_DOWNLOAD",
     "MOZ_DEBUG",
+    "MOZ_DIAGNOSTIC_ASSERT_ENABLED",
     "MOZ_ASAN",
     "MOZ_ASAN_REPORTER",
     "MOZ_TSAN",
@@ -362,7 +364,6 @@ for var in (
     "MOZ_SYSTEM_POLICIES",
     "MOZ_SELECTABLE_PROFILES",
     "USE_LIBZ_RS",
-    "MOZ_ANDROID_CONTENT_SERVICE_ISOLATED_PROCESS",
 ):
     DEFINES[f"{var}_BOOL"] = "true" if CONFIG[var] else "false"
 

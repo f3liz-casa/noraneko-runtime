@@ -4,6 +4,7 @@
 #include "RemoteDecoderModule.h"
 
 #include "AOMDecoder.h"
+#include "MediaCodecsSupport.h"
 #include "RemoteAudioDecoder.h"
 #include "RemoteMediaDataDecoder.h"
 #include "RemoteMediaManagerChild.h"
@@ -76,6 +77,15 @@ media::DecodeSupportSet RemoteDecoderModule::Supports(
        mLocation != RemoteMediaIn::UtilityProcess_Generic)) {
     support = {};
   }
+  if (const auto* videoInfo = aParams.mConfig.GetAsVideoInfo()) {
+    const media::MediaCodec codec =
+        media::MCSInfo::GetMediaCodecFromMimeType(aParams.MimeType());
+    support = media::MCSInfo::GetMediaCodecDecodeSupportForSize(
+        codec,
+        media::MCSInfo::GetMediaCodecDecodeSupportForColorDepth(
+            codec, support, videoInfo->mColorDepth),
+        videoInfo->mImage);
+  }
 #endif
   MOZ_LOG_FMT(
       sPDMLog, LogLevel::Debug, "Sandbox {} decoder {} requested type {}",
@@ -86,6 +96,14 @@ media::DecodeSupportSet RemoteDecoderModule::Supports(
 
 RefPtr<RemoteDecoderModule::SupportsDecoderPromise>
 RemoteDecoderModule::SupportsAsync(const SupportDecoderParams& aParams) const {
+  // The media engine CDM process only creates decoders for media engine
+  // playback, so don't wait for it to report support for other queries.
+  if (mLocation == RemoteMediaIn::UtilityProcess_MFMediaEngineCDM &&
+      !aParams.mMediaEngineId) {
+    return SupportsDecoderPromise::CreateAndResolve(media::DecodeSupportSet{},
+                                                    __func__);
+  }
+
   // SupportDecoderParams is stack-only and holds a reference to its config, so
   // clone the bits we need to survive the asynchronous wait below.
   UniquePtr<TrackInfo> config = aParams.mConfig.Clone();

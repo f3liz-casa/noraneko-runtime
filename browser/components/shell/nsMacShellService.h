@@ -5,28 +5,22 @@
 #ifndef nsmacshellservice_h_
 #define nsmacshellservice_h_
 
-#include "nsToolkitShellService.h"
+#include "nsCOMPtr.h"
+#include "nsIFile.h"
 #include "nsIMacShellService.h"
 #include "nsIWebProgressListener.h"
-#include "nsIFile.h"
-#include "nsCOMPtr.h"
+#include "nsShellService.h"
 
-class nsMacShellService : public nsIMacShellService,
-                          public nsToolkitShellService,
-                          public nsIWebProgressListener {
+class nsMacShellService : public nsShellService, public nsIMacShellService {
  public:
   nsMacShellService() = default;
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSISHELLSERVICE
   NS_DECL_NSIMACSHELLSERVICE
-  NS_DECL_NSIWEBPROGRESSLISTENER
 
  protected:
   virtual ~nsMacShellService() = default;
-
- private:
-  nsCOMPtr<nsIFile> mBackgroundFile;
 };
 
 #endif  // nsmacshellservice_h_

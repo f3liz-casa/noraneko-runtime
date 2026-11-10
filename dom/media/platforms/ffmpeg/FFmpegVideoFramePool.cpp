@@ -47,7 +47,9 @@ VideoFrameSurface<LIBAV_VER>::VideoFrameSurface(DMABufSurface* aSurface,
       mAVHWFrameContext(nullptr),
       mHWAVBuffer(nullptr),
       mFFMPEGSurfaceID(aFFMPEGSurfaceID),
-      mHoldByFFmpeg(false) {
+      mHoldByFFmpeg(false),
+      mUsedByRenderer(false),
+      mVulkanCopySlotIndex(-1) {
   // Create global refcount object to track mSurface usage over
   // gects rendering engine. We can't release it until it's used
   // by GL compositor / WebRender.
@@ -132,9 +134,13 @@ void VideoFrameSurface<LIBAV_VER>::ReleaseVAAPIData(bool aForFrameRecycle) {
     mSurface->ReleaseSurface();
   }
 
-  if (aForFrameRecycle && IsUsedByRenderer()) {
+#ifdef DEBUG
+  // The race we warn about here is precisely the one the cached
+  // IsUsedByRenderer() can't see, so query the global ref directly.
+  if (aForFrameRecycle && mSurface->IsGlobalRefSet()) {
     NS_WARNING("Reusing live dmabuf surface, visual glitches ahead");
   }
+#endif
 }
 
 VideoFramePool<LIBAV_VER>::VideoFramePool(int aFFMPEGPoolSize)
@@ -150,12 +156,32 @@ VideoFramePool<LIBAV_VER>::~VideoFramePool() {
   mDMABufSurfaces.Clear();
 }
 
+void VideoFramePool<LIBAV_VER>::UpdateRendererUsageLocked() {
+  if (mDMABufSurfaces.IsEmpty()) {
+    return;
+  }
+
+  AutoTArray<int, 32> refCountFds;
+  refCountFds.SetCapacity(mDMABufSurfaces.Length());
+  for (const auto& surface : mDMABufSurfaces) {
+    refCountFds.AppendElement(surface->mSurface->GetGlobalRefCountFd());
+  }
+
+  AutoTArray<bool, 32> refSet;
+  DMABufSurface::GetGlobalRefsSet(refCountFds, refSet);
+
+  for (size_t i = 0; i < mDMABufSurfaces.Length(); i++) {
+    mDMABufSurfaces[i]->mUsedByRenderer = refSet[i];
+  }
+}
+
 bool VideoFramePool<LIBAV_VER>::IsVulkanFrameSlotInUseByRenderer(
     int32_t aSlotIndex) {
   if (aSlotIndex < 0) {
     return false;
   }
   MutexAutoLock lock(mSurfaceLock);
+  UpdateRendererUsageLocked();
   for (const auto& surface : mDMABufSurfaces) {
     if (surface->mVulkanCopySlotIndex == aSlotIndex) {
       return surface->IsUsedByRenderer();
@@ -166,6 +192,7 @@ bool VideoFramePool<LIBAV_VER>::IsVulkanFrameSlotInUseByRenderer(
 
 void VideoFramePool<LIBAV_VER>::ReleaseUnusedVAAPIFrames() {
   MutexAutoLock lock(mSurfaceLock);
+  UpdateRendererUsageLocked();
   for (const auto& surface : mDMABufSurfaces) {
     if (!surface->mHoldByFFmpeg && surface->IsUsedByRenderer()) {
       DMABUF_LOG("Copied and used surface UID {}",
@@ -188,9 +215,8 @@ void VideoFramePool<LIBAV_VER>::FlushFFmpegFrames() {
   }
 }
 
-RefPtr<VideoFrameSurface<LIBAV_VER>>
-VideoFramePool<LIBAV_VER>::GetFFmpegVideoFrameSurfaceLocked(
-    const MutexAutoLock& aProofOfLock, VASurfaceID aFFMPEGSurfaceID) {
+RefPtr<VideoFrameSurface<LIBAV_VER>> VideoFramePool<
+    LIBAV_VER>::GetFFmpegVideoFrameSurfaceLocked(VASurfaceID aFFMPEGSurfaceID) {
   MOZ_DIAGNOSTIC_ASSERT(
       aFFMPEGSurfaceID != sInvalidFFMPEGSurfaceID,
       "GetFFmpegVideoFrameSurfaceLocked(): expects valid aFFMPEGSurfaceID");
@@ -216,8 +242,7 @@ VideoFramePool<LIBAV_VER>::GetFFmpegVideoFrameSurfaceLocked(
 }
 
 RefPtr<VideoFrameSurface<LIBAV_VER>>
-VideoFramePool<LIBAV_VER>::GetFreeVideoFrameSurfaceLocked(
-    const MutexAutoLock& aProofOfLock) {
+VideoFramePool<LIBAV_VER>::GetFreeVideoFrameSurfaceLocked() {
   for (auto& surface : mDMABufSurfaces) {
     if (surface->mFFMPEGSurfaceID != sInvalidFFMPEGSurfaceID) {
       continue;
@@ -234,7 +259,7 @@ VideoFramePool<LIBAV_VER>::GetFreeVideoFrameSurfaceLocked(
   return nullptr;
 }
 
-bool VideoFramePool<LIBAV_VER>::ShouldCopySurface() {
+bool VideoFramePool<LIBAV_VER>::ShouldCopySurfaceLocked() {
   // Number of used HW surfaces.
   int surfacesUsed = 0;
   int surfacesUsedFFmpeg = 0;
@@ -274,23 +299,21 @@ bool VideoFramePool<LIBAV_VER>::ShouldCopySurface() {
 
 RefPtr<VideoFrameSurface<LIBAV_VER>>
 VideoFramePool<LIBAV_VER>::GetTargetVideoFrameSurfaceLocked(
-    const MutexAutoLock& aProofOfLock, VASurfaceID aFFmpegSurfaceID,
-    bool aRecycleSurface) {
+    VASurfaceID aFFmpegSurfaceID, bool aRecycleSurface) {
   RefPtr<DMABufSurfaceYUV> surface;
   RefPtr<VideoFrameSurface<LIBAV_VER>> videoSurface;
 
   // Look for surface pool to select existing or unused surface
   if (!aRecycleSurface) {
     // Copied surfaces are not recycled.
-    videoSurface = GetFreeVideoFrameSurfaceLocked(aProofOfLock);
+    videoSurface = GetFreeVideoFrameSurfaceLocked();
   } else {
     // Use FFmpeg ID to find appropriate dmabuf surface. We want to use
     // the same DMABuf surface for FFmpeg decoded frame (FFmpeg ID).
     // It allows us to recycle buffers in rendering process.
     MOZ_DIAGNOSTIC_ASSERT(aFFmpegSurfaceID != sInvalidFFMPEGSurfaceID,
                           "Wrong FFMPEGSurfaceID to recycle!");
-    videoSurface =
-        GetFFmpegVideoFrameSurfaceLocked(aProofOfLock, aFFmpegSurfaceID);
+    videoSurface = GetFFmpegVideoFrameSurfaceLocked(aFFmpegSurfaceID);
   }
 
   // Okay, create a new one
@@ -320,8 +343,9 @@ VideoFramePool<LIBAV_VER>::GetVideoFrameSurface(
   }
 
   MutexAutoLock lock(mSurfaceLock);
+  UpdateRendererUsageLocked();
 
-  bool copySurface = mTextureCopyWorks && ShouldCopySurface();
+  bool copySurface = mTextureCopyWorks && ShouldCopySurfaceLocked();
 
   VASurfaceID ffmpegSurfaceID = (uintptr_t)aAVFrame->data[3];
   MOZ_DIAGNOSTIC_ASSERT(ffmpegSurfaceID != sInvalidFFMPEGSurfaceID,
@@ -329,7 +353,7 @@ VideoFramePool<LIBAV_VER>::GetVideoFrameSurface(
   DMABUF_LOG("Got VA-API DMABufSurface FFMPEG ID 0x{:x}", ffmpegSurfaceID);
 
   RefPtr<VideoFrameSurface<LIBAV_VER>> videoSurface =
-      GetTargetVideoFrameSurfaceLocked(lock, ffmpegSurfaceID,
+      GetTargetVideoFrameSurfaceLocked(ffmpegSurfaceID,
                                        /* aRecycleSurface */ !copySurface);
   RefPtr<DMABufSurfaceYUV> surface = videoSurface->GetDMABufSurface();
 
@@ -343,7 +367,7 @@ VideoFramePool<LIBAV_VER>::GetVideoFrameSurface(
     DMABUF_LOG("  DMABuf texture copy is broken");
     copySurface = mTextureCopyWorks = false;
 
-    videoSurface = GetTargetVideoFrameSurfaceLocked(lock, ffmpegSurfaceID,
+    videoSurface = GetTargetVideoFrameSurfaceLocked(ffmpegSurfaceID,
                                                     /* aRecycleSurface */ true);
     surface = videoSurface->GetDMABufSurface();
     if (!surface->UpdateYUVData(aVaDesc, aWidth, aHeight,
@@ -370,58 +394,6 @@ VideoFramePool<LIBAV_VER>::GetVideoFrameSurface(
     videoSurface->LockVAAPIData(aAVCodecContext, aAVFrame, aLib);
   }
 
-  return videoSurface;
-}
-
-static gfx::SurfaceFormat GetSurfaceFormat(enum AVPixelFormat aPixFmt) {
-  switch (aPixFmt) {
-    case AV_PIX_FMT_YUV420P10LE:
-      return gfx::SurfaceFormat::YUV420P10;
-    case AV_PIX_FMT_YUV420P:
-      return gfx::SurfaceFormat::YUV420;
-    default:
-      return gfx::SurfaceFormat::UNKNOWN;
-  }
-}
-
-// TODO: Add support for AV_PIX_FMT_YUV444P / AV_PIX_FMT_GBRP
-RefPtr<VideoFrameSurface<LIBAV_VER>>
-VideoFramePool<LIBAV_VER>::GetVideoFrameSurface(
-    const layers::PlanarYCbCrData& aData, AVCodecContext* aAVCodecContext) {
-  gfx::SurfaceFormat format = GetSurfaceFormat(aAVCodecContext->pix_fmt);
-  if (format == gfx::SurfaceFormat::UNKNOWN) {
-    DMABUF_LOG("Unsupported FFmpeg DMABuf format {:x}",
-               static_cast<int>(aAVCodecContext->pix_fmt));
-    return nullptr;
-  }
-
-  MutexAutoLock lock(mSurfaceLock);
-
-  RefPtr<VideoFrameSurface<LIBAV_VER>> videoSurface =
-      GetTargetVideoFrameSurfaceLocked(lock, sInvalidFFMPEGSurfaceID,
-                                       /* aRecycleSurface */ false);
-  RefPtr<DMABufSurfaceYUV> surface = videoSurface->GetDMABufSurface();
-
-  DMABUF_LOG("Using SW DMABufSurface UID {}", surface->GetUID());
-
-  if (!surface->UpdateYUVData(aData, format)) {
-    DMABUF_LOG("  failed to convert YUV data to DMABuf memory!");
-    return nullptr;
-  }
-
-  if (MOZ_UNLIKELY(!mTextureCreationWorks)) {
-    mTextureCreationWorks = Some(surface->VerifyTextureCreation());
-    if (!*mTextureCreationWorks) {
-      DMABUF_LOG("  failed to create texture over DMABuf memory!");
-      return nullptr;
-    }
-  }
-
-  // Disable recycling for copied DMABuf surfaces as we can't ensure
-  // match between FFmpeg frame with DMABufSurface.
-  // It doesn't matter much as surface copy/texture upload uses extra
-  // GPU resources anyway.
-  videoSurface->DisableRecycle();
   return videoSurface;
 }
 
@@ -619,9 +591,10 @@ VideoFramePool<LIBAV_VER>::GetVideoFrameSurface(AVDRMFrameDescriptor& aDesc,
   int crop_height = (int)layerDesc->height;
 
   MutexAutoLock lock(mSurfaceLock);
+  UpdateRendererUsageLocked();
 
   RefPtr<VideoFrameSurface<LIBAV_VER>> videoSurface =
-      GetTargetVideoFrameSurfaceLocked(lock, sInvalidFFMPEGSurfaceID,
+      GetTargetVideoFrameSurfaceLocked(sInvalidFFMPEGSurfaceID,
                                        /* aRecycleSurface */ false);
   RefPtr<DMABufSurfaceYUV> surface = videoSurface->GetDMABufSurface();
 
@@ -635,7 +608,7 @@ VideoFramePool<LIBAV_VER>::GetVideoFrameSurface(AVDRMFrameDescriptor& aDesc,
                surface->GetUID());
   }
 
-  bool copySurface = mTextureCopyWorks && ShouldCopySurface();
+  bool copySurface = mTextureCopyWorks && ShouldCopySurfaceLocked();
   if (!surface->UpdateYUVData(layerDesc.value(), crop_width, crop_height,
                               copySurface)) {
     if (!copySurface) {

@@ -41,9 +41,10 @@ NS_IMPL_ISUPPORTS(MediaDocumentStreamListener, nsIRequestObserver,
 
 NS_IMETHODIMP
 MediaDocumentStreamListener::OnStartRequest(nsIRequest* request) {
-  NS_ENSURE_TRUE(mDocument, NS_ERROR_FAILURE);
+  RefPtr<MediaDocument> document = mDocument;
+  NS_ENSURE_TRUE(document, NS_ERROR_FAILURE);
 
-  mDocument->StartLayout();
+  document->StartLayout();
 
   if (nsCOMPtr<nsIStreamListener> nextStream = mNextStream) {
     return nextStream->OnStartRequest(request);
@@ -218,11 +219,12 @@ nsresult MediaDocument::CreateSyntheticDocument() {
   RefPtr<nsGenericHTMLElement> metaContent =
       NS_NewHTMLMetaElement(nodeInfo.forget());
   NS_ENSURE_TRUE(metaContent, NS_ERROR_OUT_OF_MEMORY);
-  metaContent->SetAttr(kNameSpaceID_None, nsGkAtoms::name, u"viewport"_ns,
-                       true);
+  metaContent->SetAttr(kNameSpaceID_None, nsGkAtoms::name, u"viewport"_ns, true,
+                       IsKnownNewAttr::Yes);
 
   metaContent->SetAttr(kNameSpaceID_None, nsGkAtoms::content,
-                       u"width=device-width; height=device-height;"_ns, true);
+                       u"width=device-width; height=device-height;"_ns, true,
+                       IsKnownNewAttr::Yes);
   head->AppendChildTo(metaContent, false, IgnoreErrors());
 
   root->AppendChildTo(head, false, IgnoreErrors());
@@ -295,9 +297,11 @@ nsresult MediaDocument::LinkStylesheet(const nsAString& aStylesheet) {
   RefPtr<nsGenericHTMLElement> link = NS_NewHTMLLinkElement(nodeInfo.forget());
   NS_ENSURE_TRUE(link, NS_ERROR_OUT_OF_MEMORY);
 
-  link->SetAttr(kNameSpaceID_None, nsGkAtoms::rel, u"stylesheet"_ns, true);
+  link->SetAttr(kNameSpaceID_None, nsGkAtoms::rel, u"stylesheet"_ns, true,
+                IsKnownNewAttr::Yes);
 
-  link->SetAttr(kNameSpaceID_None, nsGkAtoms::href, aStylesheet, true);
+  link->SetAttr(kNameSpaceID_None, nsGkAtoms::href, aStylesheet, true,
+                IsKnownNewAttr::Yes);
 
   ErrorResult rv;
   Element* head = GetHeadElement();
@@ -315,9 +319,10 @@ nsresult MediaDocument::LinkScript(const nsAString& aScript) {
   NS_ENSURE_TRUE(script, NS_ERROR_OUT_OF_MEMORY);
 
   script->SetAttr(kNameSpaceID_None, nsGkAtoms::type, u"text/javascript"_ns,
-                  true);
+                  true, IsKnownNewAttr::Yes);
 
-  script->SetAttr(kNameSpaceID_None, nsGkAtoms::src, aScript, true);
+  script->SetAttr(kNameSpaceID_None, nsGkAtoms::src, aScript, true,
+                  IsKnownNewAttr::Yes);
 
   ErrorResult rv;
   Element* head = GetHeadElement();

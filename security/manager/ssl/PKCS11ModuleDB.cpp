@@ -7,6 +7,7 @@
 #include "CertVerifier.h"
 #include "PKCS11Module.h"
 #include "ScopedNSSTypes.h"
+#include "mozilla/AppShutdown.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/StaticPrefs_security.h"
@@ -42,8 +43,7 @@ PKCS11ModuleDB::PKCS11ModuleDB() {
   MOZ_ASSERT(NS_IsMainThread());
 
 #if defined(NIGHTLY_BUILD) && !defined(MOZ_NO_SMART_CARDS)
-  if (StaticPrefs::security_utility_pkcs11_module_process_enabled() &&
-      !GetInSafeMode()) {
+  if (UtilityProcessEnabled() && !GetInSafeMode()) {
     auto manager = ipc::UtilityProcessManager::GetSingleton();
     MOZ_ASSERT(manager);
     if (manager) {
@@ -71,7 +71,8 @@ StaticRefPtr<PKCS11ModuleDB> sPKCS11ModuleDB;
 
 already_AddRefed<PKCS11ModuleDB> PKCS11ModuleDB::GetSingleton() {
   MOZ_ASSERT(NS_IsMainThread());
-  if (!NS_IsMainThread()) {
+  if (!NS_IsMainThread() ||
+      AppShutdown::IsInOrBeyond(ShutdownPhase::XPCOMShutdown)) {
     return nullptr;
   }
 
@@ -81,6 +82,18 @@ already_AddRefed<PKCS11ModuleDB> PKCS11ModuleDB::GetSingleton() {
   }
 
   return do_AddRef(sPKCS11ModuleDB);
+}
+
+static StaticDataMutex<Maybe<bool>> sUtilityProcessEnabled(
+    "sUtilityProcessEnabled");
+
+bool PKCS11ModuleDB::UtilityProcessEnabled() {
+  auto utilityProcessEnabled = sUtilityProcessEnabled.Lock();
+  if (utilityProcessEnabled->isNothing()) {
+    utilityProcessEnabled->emplace(
+        StaticPrefs::security_utility_pkcs11_module_process_enabled());
+  }
+  return **utilityProcessEnabled;
 }
 
 // Using the NSS serial task queue avoids threading issues in NSS'
@@ -164,7 +177,7 @@ PKCS11ModuleDB::DeleteModule(const nsAString& aModuleName, JSContext* aCx,
       "DeleteModule promise", promise);
 
 #if defined(NIGHTLY_BUILD) && !defined(MOZ_NO_SMART_CARDS)
-  if (StaticPrefs::security_utility_pkcs11_module_process_enabled()) {
+  if (UtilityProcessEnabled()) {
     if (!mPKCS11ModuleProcessPromise) {
       return NS_ERROR_NOT_AVAILABLE;
     }
@@ -346,7 +359,7 @@ PKCS11ModuleDB::AddModule(const nsAString& aModuleName,
       MakeRefPtr<nsMainThreadPtrHolder<Promise>>("AddModule promise", promise);
 
 #if defined(NIGHTLY_BUILD) && !defined(MOZ_NO_SMART_CARDS)
-  if (StaticPrefs::security_utility_pkcs11_module_process_enabled()) {
+  if (UtilityProcessEnabled()) {
     if (!mPKCS11ModuleProcessPromise) {
       return NS_ERROR_NOT_AVAILABLE;
     }
@@ -638,7 +651,7 @@ PKCS11ModuleDB::ListModules(JSContext* aCx, Promise** aPromise) {
   promises.AppendElement(ListMainProcessModules());
 
 #if defined(NIGHTLY_BUILD) && !defined(MOZ_NO_SMART_CARDS)
-  if (StaticPrefs::security_utility_pkcs11_module_process_enabled()) {
+  if (UtilityProcessEnabled()) {
     promises.AppendElement(ListRemoteProcessModules());
   }
 #endif  // NIGHTLY_BUILD && !MOZ_NO_SMART_CARDS
@@ -672,10 +685,8 @@ PKCS11ModuleDB::ListModules(JSContext* aCx, Promise** aPromise) {
 }
 
 const nsLiteralCString kBuiltInModuleNames[] = {
-    kNSSInternalModuleName,
-    kRootModuleName,
-    kOSClientCertsModuleName,
-    kIPCClientCertsModuleName,
+    kIPCClientCertsModuleName, kNSSInternalModuleName, kOSClientCertsModuleName,
+    kRemoteCertsModuleName,    kRootModuleName,
 };
 
 void CollectThirdPartyPKCS11ModuleTelemetry(bool aIsInitialization) {
@@ -784,6 +795,72 @@ RefPtr<PKCS11ModuleDB::TokenInfoPromise> PKCS11ModuleDB::ChangeTokenPassword(
       [](nsresult rv) {
         return TokenInfoPromise::CreateAndReject(rv, __func__);
       });
+}
+
+RefPtr<PKCS11ModuleDB::FindObjectsPromise>
+PKCS11ModuleDB::FindObjectsGivenParent(
+    SearchingFor searchingFor, const RefPtr<PKCS11ModuleParent>& parent) {
+  return parent->SendFindObjects(searchingFor)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [](nsTArray<IPCClientCertObject>&& objects) {
+            return FindObjectsPromise::CreateAndResolve(std::move(objects),
+                                                        __func__);
+          },
+          [](ipc::ResponseRejectReason reason) {
+            return FindObjectsPromise::CreateAndReject(NS_ERROR_FAILURE,
+                                                       __func__);
+          });
+}
+
+RefPtr<PKCS11ModuleDB::FindObjectsPromise> PKCS11ModuleDB::FindObjects(
+    SearchingFor searchingFor) {
+  if (!mPKCS11ModuleProcessPromise) {
+    return FindObjectsPromise::CreateAndReject(NS_ERROR_NOT_AVAILABLE,
+                                               __func__);
+  }
+  return mPKCS11ModuleProcessPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
+      [searchingFor](const RefPtr<PKCS11ModuleParent>& parent) {
+        MOZ_RELEASE_ASSERT(parent);
+        return FindObjectsGivenParent(searchingFor, parent);
+      },
+      [](nsresult rv) {
+        return FindObjectsPromise::CreateAndReject(rv, __func__);
+      });
+}
+
+RefPtr<PKCS11ModuleDB::SignPromise> PKCS11ModuleDB::SignGivenParent(
+    Span<uint8_t> certificate, Span<uint8_t> data, Span<uint8_t> params,
+    const RefPtr<PKCS11ModuleParent>& parent) {
+  return parent->SendSign(certificate, data, params)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [](nsTArray<uint8_t>&& signature) {
+            return SignPromise::CreateAndResolve(std::move(signature),
+                                                 __func__);
+          },
+          [](ipc::ResponseRejectReason reason) {
+            return SignPromise::CreateAndReject(NS_ERROR_FAILURE, __func__);
+          });
+}
+
+RefPtr<PKCS11ModuleDB::SignPromise> PKCS11ModuleDB::Sign(
+    nsTArray<uint8_t> certificate, nsTArray<uint8_t> data,
+    nsTArray<uint8_t> params) {
+  if (!mPKCS11ModuleProcessPromise) {
+    return SignPromise::CreateAndReject(NS_ERROR_NOT_AVAILABLE, __func__);
+  }
+  return mPKCS11ModuleProcessPromise->Then(
+      GetCurrentSerialEventTarget(), __func__,
+      [certificate(std::move(certificate)), data(std::move(data)),
+       params(std::move(params))](
+          const RefPtr<PKCS11ModuleParent>& parent) mutable {
+        MOZ_RELEASE_ASSERT(parent);
+        return SignGivenParent(Span(certificate), Span(data), Span(params),
+                               parent);
+      },
+      [](nsresult rv) { return SignPromise::CreateAndReject(rv, __func__); });
 }
 #endif  // NIGHTLY_BUILD && !MOZ_NO_SMART_CARDS
 

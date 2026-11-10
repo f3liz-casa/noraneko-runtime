@@ -1,11 +1,11 @@
-NSPR defines a platform-dependent type, {ref}`PRIntervalTime`, for timing
+NSPR defines a platform-dependent type, {doc}`printervaltime`, for timing
 intervals of fewer than approximately 6 hours. This chapter describes
-{ref}`PRIntervalTime` and the functions that allow you to use it for timing
+{doc}`printervaltime` and the functions that allow you to use it for timing
 purposes:
 
 - [Interval Time Type and
-  Constants](#Interval_Time_Type_and_Constants)
-- [Interval Functions](#Interval_Functions)
+  Constants](#interval-time-type-and-constants)
+- [Interval Functions](#interval-functions)
 
 (interval-time-type-and-constants)=
 
@@ -13,7 +13,7 @@ purposes:
 
 All timed functions in NSPR require a parameter that depicts the amount
 of time allowed to elapse before the operation is declared failed. The
-type of such arguments is {ref}`PRIntervalTime`. Such parameters are common
+type of such arguments is {doc}`printervaltime`. Such parameters are common
 in NSPR functions such as those used for I/O operations and operations
 on condition variables.
 
@@ -28,7 +28,7 @@ epoch, and an amount of time elapsed since that **epoch**, the
 **interval**. In almost all cases the epoch is defined as the value of
 the interval timer at the time it was sampled.
 
-> - {ref}`PRIntervalTime`
+> - {doc}`printervaltime`
 
 (interval-functions)=
 
@@ -37,31 +37,31 @@ the interval timer at the time it was sampled.
 Interval timing functions are divided into three groups:
 
 - [Getting the Current Interval and Ticks Per
-  Second](#Getting_the_Current_Interval_and_Ticks_Per_Second)
+  Second](#getting-the-current-interval-and-ticks-per-second)
 - [Converting Standard Clock Units to Platform-Dependent
-  Intervals](#Converting_Standard_Clock_Units_to_Platform-Dependent_Intervals)
+  Intervals](#converting-standard-clock-units-to-platform-dependent-intervals)
 - [Converting Platform-Dependent Intervals to Standard Clock
-  Units](#Converting_Platform-Dependent_Intervals_to_Standard_Clock_Units)
+  Units](#converting-platform-dependent-intervals-to-standard-clock-units)
 
 (getting-the-current-interval-and-ticks-per-second)=
 
 ## Getting the Current Interval and Ticks Per Second
 
-> - {ref}`PR_IntervalNow`
-> - {ref}`PR_TicksPerSecond`
+> - {doc}`pr_intervalnow`
+> - {doc}`pr_tickspersecond`
 
 (converting-standard-clock-units-to-platform-dependent-intervals)=
 
 ## Converting Standard Clock Units to Platform-Dependent Intervals
 
-> - {ref}`PR_SecondsToInterval`
-> - {ref}`PR_MillisecondsToInterval`
-> - {ref}`PR_MicrosecondsToInterval`
+> - {doc}`pr_secondstointerval`
+> - {doc}`pr_millisecondstointerval`
+> - {doc}`pr_microsecondstointerval`
 
 (converting-platform-dependent-intervals-to-standard-clock-units)=
 
 ## Converting Platform-Dependent Intervals to Standard Clock Units
 
-> - {ref}`PR_IntervalToSeconds`
-> - {ref}`PR_IntervalToMilliseconds`
-> - {ref}`PR_IntervalToMicroseconds`
+> - {doc}`pr_intervaltoseconds`
+> - {doc}`pr_intervaltomilliseconds`
+> - {doc}`pr_intervaltomicroseconds`

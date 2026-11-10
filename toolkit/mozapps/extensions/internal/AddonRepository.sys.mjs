@@ -54,6 +54,7 @@ const PREF_GETADDONS_DB_SCHEMA = "extensions.getAddons.databaseSchema";
 const PREF_GET_LANGPACKS = "extensions.getAddons.langpacks.url";
 const PREF_GET_BROWSER_MAPPINGS = "extensions.getAddons.browserMappings.url";
 
+const PREF_METADATA_LASTLOCALE = "extensions.getAddons.cache.lastLocale";
 const PREF_METADATA_LASTUPDATE = "extensions.getAddons.cache.lastUpdate";
 const PREF_METADATA_UPDATETHRESHOLD_SEC =
   "extensions.getAddons.cache.updateThreshold";
@@ -702,6 +703,29 @@ export var AddonRepository = {
     lazy.AddonManager.beforeShutdown.removeBlocker(shutter);
   },
 
+  // With many langpacks "intl:app-locales-changed" fires repeatedly at startup.
+  updateIfLocaleChanged() {
+    // The "extensions.getAddons.get.url" pref defines where getAddonsByIDs()
+    // should fetch data. The pref contains %LOCALE% which is replaced with
+    // Services.locale.appLocaleAsBCP47 by urlFormatter.formatURL.
+    const locale = Services.locale.appLocaleAsBCP47;
+
+    if (Services.prefs.getStringPref(PREF_METADATA_LASTLOCALE, "") === locale) {
+      // Locale not changed, avoid excessive redundant activity (bug 2052032).
+      return undefined;
+    }
+    Services.prefs.setStringPref(PREF_METADATA_LASTLOCALE, locale);
+
+    if (this.cacheEnabled) {
+      logger.debug(`Updating cache after locale change to ${locale}`);
+    }
+
+    // We attempt only one forced refresh when the locale changes, thanks to
+    // the above immediate update to PREF_METADATA_LASTLOCALE. If this fails,
+    // we have another chance at the next scheduled backgroundUpdateCheck.
+    return this.backgroundUpdateCheck();
+  },
+
   /**
    * Creates an AddonSearchResult by parsing an entry from the AMO API.
    *
@@ -844,9 +868,11 @@ export var AddonRepository = {
           file.platform == Services.appinfo.OS.toLowerCase()
         ) {
           result.push({
+            id: entry.guid,
+            hash: file.hash,
             target_locale: entry.target_locale,
             url: file.url,
-            hash: file.hash,
+            version: entry.current_compatible_version.version,
           });
         }
       }

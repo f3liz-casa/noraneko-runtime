@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "Link.h"
+#include "mozilla/dom/Link.h"
 
 #include "mozilla/Components.h"
 #include "mozilla/FocusModel.h"
@@ -492,7 +492,8 @@ void Link::SetHrefAttribute(nsIURI* aURI) {
   nsAutoCString href;
   (void)aURI->GetSpec(href);
   (void)mElement->SetAttr(kNameSpaceID_None, nsGkAtoms::href,
-                          NS_ConvertUTF8toUTF16(href), true);
+                          NS_ConvertUTF8toUTF16(href), true,
+                          IsKnownNewAttr::No);
 }
 
 size_t Link::SizeOfExcludingThis(mozilla::SizeOfState& aState) const {

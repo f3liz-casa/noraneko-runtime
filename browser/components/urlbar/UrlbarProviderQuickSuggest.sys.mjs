@@ -2,16 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { UrlbarProvider } from "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs";
+import {
+  UrlbarProvider,
+  UrlbarUtils,
+} from "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs";
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   ContentRelevancyManager:
     "resource://gre/modules/ContentRelevancyManager.sys.mjs",
   QuickSuggest: "moz-src:///browser/components/urlbar/QuickSuggest.sys.mjs",
   SearchUtils: "moz-src:///toolkit/components/search/SearchUtils.sys.mjs",
   UrlbarPrefs: "moz-src:///browser/components/urlbar/UrlbarPrefs.sys.mjs",
+  UrlbarProviderTopSites:
+    "moz-src:///browser/components/urlbar/UrlbarProviderTopSites.sys.mjs",
   UrlbarResult: "chrome://browser/content/urlbar/UrlbarResult.mjs",
   UrlbarShared: "chrome://browser/content/urlbar/UrlbarShared.mjs",
   UrlbarSearchUtils:
@@ -71,17 +75,22 @@ export class UrlbarProviderQuickSuggest extends UrlbarProvider {
 
     // Trim only the start of the search string because a trailing space can
     // affect the suggestions.
-    let trimmedSearchString = queryContext.searchString.trimStart();
-
-    // Per product requirements, at least two characters must be typed to
-    // trigger a Suggest suggestion. Suggestion keywords should always be at
-    // least two characters long, but we check here anyway to be safe. Note we
-    // called `trimStart()` above, so we only call `trimEnd()` here.
-    if (trimmedSearchString.trimEnd().length < 2) {
-      return false;
-    }
-    this._trimmedSearchString = trimmedSearchString;
+    this._trimmedSearchString = queryContext.searchString.trimStart();
     return true;
+  }
+
+  /**
+   * Uses the same priority as `UrlbarProviderTopSites` in the zero prefix view
+   * so that Suggest features can show results there.
+   *
+   * @param {UrlbarQueryContext} queryContext
+   * @returns {number}
+   */
+  getPriority(queryContext) {
+    if (!queryContext.searchString && !queryContext.restrictSource) {
+      return lazy.UrlbarProviderTopSites.PRIORITY;
+    }
+    return 0;
   }
 
   /**
@@ -89,9 +98,9 @@ export class UrlbarProviderQuickSuggest extends UrlbarProvider {
    *
    * @param {UrlbarQueryContext} queryContext
    * @param {(provider: UrlbarProvider, result: UrlbarResult) => void} addCallback
-   *   Callback invoked by the provider to add a new result.
+   * @param {UrlbarParentController} controller
    */
-  async startQuery(queryContext, addCallback) {
+  async startQuery(queryContext, addCallback, controller) {
     let instance = this.queryInstance;
     let searchString = this._trimmedSearchString;
 
@@ -118,7 +127,7 @@ export class UrlbarProviderQuickSuggest extends UrlbarProvider {
         break;
       }
 
-      let result = await this.#makeResult(queryContext, suggestion);
+      let result = await this.#makeResult(queryContext, suggestion, controller);
       if (instance != this.queryInstance) {
         return;
       }
@@ -296,7 +305,7 @@ export class UrlbarProviderQuickSuggest extends UrlbarProvider {
    * @returns {object} An object of view template.
    */
   getViewTemplate(result) {
-    return lazy.QuickSuggest.getFeatureByResult(result)?.getViewTemplate?.(
+    return lazy.QuickSuggest.getFeatureByResult(result)?.getViewTemplate(
       result
     );
   }
@@ -304,12 +313,14 @@ export class UrlbarProviderQuickSuggest extends UrlbarProvider {
   /**
    * This is called only for dynamic result types.
    *
-   * @param {UrlbarResult} result The result whose view will be updated.
-   * @returns {object} An object describing the view update.
+   * @param {UrlbarResult} result
+   * @param {UrlbarParentController} controller
+   * @returns {object}
    */
-  getViewUpdate(result) {
-    return lazy.QuickSuggest.getFeatureByResult(result)?.getViewUpdate?.(
-      result
+  getViewUpdate(result, controller) {
+    return lazy.QuickSuggest.getFeatureByResult(result)?.getViewUpdate(
+      result,
+      controller
     );
   }
 
@@ -349,7 +360,7 @@ export class UrlbarProviderQuickSuggest extends UrlbarProvider {
     return suggestion.provider;
   }
 
-  async #makeResult(queryContext, suggestion) {
+  async #makeResult(queryContext, suggestion, controller) {
     let result = null;
     let feature = lazy.QuickSuggest.getFeatureBySource(suggestion);
     if (!feature) {
@@ -385,8 +396,15 @@ export class UrlbarProviderQuickSuggest extends UrlbarProvider {
     result.payload.telemetryType = this.#getSuggestionTelemetryType(suggestion);
 
     // Handle icons here unless the feature already did.
-    result.payload.icon ||= suggestion.icon;
     result.payload.iconBlob ||= suggestion.icon_blob;
+    result.payload.icon ||= suggestion.icon;
+    if (result.payload.icon) {
+      result.payload.icon = UrlbarUtils.getRemoteImageUrl({
+        controller,
+        url: result.payload.icon,
+        size: lazy.UrlbarShared.TOP_PICK_ICON_SIZE,
+      });
+    }
 
     switch (suggestion.source) {
       case "merino":

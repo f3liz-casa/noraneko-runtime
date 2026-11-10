@@ -194,7 +194,7 @@ class LUse : public LAllocation {
   static const uint32_t POLICY_BITS = 3;
   static const uint32_t POLICY_SHIFT = 0;
   static const uint32_t POLICY_MASK = (1 << POLICY_BITS) - 1;
-#ifdef JS_CODEGEN_ARM64
+#if defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_LOONG64)
   static const uint32_t REG_BITS = 7;
 #else
   static const uint32_t REG_BITS = 6;
@@ -1781,7 +1781,7 @@ class LSafepoint : public TempObject {
 #endif
   LiveGeneralRegisterSet gcRegs() const { return gcRegs_; }
   [[nodiscard]] bool addGcSlot(bool stack, uint32_t slot) {
-    bool result = gcSlots_.append(SlotEntry(stack, slot));
+    bool result = gcSlots_.emplaceBack(stack, slot);
     if (result) {
       assertInvariants();
     }
@@ -1794,7 +1794,7 @@ class LSafepoint : public TempObject {
     return slotsOrElementsRegs_;
   }
   [[nodiscard]] bool addSlotsOrElementsSlot(bool stack, uint32_t slot) {
-    bool result = slotsOrElementsSlots_.append(SlotEntry(stack, slot));
+    bool result = slotsOrElementsSlots_.emplaceBack(stack, slot);
     if (result) {
       assertInvariants();
     }
@@ -1815,7 +1815,7 @@ class LSafepoint : public TempObject {
     return wasmStructDataRegs_;
   }
   [[nodiscard]] bool addWasmStructDataSlot(bool stack, uint32_t slot) {
-    bool result = wasmStructDataSlots_.append(SlotEntry(stack, slot));
+    bool result = wasmStructDataSlots_.emplaceBack(stack, slot);
     if (result) {
       assertInvariants();
     }
@@ -1836,7 +1836,7 @@ class LSafepoint : public TempObject {
     return wasmArrayDataRegs_;
   }
   [[nodiscard]] bool addWasmArrayDataSlot(bool stack, uint32_t slot) {
-    bool result = wasmArrayDataSlots_.append(SlotEntry(stack, slot));
+    bool result = wasmArrayDataSlots_.emplaceBack(stack, slot);
     if (result) {
       assertInvariants();
     }
@@ -1893,7 +1893,7 @@ class LSafepoint : public TempObject {
   LiveGeneralRegisterSet wasmAnyRefRegs() const { return wasmAnyRefRegs_; }
 
   [[nodiscard]] bool addWasmAnyRefSlot(bool stack, uint32_t slot) {
-    bool result = wasmAnyRefSlots_.append(SlotEntry(stack, slot));
+    bool result = wasmAnyRefSlots_.emplaceBack(stack, slot);
     if (result) {
       assertInvariants();
     }
@@ -1961,7 +1961,7 @@ class LSafepoint : public TempObject {
 
 #elif JS_PUNBOX64
   [[nodiscard]] bool addValueSlot(bool stack, uint32_t slot) {
-    bool result = valueSlots_.append(SlotEntry(stack, slot));
+    bool result = valueSlots_.emplaceBack(stack, slot);
     if (result) {
       assertInvariants();
     }

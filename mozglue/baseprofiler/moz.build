@@ -35,7 +35,8 @@ if not CONFIG["JS_STANDALONE"]:
         )
         or (
             CONFIG["OS_TARGET"] == "Linux"
-            and CONFIG["TARGET_CPU"] in ("aarch64", "arm", "x86", "x86_64", "mips64")
+            and CONFIG["TARGET_CPU"]
+            in ("aarch64", "arm", "x86", "x86_64", "mips64", "loongarch64", "riscv64")
         )
         or (
             CONFIG["OS_TARGET"] == "FreeBSD"
@@ -145,3 +146,8 @@ if CONFIG["CC_TYPE"] in ("clang", "gcc"):
 
 with Files("**"):
     BUG_COMPONENT = ("Core", "Gecko Profiler")
+
+LICENSED_UNDER += ["vtune"]
+LICENSED_UNDER["vtune"].paths = [
+    "core/vtune",
+]

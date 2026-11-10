@@ -61,7 +61,7 @@ enum {
   ACCEPT_INVITE_MESSAGE_TYPE = kuint16max - 16,
   REQUEST_INTRODUCTION_MESSAGE_TYPE = kuint16max - 15,
   INTRODUCE_MESSAGE_TYPE = kuint16max - 14,
-  BROADCAST_MESSAGE_TYPE = kuint16max - 13,
+  DEAD_PROXY_MESSAGE_TYPE = kuint16max - 13,
   EVENT_MESSAGE_TYPE = kuint16max - 12,
 
   // Message types used by MessageChannel
@@ -741,14 +741,14 @@ class WeakActorLifecycleProxy final {
   // Safe to call on any thread.
   nsISerialEventTarget* ActorEventTarget() const { return mActorEventTarget; }
 
+  WeakActorLifecycleProxy(const WeakActorLifecycleProxy&) = delete;
+  WeakActorLifecycleProxy& operator=(const WeakActorLifecycleProxy&) = delete;
+
  private:
   friend class ActorLifecycleProxy;
 
   explicit WeakActorLifecycleProxy(ActorLifecycleProxy* aProxy);
   ~WeakActorLifecycleProxy();
-
-  WeakActorLifecycleProxy(const WeakActorLifecycleProxy&) = delete;
-  WeakActorLifecycleProxy& operator=(const WeakActorLifecycleProxy&) = delete;
 
   // This field may only be accessed on the actor's thread, and will be
   // automatically cleared when the ActorLifecycleProxy is destroyed.

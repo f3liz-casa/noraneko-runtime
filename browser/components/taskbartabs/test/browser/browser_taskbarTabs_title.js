@@ -3,8 +3,9 @@
 "use strict";
 
 ChromeUtils.defineESModuleGetters(this, {
-  TaskbarTabs: "resource:///modules/taskbartabs/TaskbarTabs.sys.mjs",
-  TaskbarTabsPin: "resource:///modules/taskbartabs/TaskbarTabsPin.sys.mjs",
+  TaskbarTabs: "moz-src:///browser/components/taskbartabs/TaskbarTabs.sys.mjs",
+  TaskbarTabsPin:
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsPin.sys.mjs",
   sinon: "resource://testing-common/Sinon.sys.mjs",
 });
 
@@ -15,7 +16,7 @@ let gProfileName = null;
 
 const kUri = Services.io.newURI("https://example.com");
 
-sinon.stub(TaskbarTabsPin, "pinTaskbarTab");
+sinon.stub(TaskbarTabsPin, "pinTaskbarTab").resolves({});
 sinon.stub(TaskbarTabsPin, "unpinTaskbarTab");
 
 add_setup(function setup() {

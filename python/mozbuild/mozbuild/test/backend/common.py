@@ -46,6 +46,54 @@ CONFIGS = defaultdict(
                 "LIB_SUFFIX": "a",
             },
         },
+        "objdir-local-includes": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
+        "host-cpp-link": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
+        "per-source-object-deps": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
+        "xpidl": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+            },
+        },
+        "database-defines": {
+            "defines": {},
+            "substs": {
+                "CC": ["clang"],
+                "CXX": ["clang++"],
+                "COMPILE_ENVIRONMENT": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
+        "generated-files-host-tool": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
         "database-compiler-wrapper": {
             "defines": {},
             "substs": {
@@ -71,6 +119,36 @@ CONFIGS = defaultdict(
             "substs": {
                 "COMPILE_ENVIRONMENT": "1",
                 "RUST_TARGET": "x86_64-unknown-linux-gnu",
+                "RUST_LTO_ELIGIBLE": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
+        "rust-library-no-lto": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "RUST_TARGET": "x86_64-unknown-linux-gnu",
+                "RUST_LTO_ELIGIBLE": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
+        "rust-library-flags": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "RUST_TARGET": "x86_64-unknown-linux-gnu",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
+        "rust-megazord-library": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "OS_TARGET": "WINNT",
+                "RUST_TARGET": "x86_64-pc-windows-msvc",
                 "LIB_PREFIX": "lib",
                 "LIB_SUFFIX": "a",
             },
@@ -96,6 +174,16 @@ CONFIGS = defaultdict(
             },
         },
         "rust-library-features": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "RUST_TARGET": "x86_64-unknown-linux-gnu",
+                "RUST_LTO_ELIGIBLE": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
+        "rust-library-cargo-profile": {
             "defines": {},
             "substs": {
                 "COMPILE_ENVIRONMENT": "1",
@@ -132,6 +220,14 @@ CONFIGS = defaultdict(
                 "HOST_BIN_SUFFIX": ".exe",
             },
         },
+        "rust-program-output-category": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "RUST_TARGET": "i686-pc-windows-msvc",
+                "BIN_SUFFIX": ".exe",
+            },
+        },
         "generated-file-rust-archive-dep": {
             "defines": {},
             "substs": {
@@ -145,6 +241,7 @@ CONFIGS = defaultdict(
             "defines": {},
             "substs": {
                 "COMPILE_ENVIRONMENT": "1",
+                "MOZ_WIDGET_TOOLKIT": "windows",
                 "RUST_TARGET": "i686-pc-windows-msvc",
                 "RUST_HOST_TARGET": "i686-pc-windows-msvc",
                 "BIN_SUFFIX": ".exe",
@@ -284,6 +381,17 @@ CONFIGS = defaultdict(
                 "LIB_PREFIX": "lib",
                 "LIB_SUFFIX": "a",
                 "OBJ_SUFFIX": "o",
+            },
+        },
+        "shared-lib-paths-windows": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "OS_ARCH": "WINNT",
+                "OS_TARGET": "WINNT",
+                "DLL_SUFFIX": ".dll",
+                "IMPORT_LIB_SUFFIX": "lib",
+                "LIB_SUFFIX": "lib",
             },
         },
         "l10n-manifest-roots": {

@@ -31,7 +31,7 @@
 #include "jit/ABIFunctions.h"
 #include "jit/Bailouts.h"  // js::jit::FinishBailoutToBaseline, js::jit::Bailout,
                            // js::jit::InvalidationBailout
-
+#include "jit/BaselineDebugModeOSR.h"
 #include "jit/Ion.h"          // js::jit::LazyLinkTopActivation
 #include "jit/JitFrames.h"    // HandleException
 #include "jit/VMFunctions.h"  // Rest of js::jit::* functions.
@@ -116,6 +116,7 @@ namespace jit {
   _(js::irregexp::CaseInsensitiveCompareNonUnicode)                            \
   _(js::irregexp::CaseInsensitiveCompareUnicode)                               \
   _(js::irregexp::GrowBacktrackStack)                                          \
+  _(js::irregexp::HandleRegExpInterrupt)                                       \
   _(js::irregexp::IsCharacterInRangeArray)                                     \
   _(js::jit::AllocateAndInitTypedArrayBuffer)                                  \
   _(js::jit::AllocateBigIntNoGC)                                               \
@@ -133,6 +134,7 @@ namespace jit {
   _(js::jit::AtomicsStore64)                                                   \
   _(js::jit::AtomizeStringNoGC)                                                \
   _(js::jit::Bailout)                                                          \
+  _(js::jit::BaselineDebugModeOSRResumeAddr)                                   \
   _(js::jit::BigIntNumberEqual<js::jit::EqualityKind::Equal>)                  \
   _(js::jit::BigIntNumberEqual<js::jit::EqualityKind::NotEqual>)               \
   _(js::jit::BigIntNumberCompare<js::jit::ComparisonKind::LessThan>)           \

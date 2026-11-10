@@ -5,6 +5,7 @@
 #ifndef CACHED_TABLE_ACCESSIBLE_H
 #define CACHED_TABLE_ACCESSIBLE_H
 
+#include "mozilla/RefPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/a11y/TableAccessible.h"
 #include "mozilla/a11y/TableCellAccessible.h"
@@ -44,12 +45,7 @@ class CachedTableCellAccessible final : public TableCellAccessible {
 
  private:
   CachedTableCellAccessible(uint64_t aAccID, Accessible* aAcc, uint32_t aRowIdx,
-                            uint32_t aColIdx, uint32_t aPrevColHeaderCellIdx)
-      : mAccID(aAccID),
-        mAcc(aAcc),
-        mRowIdx(aRowIdx),
-        mColIdx(aColIdx),
-        mPrevColHeaderCellIdx(aPrevColHeaderCellIdx) {}
+                            uint32_t aColIdx, uint32_t aPrevColHeaderCellIdx);
 
   // Get the Accessible for this table cell given its ancestor table Accessible,
   // verifying that the Accessible is valid.
@@ -63,7 +59,7 @@ class CachedTableCellAccessible final : public TableCellAccessible {
   // methods because we can't fetch a document by id. It's okay to use mAcc in
   // these methods because the caller has to hold the Accessible in order to
   // call them.
-  Accessible* mAcc;
+  RefPtr<Accessible> mAcc;
   uint32_t mRowIdx;
   uint32_t mColIdx;
   // The cell index of the previous implicit column header.
@@ -279,7 +275,7 @@ class CachedTableAccessible final : public TableAccessible {
   // will be set to kNoCellIdx.
   void EnsureRowCol(uint32_t aRowIdx, uint32_t aColIdx);
 
-  Accessible* mAcc;  // The table Accessible.
+  RefPtr<Accessible> mAcc;
   // We track the column count because it might not be uniform across rows in
   // malformed tables.
   uint32_t mColCount = 0;

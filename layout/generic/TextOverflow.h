@@ -260,9 +260,6 @@ class TextOverflow final {
   nsSize mBlockSize;
   WritingMode mBlockWM;
   bool mCanHaveInlineAxisScrollbar;
-  // When we're in a -webkit-line-clamp context, we should ignore inline-end
-  // text-overflow markers. See nsBlockFrame::IsInLineClampContext.
-  const bool mInLineClampContext;
   bool mAdjustForPixelSnapping;
 
   class Marker {
@@ -278,17 +275,20 @@ class TextOverflow final {
       mEdgeAligned = false;
     }
 
+    bool IsIStartSuppressed() { return mTextOverflowStyle->IsClip(); }
+    bool IsIEndSuppressed() {
+      if (mBlockEllipsis) {
+        // if mBlockEllipsis is no-ellipis or otherwise invalid, it should be
+        // suppressed.
+        return !HasBlockEllipsis();
+      }
+      return IsIStartSuppressed();
+    }
+
     /**
      * Setup the marker string and calculate its size, if not done already.
      */
     void SetupString(nsIFrame* aFrame);
-
-    bool IsSuppressed(bool aInLineClampContext) const {
-      if (aInLineClampContext) {
-        return !HasBlockEllipsis();
-      }
-      return mTextOverflowStyle->IsClip();
-    }
     bool IsNeeded() const { return mHasOverflow || HasBlockEllipsis(); }
     void Reset() {
       mHasOverflow = false;

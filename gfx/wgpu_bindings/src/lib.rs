@@ -1,3 +1,5 @@
+#![deny(unsafe_op_in_unsafe_fn)]
+
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,8 +11,8 @@ use wgpu_core_remote_types::encoders::{
 };
 use wgpu_core_remote_types::pipelines::{ComputePipelineDescriptor, RenderPipelineDescriptor};
 use wgpu_core_remote_types::{
-    BufferDescriptor, DeviceDescriptor, Label, PipelineLayoutDescriptor, QuerySetDescriptor,
-    RequestAdapterOptions, SamplerDescriptor, TextureDescriptor, TextureViewDescriptor, id,
+    id, BufferDescriptor, DeviceDescriptor, Label, PipelineLayoutDescriptor, QuerySetDescriptor,
+    RequestAdapterOptions, SamplerDescriptor, TextureDescriptor, TextureViewDescriptor,
 };
 
 pub mod client;
@@ -22,7 +24,7 @@ pub mod telemetry;
 use std::marker::PhantomData;
 use std::{borrow::Cow, mem, slice};
 
-use nsstring::nsACString;
+use nsstring::{nsACString, nsCString};
 
 use crate::error::GPUError;
 
@@ -73,7 +75,7 @@ impl<'a, T> FfiSlice<'a, T> {
             return &[];
         }
 
-        std::slice::from_raw_parts(self.data, self.length)
+        unsafe { std::slice::from_raw_parts(self.data, self.length) }
     }
 }
 
@@ -119,7 +121,7 @@ impl ByteBuf {
     }
 
     unsafe fn as_slice(&self) -> &[u8] {
-        slice::from_raw_parts(self.data, self.len)
+        unsafe { slice::from_raw_parts(self.data, self.len) }
     }
 }
 
@@ -262,7 +264,7 @@ pub(crate) enum Message<'a> {
         desc: DeviceDescriptor<'a>,
     },
     Device(id::DeviceId, DeviceAction<'a>),
-    Texture(id::DeviceId, id::TextureId, TextureAction<'a>),
+    Texture(id::TextureId, TextureAction<'a>),
     RenderBundleEncoder(id::RenderBundleEncoderId, RenderBundleEncoderCommand<'a>),
     CommandEncoder(id::CommandEncoderId, CommandEncoderCommand<'a>),
     RenderPassEncoder(id::RenderPassEncoderId, RenderPassEncoderCommand),
@@ -281,7 +283,6 @@ pub(crate) enum Message<'a> {
     },
     BufferUnmap(id::DeviceId, id::BufferId, bool),
     QueueSubmit(
-        id::DeviceId,
         id::QueueId,
         Cow<'a, [id::CommandBufferId]>,
         Cow<'a, [id::TextureId]>,
@@ -400,6 +401,37 @@ struct PipelineError {
     error: String,
 }
 
+/// The DOM exception `GPUAdapter.requestDevice()` is specified to reject with.
+#[repr(C)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum FfiRequestDeviceErrorType {
+    TypeError,
+    OperationError,
+}
+
+#[repr(C)]
+pub struct FfiRequestDeviceError<'a> {
+    pub ty: FfiRequestDeviceErrorType,
+    pub message: &'a nsCString,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RequestDeviceError {
+    ty: FfiRequestDeviceErrorType,
+    message: String,
+}
+
+impl RequestDeviceError {
+    /// Only the Vulkan/dmabuf device-creation path constructs these directly.
+    #[cfg(target_os = "linux")]
+    fn operation_error(message: String) -> Self {
+        Self {
+            ty: FfiRequestDeviceErrorType::OperationError,
+            message,
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ShaderModuleCompilationMessage {
     pub line_number: u64,
@@ -407,6 +439,7 @@ pub struct ShaderModuleCompilationMessage {
     pub utf16_offset: u64,
     pub utf16_length: u64,
     pub message: String,
+    pub message_type: wgt::CompilationMessageType,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -422,7 +455,7 @@ pub enum BufferMapResult<'a> {
 #[derive(serde::Serialize, serde::Deserialize)]
 enum ServerMessage<'a> {
     RequestAdapterResponse(id::AdapterId, Option<AdapterInformation<Cow<'a, str>>>),
-    RequestDeviceResponse(id::DeviceId, id::QueueId, Option<String>),
+    RequestDeviceResponse(id::DeviceId, id::QueueId, Result<wgt::Limits, RequestDeviceError>),
     PopErrorScopeResponse(id::DeviceId, FfiPopErrorScopeResultType, Cow<'a, str>),
     CreateRenderPipelineResponse {
         pipeline_id: id::RenderPipelineId,

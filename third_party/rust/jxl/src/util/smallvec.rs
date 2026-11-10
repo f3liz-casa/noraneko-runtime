@@ -6,11 +6,9 @@
 #![allow(unsafe_code)]
 
 use core::slice;
-use std::{
-    fmt::Debug,
-    mem::MaybeUninit,
-    ops::{Deref, DerefMut},
-};
+use std::fmt::Debug;
+use std::mem::MaybeUninit;
+use std::ops::{Deref, DerefMut};
 
 pub trait SmallVecHeapStorage<T> {
     const STACK_ONLY: bool;
@@ -86,7 +84,7 @@ pub enum SmallVec<T, const N: usize, HeapStorage: SmallVecHeapStorage<T> = Vec<T
 /// A SmallVec optimized to store up to #channels values.
 // Most images have at most 7 channels (RGBA + noise extra channels).
 // 8 gives a bit extra leeway and makes the size a power of two.
-pub(crate) type ChannelVec<T> = SmallVec<T, 8>;
+pub type ChannelVec<T> = SmallVec<T, 8>;
 
 impl<T, const N: usize, HeapStorage: SmallVecHeapStorage<T>> Deref for SmallVec<T, N, HeapStorage> {
     type Target = [T];
@@ -145,14 +143,6 @@ impl<T, const N: usize, HeapStorage: SmallVecHeapStorage<T>> SmallVec<T, N, Heap
             // Safety note: len == 0 makes the safety invariant trivially true.
             len: 0,
             data: [const { MaybeUninit::uninit() }; N],
-        }
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        match self {
-            Self::Stack { len, .. } => *len == 0,
-            Self::Heap(v) => v.as_slice().is_empty(),
         }
     }
 
@@ -268,8 +258,9 @@ impl<T, const N: usize, HeapStorage: SmallVecHeapStorage<T>> Drop for SmallVec<T
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use arbtest::arbitrary::Arbitrary;
+
+    use super::*;
 
     #[test]
     fn test_size() {

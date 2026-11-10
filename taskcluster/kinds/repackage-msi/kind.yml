@@ -16,9 +16,6 @@ kind-dependencies:
     - repackage-signing-l10n
     - fetch
 
-task-defaults:
-    run-on-repo-type: [hg]
-
 only-for-build-platforms:
     - win32-shippable/opt
     - win64-shippable/opt
@@ -32,6 +29,7 @@ tasks:
             group-by: single-with-filters
         mozharness:
             use-magic-mh-args: false
+            sparse-profile: repackage-msi
             config:
                 by-build-platform:
                     win32\b.*:

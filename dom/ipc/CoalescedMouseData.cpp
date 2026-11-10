@@ -92,7 +92,8 @@ bool CoalescedMouseData::CanCoalesce(const WidgetMouseEvent& aMouseMoveEvent,
       mCoalescedInputEvent->pointerId != aMouseMoveEvent.pointerId ||
       mCoalescedInputEvent->mButton != aMouseMoveEvent.mButton ||
       mCoalescedInputEvent->mButtons != aMouseMoveEvent.mButtons ||
-      mCoalescedInputEvent->mMovement != aMouseMoveEvent.mMovement ||
+      mCoalescedInputEvent->mMovement.isSome() !=
+          aMouseMoveEvent.mMovement.isSome() ||
       mGuid != aGuid || mInputBlockId != aInputBlockId) {
     return false;
   }
@@ -111,8 +112,9 @@ CoalescedMouseMoveFlusher::CoalescedMouseMoveFlusher(
 
 void CoalescedMouseMoveFlusher::WillRefresh(mozilla::TimeStamp aTime) {
   MOZ_ASSERT(mRefreshDriver);
-  mBrowserChild->FlushAllCoalescedMouseData();
-  mBrowserChild->ProcessPendingCoalescedMouseDataAndDispatchEvents();
+  RefPtr<BrowserChild> browserChild(mBrowserChild);
+  browserChild->FlushAllCoalescedMouseData();
+  browserChild->ProcessPendingCoalescedMouseDataAndDispatchEvents();
 }
 
 CoalescedMouseMoveFlusher::~CoalescedMouseMoveFlusher() { RemoveObserver(); }

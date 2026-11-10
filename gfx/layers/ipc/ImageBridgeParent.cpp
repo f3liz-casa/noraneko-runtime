@@ -21,6 +21,7 @@
 #include "mozilla/layers/BufferTexture.h"
 #include "mozilla/layers/CompositableTransactionParent.h"
 #include "mozilla/layers/Compositor.h"
+#include "mozilla/layers/LayerTreeLog.h"
 #include "mozilla/layers/LayersMessages.h"  // for EditReply
 #include "mozilla/layers/PImageBridgeParent.h"
 #include "mozilla/layers/RemoteTextureMap.h"
@@ -143,6 +144,8 @@ void ImageBridgeParent::Shutdown() {
 }
 
 void ImageBridgeParent::ActorDestroy(ActorDestroyReason aWhy) {
+  LAYERTREE_LOG("Image bridge namespace {} destroyed, reason {}", mNamespace,
+                fmt::enums::format_as(aWhy));
   // Can't alloc/dealloc shmems from now on.
   mClosed = true;
 
@@ -270,6 +273,8 @@ void ImageBridgeParent::Bind(Endpoint<PImageBridgeParent>&& aEndpoint) {
     MonitorAutoLock lock(*sImageBridgesLock);
     sImageBridges[OtherPid()] = this;
   }
+  LAYERTREE_LOG("Image bridge bound, namespace {}, content {}, pid {}",
+                mNamespace, mContentId, OtherPid());
 }
 
 mozilla::ipc::IPCResult ImageBridgeParent::RecvWillClose() {
@@ -307,6 +312,30 @@ already_AddRefed<PTextureParent> ImageBridgeParent::AllocPTextureParent(
     const SurfaceDescriptor& aSharedData, ReadLockDescriptor& aReadLock,
     const LayersBackend& aLayersBackend, const TextureFlags& aFlags,
     const uint64_t& aSerial, const wr::MaybeExternalImageId& aExternalImageId) {
+  if (aFlags & TextureFlags::REMOTE_TEXTURE) {
+    MOZ_ASSERT_UNREACHABLE("Unexpected to be called!");
+    return nullptr;
+  }
+
+  switch (aSharedData.type()) {
+    case SurfaceDescriptor::TSurfaceDescriptorBuffer:
+      break;
+    case SurfaceDescriptor::TSurfaceDescriptorGPUVideo:
+      break;
+    case SurfaceDescriptor::TSurfaceDescriptorRemoteTexture:
+      break;
+#ifdef MOZ_WIDGET_ANDROID
+    case SurfaceDescriptor::TSurfaceTextureDescriptor:
+      break;
+#elif defined(XP_MACOSX)
+    case SurfaceDescriptor::TSurfaceDescriptorMacIOSurface:
+      break;
+#endif
+    default:
+      MOZ_ASSERT_UNREACHABLE("Unexpected to be called!");
+      return nullptr;
+  }
+
   if (aExternalImageId.isSome() &&
       !OwnsExternalImageId(aExternalImageId.ref())) {
     NS_ERROR("We do not own this external image id.");

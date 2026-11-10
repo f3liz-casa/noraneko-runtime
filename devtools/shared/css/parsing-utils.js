@@ -338,12 +338,15 @@ function parseDeclarationsInternal(
   // of blocks.
   let currentBlocks = [];
 
-  // This tracks the "!important" parsing state.  The states are:
-  // 0 - haven't seen anything
-  // 1 - have seen "!", looking for "important" next (possibly after
-  //     whitespace).
-  // 2 - have seen "!important"
-  let importantState = 0;
+  // Tracking the "!important" parsing state
+  // - haven't seen anything
+  const IMPORTANT_STATE_NONE = Symbol();
+  // - have seen "!", looking for "important" next (possibly after whitespace).
+  const IMPORTANT_STATE_SAW_EXCLAMATION = Symbol();
+  // - have seen "!important"
+  const IMPORTANT_STATE_COMPLETE = Symbol();
+  // Initial state
+  let importantState = IMPORTANT_STATE_NONE;
   // This is true if we saw whitespace or comments between the "!" and
   // the "important".
   let importantWS = false;
@@ -357,7 +360,7 @@ function parseDeclarationsInternal(
   const resetStateForNextDeclaration = () => {
     current = "";
     currentBlocks = [];
-    importantState = 0;
+    importantState = IMPORTANT_STATE_NONE;
     importantWS = false;
     declarations.push(getEmptyDeclaration());
     lastProp = declarations.at(-1);
@@ -379,13 +382,13 @@ function parseDeclarationsInternal(
     } else if (
       lastProp.name &&
       !current &&
-      !importantState &&
+      importantState == IMPORTANT_STATE_NONE &&
       !lastProp.priority &&
       lastProp.colonOffsets[1]
     ) {
       // Whitespace appearing after the ":" is attributed to it.
       lastProp.colonOffsets[1] = token.endOffset;
-    } else if (importantState === 1) {
+    } else if (importantState === IMPORTANT_STATE_SAW_EXCLAMATION) {
       importantWS = true;
     }
 
@@ -406,7 +409,9 @@ function parseDeclarationsInternal(
       // and there's an opening curly bracket
       token.tokenType === "CurlyBracketBlock" &&
       // and we're not inside a function or an attribute
-      !currentBlocks.length
+      !currentBlocks.length &&
+      // and we're not assigning to a custom property (`foo: { a: b; c: d }` is valid)
+      !lastProp.isCustomProperty
     ) {
       // Assume we're encountering a nested rule.
 
@@ -442,14 +447,18 @@ function parseDeclarationsInternal(
       continue;
     } else if (
       token.tokenType === "CloseParenthesis" ||
-      token.tokenType === "CloseSquareBracket"
+      token.tokenType === "CloseSquareBracket" ||
+      // Handling closing curly bracket for custom property declaration (`foo: { a: b; c: d }` is valid)
+      (lastProp.isCustomProperty && token.tokenType === "CloseCurlyBracket")
     ) {
       // Closing the last block that was opened.
       currentBlocks.pop();
       current += token.text;
     } else if (
       token.tokenType === "ParenthesisBlock" ||
-      token.tokenType === "SquareBracketBlock"
+      token.tokenType === "SquareBracketBlock" ||
+      // Handling curly bracket for custom property declaration (`foo: { a: b; c: d }` is valid)
+      (lastProp.isCustomProperty && token.tokenType === "CurlyBracketBlock")
     ) {
       // Opening a new block.
       currentBlocks.push(token.text);
@@ -460,7 +469,7 @@ function parseDeclarationsInternal(
       current += token.text;
     } else if (token.tokenType === "Colon") {
       // Either way, a "!important" we've seen is no longer valid now.
-      importantState = 0;
+      importantState = IMPORTANT_STATE_NONE;
       importantWS = false;
       if (!lastProp.name) {
         // Set the current declaration name if there's no name yet
@@ -494,9 +503,9 @@ function parseDeclarationsInternal(
         currentBlocks = [];
         break;
       }
-      if (importantState === 2) {
+      if (importantState === IMPORTANT_STATE_COMPLETE) {
         lastProp.priority = "important";
-      } else if (importantState === 1) {
+      } else if (importantState === IMPORTANT_STATE_SAW_EXCLAMATION) {
         current += "!";
         if (importantWS) {
           current += " ";
@@ -505,24 +514,33 @@ function parseDeclarationsInternal(
       lastProp.value = cssTrim(current);
       resetStateForNextDeclaration();
     } else if (token.tokenType === "Ident") {
-      if (token.text === "important" && importantState === 1) {
-        importantState = 2;
+      if (
+        token.text.toLowerCase() === "important" &&
+        importantState === IMPORTANT_STATE_SAW_EXCLAMATION
+      ) {
+        importantState = IMPORTANT_STATE_COMPLETE;
       } else {
-        if (importantState > 0) {
+        if (importantState !== IMPORTANT_STATE_NONE) {
           current += "!";
           if (importantWS) {
             current += " ";
           }
-          if (importantState === 2) {
+          if (importantState === IMPORTANT_STATE_COMPLETE) {
             current += "important ";
           }
-          importantState = 0;
+          importantState = IMPORTANT_STATE_NONE;
           importantWS = false;
         }
         current += token.text;
       }
-    } else if (token.tokenType === "Delim" && token.text === "!") {
-      importantState = 1;
+    } else if (
+      token.tokenType === "Delim" &&
+      token.text === "!" &&
+      // !important inside parenthesis, curly or square brackets shouldn't impact the
+      // priority of the declaration
+      !currentBlocks.length
+    ) {
+      importantState = IMPORTANT_STATE_SAW_EXCLAMATION;
     } else if (token.tokenType === "WhiteSpace") {
       if (current !== "") {
         current = current.trimEnd() + " ";
@@ -547,15 +565,15 @@ function parseDeclarationsInternal(
         current = current.trimEnd() + " ";
       }
     } else {
-      if (importantState > 0) {
+      if (importantState !== IMPORTANT_STATE_NONE) {
         current += "!";
         if (importantWS) {
           current += " ";
         }
-        if (importantState === 2) {
+        if (importantState === IMPORTANT_STATE_COMPLETE) {
           current += "important ";
         }
-        importantState = 0;
+        importantState = IMPORTANT_STATE_NONE;
         importantWS = false;
       }
       current += inputString.substring(token.startOffset, token.endOffset);
@@ -563,7 +581,7 @@ function parseDeclarationsInternal(
   }
 
   // Handle whatever trailing properties or values might still be there
-  if (current) {
+  if (current || importantState !== IMPORTANT_STATE_NONE) {
     // If nested rule doesn't have closing bracket
     if (isInNested && nestingLevel > 0) {
       // We need to remove the previous (nested) pending declaration
@@ -576,9 +594,9 @@ function parseDeclarationsInternal(
       }
     } else {
       // Trailing value found, i.e. value without an ending ;
-      if (importantState === 2) {
+      if (importantState === IMPORTANT_STATE_COMPLETE) {
         lastProp.priority = "important";
-      } else if (importantState === 1) {
+      } else if (importantState === IMPORTANT_STATE_SAW_EXCLAMATION) {
         current += "!";
       }
       lastProp.value = cssTrim(current);

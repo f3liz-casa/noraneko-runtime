@@ -29,6 +29,9 @@ SOURCES += [
     'vp9intrapred_16bpp.asm',
     'vp9itxfm.asm',
     'vp9itxfm_16bpp.asm',
+    'vp9itxfm_16bpp_avx512.asm',
+    'vp9itxfm_avx2.asm',
+    'vp9itxfm_avx512.asm',
     'vp9lpf.asm',
     'vp9lpf_16bpp.asm',
     'vp9mc.asm',
@@ -46,3 +49,13 @@ if CONFIG['TARGET_CPU'] == 'x86_64':
 FINAL_LIBRARY = 'mozavcodec'
 
 include('/media/ffvpx/ffvpxcommon.mozbuild')
+
+SOURCE_HEADERS += [
+	"constants.h",
+	"fdct.h",
+	"idctdsp.h",
+	"mathops.h",
+	"simple_idct.h",
+	"vp9dsp_init.h",
+	"vpx_arith.h",
+]

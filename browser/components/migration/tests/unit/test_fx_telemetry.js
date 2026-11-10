@@ -3,16 +3,16 @@
 
 "use strict";
 const { FirefoxProfileMigrator } = ChromeUtils.importESModule(
-  "resource:///modules/FirefoxProfileMigrator.sys.mjs"
+  "moz-src:///browser/components/migration/FirefoxProfileMigrator.sys.mjs"
 );
 const { InternalTestingProfileMigrator } = ChromeUtils.importESModule(
-  "resource:///modules/InternalTestingProfileMigrator.sys.mjs"
+  "moz-src:///browser/components/migration/InternalTestingProfileMigrator.sys.mjs"
 );
 const { LoginCSVImport } = ChromeUtils.importESModule(
   "resource://gre/modules/LoginCSVImport.sys.mjs"
 );
 const { PasswordFileMigrator } = ChromeUtils.importESModule(
-  "resource:///modules/FileMigrators.sys.mjs"
+  "moz-src:///browser/components/migration/FileMigrators.sys.mjs"
 );
 const { sinon } = ChromeUtils.importESModule(
   "resource://testing-common/Sinon.sys.mjs"
@@ -433,4 +433,33 @@ user_pref("${PASSWORDS_PREF}", true);
     const EXPECTED = `user_pref("${prefKey}", true);`;
     Assert.ok(writtenPrefsString.includes(EXPECTED), "Found persisted pref.");
   }
+});
+
+add_task(async function test_migrate_glean_client_id() {
+  let [srcDir, targetDir] = getTestDirs();
+
+  // We don't know what format client_id.txt is in, but we also don't care.
+  const kClientIdContents = "<opaque value>";
+  let subDir = createSubDir(srcDir, "datareporting");
+  subDir = createSubDir(subDir, "glean");
+  writeToFile(subDir, "client_id.txt", kClientIdContents);
+
+  // Add in an events db file (not copied).
+  let eventsDir = createSubDir(subDir, "events");
+  writeToFile(eventsDir, "events", "<another opaque value>");
+
+  // Perform migration.
+  let ok = await promiseTelemetryMigrator(srcDir, targetDir);
+  Assert.ok(
+    ok,
+    "callback should have been true with important telemetry files copied"
+  );
+
+  checkDirectoryContains(targetDir, {
+    datareporting: {
+      glean: {
+        "client_id.txt": kClientIdContents,
+      },
+    },
+  });
 });

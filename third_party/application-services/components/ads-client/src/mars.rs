@@ -13,9 +13,10 @@ mod transport;
 
 pub use environment::Environment;
 pub use report_reason::ReportReason;
+use sql_support::open_database;
 
 use self::{
-    ad_request::{AdPlacementRequest, AdRequest, AdRequestFlags},
+    ad_request::{AdPlacementRequest, AdRequest, AdRequestFlags, AdRequestRelevance},
     ad_response::{AdResponse, AdResponseValue},
     error::{
         CallbackRequestError, FetchAdsError, RecordClickError, RecordImpressionError, ReportAdError,
@@ -23,53 +24,46 @@ use self::{
     preflight::PreflightRequest,
     transport::MARSTransport,
 };
+#[cfg(feature = "stateful")]
+use crate::ads::{Ads, PlacementId};
+#[cfg(feature = "stateful")]
+use crate::telemetry;
 use crate::{
     http_cache::{HttpCache, RequestHash},
-    telemetry::Telemetry,
     CachePolicy,
 };
+#[cfg(feature = "stateful")]
+use std::collections::HashMap;
 use url::Url;
 use viaduct::{Headers, Request};
 
-pub struct MARSClient<T>
-where
-    T: Clone + Telemetry,
-{
+pub struct MARSClient {
     environment: Environment,
-    telemetry: T,
-    transport: MARSTransport<T>,
+    transport: MARSTransport,
 }
 
-impl<T> MARSClient<T>
-where
-    T: Clone + Telemetry,
-{
-    pub fn new(environment: Environment, http_cache: Option<HttpCache>, telemetry: T) -> Self {
-        let transport = MARSTransport::new(http_cache, telemetry.clone());
+impl MARSClient {
+    pub fn new(environment: Environment, http_cache: Option<HttpCache>) -> Self {
         Self {
             environment,
-            telemetry,
-            transport,
+            transport: MARSTransport::new(http_cache),
         }
     }
 
-    pub fn clear_cache(&self) -> Result<(), rusqlite::Error> {
+    pub fn clear_cache(&self) -> Result<(), open_database::Error> {
         self.transport.clear_cache()
     }
 
-    #[allow(dead_code)]
-    pub fn shutdown_db(&mut self) -> Result<(), rusqlite::Error> {
-        self.transport.shutdown_db()
-    }
-
+    #[allow(clippy::too_many_arguments)]
     pub fn fetch_ads<A>(
         &self,
-        context_id: String,
+        context_id: Option<String>,
         flags: AdRequestFlags,
         placements: Vec<AdPlacementRequest>,
         cache_policy: CachePolicy,
         ohttp: bool,
         blocks: Vec<String>,
+        relevance: AdRequestRelevance,
     ) -> Result<(AdResponse<A>, RequestHash), FetchAdsError>
     where
         A: AdResponseValue,
@@ -77,22 +71,108 @@ where
         let mut ad_request = AdRequest::try_new(
             blocks,
             context_id,
-            self.environment,
+            self.environment.clone(),
             flags,
             ohttp,
             placements,
+            relevance,
         )?;
         let request_hash = RequestHash::new(&ad_request);
 
         if ohttp {
             ad_request
                 .headers
-                .extend(Headers::from(self.fetch_preflight()?));
+                .extend(Headers::try_from(self.fetch_preflight()?)?);
         }
 
         let response = self.transport.send(ad_request, &cache_policy, ohttp)?;
-        let ads = AdResponse::<A>::parse(response.json()?, &self.telemetry)?;
+        let ads = AdResponse::<A>::parse(response.json()?)?;
         Ok((ads, request_hash))
+    }
+
+    #[cfg(feature = "stateful")]
+    pub fn fetch_ads_mixed(
+        &self,
+        context_id: Option<String>,
+        flags: AdRequestFlags,
+        placements: Vec<AdPlacementRequest>,
+        ohttp: bool,
+        blocks: Vec<String>,
+    ) -> Result<HashMap<PlacementId, Ads>, FetchAdsError> {
+        let mut ad_request = AdRequest::try_new(
+            blocks,
+            context_id,
+            self.environment.clone(),
+            flags,
+            ohttp,
+            placements,
+            AdRequestRelevance::default(),
+        )?;
+
+        if ohttp {
+            ad_request
+                .headers
+                .extend(Headers::try_from(self.fetch_preflight()?)?);
+        }
+
+        let response =
+            self.transport
+                .send(ad_request, &CachePolicy::NetworkFirst { ttl: None }, ohttp)?;
+        let raw: HashMap<String, Vec<serde_json::Value>> = response.json()?;
+
+        let mut result = HashMap::new();
+        for (placement_id, items) in raw {
+            if items.is_empty() {
+                continue;
+            }
+            let format = items
+                .first()
+                .and_then(|v| v.get("format"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ads = match format.as_str() {
+                "spoc" => Ads::Spocs(
+                    items
+                        .into_iter()
+                        .filter_map(|v| match serde_json::from_value(v) {
+                            Ok(ad) => Some(ad),
+                            Err(e) => {
+                                telemetry::record_invalid_ad_item(&e);
+                                None
+                            }
+                        })
+                        .collect(),
+                ),
+                "tile" => Ads::Tiles(
+                    items
+                        .into_iter()
+                        .filter_map(|v| match serde_json::from_value(v) {
+                            Ok(ad) => Some(ad),
+                            Err(e) => {
+                                telemetry::record_invalid_ad_item(&e);
+                                None
+                            }
+                        })
+                        .collect(),
+                ),
+                _ => Ads::Images(
+                    items
+                        .into_iter()
+                        .filter_map(|v| match serde_json::from_value(v) {
+                            Ok(ad) => Some(ad),
+                            Err(e) => {
+                                telemetry::record_invalid_ad_item(&e);
+                                None
+                            }
+                        })
+                        .collect(),
+                ),
+            };
+            result.insert(placement_id.into(), ads);
+        }
+
+        Ok(result)
     }
 
     // TODO: Remove this allow(dead_code) when cache invalidation is re-enabled behind Nimbus experiment
@@ -100,7 +180,7 @@ where
     pub fn invalidate_cache_by_hash(
         &self,
         request_hash: &RequestHash,
-    ) -> Result<(), rusqlite::Error> {
+    ) -> Result<(), open_database::Error> {
         self.transport.invalidate_cache_by_hash(request_hash)
     }
 
@@ -128,9 +208,14 @@ where
         Ok(self.make_callback_request(callback, ohttp)?)
     }
 
+    #[allow(dead_code)]
+    pub fn shutdown_db(&self) {
+        self.transport.shutdown_db();
+    }
+
     fn fetch_preflight(&self) -> Result<preflight::PreflightResponse, CallbackRequestError> {
         let response = self.transport.send(
-            PreflightRequest(self.environment.into_url("ads-preflight")),
+            PreflightRequest(self.environment.clone().into_url("ads-preflight")),
             &CachePolicy::CacheFirst { ttl: None },
             false,
         )?;
@@ -146,34 +231,24 @@ where
         if ohttp {
             request
                 .headers
-                .extend(Headers::from(self.fetch_preflight()?));
+                .extend(Headers::try_from(self.fetch_preflight()?)?);
         }
         self.transport.fire(request, ohttp).map_err(Into::into)
-    }
-
-    #[cfg(test)]
-    pub fn get_telemetry(&self) -> T {
-        self.telemetry.clone()
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use super::ad_response::AdImage;
     use super::*;
-    use crate::ffi::telemetry::MozAdsTelemetryWrapper;
+    use crate::ads::AdImage;
     use crate::test_utils::{
         get_example_happy_image_response, make_happy_placement_requests, TEST_CONTEXT_ID,
     };
     use mockito::mock;
 
-    fn make_test_client(http_cache: Option<HttpCache>) -> MARSClient<MozAdsTelemetryWrapper> {
-        MARSClient::new(
-            Environment::Test,
-            http_cache,
-            MozAdsTelemetryWrapper::noop(),
-        )
+    fn make_test_client(http_cache: Option<HttpCache>) -> MARSClient {
+        MARSClient::new(Environment::Test, http_cache)
     }
 
     #[test]
@@ -242,12 +317,13 @@ mod tests {
         let client = make_test_client(None);
 
         let result = client.fetch_ads::<AdImage>(
-            TEST_CONTEXT_ID.to_string(),
+            Some(TEST_CONTEXT_ID.to_string()),
             AdRequestFlags::default(),
             make_happy_placement_requests(),
             CachePolicy::default(),
             false,
             Default::default(),
+            AdRequestRelevance::default(),
         );
         assert!(result.is_ok());
         let (response, _request_hash) = result.unwrap();
@@ -268,7 +344,7 @@ mod tests {
 
         let cache = HttpCache::builder("test_fetch_ads_cache_hit_skips_network.db")
             .default_ttl(std::time::Duration::from_secs(300))
-            .max_size(crate::http_cache::ByteSize::mib(1))
+            .max_size(crate::bytesize::ByteSize::mib(1))
             .build()
             .unwrap();
         let client = make_test_client(Some(cache));
@@ -276,12 +352,13 @@ mod tests {
         // First call should be a miss then warm the cache
         let (response1, _) = client
             .fetch_ads::<AdImage>(
-                TEST_CONTEXT_ID.to_string(),
+                Some(TEST_CONTEXT_ID.to_string()),
                 AdRequestFlags::default(),
                 make_happy_placement_requests(),
                 CachePolicy::default(),
                 false,
                 Default::default(),
+                AdRequestRelevance::default(),
             )
             .unwrap();
         assert_eq!(response1, expected);
@@ -289,12 +366,13 @@ mod tests {
         // Second call should be a hit
         let (response2, _) = client
             .fetch_ads::<AdImage>(
-                TEST_CONTEXT_ID.to_string(),
+                Some(TEST_CONTEXT_ID.to_string()),
                 AdRequestFlags::default(),
                 make_happy_placement_requests(),
                 CachePolicy::default(),
                 false,
                 Default::default(),
+                AdRequestRelevance::default(),
             )
             .unwrap();
         assert_eq!(response2, expected);
@@ -306,7 +384,7 @@ mod tests {
         viaduct_dev::init_backend_dev();
         let cache = HttpCache::builder("test_record_click.db")
             .default_ttl(std::time::Duration::from_secs(300))
-            .max_size(crate::http_cache::ByteSize::mib(1))
+            .max_size(crate::bytesize::ByteSize::mib(1))
             .build()
             .unwrap();
 
@@ -325,7 +403,7 @@ mod tests {
         viaduct_dev::init_backend_dev();
         let cache = HttpCache::builder("test_record_impression.db")
             .default_ttl(std::time::Duration::from_secs(300))
-            .max_size(crate::http_cache::ByteSize::mib(1))
+            .max_size(crate::bytesize::ByteSize::mib(1))
             .build()
             .unwrap();
 

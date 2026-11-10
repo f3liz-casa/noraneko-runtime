@@ -28,6 +28,7 @@
 // We expose a singleton from this module. Some tests may import the
 // constructor via the system global.
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { FormAutofill } from "resource://autofill/FormAutofill.sys.mjs";
 import { FormAutofillUtils } from "resource://gre/modules/shared/FormAutofillUtils.sys.mjs";
 import { AutofillDataTypes } from "resource://gre/modules/shared/AutofillDataTypes.sys.mjs";
@@ -50,6 +51,24 @@ ChromeUtils.defineESModuleGetters(lazy, {
   FirefoxRelay: "resource://gre/modules/FirefoxRelay.sys.mjs",
   LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
 });
+
+// The primary password prompt is the one passwordmgr shows for the same NSS
+// token, so a cancel holds off autocomplete for as long as it does there.
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "repromptTimeout",
+  "signon.masterPasswordReprompt.timeout_ms",
+  900000
+);
+
+/**
+ * When the user last cancelled the primary password prompt from an
+ * autocomplete search. Closing the prompt hands focus back to the field, which
+ * searches again, so without this a cancel would be answered by another prompt.
+ * Mirrors gLastMPLoginCancelled in LoginManagerParent, and is forgotten once a
+ * search finds the token unlocked.
+ */
+let gLastPrimaryPasswordCancelled = Number.NEGATIVE_INFINITY;
 
 // TODO Bug 2064859 - refactor this out as external provider
 ChromeUtils.defineLazyGetter(lazy, "SmartFormFillAutocomplete", () => {
@@ -552,6 +571,12 @@ export class FormAutofillParent extends JSWindowActorParent {
       return;
     }
 
+    // Don't check ML inference if the section is not valid to avoid loading
+    // the model when it likely won't be needed.
+    if (!FormAutofillUtils.isValidSection(fieldDetails)) {
+      return;
+    }
+
     FormAutofillParent.#mlFeature ??= new lazy.FormAutofillML();
     await FormAutofillParent.#mlFeature.detectFields(fieldDetails);
   }
@@ -806,7 +831,27 @@ export class FormAutofillParent extends JSWindowActorParent {
       return [];
     }
 
-    const records = await collection.getAll();
+    let records;
+    if (Services.logins.isLoggedIn) {
+      gLastPrimaryPasswordCancelled = Number.NEGATIVE_INFINITY;
+    }
+    if (
+      !Services.logins.isLoggedIn &&
+      Date.now() - gLastPrimaryPasswordCancelled < lazy.repromptTimeout
+    ) {
+      records = [];
+    } else {
+      try {
+        records = await collection.getAll();
+      } catch (e) {
+        // Reading the records needs a key the user declined to unlock.
+        if (e.result != Cr.NS_ERROR_ABORT) {
+          throw e;
+        }
+        gLastPrimaryPasswordCancelled = Date.now();
+        records = [];
+      }
+    }
 
     // Add testing records if exists
     records.push(...this.#getTemporaryRecordForTab(collectionName));
@@ -968,23 +1013,34 @@ export class FormAutofillParent extends JSWindowActorParent {
       return false;
     }
 
-    // If the record alreay exists in the storage, don't bother showing the prompt
-    const matchRecord = (
-      await storage.getMatchRecords(creditCard.record).next()
-    ).value;
-    if (matchRecord) {
-      storage.notifyUsed(matchRecord.guid);
-      return false;
-    }
+    let duplicateRecord;
+    try {
+      // If the record alreay exists in the storage, don't bother showing the prompt
+      const matchRecord = (
+        await storage.getMatchRecords(creditCard.record).next()
+      ).value;
+      if (matchRecord) {
+        storage.notifyUsed(matchRecord.guid);
+        return false;
+      }
 
-    // Suppress the pending doorhanger from showing up if user disabled credit card in previous doorhanger.
-    if (!FormAutofill.isAutofillTypeEnabled(AutofillDataTypes.CREDIT_CARD)) {
-      return false;
-    }
+      // Suppress the pending doorhanger from showing up if user disabled credit card in previous doorhanger.
+      if (!FormAutofill.isAutofillTypeEnabled(AutofillDataTypes.CREDIT_CARD)) {
+        return false;
+      }
 
-    // Overwrite the guid if there is a duplicate
-    const duplicateRecord =
-      (await storage.getDuplicateRecords(creditCard.record).next()).value ?? {};
+      // Overwrite the guid if there is a duplicate
+      duplicateRecord =
+        (await storage.getDuplicateRecords(creditCard.record).next()).value ??
+        {};
+    } catch (e) {
+      // Comparing against the stored numbers needs the key, and the user
+      // declined to unlock it.
+      if (e.result == Cr.NS_ERROR_ABORT) {
+        return false;
+      }
+      throw e;
+    }
 
     return async () => {
       await lazy.FormAutofillPrompter.promptToSave(
@@ -1148,7 +1204,28 @@ export class FormAutofillParent extends JSWindowActorParent {
     this.sendAsyncMessage("FormAutofill:RepopulateAutocompletePopup");
   }
 
-  async #confirmCreditCardRemoval() {
+  async #confirmAddressRemoval(guid) {
+    // Read before awaiting: the prompt below takes focus and the actor may be
+    // destroyed by the time it resolves.
+    const chromeWindow = this.manager.browsingContext.topChromeWindow;
+
+    const confirmed = await lazy.AutocompleteRemoveRecord.confirmRemoval(
+      chromeWindow,
+      "address"
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    // Both stores warn and return for a guid they do not hold.
+    await lazy.gFormAutofillStorage.addresses.remove(guid);
+  }
+
+  async #confirmCreditCardRemoval(guid) {
+    // Read before awaiting: the prompts below take focus and the actor may be
+    // destroyed by the time they resolve.
+    const chromeWindow = this.manager.browsingContext.topChromeWindow;
+
     const promptMessage = FormAutofillUtils.reauthOSPromptMessage(
       "autofill-delete-payment-method-os-prompt-macos",
       "autofill-delete-payment-method-os-prompt-windows",
@@ -1157,9 +1234,17 @@ export class FormAutofillParent extends JSWindowActorParent {
     let verified;
     let result;
     try {
+      // Removing a card never reads its number, so don't let this path create
+      // or unlock the OS key store: where nsIOSKeyStore falls back to NSS that
+      // goes through the internal PKCS#11 slot, which can prompt for the
+      // primary password and fail, over a key this flow never uses.
+      const generateKeyIfNotAvailable = false;
       verified = await FormAutofillUtils.verifyUserOSAuth(
         FormAutofill.AUTOFILL_CREDITCARDS_OS_AUTH_LOCKED_PREF,
-        promptMessage
+        promptMessage,
+        "",
+        null,
+        generateKeyIfNotAvailable
       );
       result = verified ? "success" : "fail_user_canceled";
     } catch (ex) {
@@ -1172,12 +1257,20 @@ export class FormAutofillParent extends JSWindowActorParent {
       });
     }
 
-    if (verified) {
-      await lazy.AutocompleteRemoveRecord.confirmRemoval(
-        this.manager.browsingContext.topChromeWindow,
-        "payment"
-      );
+    if (!verified || !chromeWindow) {
+      return;
     }
+
+    const confirmed = await lazy.AutocompleteRemoveRecord.confirmRemoval(
+      chromeWindow,
+      "payment"
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    // Both stores warn and return for a guid they do not hold.
+    await lazy.gFormAutofillStorage.creditCards.remove(guid);
   }
 
   /**
@@ -1208,10 +1301,7 @@ export class FormAutofillParent extends JSWindowActorParent {
 
       case "FormAutofill:DeleteAddress": {
         try {
-          await lazy.AutocompleteRemoveRecord.confirmRemoval(
-            this.manager.browsingContext.topChromeWindow,
-            "address"
-          );
+          await this.#confirmAddressRemoval(data?.guid);
         } catch (ex) {
           lazy.log.warn("Address removal flow failed:", ex);
         } finally {
@@ -1222,7 +1312,7 @@ export class FormAutofillParent extends JSWindowActorParent {
 
       case "FormAutofill:DeleteCreditCard": {
         try {
-          await this.#confirmCreditCardRemoval();
+          await this.#confirmCreditCardRemoval(data?.guid);
         } catch (ex) {
           lazy.log.warn("Payment method removal flow failed:", ex);
         } finally {

@@ -79,13 +79,13 @@ void DllServices::DisableFull() {
 }
 
 RefPtr<ModulesTrustPromise> DllServices::GetModulesTrust(
-    ModulePaths&& aModPaths, bool aRunAtNormalPriority) {
+    nsTArray<ipc::FileDescriptor>&& aModIdents, bool aRunAtNormalPriority) {
   if (!mUntrustedModulesProcessor) {
     return ModulesTrustPromise::CreateAndReject(NS_ERROR_NOT_IMPLEMENTED,
                                                 __func__);
   }
 
-  return mUntrustedModulesProcessor->GetModulesTrust(std::move(aModPaths),
+  return mUntrustedModulesProcessor->GetModulesTrust(std::move(aModIdents),
                                                      aRunAtNormalPriority);
 }
 
@@ -127,3 +127,7 @@ void DllServices::NotifyModuleLoadBacklog(ModuleLoadInfoVec&& aEvents) {
 }
 
 }  // namespace mozilla
+
+extern "C" MOZ_EXPORT uint32_t ModuleLoadInfoLayoutVersion() {
+  return mozilla::ModuleLoadInfo::kVersion;
+}

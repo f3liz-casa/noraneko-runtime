@@ -3,20 +3,17 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::util::sync::{Mutex, atomic::Ordering};
-
-use crate::{
-    api::JxlOutputBuffer,
-    error::Result,
-    image::{Image, ImageDataType},
-    render::{buffer_splitter::BufferSplitter, internal::ChannelInfo},
-    util::{ShiftRightCeil, tracing_wrappers::*},
-};
-
-use super::{
-    RenderPipeline, RenderPipelineInOutStage, RenderPipelineInPlaceStage,
-    internal::{RenderPipelineShared, Stage},
-};
+use super::internal::{RenderPipelineShared, Stage};
+use super::{RenderPipeline, RenderPipelineInOutStage, RenderPipelineInPlaceStage};
+use crate::api::JxlOutputBuffer;
+use crate::error::Result;
+use crate::image::{Image, ImageDataType};
+use crate::render::buffer_splitter::BufferSplitter;
+use crate::render::internal::ChannelInfo;
+use crate::util::ShiftRightCeil;
+use crate::util::sync::Mutex;
+use crate::util::sync::atomic::Ordering;
+use crate::util::tracing_wrappers::*;
 
 mod extend;
 mod run_stage;
@@ -177,7 +174,6 @@ impl RenderPipeline for SimpleRenderPipeline {
             let goffset = self.shared.group_offset(group_id);
             let ChannelInfo { ty, downsample } = self.shared.channel_info[0][channel];
             let off = (goffset.0 >> downsample.0, goffset.1 >> downsample.1);
-            let ty = ty.unwrap();
             assert_eq!(ty, T::DATA_TYPE_ID);
             let mut buffers = self.input_buffers.lock().unwrap();
             let total_sz = buffers[channel].size();

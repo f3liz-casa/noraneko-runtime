@@ -44,7 +44,7 @@
         }],
         ['OS=="win"', {
           'use_system_zlib%': 0,
-          'nspr_libs%': ['libnspr4.lib', 'libplc4.lib', 'libplds4.lib'],
+          'nspr_libs%': ['nspr4.lib', 'plc4.lib', 'plds4.lib'],
           'zlib_libs%': [],
           #TODO
           'moz_debug_flags%': '',
@@ -100,6 +100,10 @@
     'cc_is_clang%': '<(cc_is_clang)',
     'cc_is_gcc%': '<(cc_is_gcc)',
     'cc_use_gnu_ld%': '<(cc_use_gnu_ld)',
+    # Windows only: build with clang-cl, lld-link and llvm-lib from llvm_bindir
+    # (an absolute path) instead of MSVC. build.sh --clang-cl sets these.
+    'clang_cl%': 0,
+    'llvm_bindir%': '',
     # Some defaults
     'disable_arm_hw_aes%': 0,
     'disable_arm_hw_sha1%': 0,
@@ -199,6 +203,12 @@
       [ 'OS=="android"', {
         'libraries': [
           '-llog',
+        ],
+      }],
+      # Without this, NSPR's Windows headers mark PR_* dllimport, breaking a static link.
+      [ 'OS=="win"', {
+        'defines': [
+          '_NSPR_BUILD_',
         ],
       }],
       [ 'fuzz==1', {
@@ -588,6 +598,29 @@
                   },
                 },
               }],
+              [ 'target_arch=="arm64"', {
+                'msvs_configuration_platform': 'ARM64',
+                'msvs_settings': {
+                  'VCCLCompilerTool': {
+                    'PreprocessorDefinitions': [
+                      'WIN64',
+                      '_ARM64_',
+                      '__ARM_FEATURE_CRYPTO',
+                    ],
+                    'AdditionalOptions': [ '/EHsc' ],
+                  },
+                },
+                'conditions': [
+                  # gyp runs clang-cl with -m64, which alone means x86-64.
+                  [ 'clang_cl==1', {
+                    'msvs_settings': {
+                      'VCCLCompilerTool': {
+                        'AdditionalOptions': [ '--target=aarch64-pc-windows-msvc' ],
+                      },
+                    },
+                  }],
+                ],
+              }],
             ],
           }],
           [ 'disable_dbm==1', {
@@ -705,6 +738,16 @@
     },
   },
   'conditions': [
+    # gyp's ninja generator only switches to clang-cl when CC names it here; it
+    # ignores CC in the environment on Windows. Every build file includes this
+    # one, which keeps the settings identical across them as gyp requires.
+    [ 'clang_cl==1', {
+      'make_global_settings': [
+        ['CC', '<(llvm_bindir)/clang-cl'],
+        ['LD', '<(llvm_bindir)/lld-link'],
+        ['AR', '<(llvm_bindir)/llvm-lib'],
+      ],
+    }],
     [ 'cc_use_gnu_ld==1 or OS=="solaris"', {
       'variables': {
         'process_map_file': ['/bin/sh', '-c', '/usr/bin/env grep -v ";-" >(mapfile) | sed -e "s,;+,," -e "s; DATA ;;" -e "s,;;,," -e "s,;.*,;," > >@(_outputs)'],

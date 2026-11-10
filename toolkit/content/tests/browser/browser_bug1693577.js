@@ -8,23 +8,23 @@
  * comm-central, which need the triggerNode information.
  */
 
-add_setup(async function () {
-  // This test relies on the legacy bookmarks sidebar panel's search-box
-  // element, so opt out of the updated bookmarks panel here.
-  // TODO(Bug 2039395): adapt this test to the new bookmarks sidebar panel and remove this sidebar.updateBookmarks.enabled pushPrefEnv)
-  await SpecialPowers.pushPrefEnv({
-    set: [["sidebar.updatedBookmarks.enabled", false]],
-  });
-});
-
 add_task(async function test_search_input_popupshowing() {
   let sidebar = document.getElementById("sidebar");
-
+  const isUpdatedBookmarks = Services.prefs.getBoolPref(
+    "sidebar.updatedBookmarks.enabled"
+  );
   let loadPromise = BrowserTestUtils.waitForEvent(sidebar, "load", true);
   SidebarController.toggle("viewBookmarksSidebar");
+  await SidebarController.waitUntilStable();
   await loadPromise;
 
-  let inputField = sidebar.contentDocument.getElementById("search-box");
+  const bookmarksComponent = isUpdatedBookmarks
+    ? sidebar.contentDocument.querySelector("sidebar-bookmarks")
+    : null;
+  await SidebarController.waitUntilStable();
+  const inputField = isUpdatedBookmarks
+    ? bookmarksComponent.searchInput.inputEl
+    : sidebar.contentDocument.getElementById("search-box");
   const popupshowing = BrowserTestUtils.waitForEvent(
     sidebar.contentWindow,
     "popupshowing"
@@ -40,11 +40,19 @@ add_task(async function test_search_input_popupshowing() {
   );
   let popupshowingEvent = await popupshowing;
 
-  Assert.equal(
-    popupshowingEvent.target.triggerNode?.id,
-    "search-box",
-    "Popupshowing event for the search input includes triggernode."
-  );
+  if (isUpdatedBookmarks) {
+    Assert.equal(
+      popupshowingEvent.target.triggerNode?.localName,
+      "sidebar-bookmarks",
+      "Popupshowing event for the search input includes triggernode."
+    );
+  } else {
+    Assert.equal(
+      popupshowingEvent.target.triggerNode?.id,
+      "search-box",
+      "Popupshowing event for the search input includes triggernode."
+    );
+  }
 
   const popup = popupshowingEvent.target;
   await BrowserTestUtils.waitForEvent(popup, "popupshown");

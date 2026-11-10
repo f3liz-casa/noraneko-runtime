@@ -61,9 +61,7 @@
 #  include "MacApplicationDelegate.h"
 #  include "MacAutoreleasePool.h"
 #  include "MacRunFromDmgUtils.h"
-#  ifdef NIGHTLY_BUILD
-#    include "ASWebAuthSessionHandler.h"
-#  endif
+#  include "ASWebAuthSessionHandler.h"
 // these are needed for sysctl
 #  include <sys/types.h>
 #  include <sys/sysctl.h>
@@ -118,7 +116,6 @@
 #  include <intrin.h>
 #  include <math.h>
 #  include "cairo/cairo-features.h"
-#  include "detect_win32k_conflicts.h"
 #  include "mozilla/PreXULSkeletonUI.h"
 #  include "mozilla/DllPrefetchExperimentRegistryInfo.h"
 #  include "mozilla/WindowsDllBlocklist.h"
@@ -1229,7 +1226,7 @@ nsXULAppInfo::GetWidgetToolkit(nsACString& aResult) {
                     static_cast<int>(GeckoProcessType_##enum_name),           \
                 "GeckoProcessType in nsXULAppAPI.h not synchronized with "    \
                 "nsIXULRuntime.idl");
-#include "mozilla/GeckoProcessTypes.h"
+#include "mozilla/GeckoProcessTypes.inc"
 #undef GECKO_PROCESS_TYPE
 
 // .. and ensure that that is all of them:
@@ -1927,11 +1924,6 @@ nsXULAppInfo::IsAnnotationAllowedForReport(const nsACString& aValue,
 NS_IMETHODIMP
 nsXULAppInfo::AppendAppNotesToCrashReport(const nsACString& data) {
   return CrashReporter::AppendAppNotesToCrashReport(data);
-}
-
-NS_IMETHODIMP
-nsXULAppInfo::RegisterAppMemory(uint64_t pointer, uint64_t len) {
-  return CrashReporter::RegisterAppMemory((void*)pointer, len);
 }
 
 NS_IMETHODIMP
@@ -2734,8 +2726,8 @@ nsresult LaunchChild(bool aBlankCommandLine, bool aTryExec) {
   // immediately returns non-zero then we may mask that by returning a zero
   // exit status.
 
-#    endif  // WP_WIN
-#  endif    // WP_MACOSX
+#    endif  // XP_WIN
+#  endif    // XP_MACOSX
 #endif      // MOZ_WIDGET_ANDROID
 
   return NS_ERROR_LAUNCHED_CHILD_PROCESS;
@@ -3039,6 +3031,7 @@ static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
   }
 }
 
+MOZ_CAN_RUN_SCRIPT
 static ReturnAbortOnError ShowProfileDialog(
     nsIToolkitProfileService* aProfileSvc, nsINativeAppSupport* aNative,
     const char* aDialogURL, const char* aTelemetryEnvVar) {
@@ -3166,6 +3159,7 @@ static ReturnAbortOnError ShowProfileDialog(
   return LaunchChild(false, true);
 }
 
+MOZ_CAN_RUN_SCRIPT
 static ReturnAbortOnError ShowProfileManager(
     nsIToolkitProfileService* aProfileSvc, nsINativeAppSupport* aNative) {
   static const char kProfileManagerURL[] =
@@ -3176,6 +3170,7 @@ static ReturnAbortOnError ShowProfileManager(
                            kTelemetryEnv);
 }
 
+MOZ_CAN_RUN_SCRIPT
 static ReturnAbortOnError ShowProfileSelector(
     nsIToolkitProfileService* aProfileSvc, nsINativeAppSupport* aNative) {
   static const char kProfileSelectorURL[] = "about:profilemanager";
@@ -3183,6 +3178,17 @@ static ReturnAbortOnError ShowProfileSelector(
 
   return ShowProfileDialog(aProfileSvc, aNative, kProfileSelectorURL,
                            kTelemetryEnv);
+}
+
+// Both profile dialogs relaunch Firefox to start the chosen profile, and macOS
+// hands an ASWebAuthenticationSession request to the process it launched rather
+// than to the relaunched one, so showing a dialog would drop the request.
+static bool ShouldSkipProfileDialogForWebAuth() {
+#if defined(XP_MACOSX)
+  return WasLaunchedByAuthenticationServices();
+#else
+  return false;
+#endif
 }
 
 static bool gDoMigration = false;
@@ -3230,6 +3236,7 @@ static nsresult LockProfile(nsINativeAppSupport* aNative, nsIFile* aRootDir,
 // 4) use the default profile, if there is one
 // 5) if there are *no* profiles, set up profile-migration
 // 6) display the profile-manager UI
+MOZ_CAN_RUN_SCRIPT
 static nsresult SelectProfile(nsToolkitProfileService* aProfileSvc,
                               nsINativeAppSupport* aNative, nsIFile** aRootDir,
                               nsIFile** aLocalDir, nsIToolkitProfile** aProfile,
@@ -3325,6 +3332,28 @@ struct FileWriteFunc final : public JSONWriteFunc {
   }
 };
 
+// Parses a JSON string and returns the raw install_timestamp value, or
+// Nothing() if the JSON is malformed or lacks the property.
+static mozilla::Maybe<uint64_t> ParseInstallTimestamp(
+    std::string_view aUtf8Json) {
+  Json::Value root;
+  Json::Reader reader;
+  if (!reader.parse(aUtf8Json.data(), aUtf8Json.data() + aUtf8Json.size(),
+                    root) ||
+      !root.isMember("install_timestamp")) {
+    return mozilla::Nothing();
+  }
+
+  std::string tsStr = root["install_timestamp"].asString();
+  char* end = nullptr;
+  uint64_t val = strtoull(tsStr.c_str(), &end, 10);
+  if (!end || *end != '\0') {
+    return mozilla::Nothing();
+  }
+  return mozilla::Some(val);
+}
+
+#  ifndef XP_MACOSX
 // Reads aJsonFile and returns the raw install_timestamp value, or Nothing() if
 // the file is absent, unreadable, or lacks the property.
 static mozilla::Maybe<uint64_t> ReadInstallTimestamp(nsIFile* aJsonFile,
@@ -3350,35 +3379,23 @@ static mozilla::Maybe<uint64_t> ReadInstallTimestamp(nsIFile* aJsonFile,
   nsAutoCString converted;
   std::string_view utf8View;
   if (aIsUTF16LE) {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#    if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     const char16_t* chars = reinterpret_cast<const char16_t*>(buf.get());
     uint32_t charLen = len / 2;
     CopyUTF16toUTF8(Span(chars, charLen), converted);
     utf8View = std::string_view(converted.get(), converted.Length());
-#else
+#    else
     MOZ_ASSERT_UNREACHABLE(
         "UTF-16LE reading not supported on big-endian architectures");
     return mozilla::Nothing();
-#endif
+#    endif
   } else {
     utf8View = std::string_view(reinterpret_cast<const char*>(buf.get()), len);
   }
 
-  Json::Value root;
-  Json::Reader reader;
-  if (!reader.parse(utf8View.data(), utf8View.data() + utf8View.size(), root) ||
-      !root.isMember("install_timestamp")) {
-    return mozilla::Nothing();
-  }
-
-  std::string tsStr = root["install_timestamp"].asString();
-  char* end = nullptr;
-  uint64_t val = strtoull(tsStr.c_str(), &end, 10);
-  if (*end != '\0') {
-    return mozilla::Nothing();
-  }
-  return mozilla::Some(val);
+  return ParseInstallTimestamp(utf8View);
 }
+#  endif  // !XP_MACOSX
 
 Maybe<mozilla::PathString> GenerateDowngradeTelemetry(
     const nsACString& aPingId, const nsCString& aLastVersion, bool aHasSync,
@@ -3442,6 +3459,38 @@ Maybe<mozilla::PathString> GenerateDowngradeTelemetry(
     }
 #  endif
 
+#  ifdef XP_MACOSX
+    // GreD is <app>.app/Contents/Resources; go up two levels to the .app
+    // bundle directory where the updater stores the xattr.
+    maybeUpdateTime = [&]() -> mozilla::Maybe<PRTime> {
+      nsCOMPtr<nsIFile> contentsDir;
+      if (NS_FAILED(greDir->GetParent(getter_AddRefs(contentsDir))) ||
+          !contentsDir) {
+        return mozilla::Nothing();
+      }
+      nsCOMPtr<nsIFile> appBundle;
+      if (NS_FAILED(contentsDir->GetParent(getter_AddRefs(appBundle))) ||
+          !appBundle) {
+        return mozilla::Nothing();
+      }
+      nsCOMPtr<nsILocalFileMac> macFile = do_QueryInterface(appBundle);
+      if (!macFile) {
+        return mozilla::Nothing();
+      }
+      nsTArray<uint8_t> attrValue;
+      if (NS_FAILED(macFile->GetXAttr("org.mozilla.update-telemetry"_ns,
+                                      attrValue))) {
+        return mozilla::Nothing();
+      }
+      auto msTime = ParseInstallTimestamp(
+          std::string_view(reinterpret_cast<const char*>(attrValue.Elements()),
+                           attrValue.Length()));
+      if (!msTime) {
+        return mozilla::Nothing();
+      }
+      return mozilla::Some(PRTime(int64_t(*msTime) * PR_USEC_PER_MSEC));
+    }();
+#  else
     // update_telemetry.json uses a Unix timestamp in milliseconds.
     nsCOMPtr<nsIFile> updateTelemetry;
     if (NS_SUCCEEDED(greDir->Clone(getter_AddRefs(updateTelemetry))) &&
@@ -3452,6 +3501,7 @@ Maybe<mozilla::PathString> GenerateDowngradeTelemetry(
             mozilla::Some(PRTime(int64_t(*msTime) * PR_USEC_PER_MSEC));
       }
     }
+#  endif
   }
 
   PRTime nowUsec = PR_Now();
@@ -3665,6 +3715,7 @@ static void SubmitDowngradeTelemetry(const nsACString& aProfileSelectionReason,
 static const char kProfileDowngradeURL[] =
     "chrome://mozapps/content/profile/profileDowngrade.xhtml";
 
+MOZ_CAN_RUN_SCRIPT
 static ReturnAbortOnError HandleDetectedDowngrade(
     nsIFile* aProfileDir, nsINativeAppSupport* aNative,
     nsToolkitProfileService* aProfileSvc, nsIProfileLock* aProfileLock,
@@ -4254,8 +4305,10 @@ class XREMain {
     mAppData = nullptr;
   }
 
+  MOZ_CAN_RUN_SCRIPT
   int XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig);
   int XRE_mainInit(bool* aExitFlag);
+  MOZ_CAN_RUN_SCRIPT
   int XRE_mainStartup(bool* aExitFlag);
   MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult XRE_mainRun();
 
@@ -4339,16 +4392,12 @@ static bool CheckForUserMismatch() { return false; }
 
 void mozilla::startup::IncreaseDescriptorLimits() {
 #ifdef XP_UNIX
-  // Increase the fd limit to accomodate IPC resources like shared memory.
-#  ifdef XP_DARWIN
-  // We use Mach IPC for shared memory, so a lower limit suffices.
-  // See also the Darwin case in config/external/nspr/pr/moz.build
-  static constexpr rlim_t kFDs = 4096;
-#  else   // Unix but not Darwin
+  // Increase the fd limit to accommodate IPC resources like shared memory.
   // This can be increased if needed, but also be aware that Linux
-  // distributions may impose hard limits less than this.
+  // distributions may impose hard limits less than this. macOS accepts any
+  // value and caps the effective limit at kern.maxfilesperproc, and it must
+  // not exceed the FD_SETSIZE in config/external/nspr/pr/moz.build.
   static constexpr rlim_t kFDs = 65536;
-#  endif  // Darwin or not
   struct rlimit rlim;
 
   if (getrlimit(RLIMIT_NOFILE, &rlim) != 0) {
@@ -5514,7 +5563,9 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
 
   bool wasDefaultSelection;
   nsCOMPtr<nsIToolkitProfile> profile;
-  rv = SelectProfile(mProfileSvc, mNativeApp, getter_AddRefs(mProfD),
+  RefPtr profileSvc = mProfileSvc;
+  nsCOMPtr nativeApp = mNativeApp;
+  rv = SelectProfile(profileSvc, nativeApp, getter_AddRefs(mProfD),
                      getter_AddRefs(mProfLD), getter_AddRefs(profile),
                      &wasDefaultSelection);
   if (rv == NS_ERROR_LAUNCHED_CHILD_PROCESS || rv == NS_ERROR_ABORT) {
@@ -5686,12 +5737,14 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
   // We only ever show the profile selector if a specific profile wasn't chosen
   // via command line arguments or environment variables.
   if (wasDefaultSelection) {
-    if (!mProfileSvc->GetStartWithLastProfile()) {
+    if (ShouldSkipProfileDialogForWebAuth()) {
+      rv = NS_OK;
+    } else if (!mProfileSvc->GetStartWithLastProfile()) {
       // First check the old style profile manager
-      rv = ShowProfileManager(mProfileSvc, mNativeApp);
+      rv = ShowProfileManager(profileSvc, nativeApp);
     } else if (profile && profile->GetShowProfileSelector()) {
       // Now check the new profile group selector
-      rv = ShowProfileSelector(mProfileSvc, mNativeApp);
+      rv = ShowProfileSelector(profileSvc, nativeApp);
     } else {
       rv = NS_OK;
     }
@@ -5847,7 +5900,9 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
 #  ifdef XP_MACOSX
     InitializeMacApp();
 #  endif
-    rv = HandleDetectedDowngrade(mProfD, mNativeApp, mProfileSvc, mProfileLock,
+    nsCOMPtr profD = mProfD;
+    nsCOMPtr profileLock = mProfileLock;
+    rv = HandleDetectedDowngrade(profD, nativeApp, profileSvc, profileLock,
                                  compatResult.lastVersion,
                                  compatResult.isDifferentInstall);
     if (rv == NS_ERROR_LAUNCHED_CHILD_PROCESS || rv == NS_ERROR_ABORT) {
@@ -6386,13 +6441,12 @@ nsresult XREMain::XRE_mainRun() {
       // Check if we're running from a DMG or an app translocated location and
       // allow the user to install to the Applications directory.
       if (MacRunFromDmgUtils::MaybeInstallAndRelaunch()) {
-        bool userAllowedQuit = true;
-        appStartup->Quit(nsIAppStartup::eForceQuit, 0, &userAllowedQuit);
+        appStartup->Quit(nsIAppStartup::eForceQuit, 0);
       }
 #  endif
 #endif
 
-#if defined(XP_MACOSX) && defined(NIGHTLY_BUILD)
+#if defined(XP_MACOSX)
       RegisterASWebAuthSessionObservers();
 #endif
 
@@ -6910,7 +6964,7 @@ bool XRE_IsE10sParentProcess() {
   bool XRE_Is##proc_typename##Process() {                                     \
     return XRE_GetProcessType() == GeckoProcessType_##enum_name;              \
   }
-#include "mozilla/GeckoProcessTypes.h"
+#include "mozilla/GeckoProcessTypes.inc"
 #undef GECKO_PROCESS_TYPE
 
 bool XRE_UseNativeEventProcessing() {
@@ -7039,7 +7093,7 @@ mozilla::BinPathType XRE_GetChildProcBinPathType(
                              procinfo_typename, webidl_typename, allcaps_name) \
     case GeckoProcessType_##enum_name:                                         \
       return BinPathType::process_bin_type;
-#  include "mozilla/GeckoProcessTypes.h"
+#  include "mozilla/GeckoProcessTypes.inc"
 #  undef GECKO_PROCESS_TYPE
     default:
       return BinPathType::PluginContainer;

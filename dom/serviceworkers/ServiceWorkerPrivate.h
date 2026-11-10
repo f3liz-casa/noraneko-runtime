@@ -5,8 +5,6 @@
 #ifndef mozilla_dom_serviceworkerprivate_h
 #define mozilla_dom_serviceworkerprivate_h
 
-#include <functional>
-
 #include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MozPromise.h"
@@ -19,6 +17,7 @@
 #include "mozilla/dom/RemoteWorkerTypes.h"
 #include "mozilla/dom/ServiceWorkerLifetimeExtension.h"
 #include "mozilla/dom/ServiceWorkerOpArgs.h"
+#include "mozilla/dom/ServiceWorkerOpPromise.h"
 #include "nsCOMPtr.h"
 #include "nsISupportsImpl.h"
 #include "nsTArray.h"
@@ -109,9 +108,9 @@ class ServiceWorkerPrivate final : public RemoteWorkerObserver {
       const net::CookieStruct& aCookie, bool aCookieDeleted,
       RefPtr<ServiceWorkerRegistrationInfo> aRegistration);
 
-  nsresult SendPushEvent(const nsAString& aMessageId,
-                         const Maybe<nsTArray<uint8_t>>& aData,
-                         RefPtr<ServiceWorkerRegistrationInfo> aRegistration);
+  RefPtr<PushHandledPromise> SendPushEvent(
+      const nsAString& aMessageId, const Maybe<nsTArray<uint8_t>>& aData,
+      RefPtr<ServiceWorkerRegistrationInfo> aRegistration);
 
   nsresult SendPushSubscriptionChangeEvent(
       const RefPtr<nsIPushSubscription>& aOldSubscription);
@@ -247,7 +246,7 @@ class ServiceWorkerPrivate final : public RemoteWorkerObserver {
       RefPtr<ServiceWorkerRegistrationInfo>&& aRegistration,
       ServiceWorkerCookieChangeEventOpArgs&& aArgs);
 
-  nsresult SendPushEventInternal(
+  RefPtr<PushHandledPromise> SendPushEventInternal(
       RefPtr<ServiceWorkerRegistrationInfo>&& aRegistration,
       ServiceWorkerPushEventOpArgs&& aArgs);
 
@@ -268,11 +267,9 @@ class ServiceWorkerPrivate final : public RemoteWorkerObserver {
   RefPtr<GenericNonExclusivePromise> ShutdownInternal(
       uint32_t aShutdownStateId);
 
-  nsresult ExecServiceWorkerOp(
+  RefPtr<ServiceWorkerOpPromise> ExecServiceWorkerOp(
       ServiceWorkerOpArgs&& aArgs,
-      const ServiceWorkerLifetimeExtension& aLifetimeExtension,
-      std::function<void(ServiceWorkerOpResult&&)>&& aSuccessCallback,
-      std::function<void()>&& aFailureCallback = [] {});
+      const ServiceWorkerLifetimeExtension& aLifetimeExtension);
 
   class PendingFunctionalEvent {
    public:
@@ -308,10 +305,16 @@ class ServiceWorkerPrivate final : public RemoteWorkerObserver {
                      RefPtr<ServiceWorkerRegistrationInfo>&& aRegistration,
                      ServiceWorkerPushEventOpArgs&& aArgs);
 
+    // Rejects the promise if the event is dropped without being sent
+    ~PendingPushEvent();
+
     nsresult Send() override;
+
+    RefPtr<PushHandledPromise> Promise();
 
    private:
     ServiceWorkerPushEventOpArgs mArgs;
+    MozPromiseHolder<PushHandledPromise> mPromiseHolder;
   };
 
   class PendingFetchEvent final : public PendingFunctionalEvent {

@@ -14,6 +14,7 @@
 #include "nsIURLQueryStringStripper.h"
 #include "nsIXULRuntime.h"
 #include "nsAboutProtocolUtils.h"
+#include "nsContentUtils.h"
 #include "nsNetUtil.h"
 #include "nsQueryObject.h"
 #include "ReferrerInfo.h"
@@ -66,6 +67,11 @@ bool ContentTriggeredURILoadIsAllowed(nsIURI* aURI,
     nsCOMPtr<nsIURI> innerURI;
     return NS_SUCCEEDED(nestedURI->GetInnerURI(getter_AddRefs(innerURI))) &&
            ContentTriggeredURILoadIsAllowed(innerURI, aEffectiveRemoteType);
+  }
+
+  // about:reader is process-allocated based on the "url" parameter.
+  if (nsCOMPtr<nsIURI> readerURI = GetAboutReaderURL(aURI)) {
+    return ContentTriggeredURILoadIsAllowed(readerURI, aEffectiveRemoteType);
   }
 
   // A null principal is the least privileged principal there is, so any URI it
@@ -135,6 +141,7 @@ nsDocShellLoadState::nsDocShellLoadState(
   mInheritPrincipal = aLoadState.InheritPrincipal();
   mPrincipalIsExplicit = aLoadState.PrincipalIsExplicit();
   mNotifiedBeforeUnloadListeners = aLoadState.NotifiedBeforeUnloadListeners();
+  mPageSwapFired = aLoadState.PageSwapFired();
   mForceAllowDataURI = aLoadState.ForceAllowDataURI();
   mIsExemptFromHTTPSFirstMode = aLoadState.IsExemptFromHTTPSFirstMode();
   mOriginalFrameSrc = aLoadState.OriginalFrameSrc();
@@ -165,7 +172,6 @@ nsDocShellLoadState::nsDocShellLoadState(
   mPartitionedPrincipalToInherit = aLoadState.PartitionedPrincipalToInherit();
   mTriggeringSandboxFlags = aLoadState.TriggeringSandboxFlags();
   mTriggeringWindowId = aLoadState.TriggeringWindowId();
-  mTriggeringStorageAccess = aLoadState.TriggeringStorageAccess();
   mTriggeringClassificationFlags = aLoadState.TriggeringClassificationFlags();
   mTriggeringRemoteType = aLoadState.TriggeringRemoteType();
   mSchemelessInput = aLoadState.SchemelessInput();
@@ -220,12 +226,19 @@ nsDocShellLoadState::nsDocShellLoadState(
       // the original state.
       mSpeculativeListener = originalState->TakeSpeculativeListener();
       MOZ_ASSERT(mHasSpeculativeListener == !!mSpeculativeListener);
-    } else if (mTriggeringRemoteType != cp->GetRemoteType()) {
-      // If we don't have a previous load to compare to, the content process
-      // must be the triggering process.
-      aActor->FatalError(
-          "nsDocShellLoadState with invalid triggering remote type");
-      return;
+    } else {
+      if (!nsContentUtils::IsProcessSpecificIdFrom(mLoadIdentifier,
+                                                   cp->ChildID())) {
+        aActor->FatalError("nsDocShellLoadState with invalid load identifier");
+        return;
+      }
+      if (mTriggeringRemoteType != cp->GetRemoteType()) {
+        // If we don't have a previous load to compare to, the content process
+        // must be the triggering process.
+        aActor->FatalError(
+            "nsDocShellLoadState with invalid triggering remote type");
+        return;
+      }
     }
 
     if (!mTriggeringRemoteType.IsNotRemote()) {
@@ -322,7 +335,6 @@ nsDocShellLoadState::nsDocShellLoadState(const nsDocShellLoadState& aOther)
       mTriggeringPrincipal(aOther.mTriggeringPrincipal),
       mTriggeringSandboxFlags(aOther.mTriggeringSandboxFlags),
       mTriggeringWindowId(aOther.mTriggeringWindowId),
-      mTriggeringStorageAccess(aOther.mTriggeringStorageAccess),
       mTriggeringClassificationFlags(aOther.mTriggeringClassificationFlags),
       mPolicyContainer(aOther.mPolicyContainer),
       mKeepResultPrincipalURIIfSet(aOther.mKeepResultPrincipalURIIfSet),
@@ -330,6 +342,7 @@ nsDocShellLoadState::nsDocShellLoadState(const nsDocShellLoadState& aOther)
       mInheritPrincipal(aOther.mInheritPrincipal),
       mPrincipalIsExplicit(aOther.mPrincipalIsExplicit),
       mNotifiedBeforeUnloadListeners(aOther.mNotifiedBeforeUnloadListeners),
+      mPageSwapFired(aOther.mPageSwapFired),
       mPrincipalToInherit(aOther.mPrincipalToInherit),
       mPartitionedPrincipalToInherit(aOther.mPartitionedPrincipalToInherit),
       mForceAllowDataURI(aOther.mForceAllowDataURI),
@@ -392,7 +405,6 @@ nsDocShellLoadState::nsDocShellLoadState(nsIURI* aURI, uint64_t aLoadIdentifier)
       mResultPrincipalURIIsSome(false),
       mTriggeringSandboxFlags(0),
       mTriggeringWindowId(0),
-      mTriggeringStorageAccess(false),
       mTriggeringClassificationFlags({0, 0}),
       mKeepResultPrincipalURIIfSet(false),
       mLoadReplace(false),
@@ -654,8 +666,6 @@ nsresult nsDocShellLoadState::CreateFromLoadURIOptions(
       aLoadURIOptions.mTextDirectiveUserActivation);
   loadState->SetTriggeringSandboxFlags(aLoadURIOptions.mTriggeringSandboxFlags);
   loadState->SetTriggeringWindowId(aLoadURIOptions.mTriggeringWindowId);
-  loadState->SetTriggeringStorageAccess(
-      aLoadURIOptions.mTriggeringStorageAccess);
   // The load is assumed to be first-party, so the triggering classification
   // should be both zero.
   loadState->SetTriggeringClassificationFlags({0, 0});
@@ -806,15 +816,6 @@ void nsDocShellLoadState::SetTriggeringWindowId(uint64_t aTriggeringWindowId) {
 
 uint64_t nsDocShellLoadState::TriggeringWindowId() const {
   return mTriggeringWindowId;
-}
-
-void nsDocShellLoadState::SetTriggeringStorageAccess(
-    bool aTriggeringStorageAccess) {
-  mTriggeringStorageAccess = aTriggeringStorageAccess;
-}
-
-bool nsDocShellLoadState::TriggeringStorageAccess() const {
-  return mTriggeringStorageAccess;
 }
 
 mozilla::net::ClassificationFlags
@@ -1617,6 +1618,7 @@ DocShellLoadStateInit nsDocShellLoadState::Serialize(
   loadState.InheritPrincipal() = mInheritPrincipal;
   loadState.PrincipalIsExplicit() = mPrincipalIsExplicit;
   loadState.NotifiedBeforeUnloadListeners() = mNotifiedBeforeUnloadListeners;
+  loadState.PageSwapFired() = mPageSwapFired;
   loadState.ForceAllowDataURI() = mForceAllowDataURI;
   loadState.IsExemptFromHTTPSFirstMode() = mIsExemptFromHTTPSFirstMode;
   loadState.OriginalFrameSrc() = mOriginalFrameSrc;
@@ -1647,7 +1649,6 @@ DocShellLoadStateInit nsDocShellLoadState::Serialize(
   loadState.PartitionedPrincipalToInherit() = mPartitionedPrincipalToInherit;
   loadState.TriggeringSandboxFlags() = mTriggeringSandboxFlags;
   loadState.TriggeringWindowId() = mTriggeringWindowId;
-  loadState.TriggeringStorageAccess() = mTriggeringStorageAccess;
   loadState.TriggeringClassificationFlags() = mTriggeringClassificationFlags;
   loadState.TriggeringRemoteType() = mTriggeringRemoteType;
   loadState.SchemelessInput() = mSchemelessInput;

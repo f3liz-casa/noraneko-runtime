@@ -39,7 +39,11 @@ tasks-from:
     - xpcshell.yml
 
 task-defaults:
-    run-on-repo-type: [hg]
+    priority:
+        by-project:
+            autoland: high
+            mozilla-central: medium
+            default: null
     attributes:
         retrigger: true
     use-python:

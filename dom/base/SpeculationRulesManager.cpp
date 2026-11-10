@@ -36,9 +36,24 @@ void SpeculationRulesManager::StartPrefetch(Document* aDocument,
     return;
   }
 
+  // A candidate can be enacted repeatedly, for instance every time the user
+  // hovers a moderate eagerness link, so don't prefetch a URL that this
+  // document is already prefetching.
+  for (const RefPtr<PrefetchRecordChild>& record : mPrefetchRecords) {
+    bool equals = false;
+    if (record->URL() && NS_SUCCEEDED(record->URL()->Equals(uri, &equals)) &&
+        equals) {
+      LOG_SPECRULES(("StartPrefetch: already prefetching %s", aCand.url.get()));
+      return;
+    }
+  }
+
+  auto referrerPolicy = static_cast<ReferrerPolicy>(aCand.referrer_policy);
+  if (referrerPolicy == ReferrerPolicy::_empty) {
+    referrerPolicy = aDocument->GetReferrerPolicy();
+  }
   nsCOMPtr<nsIReferrerInfo> referrerInfo =
-      new ReferrerInfo(aDocument->GetDocumentURIAsReferrer(),
-                       static_cast<ReferrerPolicy>(aCand.referrer_policy));
+      new ReferrerInfo(aDocument->GetDocumentURIAsReferrer(), referrerPolicy);
 
   nsString noVarySearchHint;
   if (!aCand.no_vary_search_hint.IsVoid()) {

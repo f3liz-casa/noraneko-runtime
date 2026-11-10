@@ -432,7 +432,7 @@ where
             layout_parent_style.unwrap_or(inherited_style),
             element,
             try_tactic,
-            &cascade.author_specified,
+            &cascade.author_or_user_specified,
         );
     }
 
@@ -473,14 +473,14 @@ type DeclarationsToApplyUnlessOverriden = SmallVec<[PropertyDeclaration; 2]>;
 fn is_base_appearance(context: &computed::Context) -> bool {
     use computed::Appearance;
     let box_style = context.builder.get_box();
-    match box_style.clone_appearance() {
+    match *box_style.get_appearance() {
         Appearance::BaseSelect => {
             matches!(
-                box_style.clone__moz_default_appearance(),
+                box_style.get__moz_default_appearance(),
                 Appearance::Listbox | Appearance::Menulist
             )
         },
-        Appearance::Base => box_style.clone__moz_default_appearance() != Appearance::None,
+        Appearance::Base => *box_style.get__moz_default_appearance() != Appearance::None,
         _ => false,
     }
 }
@@ -505,10 +505,10 @@ fn tweak_when_ignoring_colors(
     }
 
     // Always honor colors if forced-color-adjust is set to none.
-    let forced = context
+    let forced = *context
         .builder
         .get_inherited_text()
-        .clone_forced_color_adjust();
+        .get_forced_color_adjust();
     if forced == computed::ForcedColorAdjust::None {
         return;
     }
@@ -564,7 +564,7 @@ fn tweak_when_ignoring_colors(
             if context
                 .builder
                 .get_parent_inherited_text()
-                .clone_color()
+                .get_color()
                 .alpha
                 == 0.0
             {
@@ -804,7 +804,7 @@ pub(crate) struct Cascade<'a> {
     ignore_colors: bool,
     seen: SeenSet<'a>,
     reverted: RevertedSet,
-    author_specified: LonghandIdSet,
+    author_or_user_specified: LonghandIdSet,
     declarations_to_apply_unless_overridden: DeclarationsToApplyUnlessOverriden,
     may_have_custom_property_cycles: bool,
     references_from_non_custom_properties: NonCustomReferenceMap<Vec<Arc<UnparsedValue>>>,
@@ -823,7 +823,7 @@ impl<'a> Cascade<'a> {
             stylist,
             ignore_colors,
             seen: Default::default(),
-            author_specified: Default::default(),
+            author_or_user_specified: Default::default(),
             reverted: Default::default(),
             declarations_to_apply_unless_overridden: Default::default(),
             may_have_custom_property_cycles: false,
@@ -840,7 +840,7 @@ impl<'a> Cascade<'a> {
             stylist,
             ignore_colors: false,
             seen: Default::default(),
-            author_specified: Default::default(),
+            author_or_user_specified: Default::default(),
             reverted: Default::default(),
             declarations_to_apply_unless_overridden: Default::default(),
             may_have_custom_property_cycles: false,
@@ -1148,8 +1148,8 @@ impl<'a> Cascade<'a> {
         };
 
         self.seen.longhands.insert(longhand_id);
-        if origin.is_author_origin() {
-            self.author_specified.insert(longhand_id);
+        if origin != CascadeOrigin::UA {
+            self.author_or_user_specified.insert(longhand_id);
         }
 
         if !can_skip_apply {
@@ -1263,22 +1263,28 @@ impl<'a> Cascade<'a> {
         }
 
         if self
-            .author_specified
+            .author_or_user_specified
             .contains_any(LonghandIdSet::border_background_properties())
         {
-            builder.add_flags(ComputedValueFlags::HAS_AUTHOR_SPECIFIED_BORDER_BACKGROUND);
+            builder.add_flags(ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND);
         }
 
-        if self.author_specified.contains(LonghandId::Color) {
-            builder.add_flags(ComputedValueFlags::HAS_AUTHOR_SPECIFIED_TEXT_COLOR);
+        if self.author_or_user_specified.contains(LonghandId::Color) {
+            builder.add_flags(ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_TEXT_COLOR);
         }
 
-        if self.author_specified.contains(LonghandId::TextShadow) {
-            builder.add_flags(ComputedValueFlags::HAS_AUTHOR_SPECIFIED_TEXT_SHADOW);
+        if self
+            .author_or_user_specified
+            .contains(LonghandId::TextShadow)
+        {
+            builder.add_flags(ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_TEXT_SHADOW);
         }
 
-        if self.author_specified.contains(LonghandId::GridAutoFlow) {
-            builder.add_flags(ComputedValueFlags::HAS_AUTHOR_SPECIFIED_GRID_AUTO_FLOW);
+        if self
+            .author_or_user_specified
+            .contains(LonghandId::GridAutoFlow)
+        {
+            builder.add_flags(ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_GRID_AUTO_FLOW);
         }
 
         #[cfg(feature = "servo")]
@@ -1319,8 +1325,8 @@ impl<'a> Cascade<'a> {
         // style specified viewport units / used font-relative lengths, this one
         // would as well.  It matches the same rules, so it is the right thing
         // to do anyways, even if it's only used on inherited properties.
-        let bits_to_copy = ComputedValueFlags::HAS_AUTHOR_SPECIFIED_BORDER_BACKGROUND
-            | ComputedValueFlags::HAS_AUTHOR_SPECIFIED_GRID_AUTO_FLOW
+        let bits_to_copy = ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND
+            | ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_GRID_AUTO_FLOW
             | ComputedValueFlags::DEPENDS_ON_SELF_FONT_METRICS
             | ComputedValueFlags::DEPENDS_ON_INHERITED_FONT_METRICS
             | ComputedValueFlags::IS_IN_APPEARANCE_BASE_SUBTREE
@@ -1330,7 +1336,8 @@ impl<'a> Cascade<'a> {
             | ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY
             | ComputedValueFlags::USES_SIBLING_COUNT
             | ComputedValueFlags::USES_SIBLING_INDEX
-            | ComputedValueFlags::USES_VISITED_DEPENDENT_PROPERTIES;
+            | ComputedValueFlags::USES_VISITED_DEPENDENT_PROPERTIES
+            | ComputedValueFlags::USES_ELEMENT_SCOPED_RANDOM;
         context.builder.add_flags(style.flags & bits_to_copy);
 
         true
@@ -1354,7 +1361,7 @@ impl<'a> Cascade<'a> {
             let default_font_type = unsafe {
                 bindings::Gecko_nsStyleFont_ComputeFallbackFontTypeForLanguage(
                     builder.device.document(),
-                    font.mLanguage.mRawPtr,
+                    font.mLanguage.0.as_ptr(),
                 )
             };
 
@@ -1403,7 +1410,7 @@ impl<'a> Cascade<'a> {
             unsafe {
                 bindings::Gecko_nsStyleFont_ComputeFallbackFontTypeForLanguage(
                     builder.device.document(),
-                    font.mLanguage.mRawPtr,
+                    font.mLanguage.0.as_ptr(),
                 )
             }
         };
@@ -1427,7 +1434,7 @@ impl<'a> Cascade<'a> {
 
         let new_size = {
             let font = context.builder.get_font();
-            let info = font.clone_font_size().keyword_info;
+            let info = font.slow_clone_font_size().keyword_info;
             let new_size = match info.kw {
                 specified::FontSizeKeyword::None => return,
                 _ => {
@@ -1477,8 +1484,8 @@ impl<'a> Cascade<'a> {
     fn unzoom_fonts_if_needed(&self, builder: &mut StyleBuilder) {
         debug_assert!(self.seen.longhands.contains(LonghandId::XTextScale));
 
-        let parent_text_scale = builder.get_parent_font().clone__x_text_scale();
-        let text_scale = builder.get_font().clone__x_text_scale();
+        let parent_text_scale = *builder.get_parent_font().get__x_text_scale();
+        let text_scale = *builder.get_font().get__x_text_scale();
         if parent_text_scale == text_scale {
             return;
         }
@@ -1499,7 +1506,7 @@ impl<'a> Cascade<'a> {
         debug_assert!(self.seen.longhands.contains(LonghandId::Zoom));
         // NOTE(emilio): Intentionally not using the effective zoom here, since all the inherited
         // zooms are already applied.
-        let old_size = builder.get_font().clone_font_size();
+        let old_size = builder.get_font().slow_clone_font_size();
         let new_size = old_size.zoom(builder.effective_zoom_for_inheritance);
         if old_size == new_size {
             return;
@@ -1516,7 +1523,12 @@ impl<'a> Cascade<'a> {
         use crate::values::generics::NonNegative;
 
         // Do not do anything if font-size: math or math-depth is not set.
-        if context.builder.get_font().clone_font_size().keyword_info.kw
+        if context
+            .builder
+            .get_font()
+            .slow_clone_font_size()
+            .keyword_info
+            .kw
             != specified::FontSizeKeyword::Math
         {
             return;

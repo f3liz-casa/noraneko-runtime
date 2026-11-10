@@ -10,7 +10,6 @@
 #include "GLContext.h"
 #include "ScopedGLHelpers.h"
 #include "WebGLContext.h"
-#include "WebGLContextUtils.h"
 #include "WebGLFormats.h"
 #include "WebGLFramebuffer.h"
 #include "WebGLSampler.h"
@@ -995,6 +994,15 @@ void WebGLTexture::TexParameter(TexTarget texTarget, GLenum pname,
         case LOCAL_GL_CLAMP_TO_EDGE:
         case LOCAL_GL_MIRRORED_REPEAT:
         case LOCAL_GL_REPEAT:
+          break;
+
+        case LOCAL_GL_MIRROR_CLAMP_TO_EDGE_EXT:
+          if (mContext->IsExtensionEnabled(
+                  WebGLExtensionID::EXT_texture_mirror_clamp_to_edge)) {
+            break;
+          }
+
+          paramBadEnum = true;
           break;
 
         default:

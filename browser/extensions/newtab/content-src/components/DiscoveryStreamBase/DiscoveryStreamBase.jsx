@@ -13,14 +13,23 @@ import { Navigation } from "content-src/components/DiscoveryStreamComponents/Nav
 import { PrivacyLink } from "content-src/components/DiscoveryStreamComponents/PrivacyLink/PrivacyLink";
 import React from "react";
 import { SectionTitle } from "content-src/components/DiscoveryStreamComponents/SectionTitle/SectionTitle";
-import { selectLayoutRender } from "content-src/lib/selectLayoutRender";
+import {
+  keepOnlySections,
+  selectLayoutRender,
+} from "content-src/lib/selectLayoutRender";
 import { TopSites } from "content-src/components/TopSites/TopSites";
 import { CardSections } from "../DiscoveryStreamComponents/CardSections/CardSections";
 import { Widgets } from "content-src/components/Widgets/Widgets";
 import { Spaces } from "content-src/components/Spaces/Spaces";
 import {
   isSpacesActive,
+  hasSpacesArrows,
+  isSpacesArrowsAssigned,
+  isSpacesPreviewEnabled,
+  isSpacesPeekAssigned,
+  resolveFeatureSpacePreviewImages,
   resolvePopulatedSpaces,
+  resolveThematicSpaces,
   SPACE_IDS,
 } from "common/PageLayoutVariants.mjs";
 import {
@@ -198,7 +207,7 @@ export class _DiscoveryStreamBase extends React.PureComponent {
       case "PrivacyLink":
         return <PrivacyLink properties={component.properties} />;
       case "Widgets":
-        return <Widgets />;
+        return <Widgets widgetIds={component.widgetIds} />;
       default:
         return <div>{component.type}</div>;
     }
@@ -314,44 +323,52 @@ export class _DiscoveryStreamBase extends React.PureComponent {
         },
       ]);
 
-    const contentGroup = (
-      <div
-        className={`layout-content-column${
-          layoutRender.length ? " has-feed" : ""
-        }`}
-      >
-        {/* Nova only: the ABOVE_CONTENT_FEED message, built in Base.jsx. This is
-        the widgets/feed boundary, which only exists inside this component. */}
-        {this.props.aboveContentFeed}
+    // A thematic space shows only its own content sections, so the feed is built
+    // per space from a filtered copy of the layout rather than shared. Passing
+    // null keeps the whole feed, which is what every other layout gets.
+    const contentGroupFor = (sectionKeys, isLeadSpace = true) => {
+      const rows =
+        sectionKeys === null
+          ? layoutRender
+          : keepOnlySections(layoutRender, sectionKeys);
+      const hasFeed = !!rows.length;
+      return (
+        <div className={`layout-content-column${hasFeed ? " has-feed" : ""}`}>
+          {/* Nova only: the ABOVE_CONTENT_FEED message, built in Base.jsx. This
+          is the widgets/feed boundary, which only exists inside this component.
+          One copy only, or a message would render once per space. */}
+          {isLeadSpace && this.props.aboveContentFeed}
 
-        {!!layoutRender.length && (
-          <CollapsibleSection
-            className="ds-layout"
-            collapsed={topStories.pref.collapsed}
-            dispatch={this.props.dispatch}
-            id={topStories.id}
-            isFixed={true}
-            learnMore={learnMore}
-            privacyNoticeURL={topStories.privacyNoticeURL}
-            showPrefName={topStories.pref.feed}
-            title={sectionTitle}
-            subTitle={subTitle}
-            mayHaveTopicsSelection={topicSelectionEnabled}
-            sectionsEnabled={sectionsEnabled}
-            eventSource="CARDGRID"
-          >
-            {this.renderLayout(layoutRender)}
-          </CollapsibleSection>
-        )}
-        {privacyLinkComponent &&
-          this.renderLayout([
-            {
-              width: 12,
-              components: [privacyLinkComponent],
-            },
-          ])}
-      </div>
-    );
+          {hasFeed && (
+            <CollapsibleSection
+              className="ds-layout"
+              collapsed={topStories.pref.collapsed}
+              dispatch={this.props.dispatch}
+              id={topStories.id}
+              isFixed={true}
+              learnMore={learnMore}
+              privacyNoticeURL={topStories.privacyNoticeURL}
+              showPrefName={topStories.pref.feed}
+              title={sectionTitle}
+              subTitle={subTitle}
+              mayHaveTopicsSelection={topicSelectionEnabled}
+              sectionsEnabled={sectionsEnabled}
+              eventSource="CARDGRID"
+            >
+              {this.renderLayout(rows)}
+            </CollapsibleSection>
+          )}
+          {isLeadSpace &&
+            privacyLinkComponent &&
+            this.renderLayout([
+              {
+                width: 12,
+                components: [privacyLinkComponent],
+              },
+            ])}
+        </div>
+      );
+    };
 
     const highlightsGroup = hasHighlights && (
       <div className="layout-highlights-column">
@@ -369,14 +386,90 @@ export class _DiscoveryStreamBase extends React.PureComponent {
     // and their tablist order, so the tabs follow the prefs rather than whatever
     // the feeds have delivered so far.
     let spaceEntries = [];
-    if (isSpacesActive(this.props.Prefs.values)) {
-      const spaceContent = {
-        [SPACE_IDS.STORIES]: contentGroup,
-        [SPACE_IDS.WIDGETS]: widgetsGroup,
-        [SPACE_IDS.ACTIVITY]: highlightsGroup,
-      };
-      spaceEntries = resolvePopulatedSpaces(this.props.Prefs.values)
-        .map(id => ({ id, content: spaceContent[id] }))
+    let defaultSpaceId;
+    // One call: null unless the thematic variant is assigned with a usable
+    // config, and otherwise everything each space needs, already resolved.
+    const thematicSpaces = resolveThematicSpaces(
+      this.props.Prefs.values,
+      DiscoveryStream
+    );
+    if (isSpacesActive(this.props.Prefs.values, DiscoveryStream)) {
+      const populated =
+        thematicSpaces?.order ??
+        resolvePopulatedSpaces(this.props.Prefs.values);
+      // V1 opens on stories wherever pageLayouts.spacesOrder puts it.
+      defaultSpaceId = thematicSpaces?.defaultId ?? SPACE_IDS.STORIES;
+      // A thematic space is its own slice of the feed plus the widgets column,
+      // which is the side-by-side pair rather than one of the three boxes. A
+      // space whose widgets are all off gets no column and keeps the feed width.
+      const spaceContent = thematicSpaces
+        ? Object.fromEntries(
+            populated.map(id => [
+              id,
+              <React.Fragment key={id}>
+                {/* A widgets-only space has no feed column. The lead space
+                keeps it for the message and privacy link. */}
+                {(!!thematicSpaces.spaces[id].sectionKeys.length ||
+                  id === defaultSpaceId) &&
+                  contentGroupFor(
+                    thematicSpaces.spaces[id].sectionKeys,
+                    id === defaultSpaceId
+                  )}
+                {widgets &&
+                  !!thematicSpaces.spaces[id].widgetIds.length &&
+                  this.renderLayout([
+                    {
+                      width: 12,
+                      components: [
+                        {
+                          type: "Widgets",
+                          widgetIds: thematicSpaces.spaces[id].widgetIds,
+                        },
+                      ],
+                      sectionType: "widgets",
+                    },
+                  ])}
+                {/* Recent activity keeps showing for a user who has it on, in
+                the space the config marks for it or else the one the page
+                opens on. */}
+                {id === thematicSpaces.activityId && highlightsGroup}
+              </React.Fragment>,
+            ])
+          )
+        : {
+            [SPACE_IDS.STORIES]: contentGroupFor(null),
+            [SPACE_IDS.WIDGETS]: widgetsGroup,
+            [SPACE_IDS.ACTIVITY]: highlightsGroup,
+          };
+      // Whether each space's content has settled, so the tab preview does not
+      // pick its first item from placeholders and then change it. A thematic
+      // space leads with its feed, as V1 stories is its feed. Sponsored stories
+      // arrive separately and can take the first slot, so the feed waits for
+      // them too; their update is sent even with them off. V1 widgets render
+      // from prefs alone.
+      const feedsLoaded = !!(
+        DiscoveryStream.feeds?.loaded && DiscoveryStream.spocs?.loaded
+      );
+      const spaceReady = thematicSpaces
+        ? {}
+        : {
+            [SPACE_IDS.WIDGETS]: true,
+            [SPACE_IDS.ACTIVITY]: !!this.props.Sections?.find(
+              s => s.id === "highlights"
+            )?.initialized,
+          };
+      // Thematic spaces carry their own, from their config.
+      const featureImages = thematicSpaces
+        ? {}
+        : resolveFeatureSpacePreviewImages(this.props.Prefs.values);
+      spaceEntries = populated
+        .map(id => ({
+          id,
+          content: spaceContent[id],
+          ready: spaceReady[id] ?? feedsLoaded,
+          previewImage: featureImages[id],
+          ...(thematicSpaces?.spaces[id] ?? {}),
+        }))
         .filter(space => space.content);
     }
     const spacesActive = spaceEntries.length > 1;
@@ -426,7 +519,15 @@ export class _DiscoveryStreamBase extends React.PureComponent {
           )}
 
         {spacesActive ? (
-          <Spaces spaces={spaceEntries} dispatch={this.props.dispatch} />
+          <Spaces
+            spaces={spaceEntries}
+            defaultId={defaultSpaceId}
+            arrows={hasSpacesArrows(this.props.Prefs.values)}
+            tablist={!isSpacesArrowsAssigned(this.props.Prefs.values)}
+            preview={isSpacesPreviewEnabled(this.props.Prefs.values)}
+            peek={isSpacesPeekAssigned(this.props.Prefs.values)}
+            dispatch={this.props.dispatch}
+          />
         ) : (
           <React.Fragment>
             {widgetsGroup}
@@ -451,7 +552,7 @@ export class _DiscoveryStreamBase extends React.PureComponent {
                 </ErrorBoundary>
               )}
 
-            {contentGroup}
+            {contentGroupFor(null)}
             {highlightsGroup}
           </React.Fragment>
         )}

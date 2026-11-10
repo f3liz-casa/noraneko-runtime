@@ -139,17 +139,22 @@ void BaseLocalIter::operator++(int) {
 //
 // Stack map methods.
 
+bool BaseCompiler::checkStackHeight() {
+  if (MOZ_UNLIKELY(!fr.checkStackHeight())) {
+    return decoder_.fail(decoder_.beginOffset(), "stack frame is too large");
+  }
+  return true;
+}
+
 bool BaseCompiler::createStackMap(Maybe<Trap> reason) {
-  const ExitStubMapVector noExtras;
-  StackMap* stackMap;
-  return stackMapGenerator_.createStackMap(reason, noExtras,
-                                           HasDebugFrameWithLiveRefs::No, stk_,
-                                           &stackMap) &&
-         (!stackMap || stackMaps_->add(masm.currentOffset(), stackMap));
+  return createStackMap(reason, HasDebugFrameWithLiveRefs::No);
 }
 
 bool BaseCompiler::createStackMap(Maybe<Trap> reason,
                                   CodeOffset assemblerOffset) {
+  if (!checkStackHeight()) {
+    return false;
+  }
   const ExitStubMapVector noExtras;
   StackMap* stackMap;
   return stackMapGenerator_.createStackMap(reason, noExtras,
@@ -160,6 +165,9 @@ bool BaseCompiler::createStackMap(Maybe<Trap> reason,
 
 bool BaseCompiler::createStackMap(
     Maybe<Trap> reason, HasDebugFrameWithLiveRefs debugFrameWithLiveRefs) {
+  if (!checkStackHeight()) {
+    return false;
+  }
   const ExitStubMapVector noExtras;
   StackMap* stackMap;
   return stackMapGenerator_.createStackMap(
@@ -170,6 +178,9 @@ bool BaseCompiler::createStackMap(
 bool BaseCompiler::createStackMap(
     Maybe<Trap> reason, FaultingCodeRange insnRange,
     HasDebugFrameWithLiveRefs debugFrameWithLiveRefs) {
+  if (!checkStackHeight()) {
+    return false;
+  }
   const ExitStubMapVector noExtras;
   StackMap* stackMap;
   return stackMapGenerator_.createStackMap(
@@ -184,9 +195,15 @@ bool BaseCompiler::createDebugOnlyStackMapForNonResumingTrap(StackMap** result,
   MOZ_ASSERT(!TrapMightResume(t1));
   MOZ_ASSERT_IF(t2 != Trap::Limit, !TrapMightResume(t2));
 
+  // Ensure `*result` is always defined.
+  *result = nullptr;
+
   if (MOZ_LIKELY(!compilerEnv_.debugEnabled())) {
-    *result = nullptr;
     return true;
+  }
+
+  if (!checkStackHeight()) {
+    return false;
   }
 
   // We can use either `t1` or `t2` (when valid) here, since ::createStackMap
@@ -346,25 +363,15 @@ bool StackMapGenerator::createStackMap(
   // reasonably can.
   for (const Stk& v : stk) {
     switch (v.kind()) {
-      // These are neither refs nor register-resident; hence, uninteresting.
-      case Stk::MemI32:
-      case Stk::MemI64:
-      case Stk::MemF32:
-      case Stk::MemF64:
+      // These are neither refs nor register-resident, and there's nothing we
+      // can check.  Hence, uninteresting.
       case Stk::ConstI32:
       case Stk::ConstI64:
       case Stk::ConstF32:
       case Stk::ConstF64:
 #ifdef ENABLE_JIT_SIMD
-      case Stk::MemV128:
       case Stk::ConstV128:
 #endif
-        continue;
-
-      // These are also uninteresting, but we can take the opportunity to check
-      // that they live in the section of stack set up by beginFunction().  The
-      // unguarded use of |value()| here is safe due to the assertion above this
-      // loop.
       case Stk::LocalI32:
       case Stk::LocalI64:
       case Stk::LocalF32:
@@ -372,7 +379,21 @@ bool StackMapGenerator::createStackMap(
 #ifdef ENABLE_JIT_SIMD
       case Stk::LocalV128:
 #endif
-        MOZ_ASSERT(v.offs() <= framePushedAtEntryToBody.value());
+        continue;
+
+      // It would be nice to be able to assert that these live in the section
+      // of stack set up by beginFunction(), that is, `v.offs() <=
+      // framePushedAtEntryToBody.value()`.  But that's only true for
+      // `Stk::Mem*` entries carrying incoming parameters to the function.
+      // It's not true for `Stk::Mem*` entries resulting from general spilling,
+      // a.k.a. calls to `sync()`.  See bug 2072424.
+      case Stk::MemI32:
+      case Stk::MemI64:
+      case Stk::MemF32:
+      case Stk::MemF64:
+#ifdef ENABLE_JIT_SIMD
+      case Stk::MemV128:
+#endif
         continue;
 
       // These are register-resident, but aren't refs.  Check condition [2].
@@ -559,14 +580,19 @@ void BaseStackFrame::zeroLocals(BaseRegAlloc* ra) {
     return;
   }
 
-  // For other cases, it's best to have a zero in a register.
+  // For other cases, it's best to have a zero in a register. ARM64 stores an
+  // immediate zero from its zero register.
   //
   // One can do more here with SIMD registers (store 16 bytes at a time) or
   // with instructions like STRD on ARM (store 8 bytes at a time), but that's
   // for another day.
 
+#ifdef JS_CODEGEN_ARM64
+  ImmWord zero(0);
+#else
   RegI32 zero = ra->needI32();
   masm.mov(ImmWord(0), zero);
+#endif
 
   // For the general case we want to have a loop body of UNROLL_LIMIT stores
   // and then a tail of less than UNROLL_LIMIT stores.  When initWords is less
@@ -582,7 +608,9 @@ void BaseStackFrame::zeroLocals(BaseRegAlloc* ra) {
     for (uint32_t i = low; i < high; i += wordSize) {
       masm.storePtr(zero, Address(sp_, localOffset(i + wordSize)));
     }
+#ifndef JS_CODEGEN_ARM64
     ra->freeI32(zero);
+#endif
     return;
   }
 
@@ -615,7 +643,9 @@ void BaseStackFrame::zeroLocals(BaseRegAlloc* ra) {
 
   ra->freeI32(p);
   ra->freeI32(lim);
+#ifndef JS_CODEGEN_ARM64
   ra->freeI32(zero);
+#endif
 }
 
 }  // namespace wasm

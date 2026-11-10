@@ -9,7 +9,7 @@ use std::fmt;
 
 use euclid::{Transform3D, Box2D, Point2D, Vector2D};
 
-use api::units::{DevicePoint, DeviceRect};
+use api::units::{DevicePoint, DeviceRect, LayoutSideOffsets, LayoutVector2D};
 use crate::spatial_tree::{CoordinateSystemId, SpatialTree, CoordinateSpaceMapping, SpatialNodeIndex, VisibleFace};
 use crate::surface::SurfaceInfo;
 use crate::util::project_rect;
@@ -249,6 +249,8 @@ pub struct SpaceSnapper {
     /// when the target cannot be snapped (a non-axis-aligned reference frame
     /// between it and the snap node).
     snapping_transform: Option<SnapTransform>,
+    /// See `set_shadow_offset`.
+    shadow_offset: LayoutVector2D,
 }
 
 impl SpaceSnapper {
@@ -313,7 +315,35 @@ impl SpaceSnapper {
             raster_coord_system_id: snap_node.coordinate_system_id,
             current_target_spatial_node_index: SpatialNodeIndex::INVALID,
             snapping_transform: None,
+            shadow_offset: LayoutVector2D::zero(),
         }
+    }
+
+    /// Snap subsequent rects as shadow copies translated by `offset` (in the
+    /// target's local space) from the content they shadow: the rect is
+    /// snapped where the shadowed content is, then moved by `offset` rounded to
+    /// whole device pixels on the axes that snap. Snapping the copy on its own
+    /// would let the visible offset flip between whole pixels with the
+    /// content's sub-pixel phase (bug 2076646).
+    pub fn set_shadow_offset(&mut self, offset: LayoutVector2D) {
+        self.shadow_offset = offset;
+    }
+
+    /// How far to move a shadow copy's rect, in the target's local space, so
+    /// that it sits a whole number of device pixels from the shadowed content
+    /// on the requested device axes. `None` if there is nothing to adjust.
+    pub fn shadow_snap_adjustment<F>(&self, snap_x: bool, snap_y: bool) -> Option<Vector2D<f32, F>> {
+        if self.shadow_offset == LayoutVector2D::zero() || (!snap_x && !snap_y) {
+            return None;
+        }
+        let SnapTransform { ref scale_offset, swap_xy } = *self.snapping_transform.as_ref()?;
+        let o = self.shadow_offset;
+        let (x, y) = if swap_xy { (o.y, o.x) } else { (o.x, o.y) };
+        let adjust = |v: f32, scale: f32, snap: bool| {
+            if snap && scale != 0.0 { (v * scale).round() / scale - v } else { 0.0 }
+        };
+        let (ax, ay) = (adjust(x, scale_offset.scale.x, snap_x), adjust(y, scale_offset.scale.y, snap_y));
+        Some(if swap_xy { Vector2D::new(ay, ax) } else { Vector2D::new(ax, ay) })
     }
 
     /// Set the spatial node whose content subsequent `snap_rect` calls snap.
@@ -385,6 +415,22 @@ impl SpaceSnapper {
         snap_x: bool,
         snap_y: bool,
     ) -> Box2D<f32, F> where F: fmt::Debug {
+        match self.shadow_snap_adjustment(snap_x, snap_y) {
+            Some(adjustment) => {
+                let offset = self.shadow_offset.cast_unit();
+                self.snap_rect_axes_impl(&rect.translate(-offset), snap_x, snap_y)
+                    .translate(offset + adjustment)
+            }
+            None => self.snap_rect_axes_impl(rect, snap_x, snap_y),
+        }
+    }
+
+    fn snap_rect_axes_impl<F>(
+        &self,
+        rect: &Box2D<f32, F>,
+        snap_x: bool,
+        snap_y: bool,
+    ) -> Box2D<f32, F> where F: fmt::Debug {
         debug_assert!(!self.enabled || self.current_target_spatial_node_index != SpatialNodeIndex::INVALID);
         if !snap_x && !snap_y {
             return *rect;
@@ -416,16 +462,52 @@ impl SpaceSnapper {
     /// disabled snapper) leaves the rect unchanged. See `SnapRounding` for what
     /// each mode is for.
     pub fn snap_rect_rounded<F>(&self, rect: &Box2D<f32, F>, rounding: SnapRounding) -> Box2D<f32, F> where F: fmt::Debug {
+        let snaps = rounding != SnapRounding::Exact;
+        match self.shadow_snap_adjustment(snaps, snaps) {
+            Some(adjustment) => {
+                let offset = self.shadow_offset.cast_unit();
+                self.snap_rect_rounded_impl(&rect.translate(-offset), rounding)
+                    .translate(offset + adjustment)
+            }
+            None => self.snap_rect_rounded_impl(rect, rounding),
+        }
+    }
+
+    fn snap_rect_rounded_impl<F>(&self, rect: &Box2D<f32, F>, rounding: SnapRounding) -> Box2D<f32, F> where F: fmt::Debug {
         debug_assert!(!self.enabled || self.current_target_spatial_node_index != SpatialNodeIndex::INVALID);
+        // Short-circuit rather than round-tripping through the snap transform,
+        // which wouldn't be bit-exact.
+        if rounding == SnapRounding::Exact {
+            return *rect;
+        }
         match self.snapping_transform {
             Some(SnapTransform { ref scale_offset, swap_xy }) => {
                 let rect = if swap_xy { swap_box_xy(rect) } else { *rect };
                 let device_rect: DeviceRect = scale_offset.map_rect(&rect);
                 let snapped: DeviceRect = match rounding {
+                    SnapRounding::Exact => unreachable!("returned above"),
                     SnapRounding::Nearest => device_rect.snap(),
                     SnapRounding::RoundOut => device_rect.round_out(),
                     SnapRounding::Line { horizontal } =>
                         snap_line_device_rect(&device_rect, horizontal ^ swap_xy),
+                    SnapRounding::BorderInner { .. } if swap_xy => device_rect.snap(),
+                    SnapRounding::BorderInner { ref widths } => {
+                        // Map the inner rect from layout space the way content
+                        // meeting it maps its own rect, so both round a tie the
+                        // same way.
+                        let inner: Box2D<f32, F> = Box2D::new(
+                            Point2D::new(rect.min.x + widths.left, rect.min.y + widths.top),
+                            Point2D::new(rect.max.x - widths.right, rect.max.y - widths.bottom),
+                        );
+                        let inner_device: DeviceRect = scale_offset.map_rect(&inner);
+                        snap_border_device_rect(
+                            &device_rect,
+                            &inner_device,
+                            widths,
+                            scale_offset.scale.x,
+                            scale_offset.scale.y,
+                        )
+                    }
                 };
                 let unmapped: Box2D<f32, F> = scale_offset.unmap_rect(&snapped);
                 if swap_xy { swap_box_xy(&unmapped) } else { unmapped }
@@ -438,6 +520,10 @@ impl SpaceSnapper {
 /// How a rect is rounded to the device pixel grid by `snap_rect_rounded`.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum SnapRounding {
+    /// Don't round: leave the rect at its exact sub-pixel position. For a prim
+    /// that resolves its own edges in the shader (anti-aliasing), where moving an
+    /// edge to the grid is what the anti-aliasing is there to avoid.
+    Exact,
     /// Round each edge to the nearest device pixel. Crisp fills / borders that
     /// tile seamlessly with neighbours (`round(max_of_A) == round(min_of_B)`).
     Nearest,
@@ -457,6 +543,64 @@ pub enum SnapRounding {
     /// phase dependence. `horizontal` is the line orientation in the target's
     /// own space (a horizontal line is thin in Y).
     Line { horizontal: bool },
+    /// Round a border's edges to the nearest pixel, then pull an outer edge in
+    /// where the whole-pixel width measured from it (each side's width rounded
+    /// as `NormalBorderData` rounds it) would stop short of the inner edge's
+    /// own nearest pixel. Content that meets the border in layout snaps to that
+    /// pixel, so the shortfall shows as a gap between them (bug 2074176). The
+    /// border never grows past its `Nearest` rect. Falls back to `Nearest` when
+    /// a width is not snapped to whole pixels, or across a 90-degree rotation.
+    BorderInner { widths: LayoutSideOffsets },
+}
+
+/// Snap a device-space border rect so its inner edges never fall short of
+/// the content they meet. See `SnapRounding::BorderInner`.
+fn snap_border_device_rect(
+    r: &DeviceRect,
+    inner: &DeviceRect,
+    widths: &LayoutSideOffsets,
+    scale_x: f32,
+    scale_y: f32,
+) -> DeviceRect {
+    // Mirrors the width snapping in `NormalBorderData::update`: widths of at
+    // least one layout pixel round to whole device pixels, zero stays zero.
+    let snapped_width = |w: f32, s: f32| {
+        if w == 0.0 {
+            Some(0.0)
+        } else if w >= 1.0 && s > 0.0 {
+            Some((w * s).round().max(1.0))
+        } else {
+            None
+        }
+    };
+    let (Some(left), Some(top), Some(right), Some(bottom)) = (
+        snapped_width(widths.left, scale_x),
+        snapped_width(widths.top, scale_y),
+        snapped_width(widths.right, scale_x),
+        snapped_width(widths.bottom, scale_y),
+    ) else {
+        return r.snap();
+    };
+
+    if inner.is_empty() {
+        return r.snap();
+    }
+    let outer = r.snap();
+    let inner = inner.snap();
+
+    // Content meeting the inner edge snaps it to `inner`. Where the whole-pixel
+    // width measured from the snapped outer edge stops short of that, the gap
+    // would show, so pull the outer edge in to close it. Where it reaches past
+    // `inner` instead, the outer edge stays put, so the border never grows past
+    // its own snapped rect.
+    let snapped = DeviceRect::new(
+        DevicePoint::new(outer.min.x.max(inner.min.x - left), outer.min.y.max(inner.min.y - top)),
+        DevicePoint::new(outer.max.x.min(inner.max.x + right), outer.max.y.min(inner.max.y + bottom)),
+    );
+    if snapped.width() < left + right || snapped.height() < top + bottom {
+        return outer;
+    }
+    snapped
 }
 
 /// Snap a device-space decoration-line rect: round both edges of the long axis
@@ -751,6 +895,71 @@ mod tests {
                 corner,
                 device,
             );
+        }
+    }
+
+    #[test]
+    fn test_shadow_offset_snaps_relative_to_shadowed_content() {
+        // Under a scale(1.25), a 1.25 shadow offset is 1.5625 device pixels.
+        // Whatever the shadowed rect's sub-pixel phase, the snapped copy must
+        // land exactly 2 device pixels from the snapped original (bug 2076646).
+        let mut cst = SceneSpatialTree::new();
+        let root = cst.root_reference_frame_index();
+        let scaled = cst.add_reference_frame(
+            root,
+            TransformStyle::Flat,
+            PropertyBinding::Value(LayoutTransform::scale(1.25, 1.25, 1.0)),
+            ReferenceFrameKind::Transform {
+                is_2d_scale_translation: true,
+                should_snap: false,
+                paired_with_perspective: false,
+            },
+            LayoutVector2D::zero(),
+            PipelineId::dummy(),
+            false,
+        );
+
+        let mut st = SpatialTree::new();
+        st.apply_updates(cst.end_frame_and_get_pending_updates());
+        st.update_tree(&SceneProperties::new());
+
+        let surface = SurfaceInfo::new(
+            root,
+            root,
+            DeviceRect::from_origin_and_size(DevicePoint::zero(), DeviceSize::new(1000.0, 1000.0)),
+            &st,
+            DevicePixelScale::new(1.0),
+            (1.0, 1.0),
+            (1.0, 1.0),
+            (1.0, 1.0),
+            true,
+            false,
+        );
+
+        let offset = LayoutVector2D::new(1.25, 1.25);
+        let mut snapper = SpaceSnapper::new(&surface, &st);
+        snapper.set_target_spatial_node(scaled, &st);
+        let mut shadow_snapper = snapper.clone();
+        shadow_snapper.set_shadow_offset(offset);
+
+        for phase in [0.0, 0.1, 0.2, 0.3, 0.5, 0.7] {
+            let rect = LayoutRect::from_origin_and_size(
+                LayoutPoint::new(10.0 + phase, 40.0 + phase),
+                LayoutSize::new(40.0, 8.0),
+            );
+            let original = snapper.snap_rect(&rect);
+            let copy = shadow_snapper.snap_rect(&rect.translate(offset));
+            let delta = (copy.min - original.min) * 1.25;
+            assert!(
+                (delta.x - 2.0).abs() < 0.001 && (delta.y - 2.0).abs() < 0.001,
+                "phase {}: copy is {:?} device pixels from the original",
+                phase,
+                delta,
+            );
+
+            // An unsnapped prim keeps its exact offset.
+            let exact = shadow_snapper.snap_rect_rounded(&rect.translate(offset), SnapRounding::Exact);
+            assert_eq!(exact, rect.translate(offset));
         }
     }
 }

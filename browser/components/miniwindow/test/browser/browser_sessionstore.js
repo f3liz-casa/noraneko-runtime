@@ -1,0 +1,148 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+const EXAMPLE_URL = "https://example.com/";
+
+add_task(async function test_popup_not_saved_by_sessionstore() {
+  // Not withNewTab: the tab is physically moved out of this window into the
+  // popup, so withNewTab cannot track/clean up its own tab. Manage it here.
+  let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, EXAMPLE_URL);
+
+  let windowCountBefore = JSON.parse(SessionStore.getBrowserState()).windows
+    .length;
+
+  let miniWin = await popTabForTest(tab);
+  let popup = [...MiniWindowManager._miniwindows][0];
+
+  let windowCountAfter = JSON.parse(SessionStore.getBrowserState()).windows
+    .length;
+  Assert.equal(
+    windowCountAfter,
+    windowCountBefore,
+    "Popup added zero windows to the saved session state"
+  );
+
+  popup.close();
+  await BrowserTestUtils.domWindowClosed(miniWin);
+  assertNoMiniWindowsOpen();
+
+  removeTestTabs(EXAMPLE_URL);
+});
+
+add_task(async function test_quit_returns_tab_without_stealing_focus() {
+  let keep = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    EXAMPLE_URL + "keep"
+  );
+  let tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    EXAMPLE_URL + "popped"
+  );
+  gBrowser.selectedTab = keep;
+
+  let miniWin = await popTabForTest(tab);
+
+  // The shutdown teardown path (quit-application-granted) must return popped
+  // tabs home WITHOUT changing the user's selected tab, so SessionStore saves
+  // and restores the tab the user actually had focused.
+  let closed = BrowserTestUtils.domWindowClosed(miniWin);
+  MiniWindowManager.observe(null, "quit-application-granted");
+  await closed;
+
+  let back = gBrowser.tabs.find(
+    t => t.linkedBrowser.currentURI.spec == EXAMPLE_URL + "popped"
+  );
+  Assert.ok(back, "popped tab returned to origin on quit teardown");
+  Assert.equal(
+    gBrowser.selectedTab,
+    keep,
+    "quit teardown did not steal selection"
+  );
+  Assert.notEqual(gBrowser.selectedTab, back, "returned tab is not focused");
+
+  removeTestTabs(EXAMPLE_URL);
+});
+
+add_task(async function test_private_mini_window_is_not_saved() {
+  let privateWin = await BrowserTestUtils.openNewBrowserWindow({
+    private: true,
+  });
+  let tab = await BrowserTestUtils.openNewForegroundTab(
+    privateWin.gBrowser,
+    EXAMPLE_URL + "private"
+  );
+  let closedWindowCount = SessionStore.getClosedWindowCount();
+
+  let miniWin = await popWholeTabForTest(tab);
+  Assert.ok(
+    PrivateBrowsingUtils.isWindowPrivate(miniWin),
+    "a mini window popped from a private window is private"
+  );
+
+  [...MiniWindowManager._miniwindows][0].close();
+  await BrowserTestUtils.domWindowClosed(miniWin);
+  assertNoMiniWindowsOpen();
+  Assert.equal(
+    SessionStore.getClosedWindowCount(),
+    closedWindowCount,
+    "closing the private mini window doesn't add a closed window"
+  );
+
+  await BrowserTestUtils.closeWindow(privateWin);
+  Assert.equal(
+    SessionStore.getClosedWindowCount(),
+    closedWindowCount,
+    "closing the private origin window doesn't add a closed window"
+  );
+});
+
+add_task(
+  async function test_mini_window_does_not_consume_last_window_restore() {
+    let closedWindowCount = SessionStore.getClosedWindowCount();
+    let win = await BrowserTestUtils.openNewBrowserWindow();
+    let pinnedTab = BrowserTestUtils.addTab(
+      win.gBrowser,
+      EXAMPLE_URL + "pinned"
+    );
+    await BrowserTestUtils.browserLoaded(pinnedTab.linkedBrowser);
+    win.gBrowser.pinTab(pinnedTab);
+    await BrowserTestUtils.closeWindow(win);
+    Assert.greater(
+      SessionStore.getClosedWindowCount(),
+      closedWindowCount,
+      "the closed window was saved"
+    );
+
+    // Sent when the last browser window closes. On macOS the browser keeps
+    // running, so the next window opened restores the last closed window.
+    Services.obs.notifyObservers(null, "browser-lastwindow-close-granted");
+
+    let tab = await BrowserTestUtils.openNewForegroundTab(
+      gBrowser,
+      EXAMPLE_URL + "popped"
+    );
+    let miniWin = await popWholeTabForTest(tab);
+    Assert.ok(
+      !miniWin.gBrowser.tabs.some(t => t.pinned),
+      "the closed window wasn't restored into the mini window"
+    );
+
+    let restoredWin = await BrowserTestUtils.openNewBrowserWindow({
+      openerWindow: null,
+    });
+    Assert.ok(
+      restoredWin.gBrowser.tabs.some(t => t.pinned),
+      "the closed window's pinned tab was restored into the next regular window"
+    );
+
+    await BrowserTestUtils.closeWindow(restoredWin);
+    [...MiniWindowManager._miniwindows][0].close();
+    await BrowserTestUtils.domWindowClosed(miniWin);
+    assertNoMiniWindowsOpen();
+    while (SessionStore.getClosedWindowCount() > closedWindowCount) {
+      SessionStore.forgetClosedWindow(0);
+    }
+    removeTestTabs(EXAMPLE_URL);
+  }
+);

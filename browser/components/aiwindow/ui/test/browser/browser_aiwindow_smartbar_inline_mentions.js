@@ -10,10 +10,6 @@
 
 "use strict";
 
-const { MockEngineManager } = ChromeUtils.importESModule(
-  "resource://testing-common/AIWindowTestUtils.sys.mjs"
-);
-
 let providerStub;
 const DEFAULT_PROVIDER_STUB_RETURN = [
   {
@@ -354,250 +350,337 @@ add_task(async function test_maxResults_total_limit() {
   providerStub.returns(DEFAULT_PROVIDER_STUB_RETURN);
 });
 
-add_task(async function test_suggestions_closes_when_mentions_panel_opens() {
-  const win = await openAIWindow();
-  const browser = win.gBrowser.selectedBrowser;
-
-  await promiseSmartbarSuggestionsOpen(browser, () =>
-    typeInSmartbar(browser, "test")
-  );
-
-  await typeInSmartbar(browser, " @");
-  await waitForMentionsOpen(browser);
-
-  await promiseSmartbarSuggestionsClose(browser);
-
-  await BrowserTestUtils.closeWindow(win);
-});
-
-add_task(
-  async function test_suggestions_reopens_after_mentions_trigger_removed() {
-    const win = await openAIWindow();
-    const browser = win.gBrowser.selectedBrowser;
-
-    await typeInSmartbar(browser, "test @");
-    await waitForMentionsOpen(browser);
-
-    await promiseSmartbarSuggestionsClose(browser);
-
-    await promiseSmartbarSuggestionsOpen(browser, async () => {
-      await BrowserTestUtils.synthesizeKey("KEY_Backspace", {}, browser);
-    });
-
-    await BrowserTestUtils.closeWindow(win);
-  }
-);
-
-add_task(async function test_suggestions_hidden_when_inline_mentions_exists() {
-  const win = await openAIWindow();
-  const browser = win.gBrowser.selectedBrowser;
-
-  await typeInSmartbar(browser, "@");
-  await waitForMentionsOpen(browser);
-
-  await SpecialPowers.spawn(browser, [], async () => {
-    const aiWindowElement = content.document.querySelector("ai-window");
-    const smartbar = aiWindowElement.shadowRoot.querySelector(
-      "#ai-window-smartbar"
-    );
-    const panelList = smartbar.querySelector("smartwindow-panel-list");
-    const panel = panelList.shadowRoot.querySelector("panel-list");
-    const firstItem = panel.querySelector(
-      "panel-item:not(.panel-section-header)"
-    );
-    firstItem.click();
-  });
-
-  await waitForMentionInserted(browser);
-  await typeInSmartbar(browser, " test query");
-
-  await promiseSmartbarSuggestionsClose(browser);
-
-  await BrowserTestUtils.closeWindow(win);
-});
-
-add_task(async function test_suggestions_show_after_inline_mentions_removed() {
+add_task(async function test_mentions_filter_letter_reaches_editor() {
   const win = await openAIWindow();
   const browser = win.gBrowser.selectedBrowser;
 
   const mentionsOpen = waitForMentionsOpen(browser);
-  await typeInSmartbar(browser, "test @");
+  await typeInSmartbar(browser, "@");
   await mentionsOpen;
 
-  await SpecialPowers.spawn(browser, [], async () => {
+  // The suggestion titles all start with "P", so a panel-list that picked an
+  // item by the first letter of its label would swallow this keystroke.
+  let state = await SpecialPowers.spawn(browser, [], async () => {
+    const aiWindow = content.document.querySelector("ai-window");
+    const smartbar = aiWindow.shadowRoot.querySelector("#ai-window-smartbar");
+    const panel = smartbar
+      .querySelector("smartwindow-panel-list")
+      .shadowRoot.querySelector("panel-list");
+    const before = smartbar.value;
+
+    EventUtils.sendString("p", content);
+    await new Promise(resolve => content.requestAnimationFrame(resolve));
+
+    let active = content.document.activeElement;
+    while (active?.shadowRoot?.activeElement) {
+      active = active.shadowRoot.activeElement;
+    }
+
+    return {
+      before,
+      after: smartbar.value,
+      stillOpen: panel.hasAttribute("open"),
+      activeInPanel: panel.contains(active),
+      activeLocalName: active?.localName,
+    };
+  });
+
+  info(`active element while the panel is open: ${state.activeLocalName}`);
+  Assert.equal(
+    state.after,
+    state.before + "p",
+    "A filter letter reaches the editor while the mention panel is open"
+  );
+  Assert.ok(state.stillOpen, "The mention panel stays open");
+  Assert.ok(!state.activeInPanel, "Focus stays outside the mention panel");
+
+  await BrowserTestUtils.closeWindow(win);
+});
+
+add_task(async function test_mentions_shows_tab_groups_section() {
+  const win = await openAIWindow();
+  const browser = win.gBrowser.selectedBrowser;
+
+  // Create a real tab group so getTabGroups() has data to surface.
+  const groupedTab = BrowserTestUtils.addTab(
+    win.gBrowser,
+    "https://example.com/grouped"
+  );
+  await BrowserTestUtils.browserLoaded(groupedTab.linkedBrowser);
+  win.gBrowser.addTabGroup([groupedTab], {
+    label: "Trip planning",
+    color: "blue",
+  });
+
+  await typeInSmartbar(browser, "@");
+  await waitForMentionsOpen(browser);
+
+  const info = await SpecialPowers.spawn(browser, [], async () => {
     const aiWindowElement = content.document.querySelector("ai-window");
     const smartbar = aiWindowElement.shadowRoot.querySelector(
       "#ai-window-smartbar"
     );
     const panelList = smartbar.querySelector("smartwindow-panel-list");
-    const panel = panelList.shadowRoot.querySelector("panel-list");
-    const firstItem = panel.querySelector(
-      "panel-item:not(.panel-section-header)"
+    const shadow = panelList.shadowRoot;
+
+    const headers = Array.from(
+      shadow.querySelectorAll("panel-item.panel-section-header")
+    ).map(header => header.getAttribute("data-l10n-id"));
+
+    const groupRows = Array.from(
+      shadow.querySelectorAll(".panel-tab-group-item")
+    ).map(row => ({
+      label: row.querySelector(".panel-tab-group-label")?.textContent.trim(),
+      initial: row
+        .querySelector(".panel-tab-group-icon")
+        ?.shadowRoot.textContent.trim(),
+    }));
+
+    const weightOf = item =>
+      content.getComputedStyle(item.shadowRoot.querySelector("[part=label]"))
+        .fontWeight;
+    const rows = Array.from(
+      shadow.querySelectorAll("panel-item:not(.panel-section-header)")
     );
-    firstItem.click();
+    const weights = {
+      group: weightOf(
+        rows.find(item => item.classList.contains("panel-tab-group-label"))
+      ),
+      tab: weightOf(
+        rows.find(item => !item.classList.contains("panel-tab-group-label"))
+      ),
+    };
+
+    return { headers, groupRows, weights };
   });
 
-  await waitForMentionInserted(browser);
-  await BrowserTestUtils.synthesizeKey("KEY_Backspace", {}, browser);
-
-  await promiseSmartbarSuggestionsOpen(browser, async () => {
-    await BrowserTestUtils.synthesizeKey("KEY_Backspace", {}, browser);
-  });
-
-  await BrowserTestUtils.closeWindow(win);
-});
-
-add_task(async function test_inline_mention_available_via_getAllMentions() {
-  const win = await openAIWindow();
-  const browser = win.gBrowser.selectedBrowser;
-
-  await insertInlineMention(browser);
-
-  const mentions = await getEditorInlineMentions(browser);
-  Assert.equal(mentions.length, 1, "getAllMentions should return one mention");
+  Assert.ok(
+    info.headers.includes("smartbar-mentions-list-tab-groups-label"),
+    "Groups section header renders in the mentions panel"
+  );
+  Assert.less(
+    info.headers.indexOf("smartbar-mentions-list-tab-groups-label"),
+    info.headers.indexOf("smartbar-mentions-list-recent-tabs-label"),
+    "Groups section is rendered above the Tabs section"
+  );
+  Assert.equal(info.groupRows.length, 1, "The open tab group appears");
   Assert.equal(
-    mentions[0].id,
-    "https://example.com/1",
-    "Mention id should match the selected tab URL"
+    info.groupRows[0].label,
+    "Trip planning",
+    "Group label matches the real tab group"
+  );
+  Assert.equal(
+    info.groupRows[0].initial,
+    "T",
+    "Chicklet shows the group's initial"
+  );
+  Assert.equal(
+    info.weights.group,
+    info.weights.tab,
+    "A group row's label is weighted like a tab row's, not like a title"
   );
 
   await BrowserTestUtils.closeWindow(win);
 });
 
-// select() must cover a mention chip at the end of the input, even without the
-// trailing space that @-typing normally inserts. Regression test for the
-// selection walk skipping leaf/atom nodes.
-add_task(async function test_select_covers_trailing_inline_mention() {
+add_task(async function test_tab_group_inline_mention_carries_color() {
   const win = await openAIWindow();
   const browser = win.gBrowser.selectedBrowser;
 
-  const result = await SpecialPowers.spawn(browser, [], async () => {
+  const mentions = await SpecialPowers.spawn(browser, [], async () => {
     const aiWindowElement = content.document.querySelector("ai-window");
     const smartbar = aiWindowElement.shadowRoot.querySelector(
       "#ai-window-smartbar"
     );
     const editor = smartbar.querySelector("moz-multiline-editor");
 
-    editor.value = "hello";
-    editor.insertMention({ type: "default", id: "1", label: "World" }, 5);
-    editor.select();
+    editor.value = "summarize ";
+    editor.insertMention(
+      {
+        type: "tabGroup",
+        id: "group:group-1",
+        label: "Trip planning",
+        color: "blue",
+      },
+      10
+    );
+    editor.insertMention(
+      { type: "tab", id: "https://example.com/1", label: "Page 1" },
+      0
+    );
 
-    const mention = editor.getAllMentions()[0];
-    const sel = editor.view.state.selection;
-    return {
-      mentionPos: mention.pos,
-      from: sel.from,
-      to: sel.to,
-      coversChip: sel.from <= mention.pos && sel.to >= mention.pos + 1,
-    };
+    return editor.getAllMentions().map(({ type, id, label, color }) => ({
+      type,
+      id,
+      label,
+      color,
+    }));
   });
 
-  Assert.ok(
-    result.coversChip,
-    `select() should cover a trailing mention chip (from=${result.from}, ` +
-      `to=${result.to}, mentionPos=${result.mentionPos})`
+  Assert.deepEqual(
+    mentions.find(mention => mention.type == "tabGroup"),
+    {
+      type: "tabGroup",
+      id: "group:group-1",
+      label: "Trip planning",
+      color: "blue",
+    },
+    "A tab group mention round-trips its group ID and color through the editor"
+  );
+  Assert.equal(
+    mentions.find(mention => mention.type == "tab").color,
+    null,
+    "A tab mention has no color"
   );
 
   await BrowserTestUtils.closeWindow(win);
 });
 
-add_task(
-  async function test_deleted_inline_mention_excluded_from_getAllMentions() {
-    const win = await openAIWindow();
-    const browser = win.gBrowser.selectedBrowser;
-
-    await insertInlineMention(browser);
-
-    // Delete the mention by pressing Backspace twice (once for trailing space,
-    // once for the atomic mention node).
-    await BrowserTestUtils.synthesizeKey("KEY_Backspace", {}, browser);
-    await BrowserTestUtils.synthesizeKey("KEY_Backspace", {}, browser);
-
-    const mentions = await getEditorInlineMentions(browser);
-    Assert.equal(
-      mentions.length,
-      0,
-      "getAllMentions should return empty after deleting the inline mention"
-    );
-
-    await BrowserTestUtils.closeWindow(win);
-  }
-);
-
-// Inline @mention must reach the prompt builder as part of `contextMentions`.
-add_task(async function test_inline_mention_reaches_prompt_builder() {
-  const sb = this.sinon.createSandbox();
-  const injectSpy = sb.spy(
-    this.ChatConversation.prototype,
-    "injectRealTimeContext"
-  );
-  const mockEngineManager = new MockEngineManager();
+add_task(async function test_tab_group_inline_mention_renders_icon() {
   const win = await openAIWindow();
+  const browser = win.gBrowser.selectedBrowser;
 
-  try {
-    const browser = win.gBrowser.selectedBrowser;
-
-    await insertInlineMention(browser);
-    await typeInSmartbar(browser, " please summarize");
-    await submitSmartbar(browser);
-
-    // Ensure the prompt builder has run.
-    await mockEngineManager.respondTo({ purpose: "chat", response: "ok" });
-
-    const userMessage = injectSpy.firstCall.args[0];
-    const { contextMentions } = userMessage.content;
-    Assert.equal(
-      contextMentions.length,
-      1,
-      "Inline @mention should be included in contextMentions"
+  const chip = await SpecialPowers.spawn(browser, [], async () => {
+    const aiWindowElement = content.document.querySelector("ai-window");
+    const smartbar = aiWindowElement.shadowRoot.querySelector(
+      "#ai-window-smartbar"
     );
-    Assert.equal(
-      contextMentions[0].url,
-      "https://example.com/1",
-      "Mention URL should match the @mentioned tab"
+    const editor = smartbar.querySelector("moz-multiline-editor");
+
+    editor.value = "summarize ";
+    editor.insertMention(
+      {
+        type: "tabGroup",
+        id: "group:group-1",
+        label: "Trip planning",
+        color: "blue",
+      },
+      10
     );
-  } finally {
-    mockEngineManager.rejectAllRequests();
-    mockEngineManager.cleanupMocks();
-    await BrowserTestUtils.closeWindow(win);
-    sb.restore();
-  }
+
+    const chipElement = editor.renderRoot.querySelector("ai-website-chip");
+    await chipElement.updateComplete;
+    const icon = chipElement.shadowRoot.querySelector("tab-group-icon");
+
+    const probe = content.document.createElement("div");
+    probe.style.backgroundColor = "var(--tab-group-blue)";
+    content.document.body.appendChild(probe);
+    const expectedColor = content.getComputedStyle(probe).backgroundColor;
+    probe.remove();
+
+    return {
+      initial: icon?.shadowRoot.textContent.trim(),
+      backgroundColor: icon && content.getComputedStyle(icon).backgroundColor,
+      expectedColor,
+      hasFavicon: !!chipElement.shadowRoot.querySelector(".chip-icon"),
+      isLink: !!chipElement.shadowRoot.querySelector("a.chip"),
+    };
+  });
+
+  Assert.equal(
+    chip.initial,
+    "T",
+    "An inline tab group mention renders an icon with the group's initial"
+  );
+  Assert.equal(
+    chip.backgroundColor,
+    chip.expectedColor,
+    "In the group's color, resolved rather than transparent"
+  );
+  Assert.notEqual(
+    chip.backgroundColor,
+    "rgba(0, 0, 0, 0)",
+    "The group color resolves"
+  );
+  Assert.ok(!chip.hasFavicon, "And no favicon");
+  Assert.ok(!chip.isLink, "And no link, since a tab group has no URL");
+
+  await BrowserTestUtils.closeWindow(win);
 });
 
-// Inline @mention must be resolved to URLs before they are passed to the model.
-add_task(async function test_inline_mention_passed_to_model_as_url() {
-  const mockEngineManager = new MockEngineManager();
+add_task(async function test_selecting_tab_group_inserts_inline_mention() {
+  await Services.fog.testFlushAllChildren();
+  Services.fog.testResetFOG();
+
   const win = await openAIWindow();
+  const browser = win.gBrowser.selectedBrowser;
 
-  try {
-    const browser = win.gBrowser.selectedBrowser;
+  const groupedTab = BrowserTestUtils.addTab(
+    win.gBrowser,
+    "https://example.com/grouped"
+  );
+  await BrowserTestUtils.browserLoaded(groupedTab.linkedBrowser);
+  const group = win.gBrowser.addTabGroup([groupedTab], {
+    label: "Trip planning",
+    color: "blue",
+  });
 
-    await insertInlineMention(browser);
-    await typeInSmartbar(browser, " please summarize");
-    await submitSmartbar(browser);
+  await typeInSmartbar(browser, "@");
+  await waitForMentionsOpen(browser);
 
-    const chatRequest = await TestUtils.waitForCondition(() => {
-      const engine = mockEngineManager.engines.get("chat");
-      return engine?.runRequests.size && engine.getNextRequest()[1].request;
-    }, "Chat engine should receive a request");
+  const result = await SpecialPowers.spawn(
+    browser,
+    [group.id],
+    async groupId => {
+      const aiWindowElement = content.document.querySelector("ai-window");
+      const smartbar = aiWindowElement.shadowRoot.querySelector(
+        "#ai-window-smartbar"
+      );
+      const panelList = smartbar.querySelector("smartwindow-panel-list");
+      const shadow = panelList.shadowRoot;
 
-    const requestText = JSON.stringify(chatRequest);
-    Assert.ok(
-      !requestText.includes("mention:?"),
-      "The mention markdown should not reach the model"
-    );
+      await ContentTaskUtils.waitForMutationCondition(
+        shadow,
+        { childList: true, subtree: true },
+        () => shadow.querySelector(".panel-tab-group-item panel-item")
+      );
+      shadow.querySelector(".panel-tab-group-item panel-item").click();
 
-    const urlToken = await SpecialPowers.spawn(browser, [], () => {
-      const { conversation } = content.document.querySelector("ai-window");
-      return conversation.urlToToken.get("https://example.com/1");
-    });
-    Assert.ok(
-      requestText.includes(urlToken),
-      `The @mentioned URL should reach the model as its token: ${urlToken})`
-    );
-  } finally {
-    mockEngineManager.rejectAllRequests();
-    mockEngineManager.cleanupMocks();
-    await BrowserTestUtils.closeWindow(win);
-  }
+      const editor = smartbar.querySelector("moz-multiline-editor");
+      await ContentTaskUtils.waitForCondition(
+        () => editor.getAllMentions().length,
+        "the tab group mention is inserted"
+      );
+
+      const [mention] = editor.getAllMentions();
+      return {
+        mention: {
+          type: mention.type,
+          id: mention.id,
+          label: mention.label,
+          color: mention.color,
+        },
+        expectedId: `group:${groupId}`,
+        contextChipCount: smartbar.querySelector(
+          ".smartbar-context-chips-header"
+        ).websites.length,
+      };
+    }
+  );
+
+  Assert.deepEqual(
+    result.mention,
+    {
+      type: "tabGroup",
+      id: result.expectedId,
+      label: "Trip planning",
+      color: "blue",
+    },
+    "Selecting a tab group with the inline @ command inserts a tab group mention"
+  );
+  Assert.equal(
+    result.contextChipCount,
+    0,
+    "An inline mention does not also add a context chip"
+  );
+
+  await Services.fog.testFlushAllChildren();
+  const events = Glean.smartWindow.mentionSelect.testGetValue();
+  Assert.equal(
+    events.at(-1).extra.mention_type,
+    "tab_group",
+    "mention_select tells a tab group selection apart from a tab selection"
+  );
+
+  await BrowserTestUtils.closeWindow(win);
 });

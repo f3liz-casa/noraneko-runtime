@@ -392,13 +392,27 @@ add_task(async function keywordLengthThreshold() {
           type: QuickSuggestTestUtils.RS_TYPE.WIKIPEDIA,
           attachment: [
             QuickSuggestTestUtils.wikipediaRemoteSettings({
-              keywords: ["x", "xx"],
+              keywords: ["", "x", "xx"],
             }),
           ],
         },
       ],
     },
     tests: [
+      {
+        context: createContext("", {
+          providers: [UrlbarProviderQuickSuggest.name],
+          isPrivate: false,
+        }),
+        expected: [],
+      },
+      {
+        context: createContext(" ", {
+          providers: [UrlbarProviderQuickSuggest.name],
+          isPrivate: false,
+        }),
+        expected: [],
+      },
       {
         context: createContext("x", {
           providers: [UrlbarProviderQuickSuggest.name],
@@ -472,7 +486,9 @@ add_task(async function online() {
           QuickSuggestTestUtils.wikipediaResult({
             source: "merino",
             provider: "wikipedia",
-            icon: "https://example.com/wikipedia-icon",
+            icon: UrlbarTestUtils.makeMozRemoteImageUrl(
+              "https://example.com/wikipedia-icon"
+            ),
             telemetryType: "wikipedia",
             suggestedIndex: -1,
           }),

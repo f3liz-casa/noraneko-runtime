@@ -396,7 +396,7 @@ bool CodeGeneratorX86Shared::generateOutOfLineCode() {
     return false;
   }
 
-  if (deoptLabel_.used()) {
+  if (needsDeoptLabel()) {
     // All non-table-based bailouts will go here.
     masm.bind(&deoptLabel_);
 
@@ -410,74 +410,11 @@ bool CodeGeneratorX86Shared::generateOutOfLineCode() {
   return !masm.oom();
 }
 
-class BailoutJump {
-  Assembler::Condition cond_;
-
- public:
-  explicit BailoutJump(Assembler::Condition cond) : cond_(cond) {}
-#ifdef JS_CODEGEN_X86
-  void operator()(MacroAssembler& masm, uint8_t* code) const {
-    masm.j(cond_, ImmPtr(code), RelocationKind::HARDCODED);
-  }
-#endif
-  void operator()(MacroAssembler& masm, Label* label) const {
-    masm.j(cond_, label);
-  }
-};
-
-class BailoutLabel {
-  Label* label_;
-
- public:
-  explicit BailoutLabel(Label* label) : label_(label) {}
-#ifdef JS_CODEGEN_X86
-  void operator()(MacroAssembler& masm, uint8_t* code) const {
-    masm.retarget(label_, ImmPtr(code), RelocationKind::HARDCODED);
-  }
-#endif
-  void operator()(MacroAssembler& masm, Label* label) const {
-    masm.retarget(label_, label);
-  }
-};
-
-template <typename T>
-void CodeGeneratorX86Shared::bailout(const T& binder, LSnapshot* snapshot) {
-  encode(snapshot);
-
-  // All bailout code is associated with the bytecodeSite of the block we are
-  // bailing out from.
-  InlineScriptTree* tree = snapshot->mir()->block()->trackedTree();
-  auto* ool = new (alloc()) LambdaOutOfLineCode([=, this](OutOfLineCode& ool) {
-    masm.push(Imm32(snapshot->snapshotOffset()));
-    masm.jmp(&deoptLabel_);
-  });
-  addOutOfLineCode(ool,
-                   new (alloc()) BytecodeSite(tree, tree->script()->code()));
-
-  binder(masm, ool->entry());
-}
-
-void CodeGeneratorX86Shared::bailoutIf(Assembler::Condition condition,
-                                       LSnapshot* snapshot) {
-  bailout(BailoutJump(condition), snapshot);
-}
-
 void CodeGeneratorX86Shared::bailoutIf(Assembler::DoubleCondition condition,
                                        LSnapshot* snapshot) {
   MOZ_ASSERT(Assembler::NaNCondFromDoubleCondition(condition) ==
              Assembler::NaN_HandledByCond);
   bailoutIf(Assembler::ConditionFromDoubleCondition(condition), snapshot);
-}
-
-void CodeGeneratorX86Shared::bailoutFrom(Label* label, LSnapshot* snapshot) {
-  MOZ_ASSERT_IF(!masm.oom(), label->used() && !label->bound());
-  bailout(BailoutLabel(label), snapshot);
-}
-
-void CodeGeneratorX86Shared::bailout(LSnapshot* snapshot) {
-  Label label;
-  masm.jump(&label);
-  bailoutFrom(&label, snapshot);
 }
 
 void CodeGenerator::visitMinMaxD(LMinMaxD* ins) {
@@ -1593,7 +1530,16 @@ void CodeGenerator::visitBitOpI(LBitOpI* ins) {
       break;
     case JSOp::BitAnd:
       if (rhs->isConstant()) {
-        masm.andl(Imm32(ToInt32(rhs)), lhs);
+        int32_t mask = ToInt32(rhs);
+        if (mask == 0xffff) {
+          masm.movzwl(lhs, lhs);
+        } else if (mask == 0xff &&
+                   AllocatableGeneralRegisterSet(Registers::SingleByteRegs)
+                       .has(lhs)) {
+          masm.movzbl(lhs, lhs);
+        } else {
+          masm.andl(Imm32(mask), lhs);
+        }
       } else {
         masm.andl(ToOperand(rhs), lhs);
       }
@@ -3261,6 +3207,53 @@ void CodeGenerator::visitWasmReplaceLaneSimd128(LWasmReplaceLaneSimd128* ins) {
 #endif
 }
 
+void CodeGenerator::visitWasmMoveLaneSimd128(LWasmMoveLaneSimd128* ins) {
+#ifdef ENABLE_JIT_SIMD
+  FloatRegister lhs = ToFloatRegister(ins->lhs());
+  FloatRegister rhs = ToFloatRegister(ins->rhs());
+  FloatRegister dest = ToFloatRegister(ins->output());
+  uint32_t laneIndex = ins->mir()->laneIndex();
+  uint32_t srcLaneIndex = ins->mir()->srcLaneIndex();
+
+  switch (ins->mir()->simdOp()) {
+    case wasm::SimdOp::I16x8ReplaceLane: {
+      if (srcLaneIndex == laneIndex) {
+        masm.vpblendw(1 << laneIndex, rhs, lhs, dest);
+        break;
+      }
+      // Broadcast the dword holding the source lane, then shift the lane into
+      // the other half of each dword if the halves differ.
+      ScratchSimd128Scope scratch(masm);
+      masm.vpshufd((srcLaneIndex / 2) * 0x55, rhs, scratch);
+      if ((laneIndex & 1) > (srcLaneIndex & 1)) {
+        masm.vpslld(Imm32(16), scratch, scratch);
+      } else if ((laneIndex & 1) < (srcLaneIndex & 1)) {
+        masm.vpsrld(Imm32(16), scratch, scratch);
+      }
+      masm.vpblendw(1 << laneIndex, scratch, lhs, dest);
+      break;
+    }
+    case wasm::SimdOp::I32x4ReplaceLane:
+      masm.vinsertps(masm.vinsertpsMask(srcLaneIndex, laneIndex), rhs, lhs,
+                     dest);
+      break;
+    case wasm::SimdOp::I64x2ReplaceLane:
+      if (srcLaneIndex == laneIndex) {
+        masm.vpblendw(laneIndex ? 0xF0 : 0x0F, rhs, lhs, dest);
+      } else if (laneIndex) {
+        masm.vmovlhps(rhs, lhs, dest);
+      } else {
+        masm.vmovhlps(rhs, lhs, dest);
+      }
+      break;
+    default:
+      MOZ_CRASH("MoveLane SimdOp not implemented");
+  }
+#else
+  MOZ_CRASH("No SIMD");
+#endif
+}
+
 void CodeGenerator::visitWasmReplaceInt64LaneSimd128(
     LWasmReplaceInt64LaneSimd128* ins) {
 #ifdef ENABLE_JIT_SIMD
@@ -3601,7 +3594,7 @@ void CodeGenerator::visitWasmReduceAndBranchSimd128(
       // Compare all lanes to zero, set the zero flag if none of the lanes are
       // zero, and branch on that.
       ScratchSimd128Scope tmp(masm);
-      masm.vpxor(tmp, tmp, tmp);
+      masm.vxorps(tmp, tmp, tmp);
       switch (ins->simdOp()) {
         case wasm::SimdOp::I8x16AllTrue:
           masm.vpcmpeqb(Operand(src), tmp, tmp);

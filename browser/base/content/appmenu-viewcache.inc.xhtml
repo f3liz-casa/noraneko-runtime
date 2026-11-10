@@ -57,20 +57,24 @@
         <html:moz-button id="appMenu-nova-fxa-label"/>
       </toolbaritem>
       <hbox id="appMenu-fxa-sign-in-promo"
-            align="center">
+            align="center"
+            closemenu="none">
         <html:img class="fxa-menu-sign-in-promo-image"
                   alt=""
                   src="chrome://browser/content/kit-signed-out.svg"/>
         <vbox class="fxa-menu-sign-in-promo-text" flex="1">
           <label class="fxa-menu-sign-in-promo-heading"
-                 data-l10n-id="appmenu-fxa-sign-in-promo-heading"/>
-          <description class="fxa-menu-sign-in-promo-message"
-                       data-l10n-id="appmenu-fxa-sign-in-promo-message"/>
+                 data-l10n-id="appmenu-fxa-sign-in-promo-heading2"/>
+          <html:a id="appMenu-fxa-sign-in-promo-link"
+                  class="fxa-menu-sign-in-promo-link"
+                  role="link"
+                  data-l10n-id="appmenu-fxa-sign-in-promo-link"/>
         </vbox>
-        <html:moz-button type="primary"
+        <html:moz-button type="ghost"
                          size="small"
-                         id="appMenu-fxa-sign-in-promo-button"
-                         data-l10n-id="appmenu-fxa-sign-in-promo-button"/>
+                         id="appMenu-fxa-sign-in-promo-dismiss-button"
+                         iconsrc="chrome://global/skin/icons/close.svg"
+                         data-l10n-id="appmenu-fxa-sign-in-promo-dismiss-button"/>
       </hbox>
       <toolbarbutton id="appMenu-create-profile-button"
                      class="subviewbutton subviewbutton-nav"
@@ -752,26 +756,6 @@
           <html:moz-button id="PanelUI-fxa-menu-sync-status-off-button"
                            data-l10n-id="fxa-menu-sync-status-turn-on-button"/>
         </hbox>
-        <vbox id="PanelUI-fxa-menu-setup-sync-container" hidden="true">
-          <vbox class="PanelUI-fxa-menu-setup-sync" flex="1">
-            <hbox class="sync-status-container" align="center">
-              <image class="sync-status-indicator" role="presentation"/>
-              <image class="sync-setup-icon" alt="Sync Status Icon" />
-              <label id="sync-status-text"
-                    class="sync-setup-title"
-                    data-l10n-id="appmenuitem-fxa-sync-off-title"
-                    crop="end" />
-            </hbox>
-            <label id="sync-description-text"
-                  class="sync-setup-description"
-                  data-l10n-id="appmenuitem-fxa-sync-off-description"
-                  crop="end"/>
-            <toolbarbutton id="PanelUI-fxa-menu-setup-sync-button"
-                    class="subviewbutton"
-                    data-l10n-id="appmenu-fxa-setup-sync-new"/>
-          </vbox>
-          <toolbarseparator id="PanelUI-set-up-sync-separator" />
-      </vbox>
       <vbox id="PanelUI-fxa-menu-devices-list" hidden="true"/>
       <toolbarseparator id="PanelUI-sign-out-separator" />
       <toolbarbutton id="PanelUI-fxa-menu-account-signout-button"
@@ -791,8 +775,8 @@
           <hbox align="center">
             <image class="PanelUI-fxa-menu-monitor-button ctaMenuLogo" role="presentation" />
             <vbox flex="1">
-              <label id="fxa-menu-header-title" class="cta-menu-title" crop="end" data-l10n-id="appmenuitem-monitor-title2" />
-              <label id="cta-menu-header-description" class="cta-menu-description" crop="end" data-l10n-id="appmenuitem-monitor-description2" />
+              <label class="cta-menu-title" crop="end" data-l10n-id="appmenuitem-monitor-title2" />
+              <label class="cta-menu-description text-deemphasized" crop="end" data-l10n-id="appmenuitem-monitor-description2" />
             </vbox>
           </hbox>
         </toolbarbutton>
@@ -800,8 +784,8 @@
           <hbox align="center">
             <image class="PanelUI-fxa-menu-relay-button ctaMenuLogo" role="presentation" />
             <vbox flex="1">
-              <label id="fxa-menu-header-title" class="cta-menu-title" crop="end" data-l10n-id="appmenuitem-relay-title2" />
-              <label id="cta-menu-header-description" class="cta-menu-description" crop="end" data-l10n-id="appmenuitem-relay-description2" />
+              <label class="cta-menu-title" crop="end" data-l10n-id="appmenuitem-relay-title2" />
+              <label class="cta-menu-description text-deemphasized" crop="end" data-l10n-id="appmenuitem-relay-description2" />
             </vbox>
           </hbox>
         </toolbarbutton>
@@ -809,16 +793,8 @@
           <hbox align="center">
             <image class="PanelUI-fxa-menu-vpn-button ctaMenuLogo" role="presentation" />
             <vbox flex="1">
-              <label id="fxa-menu-header-title" class="cta-menu-title" crop="end" data-l10n-id="appmenuitem-vpn-title2" />
-              <label id="cta-menu-header-description" class="cta-menu-description" crop="end" data-l10n-id="appmenuitem-vpn-description5" />
-            </vbox>
-          </hbox>
-        </toolbarbutton>
-        <toolbarbutton id="PanelUI-fxa-menu-share-firefox" class="fxa-cta-button subviewbutton subviewbutton-iconic">
-          <hbox align="center">
-            <image class="PanelUI-fxa-menu-share-firefox-button ctaMenuLogo" role="presentation" />
-            <vbox flex="1">
-              <label id="fxa-menu-header-title" crop="end" data-l10n-id="appmenuitem-share-firefox-title2" />
+              <label class="cta-menu-title" crop="end" data-l10n-id="appmenuitem-vpn-title2" />
+              <label class="cta-menu-description text-deemphasized" crop="end" data-l10n-id="appmenuitem-vpn-description5" />
             </vbox>
           </hbox>
         </toolbarbutton>
@@ -1029,6 +1005,38 @@
     </vbox>
   </panelview>
 
+  <panelview id="fire-button-panel" class="PanelUI-subView" role="document">
+    <vbox id="fire-button-panel-container" role="alertdialog" aria-labelledby="fire-button-panel-header">
+      <hbox id="fire-button-panel-header">
+        <description data-l10n-id="fire-button-panel-heading" role="heading" aria-level="2"/>
+      </hbox>
+
+      <description id="fire-button-panel-description" data-l10n-id="fire-button-panel-description"/>
+      <description id="fire-button-panel-choose-description" data-l10n-id="fire-button-panel-choose-description"/>
+
+      <hbox id="fire-button-panel-footer-row" class="panel-footer">
+        <!-- A button rather than an anchor: this opens a dialog, it does not
+             navigate anywhere. text-link gives it the link appearance. -->
+        <button id="fire-button-panel-choose-link"
+                class="text-link"
+                data-l10n-id="fire-button-panel-choose-link"
+                ></button>
+        <html:moz-button-group id="fire-button-panel-footer">
+          <html:moz-button id="fire-button-panel-cancel-button"
+                           data-l10n-id="fire-button-panel-cancel-button"
+                           data-l10n-attrs="accesskey"
+                           />
+          <html:moz-button slot="primary"
+                           type="destructive"
+                           id="fire-button-panel-confirm-button"
+                           data-l10n-id="fire-button-panel-confirm-button"
+                           data-l10n-attrs="accesskey"
+                           />
+        </html:moz-button-group>
+      </hbox>
+    </vbox>
+  </panelview>
+
 #ifdef NIGHTLY_BUILD
 #include ../../components/remotecontrol/content/remoteControlPanel.inc.xhtml
 #endif
@@ -1036,7 +1044,7 @@
   <panelview id="content-analysis-panel" class="PanelUI-subView" role="document" mainview-with-header="true">
     <vbox id="content-analysis-panel-container" role="alertdialog" aria-labelledby="content-analysis-header">
       <hbox class="panel-header">
-        <html:h1 id="content-analysis-header" data-l10n-id="content-analysis-panel-title"/>
+        <html:h1 id="content-analysis-header" data-l10n-id="content-analysis-panel-title2"/>
       </hbox>
       <description id="content-analysis-panel-description">
         <html:a is="moz-support-link"

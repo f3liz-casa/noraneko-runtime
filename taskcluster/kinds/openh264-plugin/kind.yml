@@ -16,7 +16,6 @@ transforms:
     - gecko_taskgraph.transforms.task:transforms
 
 task-defaults:
-    run-on-repo-type: [hg]
     description: Build OpenH264 plugin
     treeherder:
         kind: build
@@ -25,7 +24,7 @@ task-defaults:
     run-on-projects: []
     worker-type: b-linux-docker-amd
     worker:
-        docker-image: {in-tree: deb12-toolchain-build}
+        docker-image: {in-tree: deb13-toolchain-build}
         chain-of-trust: true
         max-run-time: 1800
         artifacts:
@@ -36,7 +35,6 @@ task-defaults:
               path: /builds/worker/artifacts/public/
               type: directory
     run:
-        clone-with: hg
         using: run-task
         checkout: true
         command: "$GECKO_PATH/taskcluster/scripts/openh264/build.sh"
@@ -107,7 +105,6 @@ tasks:
                 TARGET: x86_64-apple-darwin
         fetches:
             toolchain:
-                - linux64-cctools-port
                 - linux64-clang
                 - linux64-dump_syms
                 - linux64-nasm
@@ -124,7 +121,6 @@ tasks:
                 TARGET: aarch64-apple-darwin
         fetches:
             toolchain:
-                - linux64-cctools-port
                 - linux64-clang
                 - linux64-dump_syms
                 - macosx64-sdk-toolchain

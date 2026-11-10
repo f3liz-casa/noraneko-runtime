@@ -1,0 +1,292 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+import { Rect, Point } from "resource://gre/modules/Geometry.sys.mjs";
+
+export const MIN_WIDTH = 200;
+export const MIN_HEIGHT = 150;
+
+export const FULL_TAB_DEFAULT_WIDTH = 640;
+export const FULL_TAB_DEFAULT_HEIGHT = 400;
+
+/** Static sizing/framing helpers for a Mini Window. */
+export class MiniWindowUtils {
+  /**
+   * Size for a full-tab mini window, which frames no crop and so has no
+   * natural size of its own.
+   *
+   * @returns {{width: number, height: number}} in CSS px.
+   */
+  static fullTabSize() {
+    return {
+      width: FULL_TAB_DEFAULT_WIDTH,
+      height: FULL_TAB_DEFAULT_HEIGHT,
+    };
+  }
+
+  /**
+   * A window's outer rect in desktop px.
+   *
+   * @param {Window} win
+   * @returns {{left: number, top: number, width: number, height: number}}
+   */
+  static windowRectDesktopPx(win) {
+    let scale = win.devicePixelRatio / win.desktopToDeviceScale;
+    return {
+      left: win.screenX * scale,
+      top: win.screenY * scale,
+      width: win.outerWidth * scale,
+      height: win.outerHeight * scale,
+    };
+  }
+
+  /**
+   * Move `rect` off anything in `obstacles` it would cover. Every rect is in
+   * desktop px.
+   *
+   * First tries the screen's own four corners, preferring the one nearest to
+   * where the window wanted to sit. If they're all taken, falls back to
+   * sitting flush against an obstacle's edge::
+   *
+   *      +---+
+   *      | 2 |          1  left:   flush to the obstacle's left
+   *   +---+---+---+     2  top:    flush above it
+   *   | 1 | X | 3 |     3  right:  flush to its right
+   *   +---+---+---+     4  bottom: flush below it
+   *      | 4 |          X  the obstacle
+   *      +---+
+   *
+   * Candidates off `screenRect` or onto another obstacle are dropped.
+   *
+   * @param {object} rect - {left, top, width, height} the window wants.
+   * @param {object[]} obstacles - rects to avoid, same shape as `rect`.
+   * @param {object} screenRect - candidates have to fit inside this.
+   * @returns {{left: number, top: number}} where to put it.
+   */
+  static resolveOverlapConflicts(rect, obstacles, screenRect) {
+    let original = { left: rect.left, top: rect.top };
+    let taken = obstacles.map(o => new Rect(o.left, o.top, o.width, o.height));
+    let wanted = new Rect(rect.left, rect.top, rect.width, rect.height);
+
+    let conflict = taken.find(r => r.intersects(wanted));
+    if (!conflict) {
+      return original;
+    }
+
+    let screen = new Rect(
+      screenRect.left,
+      screenRect.top,
+      screenRect.width,
+      screenRect.height
+    );
+
+    let fits = corner => {
+      let candidate = new Rect(corner.x, corner.y, rect.width, rect.height);
+      return (
+        screen.contains(candidate) && !taken.some(o => o.intersects(candidate))
+      );
+    };
+    let distanceFromOriginal = corner =>
+      Math.abs(corner.x - original.left) + Math.abs(corner.y - original.top);
+
+    // Prefer parking in a screen corner, nearest to where it wanted to be.
+    let screenCorners = [
+      new Point(screen.left, screen.top),
+      new Point(screen.right - rect.width, screen.top),
+      new Point(screen.left, screen.bottom - rect.height),
+      new Point(screen.right - rect.width, screen.bottom - rect.height),
+    ];
+    let bestCorner = null;
+    for (let corner of screenCorners) {
+      if (!fits(corner)) {
+        continue;
+      }
+      let distance = distanceFromOriginal(corner);
+      if (!bestCorner || distance < bestCorner.distance) {
+        bestCorner = { distance, left: corner.x, top: corner.y };
+      }
+    }
+    if (bestCorner) {
+      return { left: bestCorner.left, top: bestCorner.top };
+    }
+
+    // Corners are taken; sit flush against an obstacle's edge instead, nearest
+    // to the conflict.
+    let conflictCenter = conflict.center();
+    let best = null;
+    for (let r of taken) {
+      for (let corner of [
+        new Point(r.left - rect.width, r.top),
+        new Point(r.left, r.top - rect.height),
+        new Point(r.right, r.top),
+        new Point(r.left, r.bottom),
+      ]) {
+        if (!fits(corner)) {
+          continue;
+        }
+        let candidate = new Rect(corner.x, corner.y, rect.width, rect.height);
+        let center = candidate.center();
+        let distance =
+          Math.abs(conflictCenter.x - center.x) +
+          Math.abs(conflictCenter.y - center.y);
+        if (!best || distance < best.distance) {
+          best = { distance, left: corner.x, top: corner.y };
+        }
+      }
+    }
+
+    return best ? { left: best.left, top: best.top } : original;
+  }
+
+  /**
+   * Where and how large to open the mini window for `cropInfo`. Reads the
+   * screen originWin is on; computeWindowRectForScreen does the math.
+   *
+   * @param {Window} originWin - the window the tab is popped out of.
+   * @param {object} cropInfo - region to frame; uses width/height, content CSS px.
+   * @returns {{left: number, top: number, width: number, height: number}}
+   */
+  static computeWindowRect(originWin, cropInfo) {
+    let sm = Cc["@mozilla.org/gfx/screenmanager;1"].getService(
+      Ci.nsIScreenManager
+    );
+    let originCssToDesktopScale =
+      originWin.devicePixelRatio / originWin.desktopToDeviceScale;
+    let screen = sm.screenForRect(
+      originWin.screenX * originCssToDesktopScale,
+      originWin.screenY * originCssToDesktopScale,
+      originWin.outerWidth * originCssToDesktopScale,
+      originWin.outerHeight * originCssToDesktopScale
+    );
+    let l = {},
+      t = {},
+      w = {},
+      h = {};
+    screen.GetAvailRectDisplayPix(l, t, w, h);
+
+    return MiniWindowUtils.computeWindowRectForScreen(cropInfo, {
+      availRect: {
+        left: l.value,
+        top: t.value,
+        width: w.value,
+        height: h.value,
+      },
+      screenCssToDesktopScale:
+        screen.defaultCSSScaleFactor / screen.contentsScaleFactor,
+      originCssToDesktopScale,
+      isRTL: Services.locale.isAppLocaleRTL,
+    });
+  }
+
+  /**
+   * Where to move an already-open mini window so it clears `avoidWins`.
+   *
+   * @param {Window} win - the mini window to place, already open.
+   * @param {Window[]} avoidWins - windows it should not cover (excluding `win`).
+   * @returns {{left: number, top: number}|null} the new top-left in `win`'s CSS
+   *   px for moveTo, or null if it already clears everything.
+   */
+  static repositionToAvoid(win, avoidWins) {
+    if (!avoidWins.length) {
+      return null;
+    }
+    let sm = Cc["@mozilla.org/gfx/screenmanager;1"].getService(
+      Ci.nsIScreenManager
+    );
+    let cssToDesktopScale = win.devicePixelRatio / win.desktopToDeviceScale;
+    let winRect = MiniWindowUtils.windowRectDesktopPx(win);
+    let screen = sm.screenForRect(
+      winRect.left,
+      winRect.top,
+      winRect.width,
+      winRect.height
+    );
+    let l = {},
+      t = {},
+      w = {},
+      h = {};
+    screen.GetAvailRectDisplayPix(l, t, w, h);
+
+    let { left, top } = MiniWindowUtils.resolveOverlapConflicts(
+      winRect,
+      avoidWins.map(other => MiniWindowUtils.windowRectDesktopPx(other)),
+      { left: l.value, top: t.value, width: w.value, height: h.value }
+    );
+    if (left === winRect.left && top === winRect.top) {
+      return null;
+    }
+    return {
+      left: Math.round(left / cssToDesktopScale),
+      top: Math.round(top / cssToDesktopScale),
+    };
+  }
+
+  /**
+   * Size the miniwindow to the crop's own dimensions (so the region shows at native
+   * size, scale 1), clamped down to the available screen when the crop is
+   * larger, preserving aspect ratio, then corner it in the available rect.
+   *
+   * Three pixel spaces meet here::
+   *   desktop px      availRect
+   *   screen CSS px   cropInfo, returned width/height
+   *   originWin CSS   returned left/top (what openWindow features take)
+   *
+   * A scale is desktopPx per cssPx, i.e. defaultCSSScaleFactor over
+   * contentsScaleFactor: 2/2 = 1 on a Retina Mac, 1.5/1 at 150% on Windows.
+   * originWin may be on a different monitor than the mini window, so its scale
+   * is tracked separately from the target screen's.
+   *
+   * @param {object} cropInfo - region to frame; uses width/height, content CSS px.
+   * @param {object} screenInfo
+   * @param {object} screenInfo.availRect - the target screen's available rect,
+   *   {left, top, width, height} in desktop px.
+   * @param {number} screenInfo.screenCssToDesktopScale - the target screen's scale.
+   * @param {number} screenInfo.originCssToDesktopScale - originWin's scale.
+   * @param {boolean} screenInfo.isRTL - whether the app locale is RTL.
+   * @returns {{left: number, top: number, width: number, height: number}}
+   */
+  static computeWindowRectForScreen(
+    cropInfo,
+    { availRect, screenCssToDesktopScale, originCssToDesktopScale, isRTL }
+  ) {
+    let availWidth = availRect.width / screenCssToDesktopScale;
+    let availHeight = availRect.height / screenCssToDesktopScale;
+
+    const MAX_WIDTH = availWidth;
+    const MAX_HEIGHT = availHeight;
+
+    let aspect = cropInfo.width / cropInfo.height;
+    let availAspect = availWidth / availHeight;
+
+    let width = cropInfo.width;
+    let height = cropInfo.height;
+
+    if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+      // Clamp the constraining axis by comparing the crop's aspect to the
+      // available rect's.
+      if (aspect > availAspect) {
+        width = MAX_WIDTH;
+        height = Math.round(MAX_WIDTH / aspect);
+      } else {
+        height = MAX_HEIGHT;
+        width = Math.round(MAX_HEIGHT * aspect);
+      }
+    }
+    width = Math.max(MIN_WIDTH, Math.round(width));
+    height = Math.max(MIN_HEIGHT, Math.round(height));
+
+    let widthDesktop = width * screenCssToDesktopScale;
+    let heightDesktop = height * screenCssToDesktopScale;
+    let left = isRTL
+      ? availRect.left
+      : availRect.left + availRect.width - widthDesktop;
+    let top = availRect.top + availRect.height - heightDesktop;
+    return {
+      left: Math.round(left / originCssToDesktopScale),
+      top: Math.round(top / originCssToDesktopScale),
+      width,
+      height,
+    };
+  }
+}

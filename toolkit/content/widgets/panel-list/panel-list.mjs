@@ -2,6 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/// <reference path="./panel-list.tagmap.d.ts" />
+
+import { checkAccessKeys } from "chrome://global/content/elements/accesskey-check.mjs";
+import {
+  assignAutoAccessKeys,
+  findItemForKey,
+} from "chrome://global/content/elements/auto-accesskey.mjs";
+
 export class PanelList extends HTMLElement {
   static get observedAttributes() {
     return ["open"];
@@ -231,6 +239,8 @@ export class PanelList extends HTMLElement {
     return typeof Services !== "undefined";
   }
 
+  // FIXME: Use the MozLitElement isDocumentRTL getter in lit-utils.mjs once
+  // panel-list is a Lit element.
   isDocumentRTL() {
     if (this.hasServices()) {
       return Services.locale.isAppLocaleRTL;
@@ -261,14 +271,8 @@ export class PanelList extends HTMLElement {
     // Set the showing attribute to hide the panel until its alignment is set.
     this.setAttribute("showing", "true");
     // Tell the host element to hide any overflow in case the panel extends off
-    // the page before the alignment is set. A popover skips it: mutating the
-    // host's overflow reconstructs its frame, which makes every scrollable
-    // descendant dispatch a `scroll` event it never scrolled for (bug 2066409),
-    // and `addHideListeners()` reads that as the anchor moving away.
-    const hideHostOverflow = !this.supportsPopover();
-    if (hideHostOverflow) {
-      hostElement.style.overflow = "hidden";
-    }
+    // the page before the alignment is set.
+    hostElement.style.overflow = "hidden";
 
     // Wait for a layout flush, then find the bounds.
     let {
@@ -389,9 +393,7 @@ export class PanelList extends HTMLElement {
       // Set the alignments and show the panel.
       this.setAttribute("align", align);
       this.setAttribute("valign", valign);
-      if (hideHostOverflow) {
-        hostElement.style.overflow = "";
-      }
+      hostElement.style.overflow = "";
       // Decide positioning based on where this panel will be rendered
       const offsetParentIsBody =
         this.supportsPopover() ||
@@ -457,6 +459,10 @@ export class PanelList extends HTMLElement {
     document.addEventListener("keydown", this);
     // Hide when a click is initiated outside the panel.
     document.addEventListener("mousedown", this);
+    // Sync our state when the UA light-dismisses the popover behind our back.
+    if (this.supportsPopover()) {
+      this.addEventListener("toggle", this);
+    }
     // Hide if focus changes and the panel isn't in focus.
     document.addEventListener("focusin", this);
     // Reset for focus tracking, we treat the first focusin differently.
@@ -477,6 +483,7 @@ export class PanelList extends HTMLElement {
     document.removeEventListener("keydown", this);
     document.removeEventListener("mousedown", this);
     document.removeEventListener("focusin", this);
+    this.removeEventListener("toggle", this);
     window.removeEventListener("resize", this);
     window.removeEventListener("scroll", this, { capture: true });
     window.removeEventListener("blur", this);
@@ -506,6 +513,13 @@ export class PanelList extends HTMLElement {
       case "blur":
       case "popuphidden":
         this.hide();
+        break;
+      case "toggle":
+        // A light dismiss closes the popover without hide() ever running,
+        // ensure state stays in sync.
+        if (e.newState === "closed" && this.open) {
+          this.open = false;
+        }
         break;
       case "click": {
         if (!inPanelList) {
@@ -568,17 +582,19 @@ export class PanelList extends HTMLElement {
           break;
         } else if (e.key === "Escape") {
           this.hide(undefined, { force: true });
-        } else if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
-          // Check if any of the children have an accesskey for this letter.
-          let item = this.querySelector(
-            `[accesskey="${e.key.toLowerCase()}"],
-              [accesskey="${e.key.toUpperCase()}"]`
-          );
-          if (item) {
-            // Prevent the host from receiving input events for this keypress.
-            e.preventDefault();
-            item.click();
-          }
+        } else if (
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          this.#selectByKey(e.key)
+        ) {
+          // Prevent the host from receiving input events for this keypress.
+          e.preventDefault();
+          // The listener is registered on both this element and the
+          // document, and an outer list holding a submenu gets the event
+          // too, so a selection that leaves the panel open would otherwise
+          // advance once per listener.
+          e.stopPropagation();
         }
         break;
       case "focusin":
@@ -597,6 +613,96 @@ export class PanelList extends HTMLElement {
         }
         break;
     }
+  }
+
+  /**
+   * Selects the visible, enabled item that findItemForKey picks for the
+   * pressed key, by accesskey or else by label. When one item matches, it is
+   * activated; when several do, each press moves to the next one without
+   * activating it, as in a `menupopup`. A menu listing names a user chose - a
+   * container, a bookmark - can only be reached by keyboard through label
+   * matches, having no message to take an accesskey from.
+   *
+   * Label matches stand aside while an editable field outside the panel has
+   * focus. A panel-list that stays open over a focused field, as the
+   * Smartbar's mention panel does, filters itself from what the field
+   * receives, so the keystroke belongs to the field. Any other focus outside
+   * the panel, such as the anchor button or the document body after a XUL
+   * panel took focus on a mouse open, does not claim the letter. With focus
+   * outside every list, an open submenu takes the key and its outer list
+   * stands aside.
+   *
+   * @param {string} key
+   *   The pressed key.
+   * @returns {boolean}
+   *   Whether an item was activated or selected.
+   */
+  #selectByKey(key) {
+    if (key.length != 1) {
+      return false;
+    }
+    // The focus chain from the document down through shadow roots, since the
+    // panel may sit in a shadow tree other than the focused element's.
+    let chain = [];
+    for (
+      let el = this.ownerDocument.activeElement;
+      el;
+      el = el.shadowRoot?.activeElement
+    ) {
+      chain.push(el);
+    }
+    let focused = chain.find(el => this.contains(el));
+    // Both this list and its open submenu hear the keystroke through their
+    // document listeners.
+    if (
+      !focused &&
+      [...this.querySelectorAll("panel-item[submenu]")].some(
+        item => item.submenuPanel?.open
+      )
+    ) {
+      return false;
+    }
+    let deepest = chain.at(-1);
+    let result = findItemForKey(this.getMenuItems(), key, {
+      getLabel: item => item.label?.textContent ?? item.textContent,
+      current: focused,
+      matchLabels:
+        !!focused ||
+        !(
+          deepest?.isContentEditable ||
+          ["input", "textarea", "select"].includes(deepest?.localName)
+        ),
+    });
+    if (!result) {
+      return false;
+    }
+    if (result.activate) {
+      result.item.click();
+      return true;
+    }
+    result.item.focus();
+    // Arrow navigation resumes from wherever the walker last stopped.
+    this.focusWalker.currentNode = result.item;
+    return true;
+  }
+
+  /**
+   * Returns the items that keyboard navigation in this list reaches, in order,
+   * like XULPopupElement.getMenuItems.
+   *
+   * @param {object} [options]
+   * @param {boolean} [options.includeDisabled]
+   *   Whether to include disabled items, which keyboard navigation skips.
+   * @returns {Element[]}
+   */
+  getMenuItems({ includeDisabled = false } = {}) {
+    return [
+      ...this.querySelectorAll(
+        includeDisabled
+          ? "panel-item:not([hidden])"
+          : "panel-item:not([hidden]):not([disabled])"
+      ),
+    ];
   }
 
   /**
@@ -709,6 +815,7 @@ export class PanelList extends HTMLElement {
 
   async onShow() {
     this.sendEvent("showing");
+    assignAutoAccessKeys(this);
 
     if (this.lastAnchorNode?.hasSubmenu) {
       await this.setSubmenuAlign();
@@ -750,6 +857,7 @@ export class PanelList extends HTMLElement {
 
       this.lastAnchorNode?.setAttribute("aria-expanded", "true");
 
+      checkAccessKeys(this);
       this.sendEvent("shown");
     });
   }
@@ -762,9 +870,13 @@ export class PanelList extends HTMLElement {
         // hidePopover may throw if the popover was already hidden or was never shown
       }
     }
+
+    // Hold lastAnchorNode, since show() can point it at another anchor before the next
+    // animation frame.
+    let lastAnchorNode = this.lastAnchorNode;
     requestAnimationFrame(() => {
       this.sendEvent("hidden");
-      this.lastAnchorNode?.setAttribute("aria-expanded", "false");
+      lastAnchorNode?.setAttribute("aria-expanded", "false");
     });
     this.removeHideListeners();
   }
@@ -781,9 +893,17 @@ export class PanelItem extends HTMLElement {
   #initialized = false;
   #defaultSlot;
   #badge;
+  #shortcut;
 
   static get observedAttributes() {
-    return ["accesskey", "type", "disabled", "badge-type", "aria-haspopup"];
+    return [
+      "accesskey",
+      "type",
+      "disabled",
+      "badge-type",
+      "shortcut",
+      "aria-haspopup",
+    ];
   }
 
   constructor() {
@@ -806,6 +926,7 @@ export class PanelItem extends HTMLElement {
 
     this.button.appendChild(this.label);
     this.#updateBadge();
+    this.#updateShortcut();
 
     let supportLinkSlot = document.createElement("slot");
     supportLinkSlot.name = "support-link";
@@ -937,6 +1058,8 @@ export class PanelItem extends HTMLElement {
       this.#setButtonAttributes();
     } else if (name === "badge-type") {
       this.#updateBadge();
+    } else if (name === "shortcut") {
+      this.#updateShortcut();
     }
   }
 
@@ -969,6 +1092,21 @@ export class PanelItem extends HTMLElement {
     } else if (this.#badge) {
       this.#badge.remove();
       this.#badge = null;
+    }
+  }
+
+  #updateShortcut() {
+    if (this.hasAttribute("shortcut")) {
+      if (!this.#shortcut) {
+        this.#shortcut = document.createElement("span");
+        this.#shortcut.className = "shortcut";
+        this.#shortcut.setAttribute("part", "shortcut");
+        (this.#badge ?? this.label).after(this.#shortcut);
+      }
+      this.#shortcut.textContent = this.getAttribute("shortcut");
+    } else if (this.#shortcut) {
+      this.#shortcut.remove();
+      this.#shortcut = null;
     }
   }
 
@@ -1077,40 +1215,51 @@ export class PanelItem extends HTMLElement {
       }
       case "mouseup": {
         let event = /** @type {MouseEvent} */ (e);
-        if (
-          // preventClickEvent is undefined outside of chrome contexts.
-          !event.preventClickEvent ||
-          !this.panel?.clickOnMouseup ||
-          e.button != 0
-        ) {
+        if (!this.panel?.clickOnMouseup || e.button != 0) {
           break;
         }
 
         // A click event would be fired on the nearest common ancestor of
         // the mousedown and mouseup elements. We want to retarget the
-        // click to the panel-item where mouseup happened so we prevent
-        // the native click and synthesize one on the panel-list.
+        // click to the panel-item where mouseup happened, so we swallow the
+        // one the release generates and synthesize our own on the item.
         // This enables opening a panel-list and choosing an item with a
         // single click.
+        if (event.preventClickEvent) {
+          event.preventClickEvent();
+        } else {
+          // The retargeted click follows this event synchronously.
+          let swallowClick = retargeted => {
+            if (retargeted.isTrusted) {
+              retargeted.stopPropagation();
+              retargeted.preventDefault();
+              removeSwallowClick();
+            }
+          };
+          let removeSwallowClick = () =>
+            window.removeEventListener("click", swallowClick, {
+              capture: true,
+            });
+          window.addEventListener("click", swallowClick, { capture: true });
+          setTimeout(removeSwallowClick);
+        }
 
-        event.preventClickEvent();
-        this.button.dispatchEvent(
-          new PointerEvent("click", {
-            bubbles: true,
-            composed: true,
-            view: event.view,
-            shiftKey: event.shiftKey,
-            ctrlKey: event.ctrlKey,
-            altKey: event.altKey,
-            metaKey: event.metaKey,
-            screenX: event.screenX,
-            screenY: event.screenY,
-            clientX: event.clientX,
-            clientY: event.clientY,
-            button: event.button,
-            // The inputSource of the click event will always be MOZ_SOURCE_UNKNOWN.
-          })
-        );
+        let click = new PointerEvent("click", {
+          bubbles: true,
+          composed: true,
+          view: event.view,
+          shiftKey: event.shiftKey,
+          ctrlKey: event.ctrlKey,
+          altKey: event.altKey,
+          metaKey: event.metaKey,
+          screenX: event.screenX,
+          screenY: event.screenY,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          button: event.button,
+          // The inputSource of the click event will always be MOZ_SOURCE_UNKNOWN.
+        });
+        this.button.dispatchEvent(click);
         break;
       }
     }

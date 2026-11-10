@@ -32,8 +32,8 @@ origin:
   license-file: "LICENSE"
 
   # Automatically managed by vendor process
-  release: 11c84e57fbdf1fd5241f1b90a85949a85d332278 (2026-09-09T07:42:34Z).
-  revision: 11c84e57fbdf1fd5241f1b90a85949a85d332278
+  release: cb05b484d15d9339de7ee2546d48feab36e3a3ed (2026-10-16T19:18:30Z).
+  revision: cb05b484d15d9339de7ee2546d48feab36e3a3ed
 
 vendoring:
   # Canonical repository is on GitHub

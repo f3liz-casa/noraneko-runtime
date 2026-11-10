@@ -462,6 +462,7 @@ add_task(async function test_context_menu_username_login_fill() {
  * from the context menu
  */
 add_task(async function test_context_menu_open_management() {
+  Services.fog.testResetFOG();
   Services.prefs.setBoolPref("signon.schemeUpgrades", false);
   await BrowserTestUtils.withNewTab(
     {
@@ -476,10 +477,11 @@ add_task(async function test_context_menu_open_management() {
       let passwordManager = await openPasswordManager(openingFunc);
       info("Management UI dialog was opened");
 
-      TelemetryTestUtils.assertEvents(
-        [["pwmgr", "open_management", "contextmenu"]],
-        { category: "pwmgr", method: "open_management" },
-        { clear: true, process: "content" }
+      await Services.fog.testFlushAllChildren();
+      Assert.equal(
+        Glean.pwmgr.openManagementContextmenu.testGetValue().length,
+        1,
+        "One contextmenu event"
       );
 
       await passwordManager.close();
@@ -515,7 +517,7 @@ add_task(async function test_context_menu_dismissed_before_logins_arrive() {
         const shown = BrowserTestUtils.waitForEvent(CONTEXT_MENU, "popupshown");
         await BrowserTestUtils.synthesizeMouseAtCenter(
           input,
-          { type: "mousedown", button: 2 },
+          { button: 2 },
           browser.browsingContext
         );
         await BrowserTestUtils.synthesizeMouseAtCenter(

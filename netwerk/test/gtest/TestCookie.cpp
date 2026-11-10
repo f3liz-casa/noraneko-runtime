@@ -877,11 +877,11 @@ TEST(TestCookie, TestCookieMain)
   EXPECT_TRUE(CheckResult(cookie.get(), MUST_CONTAIN, "test2=yes"));
   GetACookieNoHttp(cookieService, "http://cookiemgr.test/foo/", cookie);
   EXPECT_TRUE(CheckResult(cookie.get(), MUST_NOT_CONTAIN, "test2=yes"));
-  // check CountCookiesFromHost()
-  uint32_t hostCookies = 0;
-  EXPECT_TRUE(NS_SUCCEEDED(
-      cookieMgr2->CountCookiesFromHost("cookiemgr.test"_ns, &hostCookies)));
-  EXPECT_EQ(hostCookies, 2u);
+  // check GetCookiesFromHostNative()
+  nsTArray<RefPtr<nsICookie>> hostCookies;
+  EXPECT_TRUE(NS_SUCCEEDED(cookieMgr2->GetCookiesFromHostNative(
+      "cookiemgr.test"_ns, &attrs, false, hostCookies)));
+  EXPECT_EQ(hostCookies.Length(), 2u);
   // check CookieExistsNative() using the third cookie
   bool found;
   EXPECT_TRUE(NS_SUCCEEDED(cookieMgr2->CookieExistsNative(
@@ -890,14 +890,20 @@ TEST(TestCookie, TestCookieMain)
 
   // sleep four seconds, to make sure the second cookie has expired
   PR_Sleep(4 * PR_TicksPerSecond());
-  // check that both CountCookiesFromHost() and CookieExistsNative() count the
-  // expired cookie
-  EXPECT_TRUE(NS_SUCCEEDED(
-      cookieMgr2->CountCookiesFromHost("cookiemgr.test"_ns, &hostCookies)));
-  EXPECT_EQ(hostCookies, 2u);
+  // check that the expired cookie is not exposed by the cookie manager
+  hostCookies.Clear();
+  EXPECT_TRUE(NS_SUCCEEDED(cookieMgr2->GetCookiesFromHostNative(
+      "cookiemgr.test"_ns, &attrs, false, hostCookies)));
+  EXPECT_EQ(hostCookies.Length(), 1u);
   EXPECT_TRUE(NS_SUCCEEDED(cookieMgr2->CookieExistsNative(
       "cookiemgr.test"_ns, "/foo"_ns, "test2"_ns, &attrs, &found)));
-  EXPECT_TRUE(found);
+  EXPECT_FALSE(found);
+  cookies.SetLength(0);
+  EXPECT_NS_SUCCEEDED(cookieMgr->GetCookies(cookies));
+  EXPECT_EQ(cookies.Length(), 2ul);
+  cookies.SetLength(0);
+  EXPECT_NS_SUCCEEDED(cookieMgr->GetSessionCookies(cookies));
+  EXPECT_EQ(cookies.Length(), 2ul);
   // double-check RemoveAll() using the enumerator
   EXPECT_NS_SUCCEEDED(cookieMgr->RemoveAll());
   cookies.SetLength(0);
@@ -1280,9 +1286,6 @@ class TestableCookieStorage final : public CookieStorage {
   void StaleCookies(const nsTArray<RefPtr<Cookie>>&, int64_t) override {}
   void Close() override {}
   void EnsureInitialized() override {}
-  nsresult RunInTransaction(nsICookieTransactionCallback*) override {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
 
  protected:
   const char* NotificationTopic() const override { return "test-cookie"; }
@@ -1360,13 +1363,17 @@ TEST(TestCookie, HasCookiesForSite)
 
   nsAutoCString baseDomain("example.com"_ns);
 
-  auto addCookie = [&](const OriginAttributes& aAttrs) {
+  const int64_t nowInMSec = PR_Now() / PR_USEC_PER_MSEC;
+  const int64_t kFuture = nowInMSec + 86400 * 1000;
+  const int64_t kPast = nowInMSec - 1;
+
+  auto addCookie = [&](const OriginAttributes& aAttrs, int64_t aExpiryInMSec) {
     CookieStruct cookieData;
     cookieData.name() = "c"_ns;
     cookieData.value() = "v"_ns;
     cookieData.host() = "example.com"_ns;
     cookieData.path() = "/"_ns;
-    cookieData.expiryInMSec() = PR_Now() / PR_USEC_PER_MSEC + 86400 * 1000;
+    cookieData.expiryInMSec() = aExpiryInMSec;
     cookieData.lastAccessedInUSec() = 0;
     cookieData.creationTimeInUSec() = 0;
     cookieData.updateTimeInUSec() = 0;
@@ -1386,16 +1393,16 @@ TEST(TestCookie, HasCookiesForSite)
   nonPbPattern.mPrivateBrowsingId.Construct(0);
 
   // No cookies at all → false.
-  EXPECT_FALSE(storage->HasCookiesForSite(baseDomain, nonPbPattern));
-  EXPECT_FALSE(storage->HasCookiesForSite("other.test"_ns, nonPbPattern));
+  EXPECT_FALSE(storage->HasCookies(baseDomain, nonPbPattern));
+  EXPECT_FALSE(storage->HasCookies("other.test"_ns, nonPbPattern));
 
   // Cookie in the default-OA bucket → true.
   OriginAttributes defaultAttrs;
-  addCookie(defaultAttrs);
-  EXPECT_TRUE(storage->HasCookiesForSite(baseDomain, nonPbPattern));
+  addCookie(defaultAttrs, kFuture);
+  EXPECT_TRUE(storage->HasCookies(baseDomain, nonPbPattern));
 
   // Different base domain still gets false.
-  EXPECT_FALSE(storage->HasCookiesForSite("other.test"_ns, nonPbPattern));
+  EXPECT_FALSE(storage->HasCookies("other.test"_ns, nonPbPattern));
 
   // Cookie only in a container (userContextId != 0) → true. This is the
   // direct regression case from Bug 2041131.
@@ -1403,20 +1410,20 @@ TEST(TestCookie, HasCookiesForSite)
   storage = containerOnly;
   OriginAttributes containerAttrs;
   containerAttrs.mUserContextId = 1;
-  addCookie(containerAttrs);
-  EXPECT_TRUE(storage->HasCookiesForSite(baseDomain, nonPbPattern));
+  addCookie(containerAttrs, kFuture);
+  EXPECT_TRUE(storage->HasCookies(baseDomain, nonPbPattern));
 
   // PB-only cookie must NOT be visible to a non-PB pattern.
   RefPtr<TestableCookieStorage> pbOnly = TestableCookieStorage::Create();
   storage = pbOnly;
   OriginAttributes pbAttrs;
   pbAttrs.mPrivateBrowsingId = 1;
-  addCookie(pbAttrs);
-  EXPECT_FALSE(storage->HasCookiesForSite(baseDomain, nonPbPattern));
+  addCookie(pbAttrs, kFuture);
+  EXPECT_FALSE(storage->HasCookies(baseDomain, nonPbPattern));
   // And IS visible to a PB-matching pattern.
   OriginAttributesPattern pbPattern;
   pbPattern.mPrivateBrowsingId.Construct(1);
-  EXPECT_TRUE(storage->HasCookiesForSite(baseDomain, pbPattern));
+  EXPECT_TRUE(storage->HasCookies(baseDomain, pbPattern));
 
   // Partitioned-only cookie (non-default partitionKey) → true under
   // privateBrowsingId=0 pattern.
@@ -1425,8 +1432,18 @@ TEST(TestCookie, HasCookiesForSite)
   storage = partitionedOnly;
   OriginAttributes partAttrs;
   partAttrs.mPartitionKey = u"(http,other.test)"_ns;
-  addCookie(partAttrs);
-  EXPECT_TRUE(storage->HasCookiesForSite(baseDomain, nonPbPattern));
+  addCookie(partAttrs, kFuture);
+  EXPECT_TRUE(storage->HasCookies(baseDomain, nonPbPattern));
+
+  RefPtr<TestableCookieStorage> expiredOnly = TestableCookieStorage::Create();
+  storage = expiredOnly;
+  addCookie(defaultAttrs, kPast);
+  EXPECT_FALSE(storage->HasCookies(baseDomain, nonPbPattern));
+
+  OriginAttributes otherAttrs;
+  otherAttrs.mUserContextId = 2;
+  addCookie(otherAttrs, kFuture);
+  EXPECT_TRUE(storage->HasCookies(baseDomain, nonPbPattern));
 }
 
 namespace mozilla::net {

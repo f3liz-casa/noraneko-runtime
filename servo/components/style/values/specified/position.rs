@@ -27,10 +27,9 @@ use crate::values::specified::align::AlignFlags;
 use crate::values::specified::percentage::NoCalcPercentage;
 use crate::values::specified::{AllowQuirks, Integer, LengthPercentage, NonNegativeNumber};
 use crate::values::{AtomIdent, DashedIdent};
-use cssparser::{Parser, match_ignore_ascii_case};
+use cssparser::Parser;
 use hashbrown::hash_map::Entry;
 use num_traits::FromPrimitive;
-use selectors::parser::SelectorParseErrorKind;
 use servo_arc::Arc;
 use smallvec::{SmallVec, smallvec};
 use std::fmt::{self, Write};
@@ -1608,140 +1607,6 @@ impl ToCss for GridAutoFlow {
     }
 }
 
-#[repr(u8)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    MallocSizeOf,
-    PartialEq,
-    SpecifiedValueInfo,
-    ToComputedValue,
-    ToCss,
-    ToResolvedValue,
-    ToShmem,
-)]
-/// Masonry auto-placement algorithm packing.
-pub enum MasonryPlacement {
-    /// Place the item in the track(s) with the smallest extent so far.
-    Pack,
-    /// Place the item after the last item, from start to end.
-    Next,
-}
-
-#[repr(u8)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    MallocSizeOf,
-    PartialEq,
-    SpecifiedValueInfo,
-    ToComputedValue,
-    ToCss,
-    ToResolvedValue,
-    ToShmem,
-)]
-/// Masonry auto-placement algorithm item sorting option.
-pub enum MasonryItemOrder {
-    /// Place all items with a definite placement before auto-placed items.
-    DefiniteFirst,
-    /// Place items in `order-modified document order`.
-    Ordered,
-}
-
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    MallocSizeOf,
-    PartialEq,
-    SpecifiedValueInfo,
-    ToComputedValue,
-    ToCss,
-    ToResolvedValue,
-    ToShmem,
-    ToTyped,
-)]
-#[repr(C)]
-#[typed(todo_derive_fields)]
-/// Controls how the Masonry layout algorithm works
-/// specifying exactly how auto-placed items get flowed in the masonry axis.
-pub struct MasonryAutoFlow {
-    /// Specify how to pick a auto-placement track.
-    #[css(contextual_skip_if = "is_pack_with_non_default_order")]
-    pub placement: MasonryPlacement,
-    /// Specify how to pick an item to place.
-    #[css(skip_if = "is_item_order_definite_first")]
-    pub order: MasonryItemOrder,
-}
-
-#[inline]
-fn is_pack_with_non_default_order(placement: &MasonryPlacement, order: &MasonryItemOrder) -> bool {
-    *placement == MasonryPlacement::Pack && *order != MasonryItemOrder::DefiniteFirst
-}
-
-#[inline]
-fn is_item_order_definite_first(order: &MasonryItemOrder) -> bool {
-    *order == MasonryItemOrder::DefiniteFirst
-}
-
-impl MasonryAutoFlow {
-    #[inline]
-    /// Get initial `masonry-auto-flow` value.
-    pub fn initial() -> MasonryAutoFlow {
-        MasonryAutoFlow {
-            placement: MasonryPlacement::Pack,
-            order: MasonryItemOrder::DefiniteFirst,
-        }
-    }
-}
-
-impl Parse for MasonryAutoFlow {
-    /// [ definite-first | ordered ] || [ pack | next ]
-    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<MasonryAutoFlow, ParseError> {
-        let mut value = MasonryAutoFlow::initial();
-        let mut got_placement = false;
-        let mut got_order = false;
-        while !input.is_exhausted() {
-            let ident = input.expect_ident()?;
-            let success = match_ignore_ascii_case! { &ident,
-                "pack" if !got_placement => {
-                    got_placement = true;
-                    true
-                },
-                "next" if !got_placement => {
-                    value.placement = MasonryPlacement::Next;
-                    got_placement = true;
-                    true
-                },
-                "definite-first" if !got_order => {
-                    got_order = true;
-                    true
-                },
-                "ordered" if !got_order => {
-                    value.order = MasonryItemOrder::Ordered;
-                    got_order = true;
-                    true
-                },
-                _ => false
-            };
-            if !success {
-                return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
-            }
-        }
-
-        if got_placement || got_order {
-            Ok(value)
-        } else {
-            Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-        }
-    }
-}
-
 /// Whether the `balance` value of `flex-wrap` is enabled.
 #[inline]
 fn flex_wrap_balance_enabled() -> bool {
@@ -2160,9 +2025,13 @@ impl Inset {
         {
             return Ok(Self::LengthPercentage(l));
         }
-        if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
-            return Ok(Self::Auto);
-        }
+        match input.try_parse(|i| i.expect_ident_matching("auto")) {
+            Ok(_) => return Ok(Self::Auto),
+            Err(e) if !crate::pref!("layout.css.anchor-positioning.enabled", gecko = true) => {
+                return Err(e.into());
+            },
+            Err(_) => (),
+        };
         Self::parse_anchor_functions_quirky(context, input, allow_quirks)
     }
 
@@ -2183,6 +2052,10 @@ impl Inset {
         input: &mut Parser,
         allow_quirks: AllowQuirks,
     ) -> Result<Self, ParseError> {
+        debug_assert!(
+            crate::pref!("layout.css.anchor-positioning.enabled", gecko = true),
+            "How are we parsing with pref off?"
+        );
         if let Ok(inner) = input.try_parse(|i| AnchorFunction::parse(context, i)) {
             return Ok(Self::AnchorFunction(Box::new(inner)));
         }
@@ -2208,6 +2081,9 @@ pub type AnchorFunction = GenericAnchorFunction<specified::Percentage, Inset>;
 
 impl Parse for AnchorFunction {
     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if !crate::pref!("layout.css.anchor-positioning.enabled", gecko = true) {
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+        }
         input.expect_function_matching("anchor")?;
         input.parse_nested_block(|i| {
             let target_element = i.try_parse(|i| DashedIdent::parse(context, i)).ok();
@@ -2232,4 +2108,90 @@ impl Parse for AnchorFunction {
             })
         })
     }
+}
+
+/// https://drafts.csswg.org/css-flexbox/#flex-direction-property
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum FlexDirection {
+    Row,
+    RowReverse,
+    Column,
+    ColumnReverse,
+}
+
+/// https://drafts.csswg.org/css-ui/#propdef-box-sizing
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum BoxSizing {
+    ContentBox,
+    BorderBox,
+}
+
+/// https://drafts.csswg.org/css-images/#propdef-object-fit
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum ObjectFit {
+    Fill,
+    Contain,
+    Cover,
+    None,
+    ScaleDown,
 }

@@ -19,6 +19,9 @@ if CONFIG["MOZ_WEBRTC"]:
         "VideoEngine.cpp",
         "VideoFrameUtils.cpp",
     ]
+    SOURCE_HEADERS += [
+        "VideoEngine.h",
+    ]
     LOCAL_INCLUDES += [
         "!/dist/include/libwebrtc_overrides",
         "/dom/media/webrtc",
@@ -126,3 +129,12 @@ FINAL_LIBRARY = "xul"
 
 with Files("android_video_capture/**"):
     SCHEDULES.exclusive = ["android"]
+
+LICENSED_UNDER += ["webrtc"]
+LICENSED_UNDER["webrtc"].paths = [
+    "android_video_capture",
+]
+
+SOURCE_HEADERS += [
+    "FakeVideoSource.h",
+]

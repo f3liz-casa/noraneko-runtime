@@ -117,6 +117,7 @@
 #include "mozilla/dom/indexedDB/PBackgroundIDBVersionChangeTransactionParent.h"
 #include "mozilla/dom/indexedDB/PBackgroundIndexedDBUtilsParent.h"
 #include "mozilla/dom/ipc/IdType.h"
+#include "mozilla/dom/quota/ArtificialFailure.h"
 #include "mozilla/dom/quota/Assertions.h"
 #include "mozilla/dom/quota/CachingDatabaseConnection.h"
 #include "mozilla/dom/quota/Client.h"
@@ -2329,7 +2330,7 @@ class Database final : public PBackgroundIDBDatabaseParent,
 
   const Maybe<const CipherKey>& MaybeKeyRef() const {
     // This can be called on any thread, as it is const.
-    MOZ_ASSERT(mKey.isSome() == mInPrivateBrowsing);
+    MOZ_ASSERT(mKey.isSome() == GetFileManager().UsesEncryption());
     return mKey;
   }
 
@@ -3067,6 +3068,7 @@ class FactoryOp : public DatabaseOperationBase,
   Maybe<nsString> mDatabaseName;
   Maybe<nsCString> mDatabaseId;
   Maybe<nsString> mDatabaseFilePath;
+  Maybe<nsString> mDatabaseFilenameBase;
   int64_t mDirectoryLockId;
   const PersistenceType mPersistenceType;
   State mState;
@@ -3179,6 +3181,9 @@ class FactoryOp : public DatabaseOperationBase,
   virtual void SendBlockedNotification() = 0;
 
  private:
+  static nsAutoString GetDatabaseFilenameBase(const nsAString& aDatabaseName,
+                                              bool aIsPrivate);
+
   // Test whether this FactoryOp needs to wait for the given op.
   bool MustWaitFor(const FactoryOp& aExistingOp);
 
@@ -3335,7 +3340,6 @@ class DeleteDatabaseOp final : public FactoryRequestOp {
   class VersionChangeOp;
 
   nsString mDatabaseDirectoryPath;
-  nsString mDatabaseFilenameBase;
   uint64_t mPreviousVersion;
 
  public:
@@ -3349,7 +3353,7 @@ class DeleteDatabaseOp final : public FactoryRequestOp {
  private:
   ~DeleteDatabaseOp() override = default;
 
-  void LoadPreviousVersion(nsIFile& aDatabaseFile);
+  nsresult LoadPreviousVersion(nsIFile& aDatabaseFile);
 
   nsresult DatabaseOpen() override;
 
@@ -3676,7 +3680,7 @@ class ObjectStoreAddOrPutRequestOp final : public NormalTransactionOp {
 #ifdef DEBUG
     const StructuredCloneFileBase::FileType mType;
 #endif
-    void EnsureCipherKey();
+    nsresult EnsureCipherKey();
     void AssertInvariants() const;
 
     StoredFileInfo(SafeRefPtr<DatabaseFileInfo> aFileInfo,
@@ -3702,9 +3706,10 @@ class ObjectStoreAddOrPutRequestOp final : public NormalTransactionOp {
     StoredFileInfo(StoredFileInfo&&) = default;
 #endif
 
-    static StoredFileInfo CreateForBlob(SafeRefPtr<DatabaseFileInfo> aFileInfo,
-                                        RefPtr<DatabaseFile> aFileActor);
-    static StoredFileInfo CreateForStructuredClone(
+    static mozilla::Result<StoredFileInfo, nsresult> CreateForBlob(
+        SafeRefPtr<DatabaseFileInfo> aFileInfo,
+        RefPtr<DatabaseFile> aFileActor);
+    static mozilla::Result<StoredFileInfo, nsresult> CreateForStructuredClone(
         SafeRefPtr<DatabaseFileInfo> aFileInfo,
         nsCOMPtr<nsIInputStream> aInputStream);
 
@@ -3807,19 +3812,19 @@ void ObjectStoreAddOrPutRequestOp::StoredFileInfo::AssertInvariants() const {
   }
 }
 
-void ObjectStoreAddOrPutRequestOp::StoredFileInfo::EnsureCipherKey() {
+nsresult ObjectStoreAddOrPutRequestOp::StoredFileInfo::EnsureCipherKey() {
   const auto& fileInfo = GetFileInfo();
   const auto& fileManager = fileInfo.Manager();
 
-  // No need to generate cipher keys if we are not in PBM
-  if (!fileManager.IsInPrivateBrowsingMode()) {
-    return;
+  if (!fileManager.UsesEncryption()) {
+    return NS_OK;
   }
 
-  nsCString keyId;
-  keyId.AppendInt(fileInfo.Id());
-
-  fileManager.MutableCipherKeyManagerRef().Ensure(keyId);
+  QM_TRY_UNWRAP(const auto key,
+                fileManager.MutableCipherKeyManagerRef().Ensure(
+                    fileManager.CipherKeyIdForFile(fileInfo.Id())));
+  (void)key;
+  return NS_OK;
 }
 
 ObjectStoreAddOrPutRequestOp::StoredFileInfo::StoredFileInfo(
@@ -3833,8 +3838,6 @@ ObjectStoreAddOrPutRequestOp::StoredFileInfo::StoredFileInfo(
 {
   AssertIsOnBackgroundThread();
   AssertInvariants();
-
-  EnsureCipherKey();
   MOZ_COUNT_CTOR(ObjectStoreAddOrPutRequestOp::StoredFileInfo);
 }
 
@@ -3850,22 +3853,24 @@ ObjectStoreAddOrPutRequestOp::StoredFileInfo::StoredFileInfo(
 {
   AssertIsOnBackgroundThread();
   AssertInvariants();
-
-  EnsureCipherKey();
   MOZ_COUNT_CTOR(ObjectStoreAddOrPutRequestOp::StoredFileInfo);
 }
 
-ObjectStoreAddOrPutRequestOp::StoredFileInfo
+mozilla::Result<ObjectStoreAddOrPutRequestOp::StoredFileInfo, nsresult>
 ObjectStoreAddOrPutRequestOp::StoredFileInfo::CreateForBlob(
     SafeRefPtr<DatabaseFileInfo> aFileInfo, RefPtr<DatabaseFile> aFileActor) {
-  return {std::move(aFileInfo), std::move(aFileActor)};
+  StoredFileInfo info{std::move(aFileInfo), std::move(aFileActor)};
+  QM_TRY(MOZ_TO_RESULT(info.EnsureCipherKey()));
+  return info;
 }
 
-ObjectStoreAddOrPutRequestOp::StoredFileInfo
+mozilla::Result<ObjectStoreAddOrPutRequestOp::StoredFileInfo, nsresult>
 ObjectStoreAddOrPutRequestOp::StoredFileInfo::CreateForStructuredClone(
     SafeRefPtr<DatabaseFileInfo> aFileInfo,
     nsCOMPtr<nsIInputStream> aInputStream) {
-  return {std::move(aFileInfo), std::move(aInputStream)};
+  StoredFileInfo info{std::move(aFileInfo), std::move(aInputStream)};
+  QM_TRY(MOZ_TO_RESULT(info.EnsureCipherKey()));
+  return info;
 }
 
 bool ObjectStoreAddOrPutRequestOp::StoredFileInfo::ShouldCompress() const {
@@ -5524,24 +5529,22 @@ class EncryptedFileBlobImpl final : public FileBlobImpl {
   const CipherKey mKey;
 };
 
-RefPtr<BlobImpl> CreateFileBlobImpl(const Database& aDatabase,
-                                    const nsCOMPtr<nsIFile>& aNativeFile,
-                                    const DatabaseFileInfo::IdType aId) {
-  if (aDatabase.IsInPrivateBrowsing()) {
-    nsCString keyId;
-    keyId.AppendInt(aId);
-
-    const auto& key =
-        aDatabase.GetFileManager().MutableCipherKeyManagerRef().Get(keyId);
-
-    MOZ_RELEASE_ASSERT(key.isSome());
-    return MakeRefPtr<EncryptedFileBlobImpl>(aNativeFile, aId, *key);
+Result<RefPtr<BlobImpl>, nsresult> CreateFileBlobImpl(
+    const Database& aDatabase, const nsCOMPtr<nsIFile>& aNativeFile,
+    const DatabaseFileInfo::IdType aId) {
+  if (aDatabase.GetFileManager().UsesEncryption()) {
+    QM_TRY_UNWRAP(auto maybeKey,
+                  aDatabase.GetFileManager().MutableCipherKeyManagerRef().Get(
+                      aDatabase.GetFileManager().CipherKeyIdForFile(aId)));
+    QM_TRY(OkIf(maybeKey.isSome()), Err(NS_ERROR_FAILURE));
+    return RefPtr<BlobImpl>(
+        MakeRefPtr<EncryptedFileBlobImpl>(aNativeFile, aId, *maybeKey));
   }
 
   auto impl = MakeRefPtr<FileBlobImpl>(aNativeFile);
   impl->SetFileId(aId);
 
-  return impl;
+  return RefPtr<BlobImpl>(std::move(impl));
 }
 
 Result<nsTArray<SerializedStructuredCloneFile>, nsresult>
@@ -5592,8 +5595,11 @@ SerializeStructuredCloneFiles(const SafeRefPtr<Database>& aDatabase,
             [[fallthrough]];
 
           case StructuredCloneFileBase::eBlob: {
-            const auto impl = CreateFileBlobImpl(*aDatabase, nativeFile,
-                                                 file.FileInfo().Id());
+            QM_TRY_UNWRAP(const auto impl,
+                          CreateFileBlobImpl(*aDatabase, nativeFile,
+                                             file.FileInfo().Id()),
+                          Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR),
+                          IDB_REPORT_INTERNAL_ERR_LAMBDA);
 
             IPCBlob ipcBlob;
 
@@ -5890,6 +5896,9 @@ nsresult RemoveDatabaseFilesAndDirectory(nsIFile& aBaseDirectory,
   MOZ_ASSERT(!aDatabaseFilenameBase.IsEmpty());
 
   AUTO_PROFILER_LABEL("RemoveDatabaseFilesAndDirectory", DOM);
+
+  QM_TRY(ArtificialFailure(
+      nsIQuotaArtificialFailure::CATEGORY_REMOVE_DATABASE_FILES));
 
   QM_TRY_UNWRAP(auto markerFile,
                 CreateMarkerFile(aBaseDirectory, aDatabaseFilenameBase));
@@ -6192,54 +6201,6 @@ uint32_t TelemetryIdForFile(nsIFile* aFile) {
     // We're locked, no need for atomics.
     return sNextId++;
   });
-}
-
-nsAutoString GetDatabaseFilenameBase(const nsAString& aDatabaseName,
-                                     bool aIsPrivate) {
-  nsAutoString databaseFilenameBase;
-
-  if (aIsPrivate) {
-    MOZ_DIAGNOSTIC_ASSERT(gStorageDatabaseNameMutex);
-
-    MutexAutoLock lock(*gStorageDatabaseNameMutex);
-
-    if (!gStorageDatabaseNameHashtable) {
-      gStorageDatabaseNameHashtable = new StorageDatabaseNameHashtable();
-    }
-
-    databaseFilenameBase.Append(
-        gStorageDatabaseNameHashtable->LookupOrInsertWith(aDatabaseName, []() {
-          return NSID_TrimBracketsUTF16(nsID::GenerateUUID());
-        }));
-
-    return databaseFilenameBase;
-  }
-
-  // WARNING: do not change this hash function. See the comment in HashName()
-  // for details.
-  databaseFilenameBase.AppendInt(HashName(aDatabaseName));
-
-  nsAutoCString escapedName;
-  if (!NS_Escape(NS_ConvertUTF16toUTF8(aDatabaseName), escapedName,
-                 url_XPAlphas)) {
-    MOZ_CRASH("Can't escape database name!");
-  }
-
-  const char* forwardIter = escapedName.BeginReading();
-  const char* backwardIter = escapedName.EndReading() - 1;
-
-  nsAutoCString substring;
-  while (forwardIter <= backwardIter && substring.Length() < 21) {
-    if (substring.Length() % 2) {
-      substring.Append(*backwardIter--);
-    } else {
-      substring.Append(*forwardIter++);
-    }
-  }
-
-  databaseFilenameBase.AppendASCII(substring.get(), substring.Length());
-
-  return databaseFilenameBase;
 }
 
 const CommonIndexOpenCursorParams& GetCommonIndexOpenCursorParams(
@@ -11908,19 +11869,36 @@ DatabaseFileManager::DatabaseFileManager(
     const quota::OriginMetadata& aOriginMetadata,
     const nsAString& aDatabaseName, const nsCString& aDatabaseID,
     const nsAString& aDatabaseFilePath, bool aEnforcingQuota,
-    bool aIsInPrivateBrowsingMode)
+    bool aIsInPrivateBrowsingMode,
+    RefPtr<IndexedDBCipherKeyManager> aCipherKeyManager)
     : mPersistenceType(aPersistenceType),
       mOriginMetadata(aOriginMetadata),
       mDatabaseName(aDatabaseName),
       mDatabaseID(aDatabaseID),
       mDatabaseFilePath(aDatabaseFilePath),
-      mCipherKeyManager(
-          aIsInPrivateBrowsingMode
-              ? new IndexedDBCipherKeyManager("IndexedDBCipherKeyManager")
-              : nullptr),
+      mCipherKeyManager(std::move(aCipherKeyManager)),
       mDatabaseVersion(0),
       mEnforcingQuota(aEnforcingQuota),
       mIsInPrivateBrowsingMode(aIsInPrivateBrowsingMode) {}
+
+// static
+Result<RefPtr<IndexedDBCipherKeyManager>, nsresult>
+DatabaseFileManager::CreateCipherKeyManager(
+    const quota::OriginMetadata& aOriginMetadata,
+    bool aIsInPrivateBrowsingMode) {
+  if (aIsInPrivateBrowsingMode) {
+    return RefPtr<IndexedDBCipherKeyManager>(
+        IndexedDBCipherKeyManager::CreateEphemeral(
+            "IndexedDBCipherKeyManager"));
+  }
+  auto* quotaManager = quota::QuotaManager::Get();
+  MOZ_ASSERT(quotaManager);
+  if (quotaManager->IsOriginEncrypted(aOriginMetadata)) {
+    return quotaManager->GetOrCreateCipherKeyManager(aOriginMetadata.mOrigin,
+                                                     quota::Client::IDB);
+  }
+  return RefPtr<IndexedDBCipherKeyManager>(nullptr);
+}
 
 uint64_t DatabaseFileManager::DatabaseVersion() const {
   AssertIsOnIOThread();
@@ -12599,12 +12577,16 @@ nsresult QuotaClient::GetUsageForOriginInternal(
                 GetDatabaseFilenames<ObsoleteFilenamesHandling::Include>(
                     *directory, aCanceled));
 
+  // Databases whose removal failed. Their remaining files still count towards
+  // quota, so that the removal retried later subtracts only what was added.
+  nsTHashSet<nsString> leftoverFilenames;
+
   if (aInitializing) {
     QM_TRY(CollectEachInRange(
         subdirsToProcess,
         [&directory, &obsoleteFilenames = obsoleteFilenames,
-         &databaseFilenames = databaseFilenames, aPersistenceType,
-         &aOriginMetadata](
+         &databaseFilenames = databaseFilenames, &leftoverFilenames,
+         aPersistenceType, &aOriginMetadata](
             const nsAString& subdirName) -> Result<Ok, nsresult> {
           // The directory must have the correct suffix.
           nsDependentSubstring subdirNameBase;
@@ -12630,13 +12612,14 @@ nsresult QuotaClient::GetUsageForOriginInternal(
                  Ok{});
 
           if (obsoleteFilenames.Contains(subdirNameBase)) {
-            // If this fails, it probably means we are in a serious situation.
-            // e.g. Filesystem corruption. Will handle this in bug 1521541.
-            QM_TRY(MOZ_TO_RESULT(RemoveDatabaseFilesAndDirectory(
-                       *directory, subdirNameBase, /* aQuotaManager */ nullptr,
-                       aPersistenceType, aOriginMetadata,
-                       /* aDatabaseName */ u""_ns)),
-                   Err(NS_ERROR_UNEXPECTED));
+            QM_WARNONLY_TRY(
+                MOZ_TO_RESULT(RemoveDatabaseFilesAndDirectory(
+                    *directory, subdirNameBase, /* aQuotaManager */ nullptr,
+                    aPersistenceType, aOriginMetadata,
+                    /* aDatabaseName */ u""_ns)),
+                ([&leftoverFilenames, &subdirNameBase](const auto&) {
+                  leftoverFilenames.Insert(subdirNameBase);
+                }));
 
             databaseFilenames.Remove(subdirNameBase);
             return Ok{};
@@ -12727,6 +12710,42 @@ nsresult QuotaClient::GetUsageForOriginInternal(
 
         *aUsageInfo += fileUsage;
       }
+    }
+  }
+
+  if (aUsageInfo) {
+    for (const auto& leftoverFilename : leftoverFilenames) {
+      if (aCanceled) {
+        break;
+      }
+
+      for (const auto& suffix : {kSQLiteSuffix, kSQLiteWALSuffix}) {
+        QM_TRY_INSPECT(
+            const auto& file,
+            CloneFileAndAppend(*directory, leftoverFilename + suffix));
+
+        QM_TRY_INSPECT(const int64_t& fileSize,
+                       QM_OR_ELSE_LOG_VERBOSE_IF(
+                           // Expression.
+                           MOZ_TO_RESULT_INVOKE_MEMBER(file, GetFileSize),
+                           // Predicate.
+                           IsFileNotFoundError,
+                           // Fallback.
+                           (ErrToOk<0, int64_t>)));
+        MOZ_ASSERT(fileSize >= 0);
+
+        *aUsageInfo += DatabaseUsageType(Some(uint64_t(fileSize)));
+      }
+
+      QM_TRY_INSPECT(
+          const auto& fmDirectory,
+          CloneFileAndAppend(
+              *directory, leftoverFilename + kFileManagerDirectoryNameSuffix));
+
+      QM_TRY_INSPECT(const auto& fileUsage,
+                     DatabaseFileManager::GetUsage(fmDirectory));
+
+      *aUsageInfo += fileUsage;
     }
   }
 
@@ -15114,13 +15133,15 @@ nsresult FactoryOp::Open() {
   }
 
   if (mDatabaseName.isSome()) {
+    mDatabaseFilenameBase = Some(GetDatabaseFilenameBase(
+        mDatabaseName.ref(), mOriginMetadata.mIsPrivate));
     nsCString databaseId;
 
     QuotaManager::GetStorageId(mPersistenceType, mOriginMetadata.mOrigin,
                                Client::IDB, databaseId);
 
     databaseId.Append('*');
-    databaseId.Append(NS_ConvertUTF16toUTF8(mDatabaseName.ref()));
+    databaseId.Append(NS_ConvertUTF16toUTF8(*mDatabaseFilenameBase));
 
     mDatabaseId = Some(std::move(databaseId));
 
@@ -15135,10 +15156,8 @@ nsresult FactoryOp::Open() {
           QM_TRY(MOZ_TO_RESULT(dbFile->Append(
               NS_LITERAL_STRING_FROM_CSTRING(IDB_DIRECTORY_NAME))));
 
-          QM_TRY(MOZ_TO_RESULT(dbFile->Append(
-              GetDatabaseFilenameBase(mDatabaseName.ref(),
-                                      mOriginMetadata.mIsPrivate) +
-              kSQLiteSuffix)));
+          QM_TRY(MOZ_TO_RESULT(
+              dbFile->Append(*mDatabaseFilenameBase + kSQLiteSuffix)));
 
           QM_TRY_RETURN(
               MOZ_TO_RESULT_INVOKE_MEMBER_TYPED(nsString, dbFile, GetPath));
@@ -15363,6 +15382,54 @@ nsresult FactoryOp::SendVersionChangeMessages(
 
   return NS_OK;
 }  // namespace indexedDB
+
+nsAutoString FactoryOp::GetDatabaseFilenameBase(const nsAString& aDatabaseName,
+                                                bool aIsPrivate) {
+  nsAutoString databaseFilenameBase;
+
+  if (aIsPrivate) {
+    MOZ_DIAGNOSTIC_ASSERT(gStorageDatabaseNameMutex);
+
+    MutexAutoLock lock(*gStorageDatabaseNameMutex);
+
+    if (!gStorageDatabaseNameHashtable) {
+      gStorageDatabaseNameHashtable = new StorageDatabaseNameHashtable();
+    }
+
+    databaseFilenameBase.Append(
+        gStorageDatabaseNameHashtable->LookupOrInsertWith(aDatabaseName, []() {
+          return NSID_TrimBracketsUTF16(nsID::GenerateUUID());
+        }));
+
+    return databaseFilenameBase;
+  }
+
+  // WARNING: do not change this hash function. See the comment in HashName()
+  // for details.
+  databaseFilenameBase.AppendInt(HashName(aDatabaseName));
+
+  nsAutoCString escapedName;
+  if (!NS_Escape(NS_ConvertUTF16toUTF8(aDatabaseName), escapedName,
+                 url_XPAlphas)) {
+    MOZ_CRASH("Can't escape database name!");
+  }
+
+  const char* forwardIter = escapedName.BeginReading();
+  const char* backwardIter = escapedName.EndReading() - 1;
+
+  nsAutoCString substring;
+  while (forwardIter <= backwardIter && substring.Length() < 21) {
+    if (substring.Length() % 2) {
+      substring.Append(*backwardIter--);
+    } else {
+      substring.Append(*forwardIter++);
+    }
+  }
+
+  databaseFilenameBase.AppendASCII(substring.get(), substring.Length());
+
+  return databaseFilenameBase;
+}
 
 bool FactoryOp::MustWaitFor(const FactoryOp& aExistingOp) {
   AssertIsOnOwningThread();
@@ -15595,12 +15662,9 @@ nsresult OpenDatabaseOp::DoDatabaseWork() {
 #endif
   }
 
-  const auto databaseFilenameBase =
-      GetDatabaseFilenameBase(databaseName, mOriginMetadata.mIsPrivate);
-
   QM_TRY_INSPECT(const auto& markerFile,
                  CloneFileAndAppend(*dbDirectory, kIdbDeletionMarkerFilePrefix +
-                                                      databaseFilenameBase));
+                                                      *mDatabaseFilenameBase));
 
   QM_TRY_INSPECT(const bool& exists,
                  MOZ_TO_RESULT_INVOKE_MEMBER(markerFile, Exists));
@@ -15610,14 +15674,14 @@ nsresult OpenDatabaseOp::DoDatabaseWork() {
     // previous operation.
     // Note: only update usage to the QuotaManager when mEnforcingQuota == true
     QM_TRY(MOZ_TO_RESULT(RemoveDatabaseFilesAndDirectory(
-        *dbDirectory, databaseFilenameBase,
+        *dbDirectory, *mDatabaseFilenameBase,
         mEnforcingQuota ? quotaManager : nullptr, persistenceType,
         mOriginMetadata, databaseName)));
   }
 
   QM_TRY_INSPECT(
       const auto& dbFile,
-      CloneFileAndAppend(*dbDirectory, databaseFilenameBase + kSQLiteSuffix));
+      CloneFileAndAppend(*dbDirectory, *mDatabaseFilenameBase + kSQLiteSuffix));
 
   mTelemetryId = TelemetryIdForFile(dbFile);
 
@@ -15633,7 +15697,7 @@ nsresult OpenDatabaseOp::DoDatabaseWork() {
 
   QM_TRY_INSPECT(
       const auto& fmDirectory,
-      CloneFileAndAppend(*dbDirectory, databaseFilenameBase +
+      CloneFileAndAppend(*dbDirectory, *mDatabaseFilenameBase +
                                            kFileManagerDirectoryNameSuffix));
 
   IndexedDatabaseManager* const idm = IndexedDatabaseManager::Get();
@@ -15643,17 +15707,21 @@ nsresult OpenDatabaseOp::DoDatabaseWork() {
       persistenceType, mOriginMetadata.mOrigin, databaseName);
 
   if (!fileManager) {
+    QM_TRY_UNWRAP(auto cipherKeyManager,
+                  DatabaseFileManager::CreateCipherKeyManager(
+                      mOriginMetadata, mInPrivateBrowsing));
     fileManager = MakeSafeRefPtr<DatabaseFileManager>(
         persistenceType, mOriginMetadata, databaseName, mDatabaseId.ref(),
-        mDatabaseFilePath.ref(), mEnforcingQuota, mInPrivateBrowsing);
+        mDatabaseFilePath.ref(), mEnforcingQuota, mInPrivateBrowsing,
+        std::move(cipherKeyManager));
   }
 
-  Maybe<const CipherKey> maybeKey =
-      mInPrivateBrowsing
-          ? Some(fileManager->MutableCipherKeyManagerRef().Ensure())
-          : Nothing();
-
-  MOZ_RELEASE_ASSERT(mInPrivateBrowsing == maybeKey.isSome());
+  Maybe<CipherKey> maybeKey;
+  if (fileManager->UsesEncryption()) {
+    QM_TRY_UNWRAP(auto key, fileManager->MutableCipherKeyManagerRef().Ensure(
+                                fileManager->CipherKeyIdForDatabase()));
+    maybeKey = Some(key);
+  }
 
   QM_TRY_UNWRAP(
       NotNull<nsCOMPtr<mozIStorageConnection>> connection,
@@ -16382,11 +16450,14 @@ void OpenDatabaseOp::EnsureDatabaseActor() {
     mMetadata = info->mMetadata.clonePtr();
   }
 
-  Maybe<const CipherKey> maybeKey =
-      mInPrivateBrowsing ? mFileManager->MutableCipherKeyManagerRef().Get()
-                         : Nothing();
-
-  MOZ_RELEASE_ASSERT(mInPrivateBrowsing == maybeKey.isSome());
+  Maybe<CipherKey> maybeKey;
+  if (mFileManager->UsesEncryption()) {
+    QM_TRY_UNWRAP(auto key,
+                  mFileManager->MutableCipherKeyManagerRef().Ensure(
+                      mFileManager->CipherKeyIdForDatabase()),
+                  QM_VOID);
+    maybeKey = Some(key);
+  }
 
   const bool directoryLockInvalidated = mDirectoryLockHandle->Invalidated();
 
@@ -16683,7 +16754,7 @@ void OpenDatabaseOp::VersionChangeOp::Cleanup() {
   TransactionDatabaseOperationBase::Cleanup();
 }
 
-void DeleteDatabaseOp::LoadPreviousVersion(nsIFile& aDatabaseFile) {
+nsresult DeleteDatabaseOp::LoadPreviousVersion(nsIFile& aDatabaseFile) {
   AssertIsOnIOThread();
   MOZ_ASSERT(mState == State::DatabaseWorkOpen);
   MOZ_ASSERT(!mPreviousVersion);
@@ -16695,7 +16766,7 @@ void DeleteDatabaseOp::LoadPreviousVersion(nsIFile& aDatabaseFile) {
   nsCOMPtr<mozIStorageService> ss =
       do_GetService(MOZ_STORAGE_SERVICE_CONTRACTID, &rv);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return;
+    return NS_OK;
   }
 
   IndexedDatabaseManager* const idm = IndexedDatabaseManager::Get();
@@ -16709,61 +16780,61 @@ void DeleteDatabaseOp::LoadPreviousVersion(nsIFile& aDatabaseFile) {
       persistenceType, mOriginMetadata.mOrigin, databaseName);
 
   if (!fileManager) {
+    QM_TRY_UNWRAP(auto cipherKeyManager,
+                  DatabaseFileManager::CreateCipherKeyManager(
+                      mOriginMetadata, mInPrivateBrowsing));
     fileManager = MakeSafeRefPtr<DatabaseFileManager>(
         persistenceType, mOriginMetadata, databaseName, mDatabaseId.ref(),
-        mDatabaseFilePath.ref(), mEnforcingQuota, mInPrivateBrowsing);
+        mDatabaseFilePath.ref(), mEnforcingQuota, mInPrivateBrowsing,
+        std::move(cipherKeyManager));
   }
 
-  const auto maybeKey =
-      mInPrivateBrowsing
-          ? Some(fileManager->MutableCipherKeyManagerRef().Ensure())
-          : Nothing();
+  Maybe<CipherKey> maybeKey;
+  if (fileManager->UsesEncryption()) {
+    QM_TRY_UNWRAP(auto key, fileManager->MutableCipherKeyManagerRef().Ensure(
+                                fileManager->CipherKeyIdForDatabase()));
+    maybeKey = Some(key);
+  }
 
-  MOZ_RELEASE_ASSERT(mInPrivateBrowsing == maybeKey.isSome());
+  MOZ_RELEASE_ASSERT(!(mInPrivateBrowsing && maybeKey.isNothing()));
 
   // Pass -1 as the directoryLockId to disable quota checking, since we might
   // temporarily exceed quota before deleting the database.
   QM_TRY_INSPECT(const auto& dbFileUrl,
-                 GetDatabaseFileURL(aDatabaseFile, -1, maybeKey), QM_VOID);
+                 GetDatabaseFileURL(aDatabaseFile, -1, maybeKey), NS_OK);
 
   QM_TRY_UNWRAP(const NotNull<nsCOMPtr<mozIStorageConnection>> connection,
-                OpenDatabaseAndHandleBusy(*ss, *dbFileUrl), QM_VOID);
+                OpenDatabaseAndHandleBusy(*ss, *dbFileUrl), NS_OK);
 
-#ifdef DEBUG
-  {
-    QM_TRY_INSPECT(const auto& stmt,
-                   CreateAndExecuteSingleStepStatement<
-                       SingleStepResult::ReturnNullIfNoResult>(
-                       *connection, "SELECT name FROM database"_ns),
-                   QM_VOID);
-
-    QM_TRY(OkIf(stmt), QM_VOID);
-
-    nsString databaseName;
-    rv = stmt->GetString(0, databaseName);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return;
-    }
-
-    MOZ_ASSERT(mCommonParams.metadata().name() == databaseName);
-  }
-#endif
+  // Unreadable metadata must not prevent removal of a damaged database.
+  QM_TRY_INSPECT(const auto& nameStmt,
+                 CreateAndExecuteSingleStepStatement<
+                     SingleStepResult::ReturnNullIfNoResult>(
+                     *connection, "SELECT name FROM database"_ns),
+                 NS_OK);
+  QM_TRY(OkIf(nameStmt), NS_OK);
+  QM_TRY_INSPECT(
+      const auto& storedName,
+      MOZ_TO_RESULT_INVOKE_MEMBER_TYPED(nsString, nameStmt, GetString, 0),
+      NS_OK);
+  QM_TRY(OkIf(databaseName == storedName), NS_ERROR_FILE_CORRUPTED);
 
   QM_TRY_INSPECT(const auto& stmt,
                  CreateAndExecuteSingleStepStatement<
                      SingleStepResult::ReturnNullIfNoResult>(
                      *connection, "SELECT version FROM database"_ns),
-                 QM_VOID);
+                 NS_OK);
 
-  QM_TRY(OkIf(stmt), QM_VOID);
+  QM_TRY(OkIf(stmt), NS_OK);
 
   int64_t version;
   rv = stmt->GetInt64(0, &version);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    return;
+    return NS_OK;
   }
 
   mPreviousVersion = uint64_t(version);
+  return NS_OK;
 }
 
 nsresult DeleteDatabaseOp::DatabaseOpen() {
@@ -16792,8 +16863,6 @@ nsresult DeleteDatabaseOp::DoDatabaseWork() {
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
   }
 
-  const nsAString& databaseName = mCommonParams.metadata().name();
-
   QuotaManager* const quotaManager = QuotaManager::Get();
   MOZ_ASSERT(quotaManager);
 
@@ -16806,12 +16875,9 @@ nsresult DeleteDatabaseOp::DoDatabaseWork() {
   QM_TRY_UNWRAP(mDatabaseDirectoryPath, MOZ_TO_RESULT_INVOKE_MEMBER_TYPED(
                                             nsString, directory, GetPath));
 
-  mDatabaseFilenameBase =
-      GetDatabaseFilenameBase(databaseName, mOriginMetadata.mIsPrivate);
-
   QM_TRY_INSPECT(
       const auto& dbFile,
-      CloneFileAndAppend(*directory, mDatabaseFilenameBase + kSQLiteSuffix));
+      CloneFileAndAppend(*directory, *mDatabaseFilenameBase + kSQLiteSuffix));
 
 #ifdef DEBUG
   {
@@ -16829,7 +16895,7 @@ nsresult DeleteDatabaseOp::DoDatabaseWork() {
   if (exists) {
     // Parts of this function may fail but that shouldn't prevent us from
     // deleting the file eventually.
-    LoadPreviousVersion(*dbFile);
+    QM_TRY(MOZ_TO_RESULT(LoadPreviousVersion(*dbFile)));
 
     mState = State::BeginVersionChange;
   } else {
@@ -16985,7 +17051,7 @@ nsresult DeleteDatabaseOp::VersionChangeOp::RunOnIOThread() {
   }
 
   nsresult rv = RemoveDatabaseFilesAndDirectory(
-      *directory, mDeleteDatabaseOp->mDatabaseFilenameBase, quotaManager,
+      *directory, *mDeleteDatabaseOp->mDatabaseFilenameBase, quotaManager,
       persistenceType, mDeleteDatabaseOp->mOriginMetadata,
       mDeleteDatabaseOp->mCommonParams.metadata().name());
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -19177,34 +19243,34 @@ bool ObjectStoreAddOrPutRequestOp::Init(TransactionBase& aTransaction) {
     mUniqueIndexTable.ref().MarkImmutable();
   }
 
-  QM_TRY_UNWRAP(
-      mStoredFileInfos,
-      TransformIntoNewArray(
-          mParams.fileAddInfos(),
-          [](const auto& fileAddInfo) {
-            MOZ_ASSERT(fileAddInfo.type() == StructuredCloneFileBase::eBlob ||
-                       fileAddInfo.type() ==
-                           StructuredCloneFileBase::eMutableFile);
+  if (!mStoredFileInfos.SetCapacity(mParams.fileAddInfos().Length(),
+                                    fallible)) {
+    return false;
+  }
+  for (const auto& fileAddInfo : mParams.fileAddInfos()) {
+    MOZ_ASSERT(fileAddInfo.type() == StructuredCloneFileBase::eBlob ||
+               fileAddInfo.type() == StructuredCloneFileBase::eMutableFile);
 
-            switch (fileAddInfo.type()) {
-              case StructuredCloneFileBase::eBlob: {
-                PBackgroundIDBDatabaseFileParent* file =
-                    fileAddInfo.file().AsParent();
-                MOZ_ASSERT(file);
+    switch (fileAddInfo.type()) {
+      case StructuredCloneFileBase::eBlob: {
+        PBackgroundIDBDatabaseFileParent* file = fileAddInfo.file().AsParent();
+        MOZ_ASSERT(file);
 
-                auto* const fileActor = static_cast<DatabaseFile*>(file);
-                MOZ_ASSERT(fileActor);
+        auto* const fileActor = static_cast<DatabaseFile*>(file);
+        MOZ_ASSERT(fileActor);
 
-                return StoredFileInfo::CreateForBlob(
-                    fileActor->GetFileInfoPtr(), fileActor);
-              }
+        QM_TRY_UNWRAP(auto info,
+                      StoredFileInfo::CreateForBlob(fileActor->GetFileInfoPtr(),
+                                                    fileActor),
+                      false);
+        mStoredFileInfos.AppendElement(std::move(info));
+        break;
+      }
 
-              default:
-                MOZ_CRASH("Should never get here!");
-            }
-          },
-          fallible),
-      false);
+      default:
+        MOZ_CRASH("Should never get here!");
+    }
+  }
 
   if (mDataOverThreshold) {
     auto fileInfo =
@@ -19213,9 +19279,13 @@ bool ObjectStoreAddOrPutRequestOp::Init(TransactionBase& aTransaction) {
       return false;
     }
 
-    mStoredFileInfos.EmplaceBack(StoredFileInfo::CreateForStructuredClone(
-        std::move(fileInfo),
-        MakeRefPtr<SCInputStream>(mParams.cloneInfo().data().data)));
+    QM_TRY_UNWRAP(
+        auto info,
+        StoredFileInfo::CreateForStructuredClone(
+            std::move(fileInfo),
+            MakeRefPtr<SCInputStream>(mParams.cloneInfo().data().data)),
+        false);
+    mStoredFileInfos.EmplaceBack(std::move(info));
   }
 
   return true;
@@ -19426,13 +19496,13 @@ nsresult ObjectStoreAddOrPutRequestOp::DoDatabaseWork(
           QM_TRY(OkIf(journalFile), NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR,
                  IDB_REPORT_INTERNAL_ERR_LAMBDA);
 
-          nsCString fileKeyId;
-          fileKeyId.AppendInt(fileInfo.Id());
-
-          const auto maybeKey =
-              fileManager.IsInPrivateBrowsingMode()
-                  ? fileManager.MutableCipherKeyManagerRef().Get(fileKeyId)
-                  : Nothing();
+          Maybe<CipherKey> maybeKey;
+          if (fileManager.UsesEncryption()) {
+            QM_TRY_UNWRAP(auto key,
+                          fileManager.MutableCipherKeyManagerRef().Ensure(
+                              fileManager.CipherKeyIdForFile(fileInfo.Id())));
+            maybeKey = Some(key);
+          }
 
           QM_TRY(MOZ_TO_RESULT(fileHelper->CreateFileFromStream(
                                    *file, *journalFile, *inputStream,

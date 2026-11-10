@@ -6,15 +6,37 @@
 use std::collections::HashMap;
 
 use url::Url;
+use url_macro::url;
 
+use crate::ads::{AdCallbacks, AdImage, AdSpoc, AdTile, SpocFrequencyCaps, SpocRanking};
+#[cfg(feature = "stateful")]
+use crate::ads::{Ads, PlacementId};
 use crate::mars::{
     ad_request::{AdContentCategory, AdPlacementRequest, IABContentTaxonomy},
-    ad_response::{
-        AdCallbacks, AdImage, AdResponse, AdSpoc, AdTile, SpocFrequencyCaps, SpocRanking,
-    },
+    ad_response::AdResponse,
 };
+use crate::MozAdsTelemetry;
 
 pub const TEST_CONTEXT_ID: &str = "00000000-0000-4000-8000-000000000001";
+
+pub struct NoopMozAdsTelemetry;
+
+impl MozAdsTelemetry for NoopMozAdsTelemetry {
+    fn record_build_cache_error(&self, _label: String, _value: String) {}
+    fn record_client_error(&self, _label: String, _value: String) {}
+    fn record_client_operation_total(&self, _label: String) {}
+    fn record_deserialization_error(&self, _label: String, _value: String) {}
+    fn record_http_cache_outcome(&self, _label: String, _value: String) {}
+}
+
+#[cfg(feature = "stateful")]
+pub fn get_example_happy_image_ads(placement_id: &str) -> (PlacementId, Ads) {
+    let images = get_example_happy_image_response()
+        .data
+        .remove("example_placement_1")
+        .expect("example image response has example_placement_1");
+    (PlacementId::new(placement_id), Ads::Images(images))
+}
 
 pub fn make_happy_placement_requests() -> Vec<AdPlacementRequest> {
     vec![
@@ -44,8 +66,8 @@ pub fn get_example_happy_image_response() -> AdResponse<AdImage> {
             (
                 "example_placement_1".to_string(),
                 vec![AdImage {
-                    url: "https://ads.fakeexample.org/example_ad_1".to_string(),
-                    image_url: "https://ads.fakeexample.org/example_image_1".to_string(),
+                    url: url!("https://ads.fakeexample.org/example_ad_1"),
+                    image_url: url!("https://ads.fakeexample.org/example_image_1"),
                     format: "billboard".to_string(),
                     block_key: "abc123".into(),
                     alt_text: Some("An ad for a puppy".to_string()),
@@ -62,8 +84,8 @@ pub fn get_example_happy_image_response() -> AdResponse<AdImage> {
             (
                 "example_placement_2".to_string(),
                 vec![AdImage {
-                    url: "https://ads.fakeexample.org/example_ad_2".to_string(),
-                    image_url: "https://ads.fakeexample.org/example_image_2".to_string(),
+                    url: url!("https://ads.fakeexample.org/example_ad_2"),
+                    image_url: url!("https://ads.fakeexample.org/example_image_2"),
                     format: "skyscraper".to_string(),
                     block_key: "abc123".into(),
                     alt_text: Some("An ad for a pet duck".to_string()),
@@ -87,8 +109,8 @@ pub fn get_example_happy_spoc_response() -> AdResponse<AdSpoc> {
             (
                 "example_placement_1".to_string(),
                 vec![AdSpoc {
-                    url: "https://ads.fakeexample.org/example_spoc_1".to_string(),
-                    image_url: "https://ads.fakeexample.org/example_spoc_image_1".to_string(),
+                    url: url!("https://ads.fakeexample.org/example_spoc_1"),
+                    image_url: url!("https://ads.fakeexample.org/example_spoc_image_1"),
                     format: "spoc".to_string(),
                     block_key: "spoc123".into(),
                     title: "Example Spoc Title".to_string(),
@@ -122,8 +144,8 @@ pub fn get_example_happy_spoc_response() -> AdResponse<AdSpoc> {
             (
                 "example_placement_2".to_string(),
                 vec![AdSpoc {
-                    url: "https://ads.fakeexample.org/example_spoc_2".to_string(),
-                    image_url: "https://ads.fakeexample.org/example_spoc_image_2".to_string(),
+                    url: url!("https://ads.fakeexample.org/example_spoc_2"),
+                    image_url: url!("https://ads.fakeexample.org/example_spoc_image_2"),
                     format: "spoc".to_string(),
                     block_key: "spoc456".into(),
                     title: "Another Spoc Title".to_string(),
@@ -164,9 +186,9 @@ pub fn get_example_happy_uatile_response() -> AdResponse<AdTile> {
             (
                 "example_placement_1".to_string(),
                 vec![AdTile {
-                    url: "https://ads.fakeexample.org/example_uatile_1".to_string(),
-                    image_url: "https://ads.fakeexample.org/example_uatile_image_1".to_string(),
-                    format: "uatile".to_string(),
+                    url: url!("https://ads.fakeexample.org/example_uatile_1"),
+                    image_url: url!("https://ads.fakeexample.org/example_uatile_image_1"),
+                    format: "tile".to_string(),
                     block_key: "uatile123".into(),
                     name: "Example UA Tile".to_string(),
                     callbacks: AdCallbacks {
@@ -186,9 +208,9 @@ pub fn get_example_happy_uatile_response() -> AdResponse<AdTile> {
             (
                 "example_placement_2".to_string(),
                 vec![AdTile {
-                    url: "https://ads.fakeexample.org/example_uatile_2".to_string(),
-                    image_url: "https://ads.fakeexample.org/example_uatile_image_2".to_string(),
-                    format: "uatile".to_string(),
+                    url: url!("https://ads.fakeexample.org/example_uatile_2"),
+                    image_url: url!("https://ads.fakeexample.org/example_uatile_image_2"),
+                    format: "tile".to_string(),
                     block_key: "uatile456".into(),
                     name: "Another UA Tile".to_string(),
                     callbacks: AdCallbacks {

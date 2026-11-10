@@ -134,10 +134,6 @@ class nsDocShellLoadState final {
 
   void SetTriggeringWindowId(uint64_t aTriggeringWindowId);
 
-  bool TriggeringStorageAccess() const;
-
-  void SetTriggeringStorageAccess(bool aTriggeringStorageAccess);
-
   mozilla::net::ClassificationFlags TriggeringClassificationFlags() const;
   void SetTriggeringClassificationFlags(
       mozilla::net::ClassificationFlags aFlags);
@@ -160,6 +156,15 @@ class nsDocShellLoadState final {
   bool NotifiedBeforeUnloadListeners() const;
 
   void SetNotifiedBeforeUnloadListeners(bool aNotifiedBeforeUnloadListeners);
+
+  // If true, the old document already fired pageswap for this navigation
+  // before the navigation had to start again as a new load. Do not fire it
+  // again.
+  bool PageSwapFired() const { return mPageSwapFired; }
+
+  void SetPageSwapFired(bool aPageSwapFired) {
+    mPageSwapFired = aPageSwapFired;
+  }
 
   bool ForceAllowDataURI() const;
 
@@ -561,11 +566,8 @@ class nsDocShellLoadState final {
   // SandboxFlags of the document that started the load.
   uint32_t mTriggeringSandboxFlags;
 
-  // The window ID and current "has storage access" value of the entity
-  // triggering the load. This allows the identification of self-initiated
-  // same-origin navigations that should propogate unpartitioned storage access.
+  // The window ID of the entity triggering the load.
   uint64_t mTriggeringWindowId;
-  bool mTriggeringStorageAccess;
 
   // The classification flags of the context responsible for causing
   // the load to start.
@@ -603,6 +605,8 @@ class nsDocShellLoadState final {
   // If this attribute is true, any potential unload listeners have been
   // notified if applicable.
   bool mNotifiedBeforeUnloadListeners;
+
+  bool mPageSwapFired = false;
 
   // Principal we're inheriting. If null, this means the principal should be
   // inherited from the current document. If set to NullPrincipal, the channel

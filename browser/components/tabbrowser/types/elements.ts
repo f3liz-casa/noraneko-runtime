@@ -3,64 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // The tab strip's custom elements, as the modules that drive them see them.
-// content/tab.js is loaded as a subscript, so nothing can import its class and
-// the interfaces below stand in for it and for the label element, which has no
-// class at all. Nothing checks an interface against the element it describes: a
-// member that changes shape has to be changed here too.
 //
 // Projects outside browser/components/tabbrowser reach these by naming this
 // file in their tsconfig `include`.
 
-interface MozTabbrowserTab extends XULElement {
-  linkedBrowser: MozBrowser;
-  linkedPanel: string;
-  permanentKey: object;
-  container: any;
-  group: MozTabbrowserTabGroup | null;
-  splitview: MozTabSplitViewWrapper | null;
-  owner: MozTabbrowserTab | null;
-  successor: MozTabbrowserTab | null;
-  predecessors: Set<MozTabbrowserTab>;
-  tabs: MozTabbrowserTab[];
-  pinned: boolean;
-  visible: boolean;
-  selected: boolean;
-  multiselected: boolean;
-  closing: boolean;
-  soundPlaying: boolean;
-  hasTabNote: boolean;
-  initializingTab: boolean;
-  removedByAdoption: boolean;
-  index: number;
-  elementIndex: number;
-  userContextId: number;
-  label: string;
-  canonicalUrl: string;
-  muteReason: any;
-  initialize(): void;
-  setUserContextId(id: number): void;
-  _mouseenter(options?: { withoutPointerEvent?: boolean }): void;
-  _mouseleave(): void;
+type MozTabbrowserTab = import("../content/tab.mjs").MozTabbrowserTab;
 
-  // Set on the element by the modules rather than declared by tab.js.
-  _index: number;
-  _hover: boolean;
-  _fullyOpen: boolean;
-  _fullLabel: string;
-  _labelIsContentTitle: boolean;
-  _labelIsInitialTitle: boolean;
-  _pinnedUnscrollable: boolean;
-  _pendingPermitUnload: boolean;
-  _closedInMultiselection: boolean;
-  _soundPlayingAttrRemovalTimer: number;
-  _closeTimeAnimTimerId: any;
-  _closeTimeNoAnimTimerId: any;
-  _findBar: any;
-  _pendingFindBar: any;
-  _endRemoveArgs: any;
-  _browserParams: any;
-  _originalRegisteredOpenURI: any;
-}
+type MozTabbrowserTabs = import("../content/tabs.mjs").MozTabbrowserTabs;
 
 type MozTabbrowserTabGroup =
   import("../content/tabgroup.mjs").MozTabbrowserTabGroup;
@@ -71,8 +20,11 @@ interface MozTabbrowserTabGroupLabel extends XULElement {
   pinned: false;
   splitview: null;
 
-  container: any;
+  container: MozTabbrowserTabs;
   group: MozTabbrowserTabGroup;
+
+  // Assigned by the tab strip.
+  elementIndex: number;
 }
 
 type MozTabSplitViewWrapper =
@@ -82,3 +34,34 @@ type MozTabSplitViewWrapper =
 // it and sessionstore stores it.
 type TabSplitViewStateData =
   import("../content/tabsplitview.mjs").TabSplitViewStateData;
+
+// toolkit/content/widgets/findbar.js, which tsc cannot see. Declares only the
+// members tabbrowser uses.
+interface MozFindbar extends XULElement {
+  browser: MozBrowser;
+  readonly _findField: HTMLInputElement;
+  readonly FIND_NORMAL: number;
+  findMode: number;
+  close(noAnim?: boolean): void;
+  onFindCommand(): Promise<void>;
+}
+
+// toolkit/content/widgets/toolbarbutton.js, which tsc cannot see. Declares
+// only the members tabbrowser uses.
+interface MozToolbarbutton extends XULElement {
+  readonly menupopup: XULPopupElement | null;
+  readonly icon: Element | null;
+}
+
+// toolkit/content/widgets/arrowscrollbox.js, which tsc cannot see. Declares
+// only the members tabbrowser uses.
+interface MozArrowScrollbox extends XULElement {
+  readonly overflowing: boolean;
+  smoothScroll: boolean;
+  readonly scrollClientRect: DOMRect;
+  readonly _scrollButtonDown: Element;
+  _getScrollableElements(): Element[];
+  _canScrollToElement(element: Element): boolean;
+  ensureElementIsVisible(element: Element, aInstant?: boolean): void;
+  scrollByPixels(aPixels: number, aInstant?: boolean): void;
+}

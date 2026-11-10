@@ -9,7 +9,6 @@ import shutil
 import subprocess
 import sys
 import time
-from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
@@ -48,12 +47,22 @@ Please choose the version of Noraneko you want to build:
 %s
 Your choice: """
 
+<<<<<<< noraneko
 APPLICATIONS = OrderedDict(
     [
         ("Noraneko for Desktop Artifact Mode", "browser_artifact_mode"),
         ("Noraneko for Desktop", "browser"),
     ]
 )
+=======
+APPLICATIONS = {
+    "Firefox for Desktop Artifact Mode": "browser_artifact_mode",
+    "Firefox for Desktop": "browser",
+    "GeckoView/Firefox for Android Artifact Mode": "mobile_android_artifact_mode",
+    "GeckoView/Firefox for Android": "mobile_android",
+    "SpiderMonkey JavaScript engine": "js",
+}
+>>>>>>> upstream
 
 FINISHED = """
 Your system should be ready to build %s!

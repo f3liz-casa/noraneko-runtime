@@ -845,6 +845,33 @@ impl ResourceCache {
                 ResourceUpdate::DeleteSnapshotImage(img) => {
                     self.delete_image_template(img.as_image());
                 }
+                ResourceUpdate::AdoptSnapshotImage(from, to) => {
+                    let from = from.as_image();
+                    let to = to.as_image();
+                    match self.resources.image_templates.get(from).map(|t| t.data.is_snapshot()) {
+                        Some(true) if self.resources.image_templates.get(to).is_some() => {
+                            // Do not replace an image that is in use.
+                            warn!("Adopting a snapshot image to a key that is in use");
+                            debug!("from={:?} to={:?}", from, to);
+                        }
+                        Some(true) => {
+                            let template = self.resources.image_templates.remove(from).unwrap();
+                            self.resources.image_templates.insert(to, template);
+                            if let Some(cached) = self.cached_images.remove(&from) {
+                                self.cached_images.insert(to, cached);
+                            }
+                        }
+                        Some(false) => {
+                            // Only snapshot images can be adopted.
+                            warn!("Adopting an image that is not a snapshot");
+                            debug!("from={:?} to={:?}", from, to);
+                        }
+                        None => {
+                            warn!("Adopting a snapshot image that does not exist");
+                            debug!("from={:?} to={:?}", from, to);
+                        }
+                    }
+                }
                 ResourceUpdate::DeleteFont(font) => {
                     if let Some(shared_key) = self.resources.fonts.font_keys.delete_key(&font) {
                         self.delete_font_template(shared_key);
@@ -1283,6 +1310,11 @@ impl ResourceCache {
 
     fn set_image_visible_rect(&mut self, key: ImageKey, rect: &DeviceIntRect) {
         if let Some(image) = self.resources.image_templates.get_mut(key) {
+            // Only blob images are sized by their visible rect; other templates must
+            // keep the size that their data and stride were validated against.
+            if !image.data.is_blob() {
+                return;
+            }
             image.visible_rect = *rect;
             image.descriptor.size = rect.size();
         }
@@ -1749,7 +1781,6 @@ impl ResourceCache {
     /// specified tile size.
     pub fn create_compositor_surface(
         &mut self,
-        virtual_offset: DeviceIntPoint,
         tile_size: DeviceIntSize,
         is_opaque: bool,
     ) -> NativeSurfaceId {
@@ -1759,7 +1790,6 @@ impl ResourceCache {
             NativeSurfaceOperation {
                 details: NativeSurfaceOperationDetails::CreateSurface {
                     id,
-                    virtual_offset,
                     tile_size,
                     is_opaque,
                 },

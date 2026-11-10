@@ -29,9 +29,15 @@ def _find_moz_phab(tool_dir: Path) -> Optional[Path]:
     "--force",
     "-f",
     action="store_true",
-    help="Force installation even if already installed.",
+    help="Force installation even if already installed. This also recreates the "
+    "tool environment, which is needed after a Python version upgrade.",
 )
-def install_moz_phab(command_context, force=False):
+@CommandArgument(
+    "--no-system-changes",
+    action="store_true",
+    help="Skip Watchman configuration during VCS setup.",
+)
+def install_moz_phab(command_context, force=False, no_system_changes=False):
     import logging
     import subprocess
     import sys
@@ -58,13 +64,16 @@ def install_moz_phab(command_context, force=False):
             'user.email is not configured. Running "./mach vcs-setup" first...',
         )
         mach = Path(command_context.topsrcdir) / "mach"
-        subprocess.check_call([sys.executable, str(mach), "vcs-setup"])
+        args = [sys.executable, str(mach), "vcs-setup"]
+        if no_system_changes:
+            args.append("--no-system-changes")
+        subprocess.check_call(args)
 
     command_context.log(logging.INFO, "run", {}, "Installing moz-phab using uv")
 
     install_cmd = ["uv", "tool", "install", "MozPhab"]
     if force:
-        install_cmd.append("--force")
+        install_cmd.extend(["--force", "--reinstall"])
 
     result = subprocess.run(install_cmd, check=False, text=True)
 

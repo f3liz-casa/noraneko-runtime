@@ -14,6 +14,13 @@ var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
+const lazy = {};
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  isTrailingDotPolicyDuplicate:
+    "resource://gre/modules/PoliciesHelpers.sys.mjs",
+});
+
 XPCOMUtils.defineLazyServiceGetter(
   this,
   "SiteCategory",
@@ -39,6 +46,10 @@ const sitePermissionsL10n = {
     description: "permissions-site-xr-desc",
     disableLabel: "permissions-site-xr-disable-label",
     disableDescription: "permissions-site-xr-disable-desc",
+  },
+  "register-protocol-handler": {
+    window: "permissions-site-app-links-window",
+    description: "permissions-site-app-links-desc",
   },
   camera: {
     window: "permissions-site-camera-window2",
@@ -221,6 +232,9 @@ var gSitePermissionsManager = {
     document.l10n.setAttributes(permissionsText, l10n.description);
     if (l10n.disableLabel) {
       document.l10n.setAttributes(this._checkbox, l10n.disableLabel);
+    } else {
+      this._checkbox.hidden = true;
+      this._permissionsDisableDescription.hidden = true;
     }
     if (l10n.disableDescription) {
       document.l10n.setAttributes(
@@ -266,6 +280,15 @@ var gSitePermissionsManager = {
 
   observe(subject, topic, data) {
     if (topic !== "perm-changed") {
+      return;
+    }
+
+    if (data === "cleared") {
+      this._permissionGroups.clear();
+      this._permissionsToChange.clear();
+      this._permissionsToDelete.clear();
+      this._loadPermissions();
+      this.buildPermissionsList();
       return;
     }
 
@@ -440,6 +463,8 @@ var gSitePermissionsManager = {
       type !== this._type ||
       !PERMISSION_STATES.includes(perm.capability) ||
       !SitePermissions.isSupportedPrincipal(perm.principal) ||
+      (perm.expireType === Services.perms.EXPIRE_POLICY &&
+        lazy.isTrailingDotPolicyDuplicate(perm)) ||
       // Skip private browsing session permissions
       (perm.principal.privateBrowsingId !==
         Services.scriptSecurityManager.DEFAULT_PRIVATE_BROWSING_ID &&

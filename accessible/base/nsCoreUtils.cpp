@@ -23,6 +23,7 @@
 #include "mozilla/dom/HTMLOptionElement.h"
 #include "mozilla/dom/HTMLSelectElement.h"
 #include "mozilla/dom/MouseEventBinding.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/TouchEvent.h"
 #include "nsAccUtils.h"
@@ -32,11 +33,12 @@
 #include "nsIAccessibleTypes.h"
 #include "nsIContentInlines.h"
 #include "nsIDocShell.h"
+#include "nsIFrame.h"
 #include "nsIObserverService.h"
 #include "nsISelectionController.h"
 #include "nsISimpleEnumerator.h"
 #include "nsPresContext.h"
-#include "nsRange.h"
+#include "nsStyleStruct.h"
 #include "nsTreeColumns.h"
 #include "nsXULElement.h"
 
@@ -227,7 +229,8 @@ bool nsCoreUtils::IsAncestorOf(nsINode* aPossibleAncestorNode,
   return false;
 }
 
-nsresult nsCoreUtils::ScrollSubstringTo(nsIFrame* aFrame, nsRange* aRange,
+nsresult nsCoreUtils::ScrollSubstringTo(nsIFrame* aFrame,
+                                        mozilla::dom::Range* aRange,
                                         uint32_t aScrollType) {
   AxisScrollParams vertical, horizontal;
   ConvertScrollTypeToPercents(aScrollType, &vertical, &horizontal);
@@ -235,7 +238,8 @@ nsresult nsCoreUtils::ScrollSubstringTo(nsIFrame* aFrame, nsRange* aRange,
   return ScrollSubstringTo(aFrame, aRange, vertical, horizontal);
 }
 
-nsresult nsCoreUtils::ScrollSubstringTo(nsIFrame* aFrame, nsRange* aRange,
+nsresult nsCoreUtils::ScrollSubstringTo(nsIFrame* aFrame,
+                                        mozilla::dom::Range* aRange,
                                         AxisScrollParams aVertical,
                                         AxisScrollParams aHorizontal) {
   if (!aFrame || !aRange) {
@@ -587,7 +591,8 @@ bool nsCoreUtils::IsDisplayContents(nsIContent* aContent) {
   return element && element->IsDisplayContents();
 }
 
-bool nsCoreUtils::CanCreateAccessibleWithoutFrame(nsIContent* aContent) {
+bool nsCoreUtils::CanCreateAccessibleWithoutFrame(nsIContent* aContent,
+                                                  bool* aIsSubtreeHidden) {
   auto* element = Element::FromNodeOrNull(aContent);
   if (!element) {
     return false;
@@ -615,6 +620,11 @@ bool nsCoreUtils::CanCreateAccessibleWithoutFrame(nsIContent* aContent) {
   // Note that we need to check primary frame explicitly for the <select> case
   // above.
   if (!element->GetPrimaryFrame() && !element->IsDisplayContents()) {
+    // Nothing in aContent's subtree can ever render in this case, regardless of
+    // any ancestor.
+    if (aIsSubtreeHidden) {
+      *aIsSubtreeHidden = true;
+    }
     return false;
   }
 
@@ -628,8 +638,18 @@ bool nsCoreUtils::CanCreateAccessibleWithoutFrame(nsIContent* aContent) {
     if (nsIFrame* f = c->GetPrimaryFrame()) {
       if (f->HidesContent(nsIFrame::IncludeContentVisibility::Hidden) ||
           f->IsHiddenByContentVisibilityOnAnyAncestor(
-              nsIFrame::IncludeContentVisibility::Hidden) ||
-          !f->StyleVisibility()->IsVisible() || f->StyleUI()->IsInert()) {
+              nsIFrame::IncludeContentVisibility::Hidden)) {
+        if (aIsSubtreeHidden) {
+          // A descendant can't override content-visibility: hidden, so there's
+          // no point walking into the subtree.
+          *aIsSubtreeHidden = true;
+        }
+        return false;
+      }
+      if (!f->StyleVisibility()->IsVisible() || f->StyleUI()->IsInert()) {
+        // Unlike content-visibility, a descendant might still be exposed
+        // despite this (e.g. an open modal <dialog> which is not inert), so
+        // leave aIsSubtreeHidden alone and let the caller keep walking.
         return false;
       }
       break;
@@ -697,6 +717,70 @@ bool nsCoreUtils::IsTrimmedWhitespaceBeforeHardLineBreak(nsIFrame* aFrame) {
   return text.mString.IsEmpty();
 }
 
+Maybe<nsString> nsCoreUtils::GetCssAltContent(nsIContent* aContent) {
+  if (!aContent) {
+    return Nothing();
+  }
+
+  nsIFrame* frame = aContent->GetPrimaryFrame();
+  if (!frame) {
+    return Nothing();
+  }
+  Element* pseudoElement = nullptr;
+  // Check if this is for a pseudo-element.
+  if (IsPseudoElement(aContent)) {
+    // If there are children, we want to expose the alt text on those instead,
+    // so ignore it for the pseudo-element itself. The exception is ::marker,
+    // since a list bullet is a single Accessible for the ::marker element and
+    // its children are never exposed.
+    if (aContent->HasChildren() &&
+        !aContent->IsGeneratedContentContainerForMarker()) {
+      return Nothing();
+    }
+    // No children only happens when there is alt text with an empty content
+    // string; e.g. content: "" / "alt"
+    // In this case, we need to expose the alt text on the pseudo-element
+    // itself.
+    pseudoElement = aContent->AsElement();
+  } else if (aContent->IsInNativeAnonymousSubtree()) {
+    if (!frame->IsReplaced()) {
+      return Nothing();
+    }
+    Element* parent = aContent->GetParentElement();
+    if (parent && IsPseudoElement(parent)) {
+      // aContent is a child of a pseudo-element.
+      pseudoElement = parent;
+      // We need the frame from the pseudo-element to get the content style.
+      frame = parent->GetPrimaryFrame();
+      if (!frame) {
+        return Nothing();
+      }
+    }
+  }
+  if (pseudoElement) {
+    if (!pseudoElement->GetParentElement()) {
+      return Nothing();
+    }
+  } else if (!aContent->IsElement() || !frame->IsReplaced()) {
+    // CSS alt content doesn't apply because this is neither a pseudo-element
+    // nor an element which has its content replaced using CSS content.
+    return Nothing();
+  }
+  Span<const StyleContentItem> items = frame->StyleContent()->AltContentItems();
+  if (items.IsEmpty()) {
+    return Nothing();
+  }
+
+  nsString text;
+  // There can be multiple alt text items.
+  for (const auto& item : items) {
+    if (item.IsString()) {
+      AppendUTF8toUTF16(item.AsString().AsString(), text);
+    }
+  }
+  return Some(std::move(text));
+}
+
 const nsIFrame* nsCoreUtils::GetAnchorForPositionedFrame(
     const PresShell* aPresShell, const nsIFrame* aPositionedFrame) {
   if (!aPositionedFrame ||
@@ -726,9 +810,10 @@ const nsIFrame* nsCoreUtils::GetAnchorForPositionedFrame(
     anchorName = anchorKey;
   }
 
-  return anchorName.mName
-             ? aPresShell->GetAnchorPosAnchor(anchorName, aPositionedFrame)
-             : nullptr;
+  return anchorName.mName ? aPresShell->GetAnchorPosAnchor(
+                                anchorName, aPositionedFrame,
+                                referencedAnchors->mFrameTreeDepth)
+                          : nullptr;
 }
 
 nsIFrame* nsCoreUtils::GetPositionedFrameForAnchor(
@@ -757,7 +842,9 @@ nsIFrame* nsCoreUtils::GetPositionedFrameForAnchor(
         const ScopedNameRef nameRef(name.AsAtom(), treeScope);
         const auto* data = referencedAnchors->Lookup(nameRef);
         if (data && *data && data->ref().mOffsetData) {
-          if (aAnchorFrame == aPresShell->GetAnchorPosAnchor(nameRef, frame)) {
+          if (aAnchorFrame ==
+              aPresShell->GetAnchorPosAnchor(
+                  nameRef, frame, referencedAnchors->mFrameTreeDepth)) {
             if (positionedFrame) {
               // Multiple positioned frames reference this anchor.
               return nullptr;

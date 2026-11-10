@@ -281,16 +281,16 @@ static void PremultiplyChunkFallback(const uint8_t*& aSrc, uint8_t*& aDst,
     }
     // Approximate the multiply by alpha and divide by 255 which is
     // essentially:
-    // c = c*a + 255; c = (c + (c >> 8)) >> 8;
+    // c = c*a + 128; c = (c + (c >> 8)) >> 8;
     // However, we omit the final >> 8 to fold it with the final shift into
     // place depending on desired output format.
-    rb = rb * a + 0x00FF00FF;
+    rb = rb * a + 0x00800080;
     rb = (rb + ((rb >> 8) & 0x00FF00FF)) & 0xFF00FF00;
 
     // Use same approximation as above, but G is shifted 8 bits left.
     // Alpha is left out and handled separately.
     uint32_t g = color & (0xFF00 << aSrcRGBShift);
-    g = g * a + (0xFF00 << aSrcRGBShift);
+    g = g * a + (0x8000 << aSrcRGBShift);
     g = (g + (g >> 8)) & (0xFF0000 << aSrcRGBShift);
 
     // The above math leaves RGB shifted left by 8 bits.
@@ -361,10 +361,9 @@ static void PremultiplyFallback(const uint8_t* aSrc, int32_t aSrcGap,
 // If rows are tightly packed, and the size of the total area will fit within
 // the precision range of a single row, then process all the data as if it was
 // a single row.
-static inline IntSize CollapseSize(const IntSize& aSize, int32_t aSrcStride,
-                                   int32_t aDstStride) {
-  if (aSrcStride == aDstStride && (aSrcStride & 3) == 0 &&
-      aSrcStride / 4 == aSize.width) {
+static inline IntSize CollapseSize(const IntSize& aSize, int32_t aSrcStrideGap,
+                                   int32_t aDstStrideGap) {
+  if (!aSrcStrideGap && !aDstStrideGap) {
     CheckedInt32 area = CheckedInt32(aSize.width) * CheckedInt32(aSize.height);
     if (area.isValid()) {
       return IntSize(area.value(), 1);
@@ -390,7 +389,6 @@ bool PremultiplyData(const uint8_t* aSrc, int32_t aSrcStride,
   if (aSize.IsEmpty()) {
     return true;
   }
-  IntSize size = CollapseSize(aSize, aSrcStride, aDstStride);
   // Find gap from end of row to the start of the next row.
   int32_t srcGap = GetStrideGap(aSize.width, aSrcFormat, aSrcStride);
   int32_t dstGap = GetStrideGap(aSize.width, aDstFormat, aDstStride);
@@ -398,6 +396,7 @@ bool PremultiplyData(const uint8_t* aSrc, int32_t aSrcStride,
   if (srcGap < 0 || dstGap < 0) {
     return false;
   }
+  IntSize size = CollapseSize(aSize, srcGap, dstGap);
 
 #define FORMAT_CASE_CALL(...) __VA_ARGS__(aSrc, srcGap, aDst, dstGap, size)
 
@@ -537,14 +536,16 @@ SwizzleRowFn PremultiplyRow(SurfaceFormat aSrcFormat, SurfaceFormat aDstFormat,
 // This generates a table of 8.16 fixed-point reciprocals representing 1/alpha,
 // identical to the scalar fallback's sUnpremultiplyTable (0xFF00FF / alpha).
 // The full reciprocal can need up to 24 bits, so it does not fit in a single
-// 16-bit lane; UnpremultiplyVector_SSE2 splits each entry into a high and low
-// 16-bit half at runtime and computes an exact (channel * reciprocal) >> 16
-// with two 16-bit multiplies. A previous implementation squeezed the reciprocal
-// into 16 bits by scaling it down (by 8 or 0x100), which lost precision and
-// rounded down by 1 LSB on a subset of anti-aliased / alpha pixels, making
-// getImageData() differ by CPU architecture (x86 SSE2 vs scalar/NEON). Using
-// the full reciprocal makes the SSE2 output bit-identical to the scalar/NEON
-// paths.
+// 16-bit lane; UnpremultiplyReverse_SIMD splits each entry into a high and low
+// 16-bit half at runtime and computes (channel * reciprocal + 0x8000) >> 16
+// with three 16-bit multiplies. A previous implementation squeezed the
+// reciprocal into 16 bits by scaling it down (by 8 or 0x100), which lost
+// precision and rounded down by 1 LSB on a subset of anti-aliased / alpha
+// pixels, making getImageData() differ by CPU architecture (x86 SSE2 vs
+// scalar/NEON). Using the full reciprocal makes the SSE2 output bit-identical
+// to the scalar/NEON paths. Rounding the product gives (channel * 255 + alpha /
+// 2) / alpha for every valid premultiplied channel (0 <= channel <= alpha),
+// matching PNG export.
 #define UNPREMULQ(x) (0xFF00FFU / (x))
 #define UNPREMULQ_2(x) UNPREMULQ(x), UNPREMULQ((x) + 1)
 #define UNPREMULQ_4(x) UNPREMULQ_2(x), UNPREMULQ_2((x) + 2)
@@ -583,12 +584,12 @@ static void UnpremultiplyChunkFallback(const uint8_t*& aSrc, uint8_t*& aDst,
     uint8_t a = aSrc[aSrcAIndex];
 
     // Access the 8.16 reciprocal from the table based on alpha. Multiply by
-    // the reciprocal and shift off the fraction bits to approximate the
+    // the reciprocal and round off the fraction bits to approximate the
     // division by alpha.
     uint32_t q = sUnpremultiplyTable[a];
-    aDst[aDstRGBIndex + 0] = (r * q) >> 16;
-    aDst[aDstRGBIndex + 1] = (g * q) >> 16;
-    aDst[aDstRGBIndex + 2] = (b * q) >> 16;
+    aDst[aDstRGBIndex + 0] = (r * q + 0x8000) >> 16;
+    aDst[aDstRGBIndex + 1] = (g * q + 0x8000) >> 16;
+    aDst[aDstRGBIndex + 2] = (b * q + 0x8000) >> 16;
     aDst[aDstAIndex] = a;
 
     aSrc += 4;
@@ -649,7 +650,6 @@ bool UnpremultiplyData(const uint8_t* aSrc, int32_t aSrcStride,
   if (aSize.IsEmpty()) {
     return true;
   }
-  IntSize size = CollapseSize(aSize, aSrcStride, aDstStride);
   // Find gap from end of row to the start of the next row.
   int32_t srcGap = GetStrideGap(aSize.width, aSrcFormat, aSrcStride);
   int32_t dstGap = GetStrideGap(aSize.width, aDstFormat, aDstStride);
@@ -657,6 +657,7 @@ bool UnpremultiplyData(const uint8_t* aSrc, int32_t aSrcStride,
   if (srcGap < 0 || dstGap < 0) {
     return false;
   }
+  IntSize size = CollapseSize(aSize, srcGap, dstGap);
 
 #define FORMAT_CASE_CALL(...) __VA_ARGS__(aSrc, srcGap, aDst, dstGap, size)
 
@@ -1265,7 +1266,6 @@ bool SwizzleData(const uint8_t* aSrc, int32_t aSrcStride,
   if (aSize.IsEmpty()) {
     return true;
   }
-  IntSize size = CollapseSize(aSize, aSrcStride, aDstStride);
   // Find gap from end of row to the start of the next row.
   int32_t srcGap = GetStrideGap(aSize.width, aSrcFormat, aSrcStride);
   int32_t dstGap = GetStrideGap(aSize.width, aDstFormat, aDstStride);
@@ -1273,6 +1273,7 @@ bool SwizzleData(const uint8_t* aSrc, int32_t aSrcStride,
   if (srcGap < 0 || dstGap < 0) {
     return false;
   }
+  IntSize size = CollapseSize(aSize, srcGap, dstGap);
 
 #define FORMAT_CASE_CALL(...) __VA_ARGS__(aSrc, srcGap, aDst, dstGap, size)
 

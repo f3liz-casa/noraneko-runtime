@@ -5,6 +5,7 @@
 #include "gfxFont.h"
 
 #include "COLRFonts.h"
+#include "FontPaletteCache.h"
 #include "GreekCasing.h"
 #include "TextDrawTarget.h"
 #include "ThebesRLBox.h"
@@ -475,8 +476,8 @@ static void LookupAlternateValues(const gfxFontFeatureValueSet& aFeatureLookup,
       if (nn == 0 || nn > MAX_CVXX_VALUE) {
         continue;
       }
-      feature.mValue = values.Length() > 1 ? values[1] : 1;
-      feature.mTag = HB_TAG('c', 'v', ('0' + nn / 10), ('0' + nn % 10));
+      feature.value = values.Length() > 1 ? values[1] : 1;
+      feature.tag = HB_TAG('c', 'v', ('0' + nn / 10), ('0' + nn % 10));
       aFontFeatures.AppendElement(feature);
     }
     return;
@@ -488,12 +489,12 @@ static void LookupAlternateValues(const gfxFontFeatureValueSet& aFeatureLookup,
           aFamily, NS_FONT_VARIANT_ALTERNATES_STYLESET, ident.AsAtom());
 
       // styleset(1 2 7) ==> 'ss01' = 1, 'ss02' = 1, 'ss07' = 1
-      feature.mValue = 1;
+      feature.value = 1;
       for (uint32_t nn : values) {
         if (nn == 0 || nn > MAX_SSXX_VALUE) {
           continue;
         }
-        feature.mTag = HB_TAG('s', 's', ('0' + nn / 10), ('0' + nn % 10));
+        feature.tag = HB_TAG('s', 's', ('0' + nn / 10), ('0' + nn % 10));
         aFontFeatures.AppendElement(feature);
       }
     }
@@ -532,21 +533,21 @@ static void LookupAlternateValues(const gfxFontFeatureValueSet& aFeatureLookup,
   MOZ_ASSERT(values.Length() == 1,
              "too many values for font-specific font-variant-alternates");
 
-  feature.mValue = values[0];
+  feature.value = values[0];
   switch (aAlternates.tag) {
     case Tag::Swash:  // swsh, cswh
-      feature.mTag = HB_TAG('s', 'w', 's', 'h');
+      feature.tag = HB_TAG('s', 'w', 's', 'h');
       aFontFeatures.AppendElement(feature);
-      feature.mTag = HB_TAG('c', 's', 'w', 'h');
+      feature.tag = HB_TAG('c', 's', 'w', 'h');
       break;
     case Tag::Stylistic:  // salt
-      feature.mTag = HB_TAG('s', 'a', 'l', 't');
+      feature.tag = HB_TAG('s', 'a', 'l', 't');
       break;
     case Tag::Ornaments:  // ornm
-      feature.mTag = HB_TAG('o', 'r', 'n', 'm');
+      feature.tag = HB_TAG('o', 'r', 'n', 'm');
       break;
     case Tag::Annotation:  // nalt
-      feature.mTag = HB_TAG('n', 'a', 'l', 't');
+      feature.tag = HB_TAG('n', 'a', 'l', 't');
       break;
     default:
       MOZ_ASSERT_UNREACHABLE("how?");
@@ -566,8 +567,8 @@ void gfxFontShaper::MergeFontFeatures(
   // Bail immediately if nothing to do, which is the common case.
   if (styleRuleFeatures.IsEmpty() && aFontFeatures.IsEmpty() &&
       !aDisableLigatures &&
-      aStyle->variantCaps == NS_FONT_VARIANT_CAPS_NORMAL &&
-      aStyle->variantSubSuper == NS_FONT_VARIANT_POSITION_NORMAL &&
+      aStyle->variantCaps == StyleFontVariantCaps::Normal &&
+      aStyle->variantSubSuper == StyleFontVariantPosition::Normal &&
       aStyle->variantAlternates.IsEmpty()) {
     return;
   }
@@ -576,10 +577,10 @@ void gfxFontShaper::MergeFontFeatures(
 
   struct FeatureTagCmp {
     bool Equals(const gfxFontFeature& a, const gfxFontFeature& b) const {
-      return a.mTag == b.mTag;
+      return a.tag == b.tag;
     }
     bool LessThan(const gfxFontFeature& a, const gfxFontFeature& b) const {
-      return a.mTag < b.mTag;
+      return a.tag < b.tag;
     }
   } cmp;
 
@@ -588,7 +589,7 @@ void gfxFontShaper::MergeFontFeatures(
     if (index == nsTArray<gfxFontFeature>::NoIndex) {
       mergedFeatures.InsertElementSorted(aFeature, cmp);
     } else {
-      mergedFeatures[index].mValue = aFeature.mValue;
+      mergedFeatures[index].value = aFeature.value;
     }
   };
 
@@ -599,38 +600,37 @@ void gfxFontShaper::MergeFontFeatures(
 
   // font-variant-caps - handled here due to the need for fallback handling
   // petite caps cases can fallback to appropriate smallcaps
-  uint32_t variantCaps = aStyle->variantCaps;
-  switch (variantCaps) {
-    case NS_FONT_VARIANT_CAPS_NORMAL:
+  switch (aStyle->variantCaps) {
+    case StyleFontVariantCaps::Normal:
       break;
 
-    case NS_FONT_VARIANT_CAPS_ALL_SMALL_CAPS:
+    case StyleFontVariantCaps::AllSmallCaps:
       addOrReplace(gfxFontFeature{HB_TAG('c', '2', 's', 'c'), 1});
       // fall through to the small-caps case
       [[fallthrough]];
 
-    case NS_FONT_VARIANT_CAPS_SMALL_CAPS:
+    case StyleFontVariantCaps::SmallCaps:
       addOrReplace(gfxFontFeature{HB_TAG('s', 'm', 'c', 'p'), 1});
       break;
 
-    case NS_FONT_VARIANT_CAPS_ALL_PETITE_CAPS:
+    case StyleFontVariantCaps::AllPetiteCaps:
       addOrReplace(gfxFontFeature{aAddSmallCaps ? HB_TAG('c', '2', 's', 'c')
                                                 : HB_TAG('c', '2', 'p', 'c'),
                                   1});
       // fall through to the petite-caps case
       [[fallthrough]];
 
-    case NS_FONT_VARIANT_CAPS_PETITE_CAPS:
+    case StyleFontVariantCaps::PetiteCaps:
       addOrReplace(gfxFontFeature{aAddSmallCaps ? HB_TAG('s', 'm', 'c', 'p')
                                                 : HB_TAG('p', 'c', 'a', 'p'),
                                   1});
       break;
 
-    case NS_FONT_VARIANT_CAPS_TITLING_CAPS:
+    case StyleFontVariantCaps::TitlingCaps:
       addOrReplace(gfxFontFeature{HB_TAG('t', 'i', 't', 'l'), 1});
       break;
 
-    case NS_FONT_VARIANT_CAPS_UNICASE:
+    case StyleFontVariantCaps::Unicase:
       addOrReplace(gfxFontFeature{HB_TAG('u', 'n', 'i', 'c'), 1});
       break;
 
@@ -641,12 +641,12 @@ void gfxFontShaper::MergeFontFeatures(
 
   // font-variant-position - handled here due to the need for fallback
   switch (aStyle->variantSubSuper) {
-    case NS_FONT_VARIANT_POSITION_NORMAL:
+    case StyleFontVariantPosition::Normal:
       break;
-    case NS_FONT_VARIANT_POSITION_SUPER:
+    case StyleFontVariantPosition::Super:
       addOrReplace(gfxFontFeature{HB_TAG('s', 'u', 'p', 's'), 1});
       break;
-    case NS_FONT_VARIANT_POSITION_SUB:
+    case StyleFontVariantPosition::Sub:
       addOrReplace(gfxFontFeature{HB_TAG('s', 'u', 'b', 's'), 1});
       break;
     default:
@@ -665,7 +665,7 @@ void gfxFontShaper::MergeFontFeatures(
     }
 
     for (const gfxFontFeature& feature : featureList) {
-      addOrReplace(gfxFontFeature{feature.mTag, feature.mValue});
+      addOrReplace(gfxFontFeature{feature.tag, feature.value});
     }
   }
 
@@ -690,8 +690,8 @@ void gfxFontShaper::MergeFontFeatures(
       // features may be overridden by aDisableLigatures, while low-level
       // features specified directly as tags will come last and therefore
       // take precedence over everything else.
-      if (feature.mTag) {
-        addOrReplace(gfxFontFeature{feature.mTag, feature.mValue});
+      if (feature.tag) {
+        addOrReplace(gfxFontFeature{feature.tag, feature.value});
       } else if (aDisableLigatures) {
         // Handle ligature-disabling setting at the boundary between high-
         // and low-level features.
@@ -701,7 +701,7 @@ void gfxFontShaper::MergeFontFeatures(
   }
 
   for (const auto& f : mergedFeatures) {
-    aHandleFeature(f.mTag, f.mValue, aHandleFeatureData);
+    aHandleFeature(f.tag, f.value, aHandleFeatureData);
   }
 }
 
@@ -1011,7 +1011,7 @@ gfxFont::gfxFont(const RefPtr<UnscaledFont>& aUnscaledFont,
       mAdjustedSize(-1.0),       // negative to indicate "not yet initialized"
       mFUnitsConvFactor(-1.0f),  // negative to indicate "not yet initialized"
       mAntialiasOption(anAAOption),
-      mIsValid(true),
+      mIsValid(false),  // subclass sets true if initialization is successful
       mApplySyntheticBold(false),
       mKerningEnabled(false),
       mMathInitialized(false) {
@@ -1605,7 +1605,8 @@ bool gfxFont::SupportsFeature(Script aScript, uint32_t aFeatureTag) {
   return GetFontEntry()->SupportsOpenTypeFeature(aScript, aFeatureTag);
 }
 
-bool gfxFont::SupportsVariantCaps(Script aScript, uint32_t aVariantCaps,
+bool gfxFont::SupportsVariantCaps(Script aScript,
+                                  StyleFontVariantCaps aVariantCaps,
                                   bool& aFallbackToSmallCaps,
                                   bool& aSyntheticLowerToSmallCaps,
                                   bool& aSyntheticUpperToSmallCaps) {
@@ -1614,13 +1615,13 @@ bool gfxFont::SupportsVariantCaps(Script aScript, uint32_t aVariantCaps,
   aSyntheticLowerToSmallCaps = false;
   aSyntheticUpperToSmallCaps = false;
   switch (aVariantCaps) {
-    case NS_FONT_VARIANT_CAPS_SMALL_CAPS:
+    case StyleFontVariantCaps::SmallCaps:
       ok = SupportsFeature(aScript, HB_TAG('s', 'm', 'c', 'p'));
       if (!ok) {
         aSyntheticLowerToSmallCaps = true;
       }
       break;
-    case NS_FONT_VARIANT_CAPS_ALL_SMALL_CAPS:
+    case StyleFontVariantCaps::AllSmallCaps:
       ok = SupportsFeature(aScript, HB_TAG('s', 'm', 'c', 'p')) &&
            SupportsFeature(aScript, HB_TAG('c', '2', 's', 'c'));
       if (!ok) {
@@ -1628,7 +1629,7 @@ bool gfxFont::SupportsVariantCaps(Script aScript, uint32_t aVariantCaps,
         aSyntheticUpperToSmallCaps = true;
       }
       break;
-    case NS_FONT_VARIANT_CAPS_PETITE_CAPS:
+    case StyleFontVariantCaps::PetiteCaps:
       ok = SupportsFeature(aScript, HB_TAG('p', 'c', 'a', 'p'));
       if (!ok) {
         ok = SupportsFeature(aScript, HB_TAG('s', 'm', 'c', 'p'));
@@ -1638,7 +1639,7 @@ bool gfxFont::SupportsVariantCaps(Script aScript, uint32_t aVariantCaps,
         aSyntheticLowerToSmallCaps = true;
       }
       break;
-    case NS_FONT_VARIANT_CAPS_ALL_PETITE_CAPS:
+    case StyleFontVariantCaps::AllPetiteCaps:
       ok = SupportsFeature(aScript, HB_TAG('p', 'c', 'a', 'p')) &&
            SupportsFeature(aScript, HB_TAG('c', '2', 'p', 'c'));
       if (!ok) {
@@ -1665,7 +1666,7 @@ bool gfxFont::SupportsVariantCaps(Script aScript, uint32_t aVariantCaps,
   return ok;
 }
 
-bool gfxFont::SupportsSubSuperscript(uint32_t aSubSuperscript,
+bool gfxFont::SupportsSubSuperscript(StyleFontVariantPosition aSubSuperscript,
                                      const uint8_t* aString, uint32_t aLength,
                                      Script aRunScript) {
   NS_ConvertASCIItoUTF16 unicodeString(reinterpret_cast<const char*>(aString),
@@ -1674,14 +1675,14 @@ bool gfxFont::SupportsSubSuperscript(uint32_t aSubSuperscript,
                                 aRunScript);
 }
 
-bool gfxFont::SupportsSubSuperscript(uint32_t aSubSuperscript,
+bool gfxFont::SupportsSubSuperscript(StyleFontVariantPosition aSubSuperscript,
                                      const char16_t* aString, uint32_t aLength,
                                      Script aRunScript) {
-  NS_ASSERTION(aSubSuperscript == NS_FONT_VARIANT_POSITION_SUPER ||
-                   aSubSuperscript == NS_FONT_VARIANT_POSITION_SUB,
+  NS_ASSERTION(aSubSuperscript == StyleFontVariantPosition::Super ||
+                   aSubSuperscript == StyleFontVariantPosition::Sub,
                "unknown value of font-variant-position");
 
-  uint32_t feature = aSubSuperscript == NS_FONT_VARIANT_POSITION_SUPER
+  uint32_t feature = aSubSuperscript == StyleFontVariantPosition::Super
                          ? HB_TAG('s', 'u', 'p', 's')
                          : HB_TAG('s', 'u', 'b', 's');
 
@@ -1767,9 +1768,9 @@ bool gfxFont::HasFeatureSet(uint32_t aFeature, bool& aFeatureOn) {
   count = fontFeatures.Length();
   for (i = 0; i < count; i++) {
     const gfxFontFeature& feature = fontFeatures.ElementAt(i);
-    if (feature.mTag == aFeature) {
+    if (feature.tag == aFeature) {
       featureSet = true;
-      aFeatureOn = (feature.mValue != 0);
+      aFeatureOn = (feature.value != 0);
     }
   }
 
@@ -1778,9 +1779,9 @@ bool gfxFont::HasFeatureSet(uint32_t aFeature, bool& aFeatureOn) {
   count = styleFeatures.Length();
   for (i = 0; i < count; i++) {
     const gfxFontFeature& feature = styleFeatures.ElementAt(i);
-    if (feature.mTag == aFeature) {
+    if (feature.tag == aFeature) {
       featureSet = true;
-      aFeatureOn = (feature.mValue != 0);
+      aFeatureOn = (feature.value != 0);
     }
   }
 
@@ -1789,8 +1790,7 @@ bool gfxFont::HasFeatureSet(uint32_t aFeature, bool& aFeatureOn) {
 
 already_AddRefed<mozilla::gfx::ScaledFont> gfxFont::GetScaledFont(
     mozilla::gfx::DrawTarget* aDrawTarget) {
-  mozilla::gfx::PaletteCache dummy;
-  TextRunDrawParams params(dummy);
+  TextRunDrawParams params(nullptr);
   return GetScaledFont(params);
 }
 
@@ -1841,7 +1841,10 @@ class GlyphBufferAzure {
         mBuffer(*mAutoBuffer.addr()),
         mBufSize(AUTO_BUFFER_SIZE),
         mCapacity(0),
-        mNumGlyphs(0) {}
+        mNumGlyphs(0),
+        mNextClusterStart(0),
+        mNextClusterEnd(0),
+        mBufferedClustersEnd(0) {}
 
   ~GlyphBufferAzure() {
     if (mNumGlyphs > 0) {
@@ -1893,12 +1896,25 @@ class GlyphBufferAzure {
     Glyph* glyph = mBuffer + mNumGlyphs++;
     glyph->mIndex = aGlyphID;
     glyph->mPosition = aPt;
+    if (mRunParams.sourceText) {
+      mBufferedClusters.AppendElement(mNextClusterStart);
+      mBufferedClustersEnd = mNextClusterEnd;
+    }
+  }
+
+  // Record that the glyphs about to be output via OutputGlyph came from the
+  // source text between byte offsets aStart and aEnd in
+  // mRunParams.sourceText. Only meaningful if mRunParams.sourceText is set.
+  void SetNextCluster(uint32_t aStart, uint32_t aEnd) {
+    mNextClusterStart = aStart;
+    mNextClusterEnd = aEnd;
   }
 
   void Flush() {
     if (mNumGlyphs > 0) {
       FlushGlyphs();
       mNumGlyphs = 0;
+      mBufferedClusters.ClearAndRetainStorage();
     }
   }
 
@@ -1916,6 +1932,19 @@ class GlyphBufferAzure {
     gfx::GlyphBuffer buf;
     buf.mGlyphs = mBuffer;
     buf.mNumGlyphs = mNumGlyphs;
+    if (mRunParams.sourceText) {
+      // Pass only the source text for the buffered glyphs, rebasing their
+      // cluster offsets accordingly, since we might be flushing part way
+      // through the run.
+      MOZ_ASSERT(mBufferedClusters.Length() == mNumGlyphs);
+      uint32_t start = mBufferedClusters[0];
+      for (uint32_t& cluster : mBufferedClusters) {
+        cluster -= start;
+      }
+      buf.mText = mRunParams.sourceText->BeginReading() + start;
+      buf.mTextLength = mBufferedClustersEnd - start;
+      buf.mClusters = mBufferedClusters.Elements();
+    }
 
     const gfxContext::AzureState& state = mRunParams.context->CurrentState();
 
@@ -2043,6 +2072,19 @@ class GlyphBufferAzure {
   uint32_t mCapacity;   // amount of buffer size reserved
   uint32_t mNumGlyphs;  // number of glyphs actually present in the buffer
 
+  // One entry per glyph in mBuffer, specifying the byte offset in
+  // mRunParams.sourceText where that glyph's source text starts. Only
+  // populated if mRunParams.sourceText is set; see gfx::GlyphBuffer.
+  nsTArray<uint32_t> mBufferedClusters;
+  // The byte offsets in mRunParams.sourceText where the source text for the
+  // glyphs output by the next OutputGlyph calls starts and ends; see
+  // SetNextCluster.
+  uint32_t mNextClusterStart;
+  uint32_t mNextClusterEnd;
+  // The byte offset in mRunParams.sourceText where the source text for the
+  // last glyph in mBuffer ends.
+  uint32_t mBufferedClustersEnd;
+
 #undef AUTO_BUFFER_SIZE
 };
 
@@ -2096,9 +2138,26 @@ bool gfxFont::DrawGlyphs(const gfxShapedText* aShapedText,
   uint32_t capacityMult = 1 + aBuffer.mFontParams.extraStrikes;
   aBuffer.AddCapacity(aCount, capacityMult);
 
+  const uint32_t* charToByte = aBuffer.mRunParams.sourceCharToByte;
+  // The index of the first character after the current cluster, which is the
+  // next character that has glyphs of its own.
+  uint32_t clusterEnd = 0;
+
   bool emittedGlyphs = false;
 
   for (uint32_t i = 0; i < aCount; ++i, ++glyphData) {
+    if (charToByte && i >= clusterEnd) {
+      // Map the source text of this character and any following characters
+      // without glyphs of their own (e.g. those consumed by a ligature) to the
+      // glyphs for this character.
+      clusterEnd = i + 1;
+      while (clusterEnd < aCount &&
+             !glyphData[clusterEnd - i].IsSimpleGlyph() &&
+             glyphData[clusterEnd - i].GetGlyphCount() == 0) {
+        ++clusterEnd;
+      }
+      aBuffer.SetNextCluster(charToByte[i], charToByte[clusterEnd]);
+    }
     if (glyphData->IsSimpleGlyph()) {
       float advance =
           glyphData->GetSimpleAdvance() * aBuffer.mFontParams.advanceDirection;
@@ -2321,7 +2380,7 @@ void gfxFont::DrawEmphasisMarks(const gfxTextRun* aShapedText, gfx::Point* aPt,
                                 imgDrawingParams& aImgParams) {
   float& inlineCoord = aParams.isVertical ? aPt->y.value : aPt->x.value;
   gfxTextRun::Range markRange(aParams.mark);
-  gfxTextRun::DrawParams params(aParams.context, aParams.paletteCache);
+  gfxTextRun::DrawParams params(aParams.context, aParams.paletteValueSet);
 
   float clusterStart = -std::numeric_limits<float>::infinity();
   bool shouldDrawEmphasisMark = false;
@@ -2389,8 +2448,8 @@ void gfxFont::Draw(const gfxTextRun* aTextRun, uint32_t aStart, uint32_t aEnd,
     fontParams.currentColor = aRunParams.context->GetDeviceColor(ctxColor)
                                   ? sRGBColor::FromABGR(ctxColor.ToABGR())
                                   : sRGBColor::OpaqueBlack();
-    fontParams.palette = aRunParams.paletteCache.GetPaletteFor(
-        GetFontEntry(), aRunParams.fontPalette);
+    fontParams.palette = GetFontEntry()->GetPalette(aRunParams.fontPalette,
+                                                    aRunParams.paletteValueSet);
   }
 
   if (textDrawer) {
@@ -3002,8 +3061,9 @@ bool gfxFont::MeasureGlyphs(const gfxTextRun* aTextRun, uint32_t aStart,
             aExtents->GetContainedGlyphWidthAppUnitsLocked(glyphIndex);
         if (extentsWidth != gfxGlyphExtents::INVALID_WIDTH &&
             aBoundingBoxType == LOOSE_INK_EXTENTS) {
-          UnionRange(x, aAdvanceMin, aAdvanceMax);
-          UnionRange(x + extentsWidth, aAdvanceMin, aAdvanceMax);
+          double glyphStart = aIsRTL ? x + advance - extentsWidth : x;
+          UnionRange(glyphStart, aAdvanceMin, aAdvanceMax);
+          UnionRange(glyphStart + extentsWidth, aAdvanceMin, aAdvanceMax);
         } else {
           gfxRect glyphRect;
           if (!aExtents->GetTightGlyphExtentsAppUnitsLocked(
@@ -4120,7 +4180,7 @@ bool gfxFont::InitFakeSmallCapsRun(
 already_AddRefed<gfxFont> gfxFont::GetSmallCapsFont() const {
   gfxFontStyle style(*GetStyle());
   style.size *= SMALL_CAPS_SCALE_FACTOR;
-  style.variantCaps = NS_FONT_VARIANT_CAPS_NORMAL;
+  style.variantCaps = StyleFontVariantCaps::Normal;
   gfxFontEntry* fe = GetFontEntry();
   return fe->FindOrMakeFont(&style, mUnicodeRangeMap);
 }
@@ -4225,9 +4285,7 @@ void gfxFont::SetupGlyphExtents(DrawTarget* aDrawTarget, uint32_t aGlyphID,
 // not available.
 // If this returns TRUE without setting the mIsValid flag, then we -did-
 // apparently find an sfnt, but it was too broken to be used.
-bool gfxFont::InitMetricsFromSfntTables(Metrics& aMetrics) {
-  mIsValid = false;  // font is NOT valid in case of early return
-
+bool gfxFont::InitMetricsFromSfntTables() {
   const uint32_t kHheaTableTag = TRUETYPE_TAG('h', 'h', 'e', 'a');
   const uint32_t kOS_2TableTag = TRUETYPE_TAG('O', 'S', '/', '2');
 
@@ -4255,8 +4313,8 @@ bool gfxFont::InitMetricsFromSfntTables(Metrics& aMetrics) {
   }
 
 #define SET_UNSIGNED(field, src) \
-  aMetrics.field = uint16_t(src) * mFUnitsConvFactor
-#define SET_SIGNED(field, src) aMetrics.field = int16_t(src) * mFUnitsConvFactor
+  mMetrics.field = uint16_t(src) * mFUnitsConvFactor
+#define SET_SIGNED(field, src) mMetrics.field = int16_t(src) * mFUnitsConvFactor
 
   SET_UNSIGNED(maxAdvance, hhea->advanceWidthMax);
 
@@ -4282,32 +4340,32 @@ bool gfxFont::InitMetricsFromSfntTables(Metrics& aMetrics) {
 
   if (hb_ot_metrics_get_position(hbFont, HB_OT_METRICS_TAG_HORIZONTAL_ASCENDER,
                                  &position)) {
-    aMetrics.maxAscent = FixedToFloat(position);
+    mMetrics.maxAscent = FixedToFloat(position);
   }
   if (hb_ot_metrics_get_position(hbFont, HB_OT_METRICS_TAG_HORIZONTAL_DESCENDER,
                                  &position)) {
-    aMetrics.maxDescent = -FixedToFloat(position);
+    mMetrics.maxDescent = -FixedToFloat(position);
   }
   if (hb_ot_metrics_get_position(hbFont, HB_OT_METRICS_TAG_HORIZONTAL_LINE_GAP,
                                  &position)) {
-    aMetrics.externalLeading = FixedToFloat(position);
+    mMetrics.externalLeading = FixedToFloat(position);
   }
 
   if (hb_ot_metrics_get_position(hbFont, HB_OT_METRICS_TAG_UNDERLINE_OFFSET,
                                  &position)) {
-    aMetrics.underlineOffset = FixedToFloat(position);
+    mMetrics.underlineOffset = FixedToFloat(position);
   }
   if (hb_ot_metrics_get_position(hbFont, HB_OT_METRICS_TAG_UNDERLINE_SIZE,
                                  &position)) {
-    aMetrics.underlineSize = FixedToFloat(position);
+    mMetrics.underlineSize = FixedToFloat(position);
   }
   if (hb_ot_metrics_get_position(hbFont, HB_OT_METRICS_TAG_STRIKEOUT_OFFSET,
                                  &position)) {
-    aMetrics.strikeoutOffset = FixedToFloat(position);
+    mMetrics.strikeoutOffset = FixedToFloat(position);
   }
   if (hb_ot_metrics_get_position(hbFont, HB_OT_METRICS_TAG_STRIKEOUT_SIZE,
                                  &position)) {
-    aMetrics.strikeoutSize = FixedToFloat(position);
+    mMetrics.strikeoutSize = FixedToFloat(position);
   }
 
   // Although sxHeight and sCapHeight are signed fields, we consider
@@ -4315,24 +4373,21 @@ bool gfxFont::InitMetricsFromSfntTables(Metrics& aMetrics) {
   if (hb_ot_metrics_get_position(hbFont, HB_OT_METRICS_TAG_X_HEIGHT,
                                  &position) &&
       position > 0) {
-    aMetrics.xHeight = FixedToFloat(position);
+    mMetrics.xHeight = FixedToFloat(position);
   }
   if (hb_ot_metrics_get_position(hbFont, HB_OT_METRICS_TAG_CAP_HEIGHT,
                                  &position) &&
       position > 0) {
-    aMetrics.capHeight = FixedToFloat(position);
+    mMetrics.capHeight = FixedToFloat(position);
   }
   hb_font_destroy(hbFont);
 
   mIsValid = true;
-
   return true;
 }
 
 #if MOZ_FONTATIONS
-bool gfxFont::InitMetricsFromSkrifa(Metrics& aMetrics) {
-  mIsValid = false;
-
+bool gfxFont::InitMetricsFromSkrifa() {
   const auto* skf = mFontEntry->GetSkrifaFont();
   if (!skf) {
     return false;
@@ -4345,18 +4400,18 @@ bool gfxFont::InitMetricsFromSkrifa(Metrics& aMetrics) {
 
   // Metrics that are always returned from the Skrifa font.
   mFUnitsConvFactor = metrics.scale_factor;
-  aMetrics.maxAdvance = metrics.max_advance;
-  aMetrics.aveCharWidth = metrics.ave_char_width;
-  aMetrics.maxAscent = metrics.max_ascent;
-  aMetrics.maxDescent = -metrics.max_descent;  // note inverted sign!
-  aMetrics.externalLeading = metrics.external_leading;
+  mMetrics.maxAdvance = metrics.max_advance;
+  mMetrics.aveCharWidth = metrics.ave_char_width;
+  mMetrics.maxAscent = metrics.max_ascent;
+  mMetrics.maxDescent = -metrics.max_descent;  // note inverted sign!
+  mMetrics.externalLeading = metrics.external_leading;
 
   // These will be zero if unavailable; SanitizeMetrics will adjust them to
   // reasonable defaults if necessary.
-  aMetrics.underlineOffset = metrics.underline_offset;
-  aMetrics.underlineSize = metrics.underline_size;
-  aMetrics.strikeoutOffset = metrics.strikeout_offset;
-  aMetrics.strikeoutSize = metrics.strikeout_size;
+  mMetrics.underlineOffset = metrics.underline_offset;
+  mMetrics.underlineSize = metrics.underline_size;
+  mMetrics.strikeoutOffset = metrics.strikeout_offset;
+  mMetrics.strikeoutSize = metrics.strikeout_size;
 
   // Metrics that are derived from measuring specific glyph widths:
   SkrifaGlyphMetrics* skmtx =
@@ -4365,15 +4420,15 @@ bool gfxFont::InitMetricsFromSkrifa(Metrics& aMetrics) {
     uint32_t gid = skrifa_font_map_char_to_glyph(skf, aCh);
     return gid ? skrifa_metrics_get_glyph_advance(skmtx, gid) : aMissing;
   };
-  aMetrics.spaceWidth = measureAdvance(' ', 0.0);
+  mMetrics.spaceWidth = measureAdvance(' ', 0.0);
   // Negative values indicate the relevant character is not supported.
-  aMetrics.zeroWidth = measureAdvance('0', -1.0);
-  aMetrics.ideographicWidth = measureAdvance(kWaterIdeograph, -1.0);
+  mMetrics.zeroWidth = measureAdvance('0', -1.0);
+  mMetrics.ideographicWidth = measureAdvance(kWaterIdeograph, -1.0);
 
   // If aveCharWidth was non-positive, try measuring 'x' instead; fall back to
   // maxAdvance if unavailable.
-  if (aMetrics.aveCharWidth <= 0.0) {
-    aMetrics.aveCharWidth = measureAdvance('x', aMetrics.maxAdvance);
+  if (mMetrics.aveCharWidth <= 0.0) {
+    mMetrics.aveCharWidth = measureAdvance('x', mMetrics.maxAdvance);
   }
 
   // Metrics with glyph-measurement-based fallbacks:
@@ -4386,9 +4441,9 @@ bool gfxFont::InitMetricsFromSkrifa(Metrics& aMetrics) {
     }
     return 0.0;
   };
-  aMetrics.xHeight =
+  mMetrics.xHeight =
       metrics.x_height > 0.0 ? metrics.x_height : measureHeight('x');
-  aMetrics.capHeight =
+  mMetrics.capHeight =
       metrics.cap_height > 0.0 ? metrics.cap_height : measureHeight('H');
 
   skrifa_glyph_metrics_delete(skmtx);
@@ -4405,55 +4460,54 @@ static double RoundToNearestMultiple(double aValue, double aFraction) {
   return floor(aValue / aFraction + 0.5) * aFraction;
 }
 
-void gfxFont::CalculateDerivedMetrics(Metrics& aMetrics) {
-  aMetrics.maxAscent =
-      ceil(RoundToNearestMultiple(aMetrics.maxAscent, 1 / 1024.0));
-  aMetrics.maxDescent =
-      ceil(RoundToNearestMultiple(aMetrics.maxDescent, 1 / 1024.0));
+void gfxFont::CalculateDerivedMetrics() {
+  mMetrics.maxAscent =
+      ceil(RoundToNearestMultiple(mMetrics.maxAscent, 1 / 1024.0));
+  mMetrics.maxDescent =
+      ceil(RoundToNearestMultiple(mMetrics.maxDescent, 1 / 1024.0));
 
-  if (aMetrics.xHeight <= 0) {
+  if (mMetrics.xHeight <= 0) {
     // only happens if we couldn't find either font metrics
     // or a char to measure;
     // pick an arbitrary value that's better than zero
-    aMetrics.xHeight = aMetrics.maxAscent * DEFAULT_XHEIGHT_FACTOR;
+    mMetrics.xHeight = mMetrics.maxAscent * DEFAULT_XHEIGHT_FACTOR;
   }
 
   // If we have a font that doesn't provide a capHeight value, use maxAscent
   // as a reasonable fallback.
-  if (aMetrics.capHeight <= 0) {
-    aMetrics.capHeight = aMetrics.maxAscent;
+  if (mMetrics.capHeight <= 0) {
+    mMetrics.capHeight = mMetrics.maxAscent;
   }
 
-  aMetrics.maxHeight = aMetrics.maxAscent + aMetrics.maxDescent;
-  aMetrics.internalLeading =
-      std::max(0.0, aMetrics.maxHeight - aMetrics.emHeight);
+  mMetrics.maxHeight = mMetrics.maxAscent + mMetrics.maxDescent;
+  mMetrics.internalLeading =
+      std::max(0.0, mMetrics.maxHeight - mMetrics.emHeight);
 
-  aMetrics.emAscent =
-      aMetrics.maxAscent * aMetrics.emHeight / aMetrics.maxHeight;
-  aMetrics.emDescent = aMetrics.emHeight - aMetrics.emAscent;
+  mMetrics.emAscent =
+      mMetrics.maxAscent * mMetrics.emHeight / mMetrics.maxHeight;
+  mMetrics.emDescent = mMetrics.emHeight - mMetrics.emAscent;
 
   if (GetFontEntry()->IsFixedPitch()) {
     // Some Quartz fonts are fixed pitch, but there's some glyph with a bigger
     // advance than the average character width... this forces
     // those fonts to be recognized like fixed pitch fonts by layout.
-    aMetrics.maxAdvance = aMetrics.aveCharWidth;
+    mMetrics.maxAdvance = mMetrics.aveCharWidth;
   }
 
-  if (!aMetrics.strikeoutOffset) {
-    aMetrics.strikeoutOffset = aMetrics.xHeight * 0.5;
+  if (!mMetrics.strikeoutOffset) {
+    mMetrics.strikeoutOffset = mMetrics.xHeight * 0.5;
   }
-  if (!aMetrics.strikeoutSize) {
-    aMetrics.strikeoutSize = aMetrics.underlineSize;
+  if (!mMetrics.strikeoutSize) {
+    mMetrics.strikeoutSize = mMetrics.underlineSize;
   }
 }
 
-void gfxFont::SanitizeMetrics(gfxFont::Metrics* aMetrics,
-                              bool aIsBadUnderlineFont) {
+void gfxFont::SanitizeMetrics(bool aIsBadUnderlineFont) {
   // Even if this font size is zero, this font is created with non-zero size.
   // However, for layout and others, we should return the metrics of zero size
   // font.
   if (mStyle.AdjustedSizeMustBeZero()) {
-    memset(aMetrics, 0, sizeof(gfxFont::Metrics));
+    memset(&mMetrics, 0, sizeof(mMetrics));
     return;
   }
 
@@ -4461,32 +4515,32 @@ void gfxFont::SanitizeMetrics(gfxFont::Metrics* aMetrics,
   // replace the metrics from the font with the overrides.
   gfxFloat adjustedSize = GetAdjustedSize();
   if (mFontEntry->mAscentOverride >= 0.0) {
-    aMetrics->maxAscent = mFontEntry->mAscentOverride * adjustedSize;
-    aMetrics->maxHeight = aMetrics->maxAscent + aMetrics->maxDescent;
-    aMetrics->internalLeading =
-        std::max(0.0, aMetrics->maxHeight - aMetrics->emHeight);
+    mMetrics.maxAscent = mFontEntry->mAscentOverride * adjustedSize;
+    mMetrics.maxHeight = mMetrics.maxAscent + mMetrics.maxDescent;
+    mMetrics.internalLeading =
+        std::max(0.0, mMetrics.maxHeight - mMetrics.emHeight);
   }
   if (mFontEntry->mDescentOverride >= 0.0) {
-    aMetrics->maxDescent = mFontEntry->mDescentOverride * adjustedSize;
-    aMetrics->maxHeight = aMetrics->maxAscent + aMetrics->maxDescent;
-    aMetrics->internalLeading =
-        std::max(0.0, aMetrics->maxHeight - aMetrics->emHeight);
+    mMetrics.maxDescent = mFontEntry->mDescentOverride * adjustedSize;
+    mMetrics.maxHeight = mMetrics.maxAscent + mMetrics.maxDescent;
+    mMetrics.internalLeading =
+        std::max(0.0, mMetrics.maxHeight - mMetrics.emHeight);
   }
   if (mFontEntry->mLineGapOverride >= 0.0) {
-    aMetrics->externalLeading = mFontEntry->mLineGapOverride * adjustedSize;
+    mMetrics.externalLeading = mFontEntry->mLineGapOverride * adjustedSize;
   }
 
-  aMetrics->underlineSize = std::max(1.0, aMetrics->underlineSize);
-  aMetrics->strikeoutSize = std::max(1.0, aMetrics->strikeoutSize);
+  mMetrics.underlineSize = std::max(1.0, mMetrics.underlineSize);
+  mMetrics.strikeoutSize = std::max(1.0, mMetrics.strikeoutSize);
 
-  aMetrics->underlineOffset = std::min(aMetrics->underlineOffset, -1.0);
+  mMetrics.underlineOffset = std::min(mMetrics.underlineOffset, -1.0);
 
-  if (aMetrics->maxAscent < 1.0) {
+  if (mMetrics.maxAscent < 1.0) {
     // We cannot draw strikeout line and overline in the ascent...
-    aMetrics->underlineSize = 0;
-    aMetrics->underlineOffset = 0;
-    aMetrics->strikeoutSize = 0;
-    aMetrics->strikeoutOffset = 0;
+    mMetrics.underlineSize = 0;
+    mMetrics.underlineOffset = 0;
+    mMetrics.strikeoutSize = 0;
+    mMetrics.strikeoutOffset = 0;
     return;
   }
 
@@ -4503,46 +4557,46 @@ void gfxFont::SanitizeMetrics(gfxFont::Metrics* aMetrics,
     // First, we need 2 pixels between baseline and underline at least. Because
     // many CJK characters put their glyphs on the baseline, so, 1 pixel is too
     // close for CJK characters.
-    aMetrics->underlineOffset = std::min(aMetrics->underlineOffset, -2.0);
+    mMetrics.underlineOffset = std::min(mMetrics.underlineOffset, -2.0);
 
     // Next, we put the underline to bottom of below of the descent space.
-    if (aMetrics->internalLeading + aMetrics->externalLeading >
-        aMetrics->underlineSize) {
-      aMetrics->underlineOffset =
-          std::min(aMetrics->underlineOffset, -aMetrics->emDescent);
+    if (mMetrics.internalLeading + mMetrics.externalLeading >
+        mMetrics.underlineSize) {
+      mMetrics.underlineOffset =
+          std::min(mMetrics.underlineOffset, -mMetrics.emDescent);
     } else {
-      aMetrics->underlineOffset =
-          std::min(aMetrics->underlineOffset,
-                   aMetrics->underlineSize - aMetrics->emDescent);
+      mMetrics.underlineOffset =
+          std::min(mMetrics.underlineOffset,
+                   mMetrics.underlineSize - mMetrics.emDescent);
     }
   }
   // If underline positioned is too far from the text, descent position is
   // preferred so that underline will stay within the boundary.
-  else if (aMetrics->underlineSize - aMetrics->underlineOffset >
-           aMetrics->maxDescent) {
-    if (aMetrics->underlineSize > aMetrics->maxDescent)
-      aMetrics->underlineSize = std::max(aMetrics->maxDescent, 1.0);
+  else if (mMetrics.underlineSize - mMetrics.underlineOffset >
+           mMetrics.maxDescent) {
+    if (mMetrics.underlineSize > mMetrics.maxDescent)
+      mMetrics.underlineSize = std::max(mMetrics.maxDescent, 1.0);
     // The max underlineOffset is 1px (the min underlineSize is 1px, and min
     // maxDescent is 0px.)
-    aMetrics->underlineOffset = aMetrics->underlineSize - aMetrics->maxDescent;
+    mMetrics.underlineOffset = mMetrics.underlineSize - mMetrics.maxDescent;
   }
 
   // If strikeout line is overflowed from the ascent, the line should be resized
   // and moved for that being in the ascent space. Note that the strikeoutOffset
   // is *middle* of the strikeout line position.
-  gfxFloat halfOfStrikeoutSize = floor(aMetrics->strikeoutSize / 2.0 + 0.5);
-  if (halfOfStrikeoutSize + aMetrics->strikeoutOffset > aMetrics->maxAscent) {
-    if (aMetrics->strikeoutSize > aMetrics->maxAscent) {
-      aMetrics->strikeoutSize = std::max(aMetrics->maxAscent, 1.0);
-      halfOfStrikeoutSize = floor(aMetrics->strikeoutSize / 2.0 + 0.5);
+  gfxFloat halfOfStrikeoutSize = floor(mMetrics.strikeoutSize / 2.0 + 0.5);
+  if (halfOfStrikeoutSize + mMetrics.strikeoutOffset > mMetrics.maxAscent) {
+    if (mMetrics.strikeoutSize > mMetrics.maxAscent) {
+      mMetrics.strikeoutSize = std::max(mMetrics.maxAscent, 1.0);
+      halfOfStrikeoutSize = floor(mMetrics.strikeoutSize / 2.0 + 0.5);
     }
-    gfxFloat ascent = floor(aMetrics->maxAscent + 0.5);
-    aMetrics->strikeoutOffset = std::max(halfOfStrikeoutSize, ascent / 2.0);
+    gfxFloat ascent = floor(mMetrics.maxAscent + 0.5);
+    mMetrics.strikeoutOffset = std::max(halfOfStrikeoutSize, ascent / 2.0);
   }
 
   // If overline is larger than the ascent, the line should be resized.
-  if (aMetrics->underlineSize > aMetrics->maxAscent) {
-    aMetrics->underlineSize = aMetrics->maxAscent;
+  if (mMetrics.underlineSize > mMetrics.maxAscent) {
+    mMetrics.underlineSize = mMetrics.maxAscent;
   }
 }
 
@@ -4623,7 +4677,6 @@ void gfxFont::CreateVerticalMetrics() {
   uint32_t len;
 
   auto* metrics = new Metrics();
-  ::memset(metrics, 0, sizeof(Metrics));
   const Metrics& horizMetrics = GetHorizontalMetrics();
 
   // Some basic defaults, in case the font lacks any real metrics tables.
@@ -4909,8 +4962,8 @@ gfxFontStyle::gfxFontStyle()
       weight(FontWeight::NORMAL),
       width(FontWidth::NORMAL),
       style(FontSlantStyle::NORMAL),
-      variantCaps(NS_FONT_VARIANT_CAPS_NORMAL),
-      variantSubSuper(NS_FONT_VARIANT_POSITION_NORMAL),
+      variantCaps(StyleFontVariantCaps::Normal),
+      variantSubSuper(StyleFontVariantPosition::Normal),
       sizeAdjustBasis(uint8_t(FontSizeAdjust::Tag::None)),
       systemFont(false),
       printerFont(false),
@@ -4940,8 +4993,8 @@ gfxFontStyle::gfxFontStyle(
       weight(aWeight),
       width(aWidth),
       style(aStyle),
-      variantCaps(NS_FONT_VARIANT_CAPS_NORMAL),
-      variantSubSuper(NS_FONT_VARIANT_POSITION_NORMAL),
+      variantCaps(StyleFontVariantCaps::Normal),
+      variantSubSuper(StyleFontVariantPosition::Normal),
       systemFont(aSystemFont),
       printerFont(aPrinterFont),
 #ifdef XP_WIN
@@ -5009,12 +5062,12 @@ PLDHashNumber gfxFontStyle::Hash() const {
 }
 
 void gfxFontStyle::AdjustForSubSuperscript(int32_t aAppUnitsPerDevPixel) {
-  MOZ_ASSERT(
-      variantSubSuper != NS_FONT_VARIANT_POSITION_NORMAL && baselineOffset == 0,
-      "can't adjust this style for sub/superscript");
+  MOZ_ASSERT(variantSubSuper != StyleFontVariantPosition::Normal &&
+                 baselineOffset == 0,
+             "can't adjust this style for sub/superscript");
 
   // calculate the baseline offset (before changing the size)
-  if (variantSubSuper == NS_FONT_VARIANT_POSITION_SUPER) {
+  if (variantSubSuper == StyleFontVariantPosition::Super) {
     baselineOffset = size * -NS_FONT_SUPERSCRIPT_OFFSET_RATIO;
   } else {
     baselineOffset = size * NS_FONT_SUBSCRIPT_OFFSET_RATIO;
@@ -5034,7 +5087,7 @@ void gfxFontStyle::AdjustForSubSuperscript(int32_t aAppUnitsPerDevPixel) {
   }
 
   // clear the variant field
-  variantSubSuper = NS_FONT_VARIANT_POSITION_NORMAL;
+  variantSubSuper = StyleFontVariantPosition::Normal;
 }
 
 bool gfxFont::TryGetMathTable() {

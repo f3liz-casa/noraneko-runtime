@@ -79,7 +79,6 @@ rtc_source_set("buffer") {
     ":type_traits",
     ":zero_memory",
     "//third_party/abseil-cpp/absl/algorithm:container",
-    "//third_party/abseil-cpp/absl/base:core_headers",
     "//third_party/abseil-cpp/absl/strings:string_view",
   ]
 }
@@ -90,7 +89,6 @@ rtc_source_set("byte_order") {
   deps = [
     ":checks",
     "system:arch",
-    "//third_party/abseil-cpp/absl/base:core_headers",
   ]
 }
 
@@ -125,10 +123,7 @@ rtc_source_set("span_helpers") {
 rtc_source_set("swap_queue") {
   visibility = [ "*" ]
   sources = [ "swap_queue.h" ]
-  deps = [
-    ":checks",
-    "//third_party/abseil-cpp/absl/base:core_headers",
-  ]
+  deps = [ ":checks" ]
 }
 
 rtc_source_set("macromagic") {
@@ -236,7 +231,6 @@ rtc_library("event_tracer") {
     "../system_wrappers",
     "synchronization:mutex",
     "system:rtc_export",
-    "//third_party/abseil-cpp/absl/base:core_headers",
     "//third_party/abseil-cpp/absl/base:nullability",
     "//third_party/abseil-cpp/absl/strings:string_view",
   ]
@@ -355,23 +349,10 @@ if (rtc_rust) {
     visibility = [ "*" ]
   }
 
-  rtc_rust_library("rate_tracker_ffi_rust") {
-    allow_unsafe = true
-    crate_root = "rate_tracker_ffi.rs"
-    sources = [ "rate_tracker_ffi.rs" ]
-    deps = [
-      ":rate_tracker_rust",
-      "../api/units:time_delta_rs",
-      "../api/units:timestamp_rs",
-      "//build/rust:cxx_rustdeps",
-    ]
-  }
-
   rtc_rust_cxx_bridge("rate_tracker_ffi") {
     allow_unsafe = true
     source = "rate_tracker_ffi.rs"
     deps = [
-      ":rate_tracker_ffi_rust",
       ":rate_tracker_rust",
       "../api/units:time_delta",
       "../api/units:time_delta_ffi",
@@ -394,15 +375,10 @@ if (rtc_rust) {
       "../api/units:timestamp_rs",
     ]
   }
+}
 
-  rtc_rust_test_suite("rust_unit_tests") {
-    deps = [ ":rate_tracker_rust_tests" ]
-  }
-} else {
-  # This target is required for the bot configuration as it is always
-  # present in the more_configs_tests test suite even if Rust is disabled.
-  group("rust_unit_tests") {
-  }
+rtc_rust_test_suite("rust_unit_tests") {
+  deps = [ ":rate_tracker_rust_tests" ]
 }
 
 rtc_library("rate_tracker") {
@@ -547,7 +523,6 @@ rtc_library("logging") {
     "../api/task_queue",
     "../api/units:timestamp",
     "synchronization:mutex",
-    "//third_party/abseil-cpp/absl/base:core_headers",
     "//third_party/abseil-cpp/absl/base:no_destructor",
     "//third_party/abseil-cpp/absl/strings",
     "//third_party/abseil-cpp/absl/strings:string_view",
@@ -712,7 +687,6 @@ rtc_library("stringutils") {
     ":checks",
     ":safe_minmax",
     "system:rtc_export",
-    "//third_party/abseil-cpp/absl/base:core_headers",
     "//third_party/abseil-cpp/absl/strings",
     "//third_party/abseil-cpp/absl/strings:string_view",
   ]
@@ -1138,7 +1112,6 @@ rtc_library("threading") {
     "system:system_time",
     "system:unused",
     "//third_party/abseil-cpp/absl/algorithm:container",
-    "//third_party/abseil-cpp/absl/base:core_headers",
     "//third_party/abseil-cpp/absl/cleanup",
     "//third_party/abseil-cpp/absl/functional:any_invocable",
     "//third_party/abseil-cpp/absl/strings:string_view",
@@ -1348,7 +1321,6 @@ if (!build_with_mozilla) {
     "experiments:field_trial_parser",
     "system:rtc_export",
     "//third_party/abseil-cpp/absl/algorithm:container",
-    "//third_party/abseil-cpp/absl/base:core_headers",
     "//third_party/abseil-cpp/absl/base:nullability",
     "//third_party/abseil-cpp/absl/functional:any_invocable",
     "//third_party/abseil-cpp/absl/memory",
@@ -1441,6 +1413,23 @@ if (!build_with_mozilla) {
 }
 }
 
+rtc_library("clock_aligner") {
+  visibility = [ "*" ]
+  sources = [
+    "clock_aligner.cc",
+    "clock_aligner.h",
+  ]
+  deps = [
+    ":checks",
+    ":macromagic",
+    "../api:sequence_checker",
+    "../api/environment",
+    "../api/units:time_delta",
+    "../api/units:timestamp",
+    "system:no_unique_address",
+  ]
+}
+
 rtc_library("async_udp_socket") {
 if (!build_with_mozilla) {
   visibility = [ "*" ]
@@ -1452,6 +1441,7 @@ if (!build_with_mozilla) {
     ":async_packet_socket",
     ":buffer",
     ":checks",
+    ":clock_aligner",
     ":logging",
     ":macromagic",
     ":socket",
@@ -1459,7 +1449,6 @@ if (!build_with_mozilla) {
     ":socket_factory",
     "../api:sequence_checker",
     "../api/environment",
-    "../api/units:time_delta",
     "../api/units:timestamp",
     "network:received_packet",
     "network:sent_packet",
@@ -1526,6 +1515,22 @@ if (rtc_include_tests) {
       "//third_party/abseil-cpp/absl/memory",
     ]
   }
+
+  rtc_library("clock_aligner_unittest") {
+    testonly = true
+    sources = [ "clock_aligner_unittest.cc" ]
+    deps = [
+      ":clock_aligner",
+      "../api/environment",
+      "../api/units:time_delta",
+      "../api/units:timestamp",
+      "../system_wrappers",
+      "../test:create_test_environment",
+      "../test:near_matcher",
+      "../test:test_support",
+    ]
+  }
+
   rtc_library("async_tcp_socket_unittest") {
     testonly = true
     sources = [ "async_tcp_socket_unittest.cc" ]
@@ -1946,7 +1951,6 @@ rtc_library("rtc_base_tests_utils") {
     "network:received_packet",
     "synchronization:mutex",
     "//third_party/abseil-cpp/absl/algorithm:container",
-    "//third_party/abseil-cpp/absl/base:core_headers",
     "//third_party/abseil-cpp/absl/functional:any_invocable",
     "//third_party/abseil-cpp/absl/memory",
     "//third_party/abseil-cpp/absl/strings",
@@ -2032,6 +2036,7 @@ if (rtc_include_tests) {
       ]
     }
   }
+
   rtc_library("untyped_function_unittest") {
     testonly = true
     sources = [ "untyped_function_unittest.cc" ]
@@ -2305,7 +2310,6 @@ if (rtc_include_tests) {
         "task_utils:repeating_task",
         "//testing/gtest",
         "//third_party/abseil-cpp/absl/algorithm:container",
-        "//third_party/abseil-cpp/absl/base:core_headers",
         "//third_party/abseil-cpp/absl/cleanup",
         "//third_party/abseil-cpp/absl/functional:any_invocable",
         "//third_party/abseil-cpp/absl/memory",
@@ -2523,6 +2527,7 @@ if (rtc_include_tests) {
 
 if (is_android && !build_with_mozilla) {
   import("//third_party/jni_zero/jni_zero.gni")
+
   generate_jni("base_java_jni") {
     sources = [ "java/src/org/webrtc/Logging.java" ]
     namespace = "webrtc::jni"
@@ -2543,6 +2548,7 @@ if (is_android && !build_with_mozilla) {
       "//third_party/jni_zero:jni_zero_java",
     ]
   }
+
   java_cpp_enum("network_monitor_enums") {
     sources = [ "network_monitor.h" ]
     visibility = [ "*" ]

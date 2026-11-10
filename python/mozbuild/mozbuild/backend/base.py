@@ -186,14 +186,25 @@ class BuildBackend(LoggingMixin):
     def consume_finished(self):
         """Called when consume() has completed handling all objects."""
 
-    def build(self, config, output, jobs, verbose, what=None):
+    def build(self, config, output, jobs, verbose, what=None, append_env=None):
         """Called when 'mach build' is executed.
+
+        ``append_env`` holds environment variables every command of the build
+        runs with, such as the PGO mode.
 
         This should return the status value of a subprocess, where 0 denotes
         success and any other value is an error code. A return value of None
         indicates that the default 'make -f client.mk' should run.
         """
         return None
+
+    @classmethod
+    def resolve_targets(cls, what):
+        """Return the targets this backend builds for the names in ``what``.
+
+        A name the backend does not map is built as given.
+        """
+        return list(what)
 
     def _write_purgecaches(self, config):
         """Write .purgecaches sentinels.
@@ -350,6 +361,10 @@ def HybridBackend(*backends):
 
         def consume_object(self, obj):
             return any(b.consume_object(obj) for b in self._backends)
+
+        @classmethod
+        def resolve_targets(cls, what):
+            return backends[-1].resolve_targets(what)
 
         def consume_finished(self):
             for backend in self._backends:

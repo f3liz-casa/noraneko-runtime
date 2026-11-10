@@ -74,11 +74,13 @@ EXPORTS.mozilla.ipc += [
     "UtilityProcessManager.h",
     "UtilityProcessParent.h",
     "UtilityProcessSandboxing.h",
-    "WindowsMessageLoop.h",
 ]
 
 if CONFIG["OS_ARCH"] == "WINNT":
     SOURCES += ["WindowsMessageLoop.cpp"]
+    EXPORTS.mozilla.ipc += [
+        "WindowsMessageLoop.h",
+    ]
 
 if CONFIG["OS_ARCH"] == "WINNT":
     SOURCES += [
@@ -328,3 +330,9 @@ MARIONETTE_MANIFESTS += ["test/marionette/manifest.toml"]
 
 # Add libFuzzer configuration directives
 include("/tools/fuzzing/libfuzzer-config.mozbuild")
+
+SOURCE_HEADERS += [
+    "BackgroundChildImpl.h",
+    "BackgroundParentImpl.h",
+    "SharedMemoryPlatform.h",
+]

@@ -132,8 +132,9 @@ nssPKIObject_Destroy(
     nssPKIObject *object)
 {
     PRUint32 i;
-    PR_ASSERT(object->refCount > 0);
-    if (PR_ATOMIC_DECREMENT(&object->refCount) == 0) {
+    PRInt32 refCount = PR_ATOMIC_DECREMENT(&object->refCount);
+    PORT_ReleaseAssert(refCount >= 0);
+    if (refCount == 0) {
         for (i = 0; i < object->numInstances; i++) {
             nssCryptokiObject_Destroy(object->instances[i]);
         }
@@ -148,7 +149,8 @@ NSS_IMPLEMENT nssPKIObject *
 nssPKIObject_AddRef(
     nssPKIObject *object)
 {
-    PR_ATOMIC_INCREMENT(&object->refCount);
+    PRInt32 refCount = PR_ATOMIC_INCREMENT(&object->refCount);
+    PORT_ReleaseAssert(refCount > 1);
     return object;
 }
 
@@ -370,13 +372,6 @@ nssCertificateArray_Destroy(
     }
 }
 
-NSS_IMPLEMENT void
-NSSCertificateArray_Destroy(
-    NSSCertificate **certs)
-{
-    nssCertificateArray_Destroy(certs);
-}
-
 NSS_IMPLEMENT NSSCertificate **
 nssCertificateArray_Join(
     NSSCertificate **certs1,
@@ -519,25 +514,6 @@ nssCertificateArray_FindBestCertificate(
     return bestCert;
 }
 
-NSS_IMPLEMENT PRStatus
-nssCertificateArray_Traverse(
-    NSSCertificate **certs,
-    PRStatus (*callback)(NSSCertificate *c, void *arg),
-    void *arg)
-{
-    PRStatus status = PR_SUCCESS;
-    if (certs) {
-        NSSCertificate **certp;
-        for (certp = certs; *certp; certp++) {
-            status = (*callback)(*certp, arg);
-            if (status != PR_SUCCESS) {
-                break;
-            }
-        }
-    }
-    return status;
-}
-
 NSS_IMPLEMENT void
 nssCRLArray_Destroy(
     NSSCRL **crls)
@@ -558,17 +534,12 @@ nssCRLArray_Destroy(
 typedef enum {
     pkiObjectType_Certificate = 0,
     pkiObjectType_CRL = 1,
-    pkiObjectType_PrivateKey = 2,
-    pkiObjectType_PublicKey = 3
 } pkiObjectType;
 
 /* Each object is defined by a set of items that uniquely identify it.
  * Here are the uid sets:
  *
  * NSSCertificate ==>  { issuer, serial }
- * NSSPrivateKey
- *         (RSA) ==> { modulus, public exponent }
- *
  */
 #define MAX_ITEMS_FOR_UID 2
 
@@ -898,14 +869,6 @@ nssPKIObjectCollection_Traverse(
             case pkiObjectType_CRL:
                 (void)(*callback->func.crl)((NSSCRL *)node->object,
                                             callback->arg);
-                break;
-            case pkiObjectType_PrivateKey:
-                (void)(*callback->func.pvkey)((NSSPrivateKey *)node->object,
-                                              callback->arg);
-                break;
-            case pkiObjectType_PublicKey:
-                (void)(*callback->func.pbkey)((NSSPublicKey *)node->object,
-                                              callback->arg);
                 break;
         }
         link = PR_NEXT_LINK(link);

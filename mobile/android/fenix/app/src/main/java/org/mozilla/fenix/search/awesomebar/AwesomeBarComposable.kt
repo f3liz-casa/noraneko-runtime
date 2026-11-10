@@ -102,7 +102,6 @@ private fun Modifier.awesomeBarContentWidth(useAddressBarFocusMode: Boolean) =
  * @param searchAccessPoint Where search was started from.
  * @param isEdgeToEdgeBackgroundEnabled Whether the Edge2Edge background is enabled.
  */
-@Suppress("LongParameterList")
 class AwesomeBarComposable(
     private val activity: HomeActivity,
     private val fragment: Fragment,
@@ -225,12 +224,13 @@ class AwesomeBarComposable(
                             WindowInsets.isImeVisible
                         ) {
                             detectTapGestures(
-                                // Hide the keyboard for any touches in the empty area of the awesomebar
                                 onPress = {
-                                    focusManager.clearFocus()
                                     view.hideKeyboard()
+                                },
+                                onTap = {
+                                    focusManager.clearFocus()
                                     appStore.dispatch(SearchEnded)
-                                }
+                                },
                             )
                         }
                 ) {
@@ -282,10 +282,12 @@ class AwesomeBarComposable(
                         ) {
                             detectTapGestures(
                                 onPress = {
-                                    focusManager.clearFocus()
                                     keyboardController?.hide()
+                                },
+                                onTap = {
+                                    focusManager.clearFocus()
                                     appStore.dispatch(SearchEnded)
-                                }
+                                },
                             )
                         }
                 )

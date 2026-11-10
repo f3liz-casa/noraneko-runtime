@@ -5,6 +5,10 @@
 package org.mozilla.fenix.browser.tabstrip
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -30,8 +34,6 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,6 +67,7 @@ import kotlinx.coroutines.flow.map
 import mozilla.components.browser.state.action.TabListAction
 import mozilla.components.browser.state.state.createTab
 import mozilla.components.browser.state.store.BrowserStore
+import mozilla.components.compose.base.button.IconButton
 import mozilla.components.compose.base.modifier.thenConditional
 import mozilla.components.compose.base.theme.PreviewThemeProvider
 import mozilla.components.compose.base.theme.Theme
@@ -72,6 +75,8 @@ import mozilla.components.compose.base.theme.ThemedValue
 import mozilla.components.compose.base.theme.ThemedValueProvider
 import mozilla.components.concept.engine.utils.ABOUT_HOME_URL
 import mozilla.components.feature.tabs.TabsUseCases
+import mozilla.components.support.utils.KeyboardState
+import mozilla.components.support.utils.keyboardAsState
 import mozilla.components.ui.icons.R as iconsR
 import org.mozilla.fenix.GleanMetrics.TabStrip as TabStripMetrics
 import org.mozilla.fenix.R
@@ -84,6 +89,8 @@ import org.mozilla.fenix.tabstray.browser.compose.ReorderableDragItemContainer
 import org.mozilla.fenix.tabstray.browser.compose.createListReorderState
 import org.mozilla.fenix.tabstray.browser.compose.detectListPressAndDrag
 import org.mozilla.fenix.theme.FirefoxTheme
+
+private const val TAB_STRIP_VISIBILITY_ANIMATION_MS = 150
 
 private val minTabStripItemWidth = 130.dp
 private val maxTabStripItemWidth = 280.dp
@@ -104,8 +111,9 @@ private val tabStripIconSize
  * @param browserStore The [BrowserStore] instance used to observe tabs state.
  * @param appStore The [AppStore] instance used to observe browsing mode.
  * @param tabsUseCases The [TabsUseCases] instance to perform tab actions.
+ * @param hideWhenKeyboardShown Whether or not to hide the tabs strip when the keyboard is shown.
  * @param onAddTabClick Invoked when the add tab button is clicked.
- * @param onCloseTabClick Invoked when a tab is closed.
+ * @param onCloseTabClick Invoked when a tab other than the last remaining open tab is closed.
  * @param onLastTabClose Invoked when the last remaining open tab is closed.
  * @param onSelectedTabClick Invoked when a tab is selected.
  * @param onTabCounterClick Invoked when tab counter is clicked.
@@ -118,6 +126,7 @@ fun TabStrip(
     browserStore: BrowserStore = components.core.store,
     appStore: AppStore = components.appStore,
     tabsUseCases: TabsUseCases = components.useCases.tabsUseCases,
+    hideWhenKeyboardShown: Boolean,
     onAddTabClick: () -> Unit,
     onCloseTabClick: (isPrivate: Boolean) -> Unit,
     onLastTabClose: (isPrivate: Boolean) -> Unit,
@@ -151,36 +160,82 @@ fun TabStrip(
     }
         .collectAsState(initial = TabStripState.initial)
 
-    TabStripContent(
-        state = state,
-        showTabCounterButton = showTabCounterButton,
-        colors = tabStripColors,
-        onAddTabClick = {
-            onAddTabClick()
-            TabStripMetrics.newTabTapped.record()
-        },
-        onCloseTabClick = { tabId, isPrivate ->
-            closeTab(
-                numberOfTabs = state.tabs.size,
-                isPrivate = isPrivate,
-                tabsUseCases = tabsUseCases,
-                tabId = tabId,
-                onLastTabClose = onLastTabClose,
-                onCloseTabClick = onCloseTabClick,
-            )
-        },
-        onSelectedTabClick = { tabId, url ->
-            tabsUseCases.selectTab(tabId)
-            onSelectedTabClick(url)
-            TabStripMetrics.selectTab.record()
-        },
-        onMove = { tabId, targetId, placeAfter ->
-            if (tabId != targetId) {
-                tabsUseCases.moveTabs(listOf(tabId), targetId, placeAfter)
-            }
-        },
-        onTabCounterClick = onTabCounterClick,
+    val isKeyboardVisible =
+        if (hideWhenKeyboardShown) {
+            val keyboardState by keyboardAsState()
+            keyboardState == KeyboardState.Opened
+        } else {
+            false
+        }
+
+    AnimatedVisibility(
+        visible = !isKeyboardVisible,
+        enter =
+            expandVertically(
+                expandFrom = Alignment.Bottom,
+                animationSpec = tween(durationMillis = TAB_STRIP_VISIBILITY_ANIMATION_MS),
+            ),
+        exit =
+            shrinkVertically(
+                shrinkTowards = Alignment.Bottom,
+                animationSpec = tween(durationMillis = TAB_STRIP_VISIBILITY_ANIMATION_MS),
+            ),
+    ) {
+        TabStripContent(
+            state = state,
+            showTabCounterButton = showTabCounterButton,
+            colors = tabStripColors,
+            onAddTabClick = createAddTabClickHandler(onAddTabClick),
+            onCloseTabClick =
+                createCloseTabClickHandler(
+                    numberOfTabs = state.tabs.size,
+                    tabsUseCases = tabsUseCases,
+                    onLastTabClose = onLastTabClose,
+                    onCloseTabClick = onCloseTabClick,
+                ),
+            onSelectedTabClick = createSelectedTabClickHandler(tabsUseCases, onSelectedTabClick),
+            onMove = createMoveTabHandler(tabsUseCases),
+            onTabCounterClick = onTabCounterClick,
+        )
+    }
+}
+
+private fun createAddTabClickHandler(onAddTabClick: () -> Unit): () -> Unit = {
+    onAddTabClick()
+    TabStripMetrics.newTabTapped.record()
+}
+
+private fun createCloseTabClickHandler(
+    numberOfTabs: Int,
+    tabsUseCases: TabsUseCases,
+    onCloseTabClick: (isPrivate: Boolean) -> Unit,
+    onLastTabClose: (isPrivate: Boolean) -> Unit,
+): (tabId: String, isPrivate: Boolean) -> Unit = { tabId, isPrivate ->
+    closeTab(
+        numberOfTabs = numberOfTabs,
+        isPrivate = isPrivate,
+        tabsUseCases = tabsUseCases,
+        tabId = tabId,
+        onLastTabClose = onLastTabClose,
+        onCloseTabClick = onCloseTabClick,
     )
+}
+
+private fun createSelectedTabClickHandler(
+    tabsUseCases: TabsUseCases,
+    onSelectedTabClick: (url: String) -> Unit,
+): (tabId: String, url: String) -> Unit = { tabId, url ->
+    tabsUseCases.selectTab(tabId)
+    onSelectedTabClick(url)
+    TabStripMetrics.selectTab.record()
+}
+
+private fun createMoveTabHandler(
+    tabsUseCases: TabsUseCases
+): (tabId: String, targetId: String, placeAfter: Boolean) -> Unit = { tabId, targetId, placeAfter ->
+    if (tabId != targetId) {
+        tabsUseCases.moveTabs(listOf(tabId), targetId, placeAfter)
+    }
 }
 
 @Composable
@@ -210,17 +265,17 @@ private fun TabStripContent(
             TabsList(
                 state = state,
                 modifier = Modifier.weight(1f, fill = false),
-                tabItemBackgroundColors = colors.tabItemBackgroundColors,
+                colors = colors,
                 onCloseTabClick = onCloseTabClick,
                 onSelectedTabClick = onSelectedTabClick,
                 onMove = onMove,
             )
 
-            IconButton(onClick = onAddTabClick) {
+            IconButton(onClick = onAddTabClick, contentDescription = stringResource(R.string.add_tab)) {
                 Icon(
                     painter = painterResource(iconsR.drawable.mozac_ic_plus_24),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    contentDescription = stringResource(R.string.add_tab),
+                    tint = colors.addTabButtonColor,
+                    contentDescription = null,
                 )
             }
         }
@@ -242,7 +297,7 @@ private fun TabStripContent(
 @Composable
 private fun TabsList(
     state: TabStripState,
-    tabItemBackgroundColors: TabStripColors.TabColors,
+    colors: TabStripColors,
     modifier: Modifier = Modifier,
     onCloseTabClick: (id: String, isPrivate: Boolean) -> Unit,
     onSelectedTabClick: (tabId: String, url: String) -> Unit,
@@ -289,7 +344,7 @@ private fun TabsList(
                         state = itemState,
                         onCloseTabClick = onCloseTabClick,
                         onSelectedTabClick = onSelectedTabClick,
-                        backgroundColors = tabItemBackgroundColors,
+                        colors = colors,
                         modifier =
                             Modifier.padding(end = spaceBetweenTabs)
                                 .animateItem()
@@ -349,11 +404,11 @@ private fun BoxWithConstraintsScope.calculateTabWidth(tabCount: Int): Dp {
 private fun TabItem(
     state: TabStripItem,
     modifier: Modifier = Modifier,
-    backgroundColors: TabStripColors.TabColors,
+    colors: TabStripColors,
     onCloseTabClick: (id: String, isPrivate: Boolean) -> Unit,
     onSelectedTabClick: (id: String, url: String) -> Unit,
 ) {
-    val backgroundColor = backgroundColors.get(state.isSelected)
+    val backgroundColor = colors.tabItemBackgroundColors.get(state.isSelected)
     val closeTabLabel = stringResource(R.string.close_tab)
 
     TabStripCard(
@@ -415,7 +470,7 @@ private fun TabItem(
                     Text(
                         text = state.title,
                         modifier = Modifier.align(Alignment.CenterStart),
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = colors.tabItemContentColors.get(state.isSelected),
                         softWrap = false,
                         maxLines = 1,
                         style = FirefoxTheme.typography.body2,
@@ -426,6 +481,7 @@ private fun TabItem(
             if (state.isCloseButtonVisible) {
                 IconButton(
                     onClick = { onCloseTabClick(state.id, state.isPrivate) },
+                    contentDescription = stringResource(id = R.string.close_tab_title, state.title),
                     modifier =
                         if (state.isSelected) {
                             Modifier.semantics {}
@@ -435,17 +491,8 @@ private fun TabItem(
                 ) {
                     Icon(
                         painter = painterResource(iconsR.drawable.mozac_ic_cross_20),
-                        tint =
-                            if (state.isSelected) {
-                                MaterialTheme.colorScheme.onSurface
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        contentDescription =
-                            stringResource(
-                                id = R.string.close_tab_title,
-                                state.title,
-                            ),
+                        tint = colors.closeButtonColors.get(state.isSelected),
+                        contentDescription = null,
                     )
                 }
             } else {
@@ -498,11 +545,14 @@ private fun closeTab(
     onLastTabClose: (isPrivate: Boolean) -> Unit,
     onCloseTabClick: (isPrivate: Boolean) -> Unit,
 ) {
-    if (numberOfTabs == 1) {
+    val isLastTab = numberOfTabs == 1
+    if (isLastTab) {
         onLastTabClose(isPrivate)
     }
     tabsUseCases.removeTab(tabId)
-    onCloseTabClick(isPrivate)
+    if (!isLastTab) {
+        onCloseTabClick(isPrivate)
+    }
     TabStripMetrics.closeTab.record()
 }
 
@@ -602,6 +652,7 @@ private fun TabStripPreview(@PreviewParameter(PreviewThemeProvider::class) theme
                 appStore = AppStore(),
                 browserStore = browserStore,
                 tabsUseCases = TabsUseCases(browserStore),
+                hideWhenKeyboardShown = false,
                 onAddTabClick = {
                     val tab = createTab(url = "www.example.com")
                     browserStore.dispatch(TabListAction.AddTabAction(tab))

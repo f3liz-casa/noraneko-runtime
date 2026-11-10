@@ -34,7 +34,6 @@ const ADDRESSES_COLLECTION_NAME = "addresses";
 const CREDITCARDS_COLLECTION_NAME = "creditCards";
 const AUTOFILL_CREDITCARDS_OS_AUTH_LOCKED_PREF =
   FormAutofill.AUTOFILL_CREDITCARDS_OS_AUTH_LOCKED_PREF;
-const AUTOFILL_ML_SUCCESS_PREF = "extensions.formautofill.useml.successful";
 const AUTOFILL_ML_NATIVE_ONNX_PREF =
   "extensions.formautofill.useml.nativeOnnxAvailable";
 const MANAGE_ADDRESSES_L10N_IDS = [
@@ -190,6 +189,56 @@ FormAutofillUtils = {
     return this._unsupportedFieldNameInfo.includes(fieldName);
   },
 
+  /**
+   * Determine whether the element carries an autocomplete attribute that the
+   * parser could not resolve to a known field name, which we treat as a signal
+   * that the site does not want browser autofill on this field (Bug 1999789).
+   *
+   * getAutocompleteInfo() returns an empty fieldName for both "no attribute" and
+   * "attribute present but unparseable", so the presence of the attribute is
+   * what separates the two.
+   *
+   * Called at field detection time (FormAutofillHeuristics.inferFieldInfo),
+   * which leaves such a field unclassified so that it takes no part in
+   * autofill at all. Also called against the live element right before the
+   * dropdown would be offered on it directly
+   * (FormAutofillChild.shouldSearchForAutoComplete), to catch an attribute
+   * the site changes after detection (Bug 2078883). The field stays
+   * fillable from a sibling's dropdown either way -- only its own popup is
+   * withheld.
+   *
+   * @param {HTMLElement} element
+   * @param {?AutocompleteInfo} autocompleteInfo
+   *        The result of element.getAutocompleteInfo(), which is null when
+   *        autocomplete does not apply to this element type.
+   * @returns {boolean}
+   */
+  hasUnrecognizedAutocomplete(element, autocompleteInfo) {
+    if (autocompleteInfo?.fieldName) {
+      return false;
+    }
+
+    const tokens =
+      element
+        .getAttribute("autocomplete")
+        ?.trim()
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean) ?? [];
+
+    // An absent, empty or whitespace-only attribute expresses no intent, so it
+    // is treated the same as having no attribute at all.
+    if (!tokens.length) {
+      return false;
+    }
+
+    // "off" and "on" parse as valid field names on their own and never reach
+    // here. In a malformed multi-token value they do, and honouring those as a
+    // suppression signal would read as respecting autocomplete=off through a
+    // side door (Bug 1754879).
+    return !tokens.includes("off") && !tokens.includes("on");
+  },
+
   isCCNumber(ccNumber) {
     return ccNumber && lazy.CreditCard.isValidNumber(ccNumber);
   },
@@ -242,12 +291,22 @@ FormAutofillUtils = {
     );
   },
 
-  setMLUsedAlready() {
-    Services.prefs.setBoolPref(AUTOFILL_ML_SUCCESS_PREF, true);
-  },
-
   setNativeOnnxRuntimeAvailable(available) {
     Services.prefs.setBoolPref(AUTOFILL_ML_NATIVE_ONNX_PREF, available);
+  },
+
+  /**
+   * Return true if the ML inferencer is allowed to infer the field type for a
+   * field, or false if the field type has already been sufficiently determined
+   * (autocomplete or fathom) or false if there are no ML tokens for this field.
+   */
+  canUseML(fieldDetail) {
+    return (
+      fieldDetail.mlData &&
+      fieldDetail.reason != "autocomplete" &&
+      fieldDetail.reason != "fathom" &&
+      !FormAutofillUtils.mlIgnoreFieldTypes.includes(fieldDetail.fieldName)
+    );
   },
 
   /**
@@ -1600,6 +1659,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
   2 * 60 * 1000
 );
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  FormAutofillUtils,
+  "useHeuristicsForOther",
+  "extensions.formautofill.useml.useHeuristicsForOther",
+  false
+);
+
 // Field types the ML model is not trusted with, parsed from the comma
 // separated pref. They are classified by the regexp-based heuristics instead.
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -1617,13 +1683,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
 
 XPCOMUtils.defineLazyPreferenceGetter(
   FormAutofillUtils,
-  "isMLUsedAlready",
-  AUTOFILL_ML_SUCCESS_PREF,
-  false
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  FormAutofillUtils,
   "isNativeOnnxRuntimeAvailable",
   AUTOFILL_ML_NATIVE_ONNX_PREF,
   false
@@ -1635,6 +1694,28 @@ XPCOMUtils.defineLazyPreferenceGetter(
   FormAutofill,
   "mlFeatures",
   "extensions.formautofill.useml.features",
+  "[]",
+  null,
+  value => {
+    try {
+      const list = JSON.parse(value);
+      return new Set(Array.isArray(list) ? list : []);
+    } catch {
+      return new Set();
+    }
+  }
+);
+
+// Field types whose regex-heuristic recommendation is trustworthy enough to feed
+// the model as a "**hint<class>" mlData token (the "regex_hint" mlFeature). A
+// regex prediction outside this set is emitted as "**hintnone" so the model is
+// not tempted to copy a low-precision heuristic guess. JSON array of field-name
+// keys; MUST match the hintable set the shipped model was trained with (part of
+// the model's input contract, version-locked to the model revision).
+XPCOMUtils.defineLazyPreferenceGetter(
+  FormAutofill,
+  "mlHintFields",
+  "extensions.formautofill.useml.hint.fields",
   "[]",
   null,
   value => {

@@ -20,10 +20,15 @@ gradlePlugin {
     }
 }
 
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions {
+        allWarningsAsErrors.set(true)
+    }
+}
+
 dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
-    testImplementation(libs.mockito)
     testRuntimeOnly(libs.junit.platform.launcher)
 
     lintChecks(libs.androidx.lint)

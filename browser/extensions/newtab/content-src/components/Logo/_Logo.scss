@@ -31,6 +31,28 @@
     }
   }
 
+  // With the search bar in its variant B, the card behind it overhangs the
+  // search by $search-card-overhang on each side. The search is centered in
+  // the container and grows with the content column, so the card reaches the
+  // wordmark until the container fits the search at the content column's
+  // maximum width plus the overhang and the wordmark on each side. The
+  // wordmark ends at the logo, its margin and its own width from the
+  // container's start edge.
+  // The wordmark's margin-inline-start is var(--space-large), 1rem.
+  $wordmark-end: calc(#{$logo-size + $wordmark-size} + 1rem);
+
+  .nova-enabled.search-has-own-row & .wordmark {
+    @container outer-grid (inline-size < calc(#{$search-width-ratio} * (#{16 * $col-width-px} + #{15 * $col-gap-px}) + 2 * (#{$search-card-overhang} + #{$wordmark-end}))) {
+      display: none;
+    }
+  }
+
+  .nova-enabled.search-has-own-row.sections-5-col & .wordmark {
+    @container outer-grid (inline-size < calc(#{$search-width-ratio} * (#{20 * $col-width-px} + #{19 * $col-gap-px}) + 2 * (#{$search-card-overhang} + #{$wordmark-end}))) {
+      display: none;
+    }
+  }
+
   .nova-enabled .content & {
     grid-column: 1 / -1;
     display: flex;

@@ -26,10 +26,12 @@ import mozilla.components.concept.sync.OAuthAccount
 import mozilla.components.concept.sync.PeriodicSyncConfig
 import mozilla.components.concept.sync.SyncConfig
 import mozilla.components.concept.sync.SyncEngine
+import mozilla.components.feature.accounts.FxaCapability
 import mozilla.components.feature.accounts.push.CloseTabsCommandReceiver
 import mozilla.components.feature.accounts.push.CloseTabsFeature
 import mozilla.components.feature.accounts.push.FxaPushSupportFeature
 import mozilla.components.feature.accounts.push.SendTabFeature
+import mozilla.components.feature.automotive.isAndroidAutomotiveAvailable
 import mozilla.components.feature.syncedtabs.SyncedTabsAutocompleteProvider
 import mozilla.components.feature.syncedtabs.commands.SyncedTabsCommands
 import mozilla.components.feature.syncedtabs.commands.SyncedTabsCommandsFlushScheduler
@@ -37,6 +39,7 @@ import mozilla.components.feature.syncedtabs.storage.SyncedTabsStorage
 import mozilla.components.lib.crash.CrashReporter
 import mozilla.components.lib.state.Middleware
 import mozilla.components.lib.state.Store
+import mozilla.components.service.fxa.FxaService
 import mozilla.components.service.fxa.ServerConfig
 import mozilla.components.service.fxa.manager.FxaAccountManager
 import mozilla.components.service.fxa.manager.SCOPE_SYNC
@@ -86,6 +89,7 @@ class BackgroundServices(
     creditCardsStorage: Lazy<AutofillCreditCardsAddressesStorage>,
     strictMode: StrictModeManager,
     private val applicationScope: CoroutineScope,
+    isAndroidAutomotiveAvailable: Boolean = context.isAndroidAutomotiveAvailable(),
 ) {
     // Allows executing tasks which depend on the account manager, but do not need to eagerly initialize it.
     val accountManagerAvailableQueue = RunWhenReadyQueue()
@@ -117,17 +121,43 @@ class BackgroundServices(
             secureStateAtRest = Config.channel.isNightlyOrDebug,
         )
 
+    // Password and credit card syncing is disabled on Android Automotive until we implement the UX Google
+    // requires for handling sensitive information there. See bug 2060936.
+    private val areCredentialsSyncable = !isAndroidAutomotiveAvailable
+
     @VisibleForTesting
     val supportedEngines =
         setOfNotNull(
             SyncEngine.History,
             SyncEngine.Bookmarks,
-            SyncEngine.Passwords,
+            if (areCredentialsSyncable) SyncEngine.Passwords else null,
             SyncEngine.Tabs,
-            SyncEngine.CreditCards,
+            if (areCredentialsSyncable) SyncEngine.CreditCards else null,
             if (settings.isAddressSyncEnabled) SyncEngine.Addresses else null,
         )
-    private val syncConfig = SyncConfig(supportedEngines, PeriodicSyncConfig(periodMinutes = 240)) // four hours
+    private val syncConfig by lazyMonitored {
+        SyncConfig(
+            supportedEngines = supportedEngines,
+            periodicSyncConfig = PeriodicSyncConfig(periodMinutes = 240), // four hours
+            syncDecouplingEnabled = settings.syncDecouplingEnabled,
+        )
+    }
+
+    /**
+     * A set of [FxaCapability] that Fenix supports, which we use in our
+     * [org.mozilla.fenix.components.accounts.FxaWebChannelIntegration] to communicate client capabilities with firefox
+     * accounts (FxA)
+     */
+    val fxaCapabilities: Set<FxaCapability> by lazyMonitored {
+        buildSet {
+            add(FxaCapability.ChooseWhatToSync)
+            add(FxaCapability.PairingV2)
+            if (syncConfig.syncDecouplingEnabled) {
+                add(FxaCapability.KeysOptional)
+                add(FxaCapability.Services(values = FxaService.entries))
+            }
+        }
+    }
 
     private val creditCardKeyProvider by lazyMonitored { creditCardsStorage.value.crypto }
     private val passwordKeyProvider by lazyMonitored { passwordsStorage.value.crypto }
@@ -137,15 +167,19 @@ class BackgroundServices(
         // accessible to workers spawned by the sync manager.
         GlobalSyncableStoreProvider.configureStore(SyncEngine.History to historyStorage)
         GlobalSyncableStoreProvider.configureStore(SyncEngine.Bookmarks to bookmarkStorage)
-        GlobalSyncableStoreProvider.configureStore(
-            storePair = SyncEngine.Passwords to passwordsStorage,
-            keyProvider = lazy { passwordKeyProvider },
-        )
+        if (areCredentialsSyncable) {
+            GlobalSyncableStoreProvider.configureStore(
+                storePair = SyncEngine.Passwords to passwordsStorage,
+                keyProvider = lazy { passwordKeyProvider },
+            )
+        }
         GlobalSyncableStoreProvider.configureStore(SyncEngine.Tabs to remoteTabsStorage)
-        GlobalSyncableStoreProvider.configureStore(
-            storePair = SyncEngine.CreditCards to creditCardsStorage,
-            keyProvider = lazy { creditCardKeyProvider },
-        )
+        if (areCredentialsSyncable) {
+            GlobalSyncableStoreProvider.configureStore(
+                storePair = SyncEngine.CreditCards to creditCardsStorage,
+                keyProvider = lazy { creditCardKeyProvider },
+            )
+        }
         if (settings.isAddressSyncEnabled) {
             GlobalSyncableStoreProvider.configureStore(SyncEngine.Addresses to creditCardsStorage)
         }

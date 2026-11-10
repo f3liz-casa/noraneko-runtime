@@ -115,6 +115,11 @@ class H265NALU final {
            mNalUnitType == NAL_TYPES::IDR_N_LP;
   }
 
+  bool IsIRAP() const {
+    return mNalUnitType >= NAL_TYPES::BLA_W_LP &&
+           mNalUnitType <= NAL_TYPES::CRA_NUT;
+  }
+
   bool IsSPS() const { return mNalUnitType == NAL_TYPES::SPS_NUT; }
   bool IsVPS() const { return mNalUnitType == NAL_TYPES::VPS_NUT; }
   bool IsPPS() const { return mNalUnitType == NAL_TYPES::PPS_NUT; }
@@ -377,6 +382,22 @@ class SPSIterator final {
   const HVCCConfig& mConfig;
 };
 
+// ISO/IEC 14496-15 Annex E.3 states, "The elements following are a series of
+// values from the HEVC decoder configuration record." The record is defined
+// in Section 8.3.2.1.2, but the codec string includes only a subset of its
+// attributes.
+struct H265CodecDetails final {
+  uint8_t general_profile_space = {};
+  bool general_tier_flag = {};
+  uint8_t general_profile_idc = {};
+  // ISO/IEC 14496-15 Annex E.3: "the 32 bits of the
+  // general_profile_compatibility_flags, but in reverse bit order."
+  uint32_t general_profile_compatibility_flags = {};
+  // Store the Annex E.3 constraint bytes left-aligned in this 48-bit field.
+  uint64_t general_constraint_indicator_flags = {};
+  uint8_t general_level_idc = {};
+};
+
 class H265 final {
  public:
   static Result<H265SPS, nsresult> DecodeSPSFromHVCCExtraData(
@@ -397,9 +418,21 @@ class H265 final {
   static uint32_t ComputeMaxRefFrames(
       const mozilla::MediaByteBuffer* aExtraData);
 
+  // Return sps_max_num_reorder_pics at the highest sub-layer from a valid
+  // SPS in the extradata, otherwise return 0. A non-zero value means
+  // decode order can differ from presentation order (B-frames).
+  static uint32_t ComputeMaxReorderPics(
+      const mozilla::MediaByteBuffer* aExtraData);
+
   // Create a dummy extradata, useful to create a decoder and test the
   // capabilities of the decoder.
   static already_AddRefed<mozilla::MediaByteBuffer> CreateFakeExtraData();
+
+  // Create extradata describing a stream with the given profile, tier, level
+  // and constraint flags, sized to aSize, useful to create a decoder and test
+  // its capabilities. Use 10-bit depth for Main 10 and 8-bit otherwise.
+  static already_AddRefed<mozilla::MediaByteBuffer> CreateExtraData(
+      const H265CodecDetails& aDetails, const gfx::IntSize& aSize);
 
   // Create new extradata with the essential information from the given
   // HVCCConfig, excluding its original NALUs. The NALUs will be replaced by the
@@ -410,6 +443,11 @@ class H265 final {
   // Return true if the given sample is a keyframe. Return error if we can't
   // determine the result.
   static Result<bool, nsresult> IsKeyFrame(
+      const mozilla::MediaRawData* aSample);
+
+  // Return true if the given sample is a random access point (IDR, CRA or
+  // BLA). Return error if we can't determine the result.
+  static Result<bool, nsresult> IsRandomAccessPoint(
       const mozilla::MediaRawData* aSample);
 
   // Parse SMPTE ST 2086 mastering display and CTA-861.3 content light level

@@ -17,9 +17,9 @@ ChromeUtils.defineLazyGetter(
 );
 
 const TITLE_L10N_IDS = {
-  password: "autocomplete-remove-password-title",
-  address: "autocomplete-remove-address-title",
-  payment: "autocomplete-remove-payment-method-title",
+  password: "autocomplete-delete-password-title",
+  address: "autocomplete-delete-address-title",
+  payment: "autocomplete-delete-payment-method-title",
 };
 
 export const AutocompleteRemoveRecord = {
@@ -39,7 +39,7 @@ export const AutocompleteRemoveRecord = {
     const [title, message, confirmButton] = await lazy.l10n.formatValues([
       { id: TITLE_L10N_IDS[recordType] },
       { id: "autocomplete-remove-record-message" },
-      { id: "autocomplete-remove-record-button" },
+      { id: "autocomplete-delete-record-button" },
     ]);
 
     const flags =
@@ -60,8 +60,13 @@ export const AutocompleteRemoveRecord = {
       {}
     );
 
-    return (
-      result.QueryInterface(Ci.nsIPropertyBag2).get("buttonNumClicked") == 0
-    );
+    const confirmed =
+      result.QueryInterface(Ci.nsIPropertyBag2).get("buttonNumClicked") == 0;
+    Glean.autocomplete.recordDialogInteraction.record({
+      record_type: recordType,
+      interaction_type: confirmed ? "confirm" : "cancel",
+      update_type: "delete",
+    });
+    return confirmed;
   },
 };

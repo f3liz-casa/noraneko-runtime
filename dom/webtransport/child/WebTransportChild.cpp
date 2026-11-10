@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/dom/WebTransportChild.h"
-
 #include "mozilla/dom/WebTransport.h"
 #include "mozilla/dom/WebTransportLog.h"
 
@@ -20,7 +18,10 @@ void WebTransportChild::Shutdown(bool aClose) {
 }
 
 void WebTransportChild::CloseAll() {
-  // XXX need impl
+  if (mTransport) {
+    RefPtr<WebTransport> self(mTransport);
+    self->RemoteClosed(false, 0, EmptyCString(), Nothing());
+  }
 }
 
 ::mozilla::ipc::IPCResult WebTransportChild::RecvCloseAll(
@@ -31,10 +32,11 @@ void WebTransportChild::CloseAll() {
 }
 
 ::mozilla::ipc::IPCResult WebTransportChild::RecvRemoteClosed(
-    const bool& aCleanly, const uint32_t& aCode, const nsACString& aReason) {
+    const bool& aCleanly, const uint32_t& aCode, const nsACString& aReason,
+    const Maybe<WebTransportStatsData>& aStats) {
   if (mTransport) {
     RefPtr<WebTransport> self(mTransport);
-    self->RemoteClosed(aCleanly, aCode, aReason);
+    self->RemoteClosed(aCleanly, aCode, aReason, aStats);
   }
   return IPC_OK();
 }
@@ -67,6 +69,15 @@ void WebTransportChild::CloseAll() {
   return IPC_OK();
 }
 
+::mozilla::ipc::IPCResult WebTransportChild::RecvDatagramReady(
+    const uint64_t& aDatagramId) {
+  if (mTransport) {
+    RefPtr<WebTransport> self(mTransport);
+    self->OnDatagramReady(aDatagramId);
+  }
+  return IPC_OK();
+}
+
 ::mozilla::ipc::IPCResult WebTransportChild::RecvDraining() {
   if (mTransport) {
     RefPtr<WebTransport> self(mTransport);
@@ -75,13 +86,14 @@ void WebTransportChild::CloseAll() {
   return IPC_OK();
 }
 
-::mozilla::ipc::IPCResult WebTransportChild::RecvNegotiatedProtocol(
-    const nsACString& aSubprotocol) {
-  LOG(("WebTransportChild::RecvNegotiatedProtocol: %s",
+::mozilla::ipc::IPCResult WebTransportChild::RecvNegotiatedProtocolAndHeaders(
+    const nsACString& aSubprotocol, nsTArray<WebTransportHeader>&& aHeaders) {
+  LOG(("WebTransportChild::RecvNegotiatedProtocolAndHeaders: %s",
        PromiseFlatCString(aSubprotocol).get()));
   if (mTransport) {
     RefPtr<WebTransport> self(mTransport);
     self->SetNegotiatedProtocol(aSubprotocol);
+    self->SetResponseHeaders(std::move(aHeaders));
   }
   return IPC_OK();
 }

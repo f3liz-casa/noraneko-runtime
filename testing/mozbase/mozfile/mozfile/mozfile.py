@@ -315,11 +315,9 @@ def copy_contents(srcdir, dstdir, ignore_dangling_symlinks=False):
     """
     import shutil
 
-    # dirs_exist_ok was introduced in Python 3.8
-    # On earlier versions, or Windows, use the verbose mechanism.
-    # We use it on Windows because _call_with_windows_retry doesn't allow
-    # named arguments to be passed.
-    if (sys.version_info.major < 3 or sys.version_info.minor < 8) or (os.name == "nt"):
+    # On Windows, use the verbose mechanism because _call_with_windows_retry
+    # doesn't allow named arguments (dirs_exist_ok) to be passed.
+    if os.name == "nt":
         names = os.listdir(srcdir)
         if not os.path.isdir(dstdir):
             os.makedirs(dstdir)
@@ -351,11 +349,20 @@ def copy_contents(srcdir, dstdir, ignore_dangling_symlinks=False):
         if errors:
             raise Exception(errors)
     else:
+
+        def ignore_dangling(dirname, names):
+            return [
+                name
+                for name in names
+                if os.path.islink(path := os.path.join(dirname, name))
+                and not os.path.exists(path)
+            ]
+
         shutil.copytree(
             srcdir,
             dstdir,
+            ignore=ignore_dangling if ignore_dangling_symlinks else None,
             dirs_exist_ok=True,
-            ignore_dangling_symlinks=ignore_dangling_symlinks,
         )
 
 

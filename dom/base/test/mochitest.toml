@@ -12,6 +12,8 @@ support-files = [
   "iframe_main_bug1022229.html",
   "iframe_sandbox_bug1022229.html",
   "file_empty.html",
+  "file_domcontentloaded_document_open.html",
+  "file_domcontentloaded_terminated_parse.html",
   "iframe_postMessage_solidus.html",
   "file_setname.html",
   "345339_iframe.html",
@@ -352,6 +354,10 @@ skip-if = [
   "http3",
 ]
 
+["test_domcontentloaded_document_open.html"]
+
+["test_domcontentloaded_terminated_parse.html"]
+
 ["test_domparser_null_char.html"]
 
 ["test_domparsing.html"]
@@ -467,6 +473,8 @@ skip-if = [
 
 ["test_html_colors_standards.html"]
 
+["test_htmlcollection_spread_duplicate_keys.html"]
+
 ["test_iframe_event_listener_leaks.html"]
 
 ["test_iframe_referrer.html"]
@@ -534,8 +542,6 @@ skip-if = [
   "headless",
   "os == 'linux' && os_version == '22.04' && arch == 'x86_64' && display == 'wayland'",
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'",
-  "os == 'mac' && os_version == '10.15' && arch == 'x86_64'",
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64'", # Bug 1929448
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 2019401
 ]
 
@@ -566,6 +572,8 @@ skip-if = [
 ["test_navigator_language.html"]
 
 ["test_nested_event_loop_spin_and_idle_tasks.html"]
+
+["test_node_selected_flag_after_splitText.html"]
 
 ["test_nodelist_holes.html"]
 
@@ -622,9 +630,6 @@ skip-if = [
 ["test_processing_instruction_update_stylesheet.xhtml"]
 
 ["test_progress_events_for_gzip_data.html"]
-skip-if = [
-  "tsan", # Bug 1621323
-]
 
 ["test_pushState_structuredclone.html"]
 scheme = "https"
@@ -646,6 +651,8 @@ support-files = ["file_sandbox_and_document_uri.html"]
 
 ["test_selection_change_null_presshell.html"]
 support-files = ["file_selection_change_null_presshell.html"]
+
+["test_selection_cross_shadow_boundary_offset_after_mutation.html"]
 
 ["test_setInterval_from_start.html"]
 
@@ -706,7 +713,6 @@ skip-if = [
   "asan",
   "debug",
   "os == 'android'", # The test needs to run reasonably fast.
-  "tsan",
 ]
 
 ["test_text-fragments-create-text-directive-no-reveal.html"]
@@ -819,8 +825,6 @@ skip-if = [
 skip-if = [
   "http2",
   "http3",
-  "os == 'linux' && os_version == '22.04' && arch == 'x86_64' && display == 'wayland' && debug", # Bug 1870499 and other bugs with crashes after this test start
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && debug", # Bug 1870499 and other bugs with crashes after this test start
 ]
 
 ["test_ze_srcdoc.html"]

@@ -8,6 +8,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,6 +42,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -73,7 +77,6 @@ import org.mozilla.fenix.wallpapers.WallpaperState
 /** The size of a top site item. */
 const val TOP_SITES_ITEM_SIZE = 84
 
-internal const val TOP_SITES_TO_SHOW = 8
 internal const val TOP_SITES_PER_ROW = 4
 internal const val TOP_SITES_FAVICON_CARD_SIZE = 60
 internal const val TOP_SITES_FAVICON_SIZE = 36
@@ -95,10 +98,6 @@ internal fun TopSites(
 ) {
     // Deliberately not persisted: every new homepage starts collapsed.
     var isExpanded by remember { mutableStateOf(false) }
-
-    // Expanded, the tile follows the last shortcut as it does in the shortcuts library. Collapsed,
-    // it is only shown when it fits within the truncated grid.
-    val showAddShortcut = state.isAddShortcutEnabled && (isExpanded || state.topSites.size < TOP_SITES_TO_SHOW)
 
     TopSites(
         topSites = state.topSites,
@@ -123,8 +122,7 @@ internal fun TopSites(
             isExpanded = expanded
             interactor.onExpandToggleClicked(expanded)
         },
-        showAddShortcut = showAddShortcut,
-        showExpandToggle = state.showExpandToggle,
+        isExpandToggleEnabled = state.isExpandToggleEnabled,
         isExpanded = isExpanded,
     )
 }
@@ -145,9 +143,8 @@ internal fun TopSites(
  * @param onTopSitesItemBound Invoked during the composition of a top site item.
  * @param onAddShortcutClicked Invoked when the user clicks on the "Add shortcut" tile.
  * @param onExpandToggleClick Invoked when the user clicks on the expand/collapse control.
- * @param showAddShortcut Whether to display the "Add shortcut" tile after the top sites.
- * @param showExpandToggle Whether to display the control that expands and collapses the grid.
- * @param isExpanded Whether every top site is shown rather than only the first [TOP_SITES_TO_SHOW].
+ * @param isExpandToggleEnabled Whether the control that expands and collapses the grid is enabled.
+ * @param isExpanded Whether every top site is shown rather than only the first [TOP_SITES_COLLAPSED_ROWS] rows.
  */
 @Composable
 @Suppress("LongParameterList")
@@ -165,48 +162,59 @@ fun TopSites(
     onTopSitesItemBound: () -> Unit,
     onAddShortcutClicked: () -> Unit,
     onExpandToggleClick: () -> Unit = {},
-    showAddShortcut: Boolean = false,
-    showExpandToggle: Boolean = false,
+    isExpandToggleEnabled: Boolean = false,
     isExpanded: Boolean = false,
 ) {
-    Column(
+    BoxWithConstraints(
         modifier =
             Modifier.fillMaxWidth()
                 .semantics {
                     testTagsAsResourceId = true
                 }
-                .testTag(TopSitesTestTag.TOP_SITES),
-        horizontalAlignment = Alignment.CenterHorizontally,
+                .testTag(TopSitesTestTag.TOP_SITES)
+                .padding(horizontal = horizontalMargin)
     ) {
-        Shortcuts(
-            topSites = if (isExpanded) topSites else topSites.take(TOP_SITES_TO_SHOW),
-            topSiteColors = topSiteColors,
-            showAddShortcut = showAddShortcut,
-            scrollable = false,
-            menuItems = { topSite ->
-                getMenuItems(
-                    topSite = topSite,
-                    onOpenInPrivateTabClicked = onOpenInPrivateTabClicked,
-                    onEditTopSiteClicked = onEditTopSiteClicked,
-                    onRemoveTopSiteClicked = onRemoveTopSiteClicked,
-                    onSettingsClicked = onSettingsClicked,
-                    onSponsorPrivacyClicked = onSponsorPrivacyClicked,
-                )
-            },
-            onTopSiteClick = onTopSiteClick,
-            onTopSiteLongClick = onTopSiteLongClick,
-            onTopSiteImpression = onTopSiteImpression,
-            onTopSitesItemBound = onTopSitesItemBound,
-            onAddShortcutClicked = onAddShortcutClicked,
-            modifier = Modifier.padding(horizontal = horizontalMargin),
-        )
+        val columns = remember(maxWidth) { calculateTopSitesRowLayout(maxWidth).columns }
+        val collapsedCount = collapsedTopSitesCount(columns)
 
-        if (showExpandToggle) {
-            TopSitesExpandToggle(
-                isExpanded = isExpanded,
-                contentColor = topSiteColors.titleTextColor,
-                onClick = onExpandToggleClick,
+        val hasHiddenShortcuts = topSites.size > collapsedCount
+        val hasHiddenAddShortcut = topSites.size >= collapsedCount
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Shortcuts(
+                topSites = if (isExpanded) topSites else topSites.take(collapsedCount),
+                topSiteColors = topSiteColors,
+                showAddShortcut = isExpanded || topSites.size < collapsedCount,
+                scrollable = false,
+                menuItems = { topSite ->
+                    getMenuItems(
+                        topSite = topSite,
+                        onOpenInPrivateTabClicked = onOpenInPrivateTabClicked,
+                        onEditTopSiteClicked = onEditTopSiteClicked,
+                        onRemoveTopSiteClicked = onRemoveTopSiteClicked,
+                        onSettingsClicked = onSettingsClicked,
+                        onSponsorPrivacyClicked = onSponsorPrivacyClicked,
+                    )
+                },
+                onTopSiteClick = onTopSiteClick,
+                onTopSiteLongClick = onTopSiteLongClick,
+                onTopSiteImpression = onTopSiteImpression,
+                onTopSitesItemBound = onTopSitesItemBound,
+                onAddShortcutClicked = onAddShortcutClicked,
             )
+
+            if (isExpandToggleEnabled && (hasHiddenShortcuts || hasHiddenAddShortcut)) {
+                Spacer(modifier = Modifier.height(FirefoxTheme.layout.space.static100))
+
+                TopSitesExpandToggle(
+                    isExpanded = isExpanded,
+                    contentColor = topSiteColors.titleTextColor,
+                    onClick = onExpandToggleClick,
+                )
+            }
         }
     }
 }
@@ -219,7 +227,7 @@ private fun TopSitesExpandToggle(
 ) {
     TextButton(
         onClick = onClick,
-        modifier = Modifier.testTag(TopSitesTestTag.EXPAND_TOGGLE),
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag(TopSitesTestTag.EXPAND_TOGGLE),
         colors = ButtonDefaults.textButtonColors(contentColor = contentColor),
     ) {
         Icon(
@@ -235,7 +243,7 @@ private fun TopSitesExpandToggle(
             tint = LocalContentColor.current,
         )
 
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(FirefoxTheme.layout.space.static100))
 
         Text(
             text =
@@ -261,6 +269,7 @@ data class TopSiteColors(
     companion object {
         /** Builder function used to construct an instance of [TopSiteColors]. */
         @Composable
+        @ReadOnlyComposable
         fun colors(
             titleTextColor: Color = MaterialTheme.colorScheme.onSurface,
             sponsoredTextColor: Color = MaterialTheme.colorScheme.onSurface,
@@ -274,6 +283,7 @@ data class TopSiteColors(
 
         /** Builder function used to construct an instance of [TopSiteColors] given a [WallpaperState]. */
         @Composable
+        @ReadOnlyComposable
         fun colors(wallpaperState: WallpaperState): TopSiteColors {
             val textColor: Long? = wallpaperState.currentWallpaper.textColor
             val (titleTextColor, sponsoredTextColor) =
@@ -636,7 +646,7 @@ private fun ShowMoreExperimentPreview(@PreviewParameter(PreviewThemeProvider::cl
                     onSponsorPrivacyClicked = {},
                     onTopSitesItemBound = {},
                     onAddShortcutClicked = {},
-                    showExpandToggle = true,
+                    isExpandToggleEnabled = true,
                 )
             }
         }

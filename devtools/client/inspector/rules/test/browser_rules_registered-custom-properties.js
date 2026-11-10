@@ -79,8 +79,6 @@ const TEST_URI = `https://example.org/document-builder.sjs?html=${encodeURICompo
       --css-inherit: dashed;
       /* valid, complex value */
       --js-no-inherit: calc(100px * cos(45deg));
-      /* based on another property */
-      --css-dynamic-registered: var(--css-no-inherit);
     }
   </style>
   <main>
@@ -92,6 +90,7 @@ const TEST_URI = `https://example.org/document-builder.sjs?html=${encodeURICompo
 
 add_task(async function () {
   await pushPref("layout.css.properties-and-values.enabled", true);
+  await pushPref("layout.css.random.enabled", true);
   const tab = await addTab(TEST_URI);
   const { inspector, view } = await openRuleView();
   const doc = view.styleDocument;
@@ -568,9 +567,112 @@ add_task(async function () {
       },
     ].sort((a, b) => (a.header < b.header ? -1 : 1))
   );
+});
+
+// Check that we properly set the invalid at computed value time error icon for custom
+// property declarations that don't match the syntax of the registered property.
+add_task(async function iacvt() {
+  await pushPref("layout.css.properties-and-values.enabled", true);
+  await addTab(
+    `https://example.org/document-builder.sjs?html=${encodeURIComponent(`
+  <style>
+    @property --css-no-inherit {
+      syntax: "<color>";
+      inherits: false;
+      initial-value: ${CSS_NO_INHERIT_INITIAL_VALUE};
+    }
+
+    @property --css-inherit {
+      syntax: "<color>";
+      inherits: true;
+      initial-value: ${CSS_INHERIT_INITIAL_VALUE};
+    }
+
+    @property --color-1 {
+      syntax: "<color>";
+      inherits: false;
+      initial-value: red;
+    }
+
+    @property --color-2 {
+      syntax: "<color>";
+      inherits: false;
+      initial-value: red;
+    }
+
+    @property --color-3 {
+      syntax: "<color>";
+      inherits: false;
+      initial-value: red;
+    }
+
+    @property --color-4 {
+      syntax: "<color>";
+      inherits: false;
+      initial-value: red;
+    }
+
+    @property --color-5 {
+      syntax: "<color>";
+      inherits: false;
+      initial-value: red;
+    }
+
+    @property --color-6 {
+      syntax: "<color>";
+      inherits: false;
+      initial-value: red;
+    }
+
+    @property --length {
+      syntax: "<length>";
+      inherits: false;
+      initial-value: 10px;
+    }
+
+    @property --angle-1 {
+      syntax: "<angle>";
+      inherits: false;
+      initial-value: 10deg;
+    }
+
+    @property --angle-2 {
+      syntax: "<angle>";
+      inherits: false;
+      initial-value: 10deg;
+    }
+
+    :root {
+      --local-not-a-color: 10px;
+      --local-color: blue;
+    }
+
+    aside {
+     /* registered property has <color> syntax, this declaration is invalid at computed-value time */
+      --css-inherit: dashed;
+      /* valid, complex value */
+      --js-no-inherit: calc(100px * cos(45deg));
+      /* based on subsitution functions */
+      --color-1: var(--local-not-a-color);
+      --color-2: var(--local-color);
+      --color-3: attr(data-not-a-color);
+      --color-4: attr(data-color type(<color>));
+      --color-5: attr(data-not-a-color type(<color>));
+      --color-6: env(safe-area-inset-bottom);
+      --length: env(safe-area-inset-bottom);
+    }
+    /* Use a different rule so we don't have the "Show X unused custom CSS properties" button */
+    :where(aside) {
+      --angle-1: random(90deg, 180deg);
+      --angle-2: random(10px, 20px);
+    }
+  </style>
+  <aside data-not-a-color="10" data-color="gold">fries</aside>
+`)}`
+  );
+  const { inspector, view } = await openRuleView();
 
   await selectNode("aside", inspector);
-
   info(
     "Check that the invalid at computed-value time icon is displayed when needed"
   );
@@ -591,12 +693,57 @@ add_task(async function () {
   });
 
   info(
-    "Declaration of variable based on other variable are not marked as invalid"
+    "Check declaration of registered properties based on substitution functions"
   );
   checkInvalidAtComputedValueTime(view, {
     ruleIndex: 1,
-    declaration: { "--css-dynamic-registered": "var(--css-no-inherit)" },
+    declaration: { "--color-1": "var(--local-not-a-color)" },
+    invalid: true,
+    syntax: `<color>`,
+  });
+  checkInvalidAtComputedValueTime(view, {
+    ruleIndex: 1,
+    declaration: { "--color-2": "var(--local-color)" },
     invalid: false,
+  });
+  checkInvalidAtComputedValueTime(view, {
+    ruleIndex: 1,
+    declaration: { "--color-3": "attr(data-not-a-color)" },
+    invalid: true,
+    syntax: `<color>`,
+  });
+  checkInvalidAtComputedValueTime(view, {
+    ruleIndex: 1,
+    declaration: { "--color-4": "attr(data-color type(<color>))" },
+    invalid: false,
+  });
+  checkInvalidAtComputedValueTime(view, {
+    ruleIndex: 1,
+    declaration: { "--color-5": "attr(data-not-a-color type(<color>))" },
+    invalid: true,
+    syntax: `<color>`,
+  });
+  checkInvalidAtComputedValueTime(view, {
+    ruleIndex: 1,
+    declaration: { "--color-6": "env(safe-area-inset-bottom)" },
+    invalid: true,
+    syntax: `<color>`,
+  });
+  checkInvalidAtComputedValueTime(view, {
+    ruleIndex: 1,
+    declaration: { "--length": "env(safe-area-inset-bottom)" },
+    invalid: false,
+  });
+  checkInvalidAtComputedValueTime(view, {
+    ruleIndex: 2,
+    declaration: { "--angle-1": "random(90deg, 180deg)" },
+    invalid: false,
+  });
+  checkInvalidAtComputedValueTime(view, {
+    ruleIndex: 2,
+    declaration: { "--angle-2": "random(10px, 20px)" },
+    invalid: true,
+    syntax: `<angle>`,
   });
 });
 

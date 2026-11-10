@@ -58,6 +58,7 @@
 #include "mozilla/dom/Link.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/PerformanceContainerTiming.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/ShadowIncludingTreeIterator.h"
 #include "mozilla/dom/ToggleEvent.h"
@@ -92,7 +93,6 @@
 #include "nsPIDOMWindow.h"
 #include "nsPresContext.h"
 #include "nsQueryObject.h"
-#include "nsRange.h"
 #include "nsString.h"
 #include "nsStyleUtil.h"
 #include "nsTableCellFrame.h"
@@ -206,6 +206,8 @@ static const nsAttrValue::EnumTableEntry* kPopoverTableInvalidValueDefault =
     &kPopoverTable[3];
 }  // namespace
 
+static void MakeContentDescendantsEditable(nsIContent* aContent);
+
 void nsGenericHTMLElement::GetFetchPriority(nsAString& aFetchPriority) const {
   // <https://html.spec.whatwg.org/multipage/urls-and-fetching.html#fetch-priority-attributes>.
   GetEnumAttr(nsGkAtoms::fetchpriority, kFetchPriorityAttributeValueAuto,
@@ -308,7 +310,8 @@ void nsGenericHTMLElement::SetHidden(
 
   // 7. Otherwise, set the hidden attribute to the empty string.
   if (isHidden) {
-    aRv = SetAttr(kNameSpaceID_None, nsGkAtoms::hidden, u""_ns, true);
+    aRv = SetAttr(kNameSpaceID_None, nsGkAtoms::hidden, u""_ns, true,
+                  IsKnownNewAttr::No);
   } else {
     aRv = UnsetAttr(kNameSpaceID_None, nsGkAtoms::hidden, true);
   }
@@ -413,14 +416,15 @@ void nsGenericHTMLElement::SetEditContext(mozilla::dom::EditContext* aContext,
       return;
     }
   }
+  RefPtr doc = OwnerDoc();
   // 3. Let oldEditContext be the value of this's internal [[EditContext]] slot.
   RefPtr<EditContext> oldEditContext = GetEditContext();
   if (oldEditContext) {
     // 4. If oldEditContext is not null and oldEditContext is this's node
     //    document's active EditContext, then:
-    if (oldEditContext == OwnerDoc()->GetActiveEditContext()) {
+    if (oldEditContext == doc->GetActiveEditContext()) {
       // 1. Run the steps to deactivate an EditContext with oldEditContext.
-      oldEditContext->Deactivate();
+      doc->DeactivateEditContextAndEndComposition();
       // 2. If oldEditContext's associated element is not equal to this, then
       //    terminate these steps.
       if (oldEditContext->GetAssociatedElement() != this) {
@@ -453,16 +457,41 @@ void nsGenericHTMLElement::SetEditContext(mozilla::dom::EditContext* aContext,
   }
   EditContext::SetForElement(*this, aContext);
 
-  // Update the active EditContext since it might have changed.
-  // It's important to do this before ChangeEditableState, since
-  // we want the active EditContext to be up-to-date for
-  // HTMLEditor::NotifyEditingHostMaybeChanged.
-  RefPtr doc = OwnerDoc();
-  doc->UpdateTextEditContext();
+  if (!IsInComposedDoc()) {
+    // Don't update editable state if the element is disconnected.
+    return;
+  }
 
   int32_t delta = (aContext != nullptr) - (oldEditContext != nullptr);
+  // First, update the editable state of this element and its descendants.
+  // Computing the active EditContext depends on having the right editable
+  // state, so this needs to happen first.
   if (delta) {
-    ChangeEditableState(delta);
+    nsAutoScriptBlocker scriptBlocker;
+    MakeContentDescendantsEditable(this);
+  }
+  if (MOZ_UNLIKELY(GetEditContext() != aContext)) {
+    // A script that ran above detached the EditContext.
+    return;
+  }
+  // Update active EditContext.
+  doc->UpdateTextEditContext();
+  if (MOZ_UNLIKELY(GetEditContext() != aContext)) {
+    // A script that ran above detached the EditContext.
+    return;
+  }
+  if (delta) {
+    // Change content editable count for document.
+    // This needs to happen after updating active EditContext, since this may
+    // call HTMLEditor::FocusedElementOrDocumentBecomesEditable which needs to
+    // know the correct active EditContext.
+    doc->ChangeContentEditableCount(this, delta);
+    // Inform HTMLEditor that the editing host might have changed due to
+    // attaching/detaching EditContext. This also needs to have the correct
+    // active EditContext.
+    if (RefPtr<HTMLEditor> editor = doc->GetHTMLEditor()) {
+      editor->NotifyEditingHostMaybeChanged();
+    }
 #ifdef ACCESSIBILITY
     if (nsAccessibilityService* accService = GetAccService()) {
       accService->NotifyOfEditContextAttachmentChange(this);
@@ -521,7 +550,8 @@ nsresult nsGenericHTMLElement::BindToTree(BindContext& aContext,
         [self = RefPtr<nsGenericHTMLElement>(this)]() {
           nsAutoString nonce;
           self->GetNonce(nonce);
-          self->SetAttr(kNameSpaceID_None, nsGkAtoms::nonce, u""_ns, true);
+          self->SetAttr(kNameSpaceID_None, nsGkAtoms::nonce, u""_ns, true,
+                        IsKnownNewAttr::No);
           self->SetNonce(nonce);
         }));
   }
@@ -820,13 +850,15 @@ void nsGenericHTMLElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
         }
         if (IsInUncomposedDoc()) {
           RecomputeContainerTimingRootForSubtree();
-          // Removing containertiming unregisters this element as a container
-          // root; drop its accumulated painted region so the record can't
-          // outlive the registration (and dangle), or be inherited if the
-          // attribute is added back later.
-          if (aName == nsGkAtoms::containertiming && !aValue) {
-            ContainerTimingHelpers::DropRecordForContainerRoot(this);
-          }
+        }
+        // Removing containertiming unregisters this element as a container
+        // root; drop its accumulated painted region so the record can't
+        // outlive the registration (and dangle), or be inherited if the
+        // attribute is added back later. This must run even when detached or
+        // in a shadow tree, where the record would otherwise linger with a
+        // dangling key until the element is freed.
+        if (aName == nsGkAtoms::containertiming && !aValue) {
+          ContainerTimingHelpers::DropRecordForContainerRoot(this);
         }
       }
     } else if (aName == nsGkAtoms::dir) {
@@ -969,7 +1001,7 @@ void nsGenericHTMLElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
 }
 
 EventListenerManager* nsGenericHTMLElement::GetEventListenerManagerForAttr(
-    nsAtom* aAttrName, bool* aDefer) {
+    nsAtom* aAttrName) {
   // Attributes on the body and frameset tags get set on the global object
   if ((mNodeInfo->Equals(nsGkAtoms::body) ||
        mNodeInfo->Equals(nsGkAtoms::frameset)) &&
@@ -993,7 +1025,6 @@ EventListenerManager* nsGenericHTMLElement::GetEventListenerManagerForAttr(
     // override BindToTree for those classes and munge event listeners there?
     Document* document = OwnerDoc();
 
-    *aDefer = false;
     if ((win = document->GetInnerWindow())) {
       nsCOMPtr<EventTarget> piTarget(do_QueryInterface(win));
 
@@ -1003,8 +1034,7 @@ EventListenerManager* nsGenericHTMLElement::GetEventListenerManagerForAttr(
     return nullptr;
   }
 
-  return nsGenericHTMLElementBase::GetEventListenerManagerForAttr(aAttrName,
-                                                                  aDefer);
+  return nsGenericHTMLElementBase::GetEventListenerManagerForAttr(aAttrName);
 }
 
 #define EVENT(name_, id_, type_, struct_) /* nothing; handled by nsINode */
@@ -1086,7 +1116,7 @@ bool nsGenericHTMLElement::ParseAttribute(int32_t aNamespaceID,
                                           const nsAString& aValue,
                                           nsIPrincipal* aMaybeScriptedPrincipal,
                                           nsAttrValue& aResult) {
-  if (aNamespaceID == kNameSpaceID_None) {
+  if (aAttribute->IsStatic() && aNamespaceID == kNameSpaceID_None) {
     if (aAttribute == nsGkAtoms::dir) {
       return aResult.ParseEnumValue(aValue, kDirTable, false);
     }
@@ -1098,10 +1128,6 @@ bool nsGenericHTMLElement::ParseAttribute(int32_t aNamespaceID,
 
     if (aAttribute == nsGkAtoms::tabindex) {
       return aResult.ParseIntValue(aValue);
-    }
-
-    if (aAttribute == nsGkAtoms::referrerpolicy) {
-      return ParseReferrerAttribute(aValue, aResult);
     }
 
     if (aAttribute == nsGkAtoms::name) {
@@ -1757,7 +1783,7 @@ nsresult nsGenericHTMLElement::SetIntAttr(nsAtom* aAttr, int32_t aValue) {
   nsAutoString value;
   value.AppendInt(aValue);
 
-  return SetAttr(kNameSpaceID_None, aAttr, value, true);
+  return SetAttr(kNameSpaceID_None, aAttr, value, true, IsKnownNewAttr::No);
 }
 
 uint32_t nsGenericHTMLElement::GetUnsignedIntAttr(nsAtom* aAttr,
@@ -3274,16 +3300,21 @@ void nsGenericHTMLElement::GetInnerText(mozilla::dom::DOMString& aValue,
     }
   }
 
-  // Check for dirty reflow roots in the subtree from targetFrame; this requires
-  // a reflow flush.
-  bool dirty = frame && frame->PresShell()->FrameIsAncestorOfDirtyRoot(frame);
-
+  // Check for dirty reflow roots in the subtrees of frame and its
+  // continuations; this requires a reflow flush.
+  //
   // The way we do that is by checking whether the element has either of the two
-  // dirty bits (NS_FRAME_IS_DIRTY or NS_FRAME_HAS_DIRTY_DESCENDANTS) or if any
+  // dirty bits (NS_FRAME_IS_DIRTY or NS_FRAME_HAS_DIRTY_CHILDREN) or if any
   // ancestor has NS_FRAME_IS_DIRTY.  We need to check for NS_FRAME_IS_DIRTY on
   // ancestors since that is something that implies NS_FRAME_IS_DIRTY on all
   // descendants.
-  dirty |= frame && frame->HasAnyStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
+  bool dirty = false;
+  const PresShell* ps = frame ? frame->PresShell() : nullptr;
+  for (nsIFrame* f = frame; f && !dirty;
+       f = nsLayoutUtils::GetNextContinuationOrIBSplitSibling(f)) {
+    dirty = ps->FrameIsAncestorOfDirtyRoot(f) ||
+            f->HasAnyStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
+  }
   while (!dirty && frame) {
     dirty |= frame->HasAnyStateBits(NS_FRAME_IS_DIRTY);
     frame = frame->GetInFlowParent();
@@ -3297,7 +3328,7 @@ void nsGenericHTMLElement::GetInnerText(mozilla::dom::DOMString& aValue,
   if (!IsRendered()) {
     GetTextContentInternal(aValue, aError);
   } else {
-    nsRange::GetInnerTextNoFlush(aValue, aError, this);
+    dom::Range::GetInnerTextNoFlush(aValue, aError, this);
   }
 }
 
@@ -3436,8 +3467,10 @@ bool nsGenericHTMLElement::CheckPopoverValidity(
   }
 
   // 3. If any of the following are true:
-  //   - element is not connected;
-  if (!IsInComposedDoc()) {
+  //   - expectedToBeShowing is false and element is not connected;
+  const bool expectedToBeShowing =
+      aExpectedState == PopoverVisibilityState::Showing;
+  if (!expectedToBeShowing && !IsInComposedDoc()) {
     // 1. If throwExceptions is true, then throw an "InvalidStateError"
     //    DOMException.
     aRv.ThrowInvalidStateError("Element is not connected");
@@ -3445,8 +3478,9 @@ bool nsGenericHTMLElement::CheckPopoverValidity(
     return false;
   }
 
-  //   - element's node document is not fully active;
-  if (!OwnerDoc()->IsFullyActive()) {
+  //   - expectedToBeShowing is false and element's node document is not fully
+  //     active;
+  if (!expectedToBeShowing && !OwnerDoc()->IsFullyActive()) {
     aRv.ThrowInvalidStateError("Element's document is not fully active");
     return false;
   }

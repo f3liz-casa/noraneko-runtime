@@ -374,7 +374,7 @@ class RefreshDriverTimer {
 
   // useful callback for nsITimer-based derived classes, here
   // because of c++ protected shenanigans
-  static void TimerTick(nsITimer* aTimer, void* aClosure) {
+  static void TimerTick(nsITimer* /*aTimer*/, void* aClosure) {
     RefPtr<RefreshDriverTimer> timer =
         static_cast<RefreshDriverTimer*>(aClosure);
     timer->Tick();
@@ -647,14 +647,18 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
     TaskController* taskController = TaskController::Get();
     IdleTaskManager* idleTaskManager = taskController->GetIdleTaskManager();
     VsyncTaskManager* vsyncTaskManager = VsyncTaskManager::Get();
+    LowestTaskManager* lowestTaskManager =
+        taskController->GetLowestTaskManager();
 
-    // Note, pendingTaskCount includes also all the pending idle and vsync
-    // tasks.
+    // Note, pendingTaskCount includes also all the pending idle, vsync and
+    // lowest priority tasks.
     uint64_t pendingTaskCount =
         taskController->PendingMainthreadTaskCountIncludingSuspended();
     uint64_t pendingIdleTaskCount = idleTaskManager->PendingTaskCount();
     uint64_t pendingVsyncTaskCount = vsyncTaskManager->PendingTaskCount();
-    if (!(pendingTaskCount > (pendingIdleTaskCount + pendingVsyncTaskCount))) {
+    uint64_t pendingLowestTaskCount = lowestTaskManager->PendingTaskCount();
+    if (!(pendingTaskCount > (pendingIdleTaskCount + pendingVsyncTaskCount +
+                              pendingLowestTaskCount))) {
       return false;
     }
     if (aCheckOnlyNewPendingTasks) {
@@ -668,6 +672,10 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
     // but only if the main thread wasn't totally empty at some point.
     // In the parent process RunOutOfMTTasksCount() is less meaningful
     // because some of the tasks run through AppShell.
+    //
+    // A queued lowest priority task freezes RunOutOfMTTasksCount(), but the
+    // count check above has already returned false unless work other than
+    // idle, vsync and lowest is pending, which is when we want to delay.
     return mLastIdleTaskCount == idleTaskCount &&
            (taskController->RunOutOfMTTasksCount() ==
                 mLastRunOutOfMTTasksCount ||
@@ -1097,7 +1105,7 @@ class InactiveRefreshDriverTimer final
     mIsTicking = false;
   }
 
-  void ScheduleNextTick(TimeStamp aNowTime) override {
+  void ScheduleNextTick(TimeStamp /*aNowTime*/) override {
     if (mDisableAfterMilliseconds > 0.0 &&
         mNextTickDuration > mDisableAfterMilliseconds) {
       // We hit the time after which we should disable
@@ -1147,7 +1155,7 @@ class InactiveRefreshDriverTimer final
     mNextDriverIndex++;
   }
 
-  static void TimerTickOne(nsITimer* aTimer, void* aClosure) {
+  static void TimerTickOne(nsITimer* /*aTimer*/, void* aClosure) {
     RefPtr<InactiveRefreshDriverTimer> timer =
         static_cast<InactiveRefreshDriverTimer*>(aClosure);
     timer->TickOne();
@@ -2482,7 +2490,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime,
                         //
                         // [1]:
                         // https://drafts.csswg.org/web-animations-1/#update-animations-and-send-events
-                        nsAutoMicroTask mt;
+                        nsAutoMicroTaskForDocument mt(&aDoc);
                         UpdateAndReduceAnimations(aDoc);
                       }
                       if (RefPtr pc = aDoc.GetPresContext()) {
@@ -2878,7 +2886,7 @@ void nsRefreshDriver::NotifyTransactionCompleted(
   }
 }
 
-void nsRefreshDriver::WillRefresh(mozilla::TimeStamp aTime) {
+void nsRefreshDriver::WillRefresh(mozilla::TimeStamp /*aTime*/) {
   mRootRefresh->RemoveRefreshObserver(this, FlushType::Style);
   mRootRefresh = nullptr;
   if (mSkippedPaints) {

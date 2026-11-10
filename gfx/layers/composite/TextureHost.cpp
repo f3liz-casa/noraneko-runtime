@@ -10,7 +10,6 @@
 #include "CompositableHost.h"  // for CompositableHost
 #include "gfxUtils.h"
 #include "mozilla/RefPtr.h"  // for nsRefPtr
-#include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/gfx/2D.h"  // for DataSourceSurface, Factory
 #include "mozilla/gfx/CanvasManagerParent.h"
@@ -33,7 +32,6 @@
 #include "mozilla/layers/VideoBridgeParent.h"
 #include "mozilla/layers/WebRenderTextureHost.h"
 #include "mozilla/webrender/RenderBufferTextureHost.h"
-#include "mozilla/webrender/RenderExternalTextureHost.h"
 #include "mozilla/webrender/RenderThread.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "nsAString.h"
@@ -49,6 +47,11 @@
 #  ifdef MOZ_WMF_MEDIA_ENGINE
 #    include "mozilla/layers/DcompSurfaceImage.h"
 #  endif
+#endif
+
+#ifdef MOZ_WAYLAND
+#  include "mozilla/WidgetUtilsGtk.h"
+#  include "mozilla/webrender/RenderWaylandTextureHost.h"
 #endif
 
 #if 0
@@ -496,14 +499,9 @@ BufferTextureHost::BufferTextureHost(const BufferDescriptor& aDesc,
       MOZ_CRASH("GFX: Bad descriptor");
   }
 
-#ifdef XP_MACOSX
-  const int kMinSize = 1024;
-  const int kMaxSize = 4096;
+#ifdef MOZ_WAYLAND
   mUseExternalTextures =
-      kMaxSize >= mSize.width && mSize.width >= kMinSize &&
-      kMaxSize >= mSize.height && mSize.height >= kMinSize &&
-      StaticPrefs::gfx_webrender_enable_client_storage_AtStartup() &&
-      !gfx::gfxVars::UseWebRenderANGLE();
+      widget::GdkIsWaylandDisplay() && gfx::gfxVars::UseWebRenderCompositor();
 #else
   mUseExternalTextures = false;
 #endif
@@ -522,11 +520,13 @@ void BufferTextureHost::CreateRenderTexture(
   MOZ_ASSERT(mExternalImageId.isSome());
 
   RefPtr<wr::RenderTextureHost> texture;
-
+#ifdef MOZ_WAYLAND
   if (UseExternalTextures()) {
-    texture = MakeRefPtr<wr::RenderExternalTextureHost>(GetBuffer(),
-                                                        GetBufferDescriptor());
-  } else {
+    texture = MakeRefPtr<wr::RenderWaylandTextureHost>(GetBuffer(),
+                                                       GetBufferDescriptor());
+  } else
+#endif
+  {
     texture = MakeRefPtr<wr::RenderBufferTextureHost>(GetBuffer(),
                                                       GetBufferDescriptor());
   }

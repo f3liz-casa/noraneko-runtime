@@ -189,13 +189,6 @@ const EXPECTED_TRANSCRIPT_BLOCK = [
 
 const EXPECTED_CONTENT = `${EXPECTED_METADATA_BLOCK}\n\n${EXPECTED_TRANSCRIPT_BLOCK}`;
 
-// YouTube extraction is off by default; enable it for the extraction tests.
-add_setup(async function () {
-  await SpecialPowers.pushPrefEnv({
-    set: [["browser.pageextractor.youtube.enabled", true]],
-  });
-});
-
 /**
  * The URL detection should only match youtube.com watch pages with a video id.
  */
@@ -976,6 +969,31 @@ add_task(async function test_content_truncated_to_sufficient_length() {
     result.text,
     EXPECTED_CONTENT.slice(0, sufficientLength),
     "The structured block should be truncated to sufficientLength"
+  );
+
+  await cleanup();
+});
+
+/**
+ * A transcript can be given a longer cap than the rest of the page, since a
+ * long video's transcript is far longer than a typical article.
+ */
+add_task(async function test_transcript_uses_its_own_length_limit() {
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`${NEW_GENERATION_SEGMENTS}`;
+  const actor = getPageExtractor();
+
+  const sufficientTranscriptLength = 80;
+  const result = await actor.getText({
+    sourceUrl: YOUTUBE_URL,
+    sufficientLength: 20,
+    sufficientTranscriptLength,
+  });
+
+  is(
+    result.text,
+    EXPECTED_CONTENT.slice(0, sufficientTranscriptLength),
+    "The transcript block should be capped at sufficientTranscriptLength"
   );
 
   await cleanup();

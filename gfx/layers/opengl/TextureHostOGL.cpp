@@ -63,6 +63,11 @@ already_AddRefed<TextureHost> CreateTextureHostOGL(
   switch (aDesc.type()) {
 #ifdef MOZ_WIDGET_ANDROID
     case SurfaceDescriptor::TSurfaceTextureDescriptor: {
+      if (gfx::gfxVars::ForceAImageReaderAndroid()) {
+        MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+        gfxCriticalError() << "ForceAImageReader is enabled";
+        return nullptr;
+      }
       const SurfaceTextureDescriptor& desc =
           aDesc.get_SurfaceTextureDescriptor();
       java::GeckoSurfaceTexture::LocalRef surfaceTexture =
@@ -337,127 +342,6 @@ void GLTextureSource::BindTexture(GLenum aTextureUnit,
 bool GLTextureSource::IsValid() const { return !!gl() && mTextureHandle != 0; }
 
 ////////////////////////////////////////////////////////////////////////
-// DirectMapTextureSource
-
-DirectMapTextureSource::DirectMapTextureSource(gl::GLContext* aContext,
-                                               gfx::DataSourceSurface* aSurface)
-    : GLTextureSource(aContext, 0, LOCAL_GL_TEXTURE_RECTANGLE_ARB,
-                      aSurface->GetSize(), aSurface->GetFormat()),
-      mSync(nullptr) {
-  MOZ_ASSERT(aSurface);
-
-  UpdateInternal(aSurface, nullptr, nullptr, true);
-}
-
-DirectMapTextureSource::DirectMapTextureSource(TextureSourceProvider* aProvider,
-                                               gfx::DataSourceSurface* aSurface)
-    : DirectMapTextureSource(aProvider->GetGLContext(), aSurface) {}
-
-DirectMapTextureSource::~DirectMapTextureSource() {
-  if (!mSync || !gl() || !gl()->MakeCurrent() || gl()->IsDestroyed()) {
-    return;
-  }
-
-  gl()->fDeleteSync(mSync);
-  mSync = nullptr;
-}
-
-bool DirectMapTextureSource::Update(gfx::DataSourceSurface* aSurface,
-                                    nsIntRegion* aDestRegion,
-                                    gfx::IntPoint* aSrcOffset,
-                                    gfx::IntPoint* aDstOffset) {
-  MOZ_RELEASE_ASSERT(aDstOffset == nullptr);
-  if (!aSurface) {
-    return false;
-  }
-
-  return UpdateInternal(aSurface, aDestRegion, aSrcOffset, false);
-}
-
-void DirectMapTextureSource::MaybeFenceTexture() {
-  if (!gl() || !gl()->MakeCurrent() || gl()->IsDestroyed()) {
-    return;
-  }
-
-  if (mSync) {
-    gl()->fDeleteSync(mSync);
-  }
-  mSync = gl()->fFenceSync(LOCAL_GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-}
-
-bool DirectMapTextureSource::Sync(bool aBlocking) {
-  if (!gl() || !gl()->MakeCurrent() || gl()->IsDestroyed()) {
-    // We use this function to decide whether we can unlock the texture
-    // and clean it up. If we return false here and for whatever reason
-    // the context is absent or invalid, the compositor will keep a
-    // reference to this texture forever.
-    return true;
-  }
-
-  if (!mSync) {
-    return false;
-  }
-
-  GLenum waitResult =
-      gl()->fClientWaitSync(mSync, LOCAL_GL_SYNC_FLUSH_COMMANDS_BIT,
-                            aBlocking ? LOCAL_GL_TIMEOUT_IGNORED : 0);
-  return waitResult == LOCAL_GL_ALREADY_SIGNALED ||
-         waitResult == LOCAL_GL_CONDITION_SATISFIED;
-}
-
-bool DirectMapTextureSource::UpdateInternal(gfx::DataSourceSurface* aSurface,
-                                            nsIntRegion* aDestRegion,
-                                            gfx::IntPoint* aSrcOffset,
-                                            bool aInit) {
-  if (!gl() || !gl()->MakeCurrent()) {
-    return false;
-  }
-
-  MOZ_ASSERT(gl()->IsExtensionSupported(gl::GLContext::APPLE_texture_range));
-  MOZ_ASSERT(gl()->IsExtensionSupported(gl::GLContext::APPLE_client_storage));
-
-  if (aInit) {
-    gl()->fGenTextures(1, &mTextureHandle);
-    gl()->fBindTexture(LOCAL_GL_TEXTURE_RECTANGLE_ARB, mTextureHandle);
-
-    gl()->fTexParameteri(LOCAL_GL_TEXTURE_RECTANGLE_ARB,
-                         LOCAL_GL_TEXTURE_STORAGE_HINT_APPLE,
-                         LOCAL_GL_STORAGE_CACHED_APPLE);
-    gl()->fTextureRangeAPPLE(LOCAL_GL_TEXTURE_RECTANGLE_ARB,
-                             aSurface->Stride() * aSurface->GetSize().height,
-                             aSurface->GetData());
-
-    gl()->fTexParameteri(LOCAL_GL_TEXTURE_RECTANGLE_ARB,
-                         LOCAL_GL_TEXTURE_WRAP_S, LOCAL_GL_CLAMP_TO_EDGE);
-    gl()->fTexParameteri(LOCAL_GL_TEXTURE_RECTANGLE_ARB,
-                         LOCAL_GL_TEXTURE_WRAP_T, LOCAL_GL_CLAMP_TO_EDGE);
-  }
-
-  MOZ_ASSERT(mTextureHandle);
-
-  // APPLE_client_storage
-  gl()->fPixelStorei(LOCAL_GL_UNPACK_CLIENT_STORAGE_APPLE, LOCAL_GL_TRUE);
-
-  nsIntRegion destRegion = aDestRegion
-                               ? *aDestRegion
-                               : IntRect(0, 0, aSurface->GetSize().width,
-                                         aSurface->GetSize().height);
-  gfx::IntPoint srcPoint = aSrcOffset ? *aSrcOffset : gfx::IntPoint(0, 0);
-  mFormat = gl::UploadSurfaceToTexture(
-      gl(), aSurface, destRegion, mTextureHandle, aSurface->GetSize(), nullptr,
-      aInit, srcPoint, gfx::IntPoint(0, 0), LOCAL_GL_TEXTURE0,
-      LOCAL_GL_TEXTURE_RECTANGLE_ARB);
-
-  if (mSync) {
-    gl()->fDeleteSync(mSync);
-    mSync = nullptr;
-  }
-
-  gl()->fPixelStorei(LOCAL_GL_UNPACK_CLIENT_STORAGE_APPLE, LOCAL_GL_FALSE);
-  return true;
-}
-
-////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////
 // SurfaceTextureHost
 
@@ -500,9 +384,8 @@ gfx::Matrix4x4 SurfaceTextureSource::GetTextureTransform() {
 
   // GetTransformMatrix() returns the transform set by the producer side of the
   // SurfaceTexture that must be applied to texture coordinates when
-  // sampling. In some cases we may have set an override value, such as in
-  // AndroidNativeWindowTextureData where we own the producer side, or for
-  // MediaCodec output on devices where where we know the value is incorrect.
+  // sampling. In some cases we may have set an override value, such as for
+  // MediaCodec output on devices where we know the value is incorrect.
   if (mTransformOverride) {
     ret = *mTransformOverride;
   } else {

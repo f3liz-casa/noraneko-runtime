@@ -3,18 +3,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::{
-    render::{
-        Channels, ChannelsMut, ErasedLocalState, RunInPlaceStage,
-        internal::{PipelineBuffer, RunInOutStage},
-    },
-    util::{ChannelVec, ShiftRightCeil, SmallVec, StackOnly, mirror, tracing_wrappers::*},
-};
-
-use super::{
-    super::{RenderPipelineInOutStage, RenderPipelineInPlaceStage},
-    row_buffers::RowBuffer,
-};
+use super::super::{RenderPipelineInOutStage, RenderPipelineInPlaceStage};
+use super::row_buffers::RowBuffer;
+use crate::render::internal::{PipelineBuffer, RunInOutStage};
+use crate::render::{Channels, ChannelsMut, ErasedLocalState, RunInPlaceStage};
+use crate::util::tracing_wrappers::*;
+use crate::util::{ChannelVec, ShiftRightCeil};
 
 pub struct ExtraInfo {
     // Number of *input* pixels to process (ignoring additional border pixels).
@@ -26,6 +20,7 @@ pub struct ExtraInfo {
     pub(super) start_of_row: bool,
     pub(super) end_of_row: bool,
     pub(super) image_height: usize,
+    pub(super) previous_call_was_previous_row: bool,
 }
 
 impl PipelineBuffer for RowBuffer {
@@ -45,6 +40,7 @@ impl<T: RenderPipelineInPlaceStage> RunInPlaceStage<RowBuffer> for T {
             image_height: _,
             start_of_row,
             end_of_row,
+            previous_call_was_previous_row,
         }: ExtraInfo,
         buffers: &mut [&mut RowBuffer],
         state: Option<&mut ErasedLocalState>,
@@ -63,6 +59,7 @@ impl<T: RenderPipelineInPlaceStage> RunInPlaceStage<RowBuffer> for T {
             xend - xstart,
             &mut rows[..],
             state,
+            previous_call_was_previous_row,
         );
     }
 }
@@ -79,12 +76,12 @@ impl<T: RenderPipelineInOutStage> RunInOutStage<RowBuffer> for T {
             image_height,
             start_of_row,
             end_of_row,
+            previous_call_was_previous_row,
         }: ExtraInfo,
         input_buffers: &[&RowBuffer],
         output_buffers: &mut [RowBuffer],
         state: Option<&mut ErasedLocalState>,
     ) {
-        let ibordery = Self::BORDER.1 as isize;
         let x0 = RowBuffer::x0_offset::<T::InputT>();
         let xpre = if start_of_row {
             0
@@ -100,44 +97,20 @@ impl<T: RenderPipelineInOutStage> RunInOutStage<RowBuffer> for T {
                 out_extra_x.shrc(T::SHIFT.0)
             };
 
-        // Build flat input rows: all rows for all channels in one SmallVec
-        let input_rows_per_channel = (2 * Self::BORDER.1 + 1) as usize;
-        let num_channels = input_buffers.len();
-        let mut input_row_data: SmallVec<&[T::InputT], 32, StackOnly> = SmallVec::new();
-        for x in input_buffers.iter() {
-            input_row_data.extend((-ibordery..=ibordery).map(|iy| {
-                &x.get_row::<T::InputT>(mirror(current_row as isize + iy, image_height))
-                    [xstart - Self::BORDER.0 as usize..]
-            }));
-        }
-        let input_rows = Channels::new(input_row_data, num_channels, input_rows_per_channel);
+        let input_rows = Channels::from_row_buffers(
+            input_buffers,
+            xstart,
+            current_row,
+            image_height,
+            Self::BORDER.0 as usize,
+        );
 
-        // Build flat output rows: all rows for all channels in one SmallVec
-        let output_rows_per_channel = 1 << T::SHIFT.1;
-        let num_output_channels = output_buffers.len();
-        let mut output_row_data: SmallVec<&mut [T::OutputT], 8, StackOnly> = SmallVec::new();
-        // optimize for the common case of a single output row per channel.
-        if output_rows_per_channel == 1 {
-            // Use OutputT's x0_offset, not InputT's - they differ for type conversions (e.g., f32→u8).
-            // Must apply the same offset calculation as the else branch.
-            let output_xstart = RowBuffer::x0_offset::<T::OutputT>() - (xpre << T::SHIFT.0);
-            for x in output_buffers.iter_mut() {
-                let row = x.get_row_mut::<T::OutputT>(current_row);
-                output_row_data.push(&mut row[output_xstart..]);
-            }
-        } else {
-            for x in output_buffers.iter_mut() {
-                x.get_rows_mut::<T::OutputT, _>(
-                    (current_row << T::SHIFT.1)..((current_row + 1) << T::SHIFT.1),
-                    RowBuffer::x0_offset::<T::OutputT>() - (xpre << T::SHIFT.0),
-                    &mut output_row_data,
-                );
-            }
-        }
-        let mut output_rows = ChannelsMut::new(
-            output_row_data,
-            num_output_channels,
-            output_rows_per_channel,
+        let output_xstart = RowBuffer::x0_offset::<T::OutputT>() - (xpre << T::SHIFT.0);
+        let mut output_rows = ChannelsMut::from_row_buffers(
+            output_buffers,
+            output_xstart,
+            current_row << T::SHIFT.1,
+            1 << T::SHIFT.1,
         );
 
         self.process_row_chunk(
@@ -146,6 +119,7 @@ impl<T: RenderPipelineInOutStage> RunInOutStage<RowBuffer> for T {
             &input_rows,
             &mut output_rows,
             state,
+            previous_call_was_previous_row,
         );
     }
 }

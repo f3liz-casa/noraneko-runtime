@@ -28,6 +28,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   TabManager: "chrome://remote/content/shared/TabManager.sys.mjs",
   unregisterProcessDataActor:
     "chrome://remote/content/shared/webdriver/process-actors/WebDriverProcessDataParent.sys.mjs",
+  UserContextManager:
+    "chrome://remote/content/shared/UserContextManager.sys.mjs",
   WebDriverBiDiConnection:
     "chrome://remote/content/webdriver-bidi/WebDriverBiDiConnection.sys.mjs",
   WebSocketHandshake:
@@ -44,8 +46,21 @@ XPCOMUtils.defineLazyServiceGetter(
   Ci.amIAddonManagerStartup
 );
 
+// Hidden pref, for tests only. Use the dedicated container for all sessions,
+// including the ones created for browser automation.
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "forceContainer",
+  "remote.experimental.dynamicstart.force-container",
+  false
+);
+
 // Global singleton that holds active WebDriver sessions
 const webDriverSessions = new Map();
+
+// Global singleton that maps the id of the MessageHandler network of a session
+// to the WebDriver session itself.
+const webDriverSessionsByInternalSessionId = new Map();
 
 // Notification emitted when a session is created or destroyed.
 const NOTIFY_WEBDRIVER_SESSION_CHANGED = "webdriver-session-changed";
@@ -77,6 +92,7 @@ export class WebDriverSession {
   #messageHandler;
   #navigableSeenNodes;
   #path;
+  #userContext;
 
   static SESSION_FLAG_BIDI = "bidi";
   static SESSION_FLAG_HTTP = "http";
@@ -124,6 +140,11 @@ export class WebDriverSession {
    *
    *  <dt><code>moz:webdriverClick</code> (boolean)
    *  <dd>(HTTP only) Use a WebDriver conforming <i>WebDriver::ElementClick</i>.
+   *
+   *  <dt><code>moz:userContext</code> (string)
+   *  <dd>Returned only for sessions which are restricted to a user context.
+   *   The user context id the session is restricted to. This capability can
+   *   only be returned, it is never accepted as an input capability.
    * </dl>
    *
    * <h4>WebAuthn</h4>
@@ -213,14 +234,20 @@ export class WebDriverSession {
    *     above.
    * @param {SessionConfigurationFlags} flags
    *     Session configuration flags.
-   * @param {WebDriverBiDiConnection=} connection
+   * @param {object=} options
+   * @param {WebDriverBiDiConnection=} options.connection
    *     An optional existing WebDriver BiDi connection to associate with the
    *     new session.
+   * @param {boolean=} options.useDedicatedContainer
+   *     True if the session should use a dedicated container (typically for
+   *     dynamically started servers). Defaults to false.
    *
    * @throws {SessionNotCreatedError}
    *     If, for whatever reason, a session could not be created.
    */
-  constructor(capabilities, flags, connection) {
+  constructor(capabilities, flags, options = {}) {
+    const { connection, useDedicatedContainer = false } = options;
+
     // List of handles for registered chrome:// URLs
     this.#chromeProtocolHandles = new Map();
 
@@ -252,6 +279,17 @@ export class WebDriverSession {
       this.#capabilities = lazy.Capabilities.fromJSON(capabilities, this.#bidi);
     } catch (e) {
       throw new lazy.error.SessionNotCreatedError(e);
+    }
+
+    this.#userContext =
+      useDedicatedContainer || lazy.forceContainer
+        ? getRemoteControlUserContextId()
+        : null;
+    if (this.#userContext !== null) {
+      this.#capabilities.set("moz:userContext", this.#userContext);
+      lazy.logger.debug(
+        `Session restricted to user context ${this.#userContext}`
+      );
     }
 
     if (this.proxy.init()) {
@@ -330,6 +368,9 @@ export class WebDriverSession {
 
     // Destroy the dedicated MessageHandler instance if we created one.
     if (this.#messageHandler) {
+      webDriverSessionsByInternalSessionId.delete(
+        this.#messageHandler.internalSessionId
+      );
       this.#messageHandler.off(
         "message-handler-protocol-event",
         this._onMessageHandlerProtocolEvent
@@ -383,8 +424,18 @@ export class WebDriverSession {
 
   get messageHandler() {
     if (!this.#messageHandler) {
+      // The session id is a secret used by clients to authenticate against the
+      // WebDriver endpoints, and as such must never be shared with content
+      // processes. Identify the MessageHandler network, which is broadcast to
+      // all content processes, with a dedicated id instead.
+      const internalSessionId = lazy.generateUUID();
+
       this.#messageHandler =
-        lazy.RootMessageHandlerRegistry.getOrCreateMessageHandler(this.#id);
+        lazy.RootMessageHandlerRegistry.getOrCreateMessageHandler(
+          internalSessionId
+        );
+      webDriverSessionsByInternalSessionId.set(internalSessionId, this);
+
       this._onMessageHandlerProtocolEvent =
         this._onMessageHandlerProtocolEvent.bind(this);
       this.#messageHandler.on(
@@ -422,6 +473,18 @@ export class WebDriverSession {
 
   set timeouts(timeouts) {
     this.#capabilities.set("timeouts", timeouts);
+  }
+
+  /**
+   * The user context id of the container created for this session.
+   * WebDriver BiDi commands and events are restricted to this user context
+   * when remote.experimental.dynamicstart.container-isolation-enabled is true.
+   *
+   * @returns {string|null}
+   *     The user context id, or null if no user context was created.
+   */
+  get userContext() {
+    return this.#userContext;
   }
 
   get userPromptHandler() {
@@ -581,19 +644,50 @@ export class WebDriverSession {
   QueryInterface = ChromeUtils.generateQI(["nsIHttpRequestHandler"]);
 }
 
+const REMOTE_CONTROL_CONTAINER_NAME = "remote-control-container";
+
+/**
+ * Retrieve the user context id for the dedicated container created for sessions
+ * using dynamically started servers.
+ *
+ * @returns {string}
+ *     The user context id.
+ */
+function getRemoteControlUserContextId() {
+  const existingUserContexts = lazy.UserContextManager.getUserContextIdsByName(
+    REMOTE_CONTROL_CONTAINER_NAME
+  );
+
+  // If any container already matches the hardcoded REMOTE_CONTROL_CONTAINER_NAME
+  // pick the first one, users should be able to reuse the same container across
+  // sessions.
+  if (existingUserContexts.length) {
+    return existingUserContexts[0];
+  }
+
+  return lazy.UserContextManager.createContext({
+    // Use a color reminiscent of the color applied to the URL bar.
+    color: "red",
+    // Bug 2074485: Add a new container icon matching the robot icon for the
+    // remote control panel. In the meantime, use a circle as a generic icon.
+    icon: "circle",
+    name: REMOTE_CONTROL_CONTAINER_NAME,
+  });
+}
+
 /**
  * Get the list of seen nodes for the given browsing context unique to a
  * WebDriver session.
  *
- * @param {string} sessionId
- *     The id of the WebDriver session to use.
+ * @param {WebDriverSession} session
+ *     The WebDriver session to use.
  * @param {BrowsingContext} browsingContext
  *     Browsing context the node is part of.
  *
  * @returns {Set}
  *     The list of seen nodes.
  */
-export function getSeenNodesForBrowsingContext(sessionId, browsingContext) {
+export function getSeenNodesForBrowsingContext(session, browsingContext) {
   if (!lazy.TabManager.isValidCanonicalBrowsingContext(browsingContext)) {
     // If browsingContext is not a valid Browsing Context, return an empty set.
     return new Set();
@@ -601,7 +695,6 @@ export function getSeenNodesForBrowsingContext(sessionId, browsingContext) {
 
   const navigable =
     lazy.NavigableManager.getNavigableForBrowsingContext(browsingContext);
-  const session = getWebDriverSessionById(sessionId);
 
   if (!session.navigableSeenNodes.has(navigable)) {
     // The navigable hasn't been seen yet.
@@ -613,14 +706,15 @@ export function getSeenNodesForBrowsingContext(sessionId, browsingContext) {
 
 /**
  *
- * @param {string} sessionId
- *     The ID of the WebDriver session to retrieve.
+ * @param {string} internalSessionId
+ *     The id of the MessageHandler network of the WebDriver session to
+ *     retrieve.
  *
  * @returns {WebDriverSession|undefined}
  *     The WebDriver session or undefined if the id is not known.
  */
-export function getWebDriverSessionById(sessionId) {
-  return webDriverSessions.get(sessionId);
+export function getWebDriverSessionByInternalSessionId(internalSessionId) {
+  return webDriverSessionsByInternalSessionId.get(internalSessionId);
 }
 
 /**

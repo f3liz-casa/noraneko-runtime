@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { IndexedDBHelper } from "resource://gre/modules/IndexedDBHelper.sys.mjs";
+import { IndexedDBHelper } from "moz-src:///dom/base/IndexedDBHelper.sys.mjs";
 
 const lazy = {};
 
@@ -231,10 +231,10 @@ PushDB.prototype = {
    *  `cursor` is an `IDBCursor`.
    * @returns {Promise} Resolves once all records have been processed.
    */
-  forEachOrigin(origin, originAttributes, callback) {
+  async forEachOrigin(origin, originAttributes, callback) {
     lazy.console.debug("forEachOrigin()");
-
-    return new Promise((resolve, reject) =>
+    let error;
+    await new Promise((resolve, reject) =>
       this.newTxn(
         "readwrite",
         this._dbStoreName,
@@ -251,7 +251,15 @@ PushDB.prototype = {
             if (!cursor) {
               return;
             }
-            callback(this.toPushRecord(cursor.value), cursor);
+            try {
+              callback(this.toPushRecord(cursor.value), cursor);
+            } catch (e) {
+              // If the callback throws, still continue with other records.
+              lazy.console.error(`forEachOrigin() callback: ${e}`);
+              if (!error) {
+                error = e;
+              }
+            }
             cursor.continue();
           };
         },
@@ -259,6 +267,9 @@ PushDB.prototype = {
         reject
       )
     );
+    if (error) {
+      throw error;
+    }
   },
 
   // Perform a unique match against { scope, originAttributes }

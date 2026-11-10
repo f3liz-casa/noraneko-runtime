@@ -29,6 +29,8 @@ class Attr final : public nsINode {
   virtual ~Attr() = default;
 
  public:
+  static constexpr bool kHasWeakReferenceTearoff = true;
+
   Attr(nsDOMAttributeMap* aAttrMap, already_AddRefed<dom::NodeInfo> aNodeInfo,
        const nsAString& aValue);
 
@@ -66,12 +68,6 @@ class Attr final : public nsINode {
   void SetMap(nsDOMAttributeMap* aMap);
 
   Element* GetElement() const;
-
-  /**
-   * Called when our ownerElement is moved into a new document.
-   * Updates the nodeinfo of this node.
-   */
-  nsresult SetOwnerDocument(Document* aDocument);
 
   // nsINode interface
   nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;

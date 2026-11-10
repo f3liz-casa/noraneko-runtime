@@ -141,10 +141,10 @@ add_task(async function test_dialog_opens() {
       Assert.ok(cancelButton, "Cancel button exists");
       Assert.ok(startButton, "Create alert button exists");
 
-      // Check that start button is initially disabled
+      // Validation runs on submit so it can surface per-field errors.
       Assert.ok(
-        startButton.hasAttribute("disabled"),
-        "Start button is initially disabled"
+        !startButton.hasAttribute("disabled"),
+        "Start button is enabled"
       );
 
       // Close the dialog
@@ -214,40 +214,55 @@ add_task(async function test_form_validation() {
         'moz-button[data-l10n-id="ai-tasks-alert-create-button"]'
       );
 
-      // Start button should be disabled initially
+      const errorIds = () =>
+        [...cardShadow.querySelectorAll(".error-message")]
+          .map(el => el.getAttribute("data-l10n-id"))
+          .sort();
+
+      // Submitting an empty form reveals every missing field error.
       Assert.ok(
-        startButton.hasAttribute("disabled"),
-        "Start button initially disabled"
+        !startButton.hasAttribute("disabled"),
+        "Start button is enabled"
       );
 
-      // Fill in name (optional field)
+      startButton.click();
+      await cardJS.updateComplete;
+
+      Assert.deepEqual(
+        errorIds(),
+        [
+          "ai-tasks-alert-error-condition-required",
+          "ai-tasks-alert-error-name-required",
+          "ai-tasks-alert-error-no-pages",
+        ],
+        "Submitting empty surfaces name, condition and pages errors"
+      );
+      Assert.ok(dialog.open, "Dialog stays open while the form is invalid");
+
+      // Filling each field clears its own error.
       setInputValue(nameInput, "Test Monitor");
       await cardJS.updateComplete;
-
-      // Start button should still be disabled (need alert description and URL)
       Assert.ok(
-        startButton.hasAttribute("disabled"),
-        "Start button still disabled without alert description"
+        !cardShadow.querySelector(
+          "[data-l10n-id='ai-tasks-alert-error-name-required']"
+        ),
+        "Name error clears once a name is entered"
       );
 
-      // Fill in alert description
       setInputValue(alertTextarea, "Watch for price changes");
       await cardJS.updateComplete;
-
-      // Start button should still be disabled (need URL)
       Assert.ok(
-        startButton.hasAttribute("disabled"),
-        "Start button still disabled without URL"
+        !cardShadow.querySelector(
+          "[data-l10n-id='ai-tasks-alert-error-condition-required']"
+        ),
+        "Condition error clears once a description is entered"
       );
 
-      // Add a URL - set value and trigger input event
-      setInputValue(pageInput, "https://example.com");
+      // A page no test visits, so it has no title and keeps the hostname
+      setInputValue(pageInput, "https://example.com/never-visited");
       await cardJS.updateComplete;
-
-      // Click the plus button to add the URL
       addPageButton.click();
 
-      // Wait for URL pill to appear
       await ContentTaskUtils.waitForCondition(
         () => {
           const pills = cardShadow.querySelectorAll(
@@ -270,6 +285,11 @@ add_task(async function test_form_validation() {
       Assert.ok(
         pagePill.getAttribute("label").includes("example.com"),
         "URL pill should display the domain"
+      );
+
+      Assert.ok(
+        !cardShadow.querySelector(".error-message"),
+        "All errors are cleared once the form is complete"
       );
 
       // Now start button should be enabled
@@ -607,4 +627,129 @@ add_task(async function test_add_button_shown_for_secondary_region() {
   }
 
   await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_added_page_chip_shows_open_tab_title() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.smartwindow.enabled", true],
+      [SUPPORTED_REGIONS_PREF, TEST_REGION],
+    ],
+  });
+  const OPEN_URL =
+    "https://example.com/browser/browser/components/aiwindow/ui/test/browser/test_context_url_page.html";
+  const pageTab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    OPEN_URL
+  );
+  const openTitle = pageTab.linkedBrowser.contentTitle;
+  Assert.ok(openTitle, "The open test page has a title");
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    "about:smartwindowtasks"
+  );
+
+  try {
+    await SpecialPowers.spawn(
+      tab.linkedBrowser,
+      [OPEN_URL, openTitle],
+      async (url, title) => {
+        await content.customElements.whenDefined("ai-tasks");
+        const aiTasks = content.document.querySelector("ai-tasks");
+        aiTasks.shadowRoot.querySelector(".add-task-button").click();
+
+        const card = await ContentTaskUtils.waitForCondition(
+          () =>
+            aiTasks.shadowRoot.querySelector("dialog[open] agent-monitor-item"),
+          "Wait for the create card"
+        );
+        const cardJS = card.wrappedJSObject || card;
+        await cardJS.updateComplete;
+
+        cardJS.pendingUrl = url;
+        await cardJS.updateComplete;
+        card.shadowRoot.querySelector(".add-page-btn").click();
+
+        const chip = () =>
+          card.shadowRoot.querySelector(".page-pills-row ai-website-chip");
+        await ContentTaskUtils.waitForCondition(
+          () => chip()?.getAttribute("label") === title,
+          "Wait for the open tab's title to reach the added page's chip"
+        );
+        Assert.equal(
+          chip().getAttribute("label"),
+          title,
+          "An added page that is open is labelled with its tab title"
+        );
+      }
+    );
+  } finally {
+    BrowserTestUtils.removeTab(tab);
+    BrowserTestUtils.removeTab(pageTab);
+    await SpecialPowers.popPrefEnv();
+  }
+});
+
+add_task(async function test_title_requests_are_limited_to_watchable_pages() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.smartwindow.enabled", true]],
+  });
+  const OPEN_URL =
+    "https://example.com/browser/browser/components/aiwindow/ui/test/browser/test_context_url_page.html";
+  const pageTab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    OPEN_URL
+  );
+  const openTitle = pageTab.linkedBrowser.contentTitle;
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    "about:smartwindowtasks"
+  );
+
+  try {
+    await SpecialPowers.spawn(
+      tab.linkedBrowser,
+      [OPEN_URL, openTitle],
+      async (openUrl, title) => {
+        const requestTitles = urls => {
+          const requester = content.document.createElement("div");
+          content.document.body.append(requester);
+          const answered = ContentTaskUtils.waitForEvent(
+            requester,
+            "agent-monitor-item:titles-resolved"
+          );
+          requester.dispatchEvent(
+            new content.CustomEvent("agent-monitor-item:resolve-titles", {
+              bubbles: true,
+              composed: true,
+              detail: Cu.cloneInto({ urls }, content),
+            })
+          );
+          return answered.then(event => {
+            requester.remove();
+            return event.detail.titles;
+          });
+        };
+
+        Assert.deepEqual(
+          await requestTitles(["javascript:void(0)", "about:robots", openUrl]),
+          { [openUrl]: title },
+          "Pages that can't be watched are dropped and the open page resolves"
+        );
+
+        const unvisited = [1, 2, 3, 4, 5].map(
+          n => `https://example.org/unvisited-${n}`
+        );
+        Assert.deepEqual(
+          await requestTitles([...unvisited, openUrl]),
+          {},
+          "Only as many pages as one monitor holds are looked up"
+        );
+      }
+    );
+  } finally {
+    BrowserTestUtils.removeTab(tab);
+    BrowserTestUtils.removeTab(pageTab);
+    await SpecialPowers.popPrefEnv();
+  }
 });

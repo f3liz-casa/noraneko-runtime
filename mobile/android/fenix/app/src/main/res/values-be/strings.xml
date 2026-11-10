@@ -75,7 +75,11 @@
   <string name="about_content" tools:ignore="BrandUsage">%1$s распрацаваны Mozilla.</string>
   <!-- Private Browsing -->
   <string name="private_browsing_common_myths">Шырокавядомыя забабоны пра прыватнае агляданне</string>
-  <!-- Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active. -->
+  <!--
+    Private Browsing
+
+    Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active.
+  -->
   <string name="private_browsing_a11y_session_announcement">Сеанс прыватнага аглядання</string>
   <!--
     True Private Browsing Mode
@@ -168,11 +172,7 @@
   <string name="recently_visited_menu_item_remove">Выдаліць</string>
   <!-- Content description for the button which navigates the user to show all of their history. -->
   <string name="past_explorations_show_all_content_description_2">Паказаць усе мінулыя пошукі</string>
-  <!--
-    Browser Fragment
-
-    Content description (not visible, for screen readers etc.): Navigate backward (browsing history)
-  -->
+  <!-- Content description (not visible, for screen readers etc.): Navigate backward (browsing history) -->
   <string name="browser_menu_back">Назад</string>
   <!-- Content description (not visible, for screen readers etc.): Navigate forward (browsing history) -->
   <string name="browser_menu_forward">Наперад</string>
@@ -293,8 +293,6 @@
   <string name="browser_menu_default_banner_title">Зрабіць %1$s прыладай па змаўчанні</string>
   <!-- Label text within the set as default banner -->
   <string name="browser_menu_default_banner_subtitle_2">Хуткі, прыватны, і створаны для вас.</string>
-  <!-- Content description (not visible, for screen readers etc.) for the button that dismisses the set as default banner in the menu -->
-  <string name="browser_menu_default_banner_dismiss_promotion">Адхіліць акцыю</string>
   <!-- Content description (not visible, for screen readers etc.) for recommended extensions in main menu -->
   <string name="browser_menu_recommended_extensions_content_description">Падрабязней</string>
   <!--
@@ -329,8 +327,12 @@
   <string name="preferences_ai_controls">Кіраванне штучным інтэлектам</string>
   <!-- Link text for learning more about AI controls -->
   <string name="ai_controls_learn_more">Падрабязней</string>
+  <!-- Section header for the AI-powered features list -->
+  <string name="ai_controls_ai_powered_features">Функцыі на базе штучнага інтэлекту</string>
   <!-- Title for the translations AI feature toggle -->
   <string name="ai_controls_translations_title">Пераклады</string>
+  <!-- Description for the translations AI feature toggle -->
+  <string name="ai_controls_translations_description">Усе пераклады застаюцца прыватнымі на вашай прыладзе.</string>
   <!-- Title for the voice search AI feature toggle -->
   <string name="ai_controls_voice_search_title">Галасавы пошук</string>
   <!-- Cancel button text in the block AI enhancements confirmation dialog -->
@@ -581,7 +583,11 @@
     Title for the settings page
   -->
   <string name="settings">Налады</string>
-  <!-- Preference category for general settings -->
+  <!--
+    Preferences
+
+    Preference category for general settings
+  -->
   <string name="preferences_category_general">Агульныя</string>
   <!-- Preference category for all links about Fenix -->
   <string name="preferences_category_about">Аб праграме</string>
@@ -746,6 +752,10 @@
   <string name="preferences_open_links_in_apps_ask">Спытаць перад адкрыццём</string>
   <!-- Preference for open links in third party apps never open in apps option -->
   <string name="preferences_open_links_in_apps_never">Ніколі</string>
+  <!-- Preference category header for media related open links in apps settings -->
+  <string name="preferences_media_category">Медыя</string>
+  <!-- Preference label for choosing whether links open in the YouTube app -->
+  <string name="preferences_open_links_in_youtube">Адкрываць спасылкі ў праграме YouTube</string>
   <!-- Preference category for file storage. -->
   <string name="preferences_category_file_storage">Захоўванне файлаў</string>
   <!-- Preference title for downloads default location. -->
@@ -1200,8 +1210,6 @@
     Title of preference for tabs management
   -->
   <string name="preferences_tabs">Карткі</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">Выгляд карткі</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">Спіс</string>
   <!-- Option for a grid tab view -->
@@ -1246,12 +1254,6 @@
   <string name="opening_screen_last_tab_summary">Адкрываць на апошняй картцы</string>
   <!-- Summary for homepage preference indicating opening the homepage when re-opening the app after four hours of inactivity -->
   <string name="opening_screen_after_four_hours_of_inactivity_summary">Адкрываць на хатняй старонцы праз чатыры гадзіны</string>
-  <!--
-    Inactive tabs
-
-    Category header of a preference that allows a user to enable or disable the inactive tabs feature
-  -->
-  <string name="preferences_inactive_tabs">Перамяшчаць старыя карткі ў неактыўныя</string>
   <!-- Summary of the preference that allows a user to enable or disable the inactive tabs feature. -->
   <string name="preferences_inactive_tabs_title">Карткі, якія вы не праглядалі на працягу двух тыдняў, будуць перанесеныя ў раздзел неактыўных.</string>
   <!--
@@ -1906,6 +1908,10 @@
   <string name="qr_code_display_close">Закрыць</string>
   <!-- Label for the download button on the QR code display screen -->
   <string name="qr_code_display_download">Сцягнуць</string>
+  <!-- Toast shown when the QR code is successfully saved to Downloads -->
+  <string name="qr_code_download_success">QR-код захаваны ў загрузках</string>
+  <!-- Toast shown when saving the QR code to Downloads fails -->
+  <string name="qr_code_download_failure">Не ўдалося захаваць QR-код</string>
   <!-- Sub-header in the dialog to share a link to an app from the full list -->
   <string name="share_link_all_apps_subheader">Усе дзеянні</string>
   <!-- Sub-header in the dialog to share a link to an app from the most-recent sorted list -->

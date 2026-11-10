@@ -44,7 +44,7 @@ class RDDChild final : public PRDDChild,
   mozilla::ipc::IPCResult RecvAddMemoryReport(const MemoryReport& aReport);
 #if defined(XP_WIN)
   mozilla::ipc::IPCResult RecvGetModulesTrust(
-      ModulePaths&& aModPaths, bool aRunAtNormalPriority,
+      ModuleIdentifiers&& aModIdents, bool aRunAtNormalPriority,
       GetModulesTrustResolver&& aResolver);
 #endif  // defined(XP_WIN)
   mozilla::ipc::IPCResult RecvUpdateMediaCodecsSupported(
@@ -74,7 +74,7 @@ class RDDChild final : public PRDDChild,
  private:
   ~RDDChild();
 
-  RDDProcessHost* mHost;
+  RefPtr<RDDProcessHost> mHost;
   UniquePtr<MemoryReportRequestHost> mMemoryReportRequest;
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX)
   RefPtr<SandboxBroker> mSandboxBroker;

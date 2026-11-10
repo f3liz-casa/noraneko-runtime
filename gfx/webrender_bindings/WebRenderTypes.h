@@ -707,9 +707,11 @@ struct Vec<uint8_t> final {
 
   size_t Capacity() { return inner.capacity; }
 
-  Range<uint8_t> GetRange() { return Range<uint8_t>(Data(), Length()); }
+  mozilla::Range<uint8_t> GetRange() {
+    return mozilla::Range<uint8_t>(Data(), Length());
+  }
 
-  void PushBytes(Range<uint8_t> aBytes) {
+  void PushBytes(mozilla::Range<uint8_t> aBytes) {
     wr_vec_u8_push_bytes(&inner, RangeToByteSlice(aBytes));
   }
 
@@ -775,11 +777,13 @@ struct ByteBuffer {
     }
   }
 
-  const Range<uint8_t> AsSlice() const {
-    return Range<uint8_t>(mData, mLength);
+  const mozilla::Range<uint8_t> AsSlice() const {
+    return mozilla::Range<uint8_t>(mData, mLength);
   }
 
-  Range<uint8_t> AsSlice() { return Range<uint8_t>(mData, mLength); }
+  mozilla::Range<uint8_t> AsSlice() {
+    return mozilla::Range<uint8_t>(mData, mLength);
+  }
 
   bool operator==(const ByteBuffer& other) const {
     return mLength == other.mLength && !(memcmp(mData, other.mData, mLength));
@@ -793,6 +797,9 @@ struct ByteBuffer {
 struct BuiltDisplayList {
   wr::VecU8 dl_items;
   wr::VecU8 dl_spatial_tree;
+  // Encoded delta for the items this display list's builder interned. See
+  // gfx/wr/webrender/doc/dl-builder-interning.md.
+  wr::VecU8 dl_interner_delta;
   wr::BuiltDisplayListDescriptor dl_desc;
 };
 

@@ -11,6 +11,7 @@
 #include "gfxRect.h"
 #include "harfbuzz/hb.h"
 #include "mozilla/EndianUtils.h"
+#include "mozilla/FileUtils.h"
 #include "mozilla/FontPropertyTypes.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MemoryReporting.h"
@@ -19,7 +20,6 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/Utf16.h"
-#include "mozilla/WindowsProcessMitigations.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/glean/GfxMetrics.h"
@@ -244,9 +244,8 @@ void gfxDWriteFontFamily::FindStyleVariationsLocked(
     mFaceNamesInitialized = true;
   }
 
-  if (!mAvailableFonts.Length()) {
-    NS_WARNING("Family with no font faces in it.");
-  }
+  NS_WARNING_ASSERTION(mAvailableFonts.Length(),
+                       "Family with no font faces in it.");
 
   if (mIsBadUnderlineFamily) {
     SetBadUnderlineFonts();
@@ -388,61 +387,22 @@ gfxFontEntry* gfxDWriteFontEntry::Clone() const {
 gfxDWriteFontEntry::~gfxDWriteFontEntry() {
   auto* cache = mFontTableCache.exchange(nullptr);
   delete cache;
-}
-
-static bool UsingArabicOrHebrewScriptSystemLocale() {
-  LANGID langid = PRIMARYLANGID(::GetSystemDefaultLangID());
-  switch (langid) {
-    case LANG_ARABIC:
-    case LANG_DARI:
-    case LANG_PASHTO:
-    case LANG_PERSIAN:
-    case LANG_SINDHI:
-    case LANG_UIGHUR:
-    case LANG_URDU:
-    case LANG_HEBREW:
-      return true;
-    default:
-      return false;
+#if MOZ_FONTATIONS
+  if (mFragmentContext) {
+    mFontFileStream->ReleaseFileFragment(mFragmentContext);
   }
+#endif
 }
 
 nsresult gfxDWriteFontEntry::CopyFontTable(uint32_t aTableTag,
                                            nsTArray<uint8_t>& aBuffer) {
-  gfxDWriteFontList* pFontList = gfxDWriteFontList::PlatformFontList();
-  const uint32_t tagBE = NativeEndian::swapToBigEndian(aTableTag);
-
-  // Don't use GDI table loading for symbol fonts or for
-  // italic fonts in Arabic-script system locales because of
-  // potential cmap discrepancies, see bug 629386.
-  // Ditto for Hebrew, bug 837498.
-  if (mFont && mMayUseGDIAccess && pFontList->UseGDIFontTableAccess() &&
-      !(!IsUpright() && UsingArabicOrHebrewScriptSystemLocale()) &&
-      !mFont->IsSymbolFont()) {
-    LOGFONTW logfont = {0};
-    if (InitLogFont(mFont, &logfont)) {
-      AutoDC dc;
-      AutoSelectFont font(dc.GetDC(), &logfont);
-      if (font.IsValid()) {
-        uint32_t tableSize = ::GetFontData(dc.GetDC(), tagBE, 0, nullptr, 0);
-        if (tableSize != GDI_ERROR) {
-          if (aBuffer.SetLength(tableSize, fallible)) {
-            ::GetFontData(dc.GetDC(), tagBE, 0, aBuffer.Elements(),
-                          aBuffer.Length());
-            return NS_OK;
-          }
-          return NS_ERROR_OUT_OF_MEMORY;
-        }
-      }
-    }
-  }
-
   RefPtr<IDWriteFontFace> fontFace;
   nsresult rv = CreateFontFace(getter_AddRefs(fontFace));
   if (NS_FAILED(rv)) {
     return rv;
   }
 
+  const uint32_t tagBE = NativeEndian::swapToBigEndian(aTableTag);
   uint8_t* tableData;
   uint32_t len;
   void* tableContext = nullptr;
@@ -699,6 +659,93 @@ void gfxDWriteFontEntry::GetVariationInstancesInternal(
   gfxFontUtils::GetVariationData(this, nullptr, &aInstances);
 }
 
+#if MOZ_FONTATIONS
+void gfxDWriteFontEntry::InitSkrifaFontFace() {
+  RefPtr<IDWriteFontFace> face;
+  {
+    AutoReadLock lock(mLock);
+    face = mFontFace;
+  }
+  if (!face) {
+    if (!mFont || FAILED(mFont->CreateFontFace(getter_AddRefs(face)))) {
+      return;
+    }
+  }
+  uint32_t count = 0;
+  if (FAILED(face->GetFiles(&count, nullptr)) || count != 1) {
+    return;
+  }
+  RefPtr<IDWriteFontFile> file;
+  if (FAILED(face->GetFiles(&count, getter_AddRefs(file))) || count != 1) {
+    return;
+  }
+  const void* key = nullptr;
+  uint32_t keySize = 0;
+  if (FAILED(file->GetReferenceKey(&key, &keySize))) {
+    return;
+  }
+  RefPtr<IDWriteFontFileLoader> loader;
+  if (FAILED(file->GetLoader(getter_AddRefs(loader)))) {
+    return;
+  }
+  RefPtr<IDWriteLocalFontFileLoader> local;
+  loader->QueryInterface(__uuidof(IDWriteLocalFontFileLoader),
+                         (void**)getter_AddRefs(local));
+  while (local) {
+    // We have a local file path; attempt to memmap it. If this fails, |break|
+    // to fall back to stream access.
+    uint32_t length = 0;
+    if (FAILED(local->GetFilePathLengthFromKey(key, keySize, &length))) {
+      break;
+    }
+    nsAutoString path;
+    path.SetLength(length);
+    if (FAILED(local->GetFilePathFromKey(
+            key, keySize, (WCHAR*)path.BeginWriting(), length + 1))) {
+      break;
+    }
+    AutoFDClose fd(PR_Open(NS_ConvertUTF16toUTF8(path).get(), PR_RDONLY, 0));
+    MemoryMappedFile mappedFile = MemoryMappedFile::Open(fd.get());
+    if (!mappedFile.IsValid()) {
+      break;
+    }
+    const uint8_t* const data = static_cast<const uint8_t*>(mappedFile.Data());
+    const size_t size = mappedFile.Size();
+    if (auto* skf = skrifa_font_new_from_index(data, size, face->GetIndex())) {
+      SetSkrifaFont(skf, std::move(mappedFile));
+    }
+    return;
+  }
+  // No local file, or failed to open/mmap it. Get a reference to the entire
+  // font data.
+  RefPtr<IDWriteFontFileStream> stream;
+  if (FAILED(
+          loader->CreateStreamFromKey(key, keySize, getter_AddRefs(stream)))) {
+    return;
+  }
+  uint64_t fileSize;
+  if (FAILED(stream->GetFileSize(&fileSize)) || !fileSize ||
+      fileSize > std::numeric_limits<size_t>::max()) {
+    return;
+  }
+  const void* data = nullptr;
+  void* fragmentContext = nullptr;
+  if (FAILED(stream->ReadFileFragment(&data, 0, fileSize, &fragmentContext))) {
+    return;
+  }
+  if (data) {
+    if (auto* skf = skrifa_font_new_from_index(
+            static_cast<const uint8_t*>(data), fileSize, face->GetIndex())) {
+      if (SetSkrifaFont(skf)) {
+        // Hold a reference to the stream, so that the data remains live.
+        mFontFileStream = stream;
+        mFragmentContext = fragmentContext;
+      }
+    }
+  }
+}
+#endif
+
 gfxFont* gfxDWriteFontEntry::CreateFontInstance(
     const gfxFontStyle* aFontStyle) {
   // We use the DirectWrite bold simulation for installed fonts, but NOT for
@@ -810,8 +857,8 @@ nsresult gfxDWriteFontEntry::CreateFontFace(
           if (SUCCEEDED(hr) && resource) {
             AutoTArray<DWRITE_FONT_AXIS_VALUE, 4> fontAxisValues;
             for (const auto& v : mVariationSettings) {
-              DWRITE_FONT_AXIS_VALUE axisValue = {makeDWriteAxisTag(v.mTag),
-                                                  v.mValue};
+              DWRITE_FONT_AXIS_VALUE axisValue = {makeDWriteAxisTag(v.tag),
+                                                  v.value};
               fontAxisValues.AppendElement(axisValue);
             }
             resource->CreateFontFace(
@@ -838,8 +885,8 @@ nsresult gfxDWriteFontEntry::CreateFontFace(
         // Copy variation settings to DWrite's type.
         if (aVariations) {
           for (const auto& v : *aVariations) {
-            DWRITE_FONT_AXIS_VALUE axisValue = {makeDWriteAxisTag(v.mTag),
-                                                v.mValue};
+            DWRITE_FONT_AXIS_VALUE axisValue = {makeDWriteAxisTag(v.tag),
+                                                v.value};
             fontAxisValues.AppendElement(axisValue);
           }
         }
@@ -893,19 +940,6 @@ nsresult gfxDWriteFontEntry::CreateFontFace(
   return NS_OK;
 }
 
-bool gfxDWriteFontEntry::InitLogFont(IDWriteFont* aFont, LOGFONTW* aLogFont) {
-  HRESULT hr;
-
-  BOOL isInSystemCollection;
-  IDWriteGdiInterop* gdi =
-      gfxDWriteFontList::PlatformFontList()->GetGDIInterop();
-  hr = gdi->ConvertFontToLOGFONT(aFont, aLogFont, &isInSystemCollection);
-  // If the font is not in the system collection, GDI will be unable to
-  // select it and load its tables, so we return false here to indicate
-  // failure, and let CopyFontTable fall back to DWrite native methods.
-  return (SUCCEEDED(hr) && isInSystemCollection);
-}
-
 bool gfxDWriteFontEntry::IsCJKFont() {
   if (mIsCJK != UNINITIALIZED_VALUE) {
     return mIsCJK;
@@ -955,8 +989,10 @@ void gfxDWriteFontEntry::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
 size_t gfxDWriteFontEntry::ComputedSizeOfExcludingThis(
     mozilla::MallocSizeOf aMallocSizeOf) {
   size_t result = gfxFontEntry::ComputedSizeOfExcludingThis(aMallocSizeOf);
-  if (mFontFileStream) {
-    result += mFontFileStream->SizeOfExcludingThis(aMallocSizeOf);
+  if (mFontFileStream && mIsDataUserFont) {
+    auto* stream =
+        reinterpret_cast<gfxDWriteFontFileStream*>(mFontFileStream.get());
+    result += stream->SizeOfExcludingThis(aMallocSizeOf);
   }
   return result;
 }
@@ -1034,15 +1070,15 @@ already_AddRefed<gfxFontEntry> gfxDWriteFontList::MakePlatformFont(
   HRESULT hr = gfxDWriteFontFileLoader::CreateCustomFontFile(
       aFontData, getter_AddRefs(fontFile), getter_AddRefs(fontFileStream));
 
-  NS_ASSERTION(SUCCEEDED(hr), "Failed to create font file reference");
   if (FAILED(hr)) {
+    NS_ERROR("Failed to create font file reference");
     return nullptr;
   }
 
   nsAutoCString uniqueName;
   nsresult rv = gfxFontUtils::MakeUniqueUserFontName(uniqueName);
-  NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to make unique user font name");
   if (NS_FAILED(rv)) {
+    NS_ERROR("Failed to make unique user font name");
     return nullptr;
   }
 
@@ -1055,27 +1091,21 @@ already_AddRefed<gfxFontEntry> gfxDWriteFontList::MakePlatformFont(
                                                 aWidthForEntry, aStyleForEntry);
 
   hr = fontFile->Analyze(&isSupported, &fileType, &entry->mFaceType, &numFaces);
-  NS_ASSERTION(SUCCEEDED(hr), "IDWriteFontFile::Analyze failed");
   if (FAILED(hr)) {
+    NS_ERROR("IDWriteFontFile::Analyze failed");
     return nullptr;
   }
-  NS_ASSERTION(isSupported, "Unsupported font file");
   if (!isSupported) {
+    NS_ERROR("Unsupported font file");
     return nullptr;
   }
-  NS_ASSERTION(numFaces == 1, "Font file does not contain exactly 1 face");
   if (numFaces != 1) {
     // We don't know how to deal with 0 faces either.
+    NS_ERROR("Font file does not contain exactly 1 face");
     return nullptr;
   }
 
   return entry.forget();
-}
-
-bool gfxDWriteFontList::UseGDIFontTableAccess() const {
-  // Using GDI font table access for DWrite is controlled by a pref, but also we
-  // must be able to make win32k calls.
-  return mGDIFontTableAccess && !IsWin32kLockedDown();
 }
 
 static void GetPostScriptNameFromNameTable(IDWriteFontFace* aFace,
@@ -1621,15 +1651,9 @@ void gfxDWriteFontList::ReadFaceNamesForFamily(
   }
 }
 
-enum DWriteInitError {
-  errGDIInterop = 1,
-  errSystemFontCollection = 2,
-  errNoFonts = 3
-};
+enum DWriteInitError { errSystemFontCollection = 2, errNoFonts = 3 };
 
 void gfxDWriteFontList::InitSharedFontListForPlatform() {
-  mGDIFontTableAccess = Preferences::GetBool(
-      "gfx.font_rendering.directwrite.use_gdi_table_loading", false);
   mForceGDIClassicMaxFontSize = Preferences::GetInt(
       "gfx.font_rendering.cleartype_params.force_gdi_classic_max_size",
       mForceGDIClassicMaxFontSize);
@@ -1638,28 +1662,21 @@ void gfxDWriteFontList::InitSharedFontListForPlatform() {
   mHardcodedSubstitutions.Clear();
   mNonExistingFonts.Clear();
 
-  RefPtr<IDWriteFactory> factory = Factory::EnsureDWriteFactory();
-  HRESULT hr = factory->GetGdiInterop(getter_AddRefs(mGDIInterop));
-  if (FAILED(hr)) {
-    glean::fontlist::dwritefont_init_problem.AccumulateSingleSample(
-        uint32_t(errGDIInterop));
-    delete mSharedFontList.exchange(nullptr);
-    return;
-  }
-
   mSystemFonts = Factory::GetDWriteSystemFonts(true);
-  NS_ASSERTION(mSystemFonts != nullptr, "GetSystemFontCollection failed!");
   if (!mSystemFonts) {
+    NS_ERROR("GetSystemFontCollection failed!");
     glean::fontlist::dwritefont_init_problem.AccumulateSingleSample(
         uint32_t(errSystemFontCollection));
     delete mSharedFontList.exchange(nullptr);
     return;
   }
+
 #ifdef MOZ_BUNDLED_FONTS
   // We activate bundled fonts if the pref is > 0 (on) or < 0 (auto), only an
   // explicit value of 0 (off) will disable them.
   TimeStamp start1 = TimeStamp::Now();
   if (StaticPrefs::gfx_bundled_fonts_activate_AtStartup() != 0) {
+    RefPtr<IDWriteFactory> factory = Factory::EnsureDWriteFactory();
     mBundledFonts = CreateBundledFontsCollection(factory);
   }
   TimeStamp end1 = TimeStamp::Now();
@@ -1703,8 +1720,8 @@ void gfxDWriteFontList::InitSharedFontListForPlatform() {
 }
 
 nsresult gfxDWriteFontList::InitFontListForPlatform() {
-  LARGE_INTEGER frequency;           // ticks per second
-  LARGE_INTEGER t1, t2, t3, t4, t5;  // ticks
+  LARGE_INTEGER frequency;       // ticks per second
+  LARGE_INTEGER t1, t2, t3, t4;  // ticks
   double elapsedTime, upTime;
   char nowTime[256], nowDate[256];
 
@@ -1717,29 +1734,13 @@ nsresult gfxDWriteFontList::InitFontListForPlatform() {
   QueryPerformanceFrequency(&frequency);
   QueryPerformanceCounter(&t1);  // start
 
-  HRESULT hr;
-  mGDIFontTableAccess = Preferences::GetBool(
-      "gfx.font_rendering.directwrite.use_gdi_table_loading", false);
-
   mFontSubstitutes.Clear();
   mHardcodedSubstitutes.Clear();
   mNonExistingFonts.Clear();
 
-  RefPtr<IDWriteFactory> factory = Factory::GetDWriteFactory();
-
-  hr = factory->GetGdiInterop(getter_AddRefs(mGDIInterop));
-  if (FAILED(hr)) {
-    glean::fontlist::dwritefont_init_problem.AccumulateSingleSample(
-        uint32_t(errGDIInterop));
-    return NS_ERROR_FAILURE;
-  }
-
-  QueryPerformanceCounter(&t2);  // base-class/interop initialization
-
   mSystemFonts = Factory::GetDWriteSystemFonts(true);
-  NS_ASSERTION(mSystemFonts != nullptr, "GetSystemFontCollection failed!");
-
   if (!mSystemFonts) {
+    NS_ERROR("GetSystemFontCollection failed!");
     glean::fontlist::dwritefont_init_problem.AccumulateSingleSample(
         uint32_t(errSystemFontCollection));
     return NS_ERROR_FAILURE;
@@ -1753,6 +1754,7 @@ nsresult gfxDWriteFontList::InitFontListForPlatform() {
   // explicit value of 0 (off) will disable them.
   if (StaticPrefs::gfx_bundled_fonts_activate_AtStartup() != 0) {
     auto timerId = glean::fontlist::bundledfonts_activate.Start();
+    RefPtr<IDWriteFactory> factory = Factory::EnsureDWriteFactory();
     mBundledFonts = CreateBundledFontsCollection(factory);
     if (mBundledFonts) {
       GetFontsFromCollection(mBundledFonts);
@@ -1761,22 +1763,21 @@ nsresult gfxDWriteFontList::InitFontListForPlatform() {
         std::move(timerId));
   }
 #endif
+
+  QueryPerformanceCounter(&t2);  // system font collection
+
   const uint32_t kBundledCount = mFontFamilies.Count();
 
-  QueryPerformanceCounter(&t3);  // system font collection
-
   GetFontsFromCollection(mSystemFonts);
-
-  // if no fonts found, something is out of whack, bail and use GDI backend
-  NS_ASSERTION(mFontFamilies.Count() > kBundledCount,
-               "no fonts found in the system fontlist -- holy crap batman!");
   if (mFontFamilies.Count() == kBundledCount) {
+    // If no fonts are found, something is out of whack, so bail.
+    NS_ERROR("no fonts found in the system fontlist -- holy crap batman!");
     glean::fontlist::dwritefont_init_problem.AccumulateSingleSample(
         uint32_t(errNoFonts));
     return NS_ERROR_FAILURE;
   }
 
-  QueryPerformanceCounter(&t4);  // iterate over system fonts
+  QueryPerformanceCounter(&t3);  // iterate over system fonts
 
   mOtherFamilyNamesInitialized = true;
   GetFontSubstitutes();
@@ -1867,7 +1868,7 @@ nsresult gfxDWriteFontList::InitFontListForPlatform() {
 
   GetPrefsAndStartLoader();
 
-  QueryPerformanceCounter(&t5);  // misc initialization
+  QueryPerformanceCounter(&t4);  // misc initialization
 
   if (LOG_FONTINIT_ENABLED()) {
     // determine dwrite version
@@ -1879,34 +1880,28 @@ nsresult gfxDWriteFontList::InitFontListForPlatform() {
                   NS_ConvertUTF16toUTF8(dwriteVers).get()));
   }
 
-  elapsedTime = (t5.QuadPart - t1.QuadPart) * 1000.0 / frequency.QuadPart;
+  elapsedTime = (t4.QuadPart - t1.QuadPart) * 1000.0 / frequency.QuadPart;
   glean::fontlist::dwritefont_delayedinit_total.AccumulateRawDuration(
       TimeDuration::FromMilliseconds(elapsedTime));
   glean::fontlist::dwritefont_delayedinit_count.AccumulateSingleSample(
       mSystemFonts->GetFontFamilyCount());
-  LOG_FONTINIT((
-      "(fontinit) Total time in InitFontList:    %9.3f ms (families: %d, %s)\n",
-      elapsedTime, mSystemFonts->GetFontFamilyCount(),
-      (mGDIFontTableAccess ? "gdi table access" : "dwrite table access")));
+  LOG_FONTINIT(
+      ("(fontinit) Total time in InitFontList:  %9.3f ms (families: %d)\n",
+       elapsedTime, mSystemFonts->GetFontFamilyCount()));
 
   elapsedTime = (t2.QuadPart - t1.QuadPart) * 1000.0 / frequency.QuadPart;
-  LOG_FONTINIT(
-      ("(fontinit)  --- base/interop obj initialization init: %9.3f ms\n",
-       elapsedTime));
-
-  elapsedTime = (t3.QuadPart - t2.QuadPart) * 1000.0 / frequency.QuadPart;
   glean::fontlist::dwritefont_delayedinit_collect.AccumulateRawDuration(
       TimeDuration::FromMilliseconds(elapsedTime));
   LOG_FONTINIT(
-      ("(fontinit)  --- GetSystemFontCollection:  %9.3f ms\n", elapsedTime));
+      ("(fontinit) --- GetSystemFontCollection: %9.3f ms\n", elapsedTime));
+
+  elapsedTime = (t3.QuadPart - t2.QuadPart) * 1000.0 / frequency.QuadPart;
+  LOG_FONTINIT(
+      ("(fontinit) --- iterate over families:   %9.3f ms\n", elapsedTime));
 
   elapsedTime = (t4.QuadPart - t3.QuadPart) * 1000.0 / frequency.QuadPart;
   LOG_FONTINIT(
-      ("(fontinit)  --- iterate over families:    %9.3f ms\n", elapsedTime));
-
-  elapsedTime = (t5.QuadPart - t4.QuadPart) * 1000.0 / frequency.QuadPart;
-  LOG_FONTINIT(
-      ("(fontinit)  --- misc initialization:    %9.3f ms\n", elapsedTime));
+      ("(fontinit) --- misc initialization:     %9.3f ms\n", elapsedTime));
 
   return NS_OK;
 }
@@ -2117,8 +2112,7 @@ static const FontSubstitution sDirectWriteSubs[] = {
     {"Script", "Mistral"}};
 
 void gfxDWriteFontList::GetDirectWriteSubstitutes() {
-  for (uint32_t i = 0; i < std::size(sDirectWriteSubs); ++i) {
-    const FontSubstitution& sub(sDirectWriteSubs[i]);
+  for (const auto& sub : sDirectWriteSubs) {
     nsAutoCString substituteName(sub.aliasName);
     BuildKeyNameFromFontName(substituteName);
     if (SharedFontList()) {
@@ -2636,15 +2630,16 @@ class BundledFontFileEnumerator : public IDWriteFontFileEnumerator {
  public:
   BundledFontFileEnumerator(IDWriteFactory* aFactory, nsIFile* aFontDir);
 
+  BundledFontFileEnumerator() = delete;
+  BundledFontFileEnumerator(const BundledFontFileEnumerator&) = delete;
+  BundledFontFileEnumerator& operator=(const BundledFontFileEnumerator&) =
+      delete;
+
   IFACEMETHODIMP MoveNext(BOOL* hasCurrentFile);
 
   IFACEMETHODIMP GetCurrentFontFile(IDWriteFontFile** fontFile);
 
  private:
-  BundledFontFileEnumerator() = delete;
-  BundledFontFileEnumerator(const BundledFontFileEnumerator&) = delete;
-  BundledFontFileEnumerator& operator=(const BundledFontFileEnumerator&) =
-      delete;
   virtual ~BundledFontFileEnumerator() = default;
 
   RefPtr<IDWriteFactory> mFactory;
@@ -2696,14 +2691,15 @@ class BundledFontLoader : public IDWriteFontCollectionLoader {
  public:
   BundledFontLoader() = default;
 
+  BundledFontLoader(const BundledFontLoader&) = delete;
+  BundledFontLoader& operator=(const BundledFontLoader&) = delete;
+
   IFACEMETHODIMP CreateEnumeratorFromKey(
       IDWriteFactory* aFactory, const void* aCollectionKey,
       UINT32 aCollectionKeySize,
       IDWriteFontFileEnumerator** aFontFileEnumerator);
 
  private:
-  BundledFontLoader(const BundledFontLoader&) = delete;
-  BundledFontLoader& operator=(const BundledFontLoader&) = delete;
   virtual ~BundledFontLoader() = default;
 };
 

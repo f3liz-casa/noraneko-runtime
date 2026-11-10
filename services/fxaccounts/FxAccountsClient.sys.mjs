@@ -249,6 +249,19 @@ FxAccountsClient.prototype = {
   },
 
   /**
+   * List all the subscriptions for the user.
+   *
+   * @param accessToken
+   *        An OAuth access token with the subscriptions scope
+   * @return Promise
+   */
+  async activeSubscriptions(accessToken) {
+    return this._request("/oauth/subscriptions/active", "GET", {
+      accessToken,
+    });
+  },
+
+  /**
    * Retrieves an OAuth authorization code.
    *
    * @param String sessionTokenHex
@@ -679,7 +692,7 @@ FxAccountsClient.prototype = {
   },
 
   /**
-   * Update the session or name for an existing device
+   * Update the details of an existing device
    *
    * @function updateDevice
    * @param  sessionTokenHex
@@ -688,6 +701,8 @@ FxAccountsClient.prototype = {
    *         Device identifier
    * @param  name
    *         Device name
+   * @param  type
+   *         Device type (mobile|desktop)
    * @param  [options]
    *         Extra device options
    * @param  [options.availableCommands]
@@ -705,11 +720,11 @@ FxAccountsClient.prototype = {
    *           name: Device name
    *         }
    */
-  async updateDevice(sessionTokenHex, id, name, options = {}) {
+  async updateDevice(sessionTokenHex, id, name, type, options = {}) {
     let path = "/account/device";
 
     let creds = await deriveHawkCredentials(sessionTokenHex, "sessionToken");
-    let body = { id, name };
+    let body = { id, name, type };
     if (options.pushCallback) {
       body.pushCallback = options.pushCallback;
     }

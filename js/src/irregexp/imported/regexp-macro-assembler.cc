@@ -9,7 +9,7 @@
 
 #ifdef V8_INTL_SUPPORT
 #include "unicode/uchar.h"
-#include "unicode/unistr.h"
+#include "unicode/utf16.h"
 #endif  // V8_INTL_SUPPORT
 
 namespace v8 {
@@ -61,9 +61,11 @@ int RegExpMacroAssembler::CaseInsensitiveCompareNonUnicode(Address byte_offset1,
   base::uc16* substring2 = reinterpret_cast<base::uc16*>(byte_offset2);
 
   for (size_t i = 0; i < length; i++) {
-    UChar32 c1 = CaseFolding::Canonicalize(substring1[i]);
-    UChar32 c2 = CaseFolding::Canonicalize(substring2[i]);
-    if (c1 != c2) {
+    UChar32 c1 = substring1[i];
+    UChar32 c2 = substring2[i];
+    if (c1 == c2) continue;
+    if (CaseFolding::EquivalenceKey(c1, CaseFolding::Mode::kNonUnicode) !=
+        CaseFolding::EquivalenceKey(c2, CaseFolding::Mode::kNonUnicode)) {
       return 0;
     }
   }
@@ -86,11 +88,25 @@ int RegExpMacroAssembler::CaseInsensitiveCompareUnicode(Address byte_offset1,
   DCHECK_EQ(0, byte_length % 2);
 
 #ifdef V8_INTL_SUPPORT
-  int32_t length = static_cast<int32_t>(byte_length >> 1);
-  icu::UnicodeString uni_str_1(reinterpret_cast<const char16_t*>(byte_offset1),
-                               length);
-  return uni_str_1.caseCompare(reinterpret_cast<const char16_t*>(byte_offset2),
-                               length, U_FOLD_CASE_DEFAULT) == 0;
+  // Canonicalize (ECMA-262 22.2.2.9.2) applies the simple case folding of
+  // each code point separately.
+  const int32_t length = static_cast<int32_t>(byte_length >> 1);
+  const char16_t* str1 = reinterpret_cast<const char16_t*>(byte_offset1);
+  const char16_t* str2 = reinterpret_cast<const char16_t*>(byte_offset2);
+  int32_t i1 = 0;
+  int32_t i2 = 0;
+  while (i1 < length) {
+    UChar32 c1, c2;
+    U16_NEXT(str1, i1, length, c1);
+    U16_NEXT(str2, i2, length, c2);
+    if (i1 != i2) return 0;
+    if (c1 == c2) continue;
+    if (CaseFolding::EquivalenceKey(c1, CaseFolding::Mode::kUnicode) !=
+        CaseFolding::EquivalenceKey(c2, CaseFolding::Mode::kUnicode)) {
+      return 0;
+    }
+  }
+  return 1;
 #else
   base::uc16* substring1 = reinterpret_cast<base::uc16*>(byte_offset1);
   base::uc16* substring2 = reinterpret_cast<base::uc16*>(byte_offset2);
@@ -582,7 +598,7 @@ int NativeRegExpMacroAssembler::CheckStackGuardState(
 // Returns a {Result} sentinel, or the number of successful matches.
 int NativeRegExpMacroAssembler::Match(DirectHandle<IrRegExpData> regexp_data,
                                       DirectHandle<String> subject,
-                                      int* offsets_vector,
+                                      bool is_one_byte, int* offsets_vector,
                                       int offsets_vector_length,
                                       int previous_index, Isolate* isolate) {
   DCHECK(subject->IsFlat());
@@ -612,8 +628,6 @@ int NativeRegExpMacroAssembler::Match(DirectHandle<IrRegExpData> regexp_data,
   if (StringShape(subject_ptr).IsThin()) {
     subject_ptr = Cast<ThinString>(subject_ptr)->actual();
   }
-  // Ensure that an underlying string has the same representation.
-  bool is_one_byte = subject_ptr->IsOneByteRepresentation();
   DCHECK(IsExternalString(subject_ptr) || IsSeqString(subject_ptr));
   // String is now either Sequential or External
   int char_size_shift = is_one_byte ? 0 : 1;
@@ -630,8 +644,8 @@ int NativeRegExpMacroAssembler::Match(DirectHandle<IrRegExpData> regexp_data,
   }
 #endif  // V8_ENABLE_REGEXP_DIAGNOSTICS
   int res =
-      Execute(*subject, start_offset, input_start, input_end, offsets_vector,
-              offsets_vector_length, isolate, *regexp_data);
+      Execute(*subject, start_offset, input_start, input_end, is_one_byte,
+              offsets_vector, offsets_vector_length, isolate, *regexp_data);
 #ifdef V8_ENABLE_REGEXP_DIAGNOSTICS
   if (V8_UNLIKELY(v8_flags.trace_regexp_exec)) {
     RegExp::TraceExecutionEnd(reinterpret_cast<Address>(isolate),
@@ -648,8 +662,9 @@ int NativeRegExpMacroAssembler::ExecuteForTesting(
     const uint8_t* input_end, int* output, int output_size, Isolate* isolate,
     Tagged<JSRegExp> regexp) {
   Tagged<RegExpData> data = regexp->data(isolate);
-  return Execute(input, start_offset, input_start, input_end, output,
-                 output_size, isolate, SbxCast<IrRegExpData>(data));
+  bool is_one_byte = String::IsOneByteRepresentationUnderneath(input);
+  return Execute(input, start_offset, input_start, input_end, is_one_byte,
+                 output, output_size, isolate, SbxCast<IrRegExpData>(data));
 }
 
 // Returns a {Result} sentinel, or the number of successful matches.
@@ -657,10 +672,12 @@ int NativeRegExpMacroAssembler::Execute(
     Tagged<String>
         input,  // This needs to be the unpacked (sliced, cons) string.
     int start_offset, const uint8_t* input_start, const uint8_t* input_end,
-    int* output, int output_size, Isolate* isolate,
+    bool is_one_byte, int* output, int output_size, Isolate* isolate,
     Tagged<IrRegExpData> regexp_data) {
-  bool is_one_byte = String::IsOneByteRepresentationUnderneath(input);
   Tagged<Code> code = regexp_data->code(isolate, is_one_byte);
+  // Ensure code is in sync with subject strings 1-byte/2-byte.
+  // Code should always be RegExp JIT code (no trampoline).
+  SBXCHECK_EQ(code->kind(), CodeKind::REGEXP);
   RegExp::CallOrigin call_origin = RegExp::CallOrigin::kFromRuntime;
 
   using RegexpMatcherSig =

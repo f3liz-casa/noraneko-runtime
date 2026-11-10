@@ -16,7 +16,6 @@
 #include "nsIGIOService.h"
 #include "nsIStringBundle.h"
 #include "nsServiceManagerUtils.h"
-#include "nsIImageLoadingContent.h"
 #include "nsIINIParser.h"
 #include "imgIRequest.h"
 #include "imgIContainer.h"
@@ -24,9 +23,7 @@
 #include "mozilla/GRefPtr.h"
 #include "mozilla/GUniquePtr.h"
 #include "mozilla/WidgetUtilsGtk.h"
-#include "mozilla/dom/Element.h"
 #include "mozilla/dom/Promise.h"
-#include "nsImageToPixbuf.h"
 #include "nsXULAppAPI.h"
 
 #ifdef MOZ_ENABLE_DBUS
@@ -99,8 +96,8 @@ nsresult nsGNOMEShellService::Init() {
   return appPath->GetNativePath(mAppPath);
 }
 
-NS_IMPL_ISUPPORTS(nsGNOMEShellService, nsIGNOMEShellService, nsIShellService,
-                  nsIToolkitShellService)
+NS_IMPL_ISUPPORTS_INHERITED(nsGNOMEShellService, nsShellService,
+                            nsIGNOMEShellService, nsIShellService)
 
 bool nsGNOMEShellService::GetAppPathFromLauncher() {
   gchar* tmp;
@@ -169,7 +166,7 @@ bool nsGNOMEShellService::CheckHandlerMatchesAppName(
 }
 
 NS_IMETHODIMP
-nsGNOMEShellService::IsDefaultBrowser(bool aForAllTypes,
+nsGNOMEShellService::IsDefaultBrowser(bool /*aForAllTypes*/,
                                       bool* aIsDefaultBrowser) {
   *aIsDefaultBrowser = false;
 
@@ -178,29 +175,33 @@ nsGNOMEShellService::IsDefaultBrowser(bool aForAllTypes,
                            (MOZ_APP_NAME ".desktop"), nullptr};
     GSpawnFlags flags = static_cast<GSpawnFlags>(G_SPAWN_SEARCH_PATH |
                                                  G_SPAWN_STDERR_TO_DEV_NULL);
+
     gchar* output = nullptr;
     gint exit_status = 0;
     if (!g_spawn_sync(nullptr, (gchar**)argv, nullptr, flags, nullptr, nullptr,
                       &output, nullptr, &exit_status, nullptr)) {
       return NS_OK;
     }
+
     if (exit_status != 0) {
       g_free(output);
       return NS_OK;
     }
+
     if (strcmp(output, "yes\n") == 0) {
       *aIsDefaultBrowser = true;
     }
+
     g_free(output);
     return NS_OK;
   }
 
   nsCOMPtr<nsIGIOService> giovfs = do_GetService(NS_GIOSERVICE_CONTRACTID);
-  nsAutoCString handler;
-  nsCOMPtr<nsIGIOMimeApp> gioApp;
 
   for (auto appProtocol : appProtocols) {
-    if (!appProtocol.essential) continue;
+    if (!appProtocol.essential) {
+      continue;
+    }
 
     if (!IsDefaultForSchemeHelper(nsDependentCString(appProtocol.name),
                                   giovfs)) {
@@ -211,6 +212,13 @@ nsGNOMEShellService::IsDefaultBrowser(bool aForAllTypes,
   *aIsDefaultBrowser = true;
 
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsGNOMEShellService::IsDefaultBrowserAsync(bool aForAllTypes,
+                                           JSContext* aContext,
+                                           mozilla::dom::Promise** _retval) {
+  return nsShellService::IsDefaultBrowserAsync(aForAllTypes, aContext, _retval);
 }
 
 bool nsGNOMEShellService::IsDefaultForSchemeHelper(
@@ -329,38 +337,9 @@ nsGNOMEShellService::GetCanSetDesktopBackground(bool* aResult) {
   return NS_OK;
 }
 
-static nsresult WriteImage(const nsCString& aPath, imgIContainer* aImage) {
-  RefPtr<GdkPixbuf> pixbuf = nsImageToPixbuf::ImageToPixbuf(aImage);
-  if (!pixbuf) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-
-  gboolean res = gdk_pixbuf_save(pixbuf, aPath.get(), "png", nullptr, nullptr);
-  return res ? NS_OK : NS_ERROR_FAILURE;
-}
-
 NS_IMETHODIMP
-nsGNOMEShellService::SetDesktopBackground(dom::Element* aElement,
-                                          int32_t aPosition,
-                                          const nsACString& aImageName) {
-  nsCOMPtr<nsIImageLoadingContent> imageContent = do_QueryInterface(aElement);
-  if (!imageContent) {
-    return NS_ERROR_FAILURE;
-  }
-
-  // get the image container
-  nsCOMPtr<imgIRequest> request;
-  imageContent->GetRequest(nsIImageLoadingContent::CURRENT_REQUEST,
-                           getter_AddRefs(request));
-  if (!request) {
-    return NS_ERROR_FAILURE;
-  }
-  nsCOMPtr<imgIContainer> container;
-  request->GetImage(getter_AddRefs(container));
-  if (!container) {
-    return NS_ERROR_FAILURE;
-  }
-
+nsGNOMEShellService::SetDesktopBackgroundFile(nsIFile* aFile,
+                                              int32_t aPosition) {
   // Set desktop wallpaper filling style
   nsAutoCString options;
   if (aPosition == BACKGROUND_TILE)
@@ -376,34 +355,13 @@ nsGNOMEShellService::SetDesktopBackground(dom::Element* aElement,
   else
     options.AssignLiteral("centered");
 
-  // Write the background file to the home directory.
-  nsAutoCString filePath(PR_GetEnv("HOME"));
-  nsAutoString brandName;
-
-  // get the product brand name from localized strings
-  if (nsCOMPtr<nsIStringBundleService> bundleService =
-          components::StringBundle::Service()) {
-    nsCOMPtr<nsIStringBundle> brandBundle;
-    bundleService->CreateBundle(SHELL_BRAND_PROPERTIES_URI,
-                                getter_AddRefs(brandBundle));
-    if (bundleService) {
-      brandBundle->GetStringFromName("brandShortName", brandName);
-    }
-  }
-
-  // build the file name
-  filePath.Append('/');
-  filePath.Append(NS_ConvertUTF16toUTF8(brandName));
-  filePath.AppendLiteral("_wallpaper.png");
-
-  // write the image to a file in the home dir
-  MOZ_TRY(WriteImage(filePath, container));
-
   widget::GSettings::Collection bgSettings(kDesktopBGSchema);
   if (!bgSettings) {
     return NS_ERROR_FAILURE;
   }
 
+  nsAutoCString filePath;
+  MOZ_TRY(aFile->GetNativePath(filePath));
   GUniquePtr<gchar> fileURI(
       g_filename_to_uri(filePath.get(), nullptr, nullptr));
   if (!fileURI) {

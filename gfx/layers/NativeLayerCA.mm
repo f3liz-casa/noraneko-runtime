@@ -154,9 +154,8 @@ NativeLayerRootCA::NativeLayerRootCA(CALayer* aLayer)
     : mMutex("NativeLayerRootCA"), mOnscreenRootCALayer([aLayer retain]) {}
 
 NativeLayerRootCA::~NativeLayerRootCA() {
-  MOZ_RELEASE_ASSERT(
-      mSublayers.IsEmpty(),
-      "Please clear all layers before destroying the layer root.");
+  MOZ_ASSERT(mSublayers.IsEmpty(),
+             "Sublayers should be empty when destroying the layer root.");
 
   {
     // Clear the root layer's sublayers. At this point the window is usually
@@ -214,8 +213,14 @@ void NativeLayerRootCA::RemoveLayer(NativeLayer* aLayer) {
   RefPtr<NativeLayerCA> layerCA = aLayer->AsNativeLayerCA();
   MOZ_RELEASE_ASSERT(layerCA);
 
-  mSublayers.RemoveElement(layerCA);
-  SetMutatedLayerStructure();
+  bool layerWasRemoved = mSublayers.RemoveElement(layerCA);
+  MOZ_ASSERT(
+      layerWasRemoved,
+      "Calling RemoveLayer on a layer we don't know about violates sanity "
+      "checks, and might leave sublayers non-empty when root is destroyed.");
+  if (MOZ_LIKELY(layerWasRemoved)) {
+    SetMutatedLayerStructure();
+  }
 }
 
 void NativeLayerRootCA::SetLayers(
@@ -903,7 +908,7 @@ void NativeLayerCA::AttachExternalImage(wr::RenderTextureHost* aExternalImage) {
   });
 }
 
-GpuFence* NativeLayerCA::GetGpuFence() {
+RefPtr<GpuFence> NativeLayerCA::GetGpuFence() {
   if (!mTextureHost) {
     return nullptr;
   }
@@ -1383,6 +1388,7 @@ NativeLayerCARepresentation::NativeLayerCARepresentation()
 NativeLayerCARepresentation::~NativeLayerCARepresentation() {
   [mContentCALayer release];
   [mOpaquenessTintLayer release];
+  [mProtectedBackingLayer release];
   [mWrappingCALayer release];
   [mRoundedClipCALayer release];
 }
@@ -1749,9 +1755,11 @@ bool NativeLayerCARepresentation::ApplyChanges(
 
   MOZ_ASSERT(aUpdate == UpdateType::All);
 
-  if (mWrappingCALayer && mMutatedSpecializeVideo) {
+  if (mWrappingCALayer && (mMutatedSpecializeVideo || mMutatedIsDRM)) {
     // Since specialize video changes the way we construct our wrapping and
-    // content layers, we have to scrap them if this value has changed.
+    // content layers, we have to scrap them if this value has changed. A DRM
+    // change also gets fresh layers, so a layer never switches between
+    // holding DRM and non-DRM frames.
 #ifdef NIGHTLY_BUILD
     if (aIsVideo && StaticPrefs::gfx_core_animation_specialize_video_log()) {
       NSLog(@"VIDEO_LOG: Scrapping existing video layer.");
@@ -1761,6 +1769,8 @@ bool NativeLayerCARepresentation::ApplyChanges(
     mContentCALayer = nil;
     [mOpaquenessTintLayer release];
     mOpaquenessTintLayer = nil;
+    [mProtectedBackingLayer release];
+    mProtectedBackingLayer = nil;
     [mWrappingCALayer release];
     mWrappingCALayer = nil;
     [mRoundedClipCALayer release];
@@ -1815,6 +1825,17 @@ bool NativeLayerCARepresentation::ApplyChanges(
         [(AVSampleBufferDisplayLayer*)mContentCALayer
             setControlTimebase:timebase];
         CFRelease(timebase);
+        ((AVSampleBufferDisplayLayer*)mContentCALayer).preventsCapture = aIsDRM;
+        if (aIsDRM) {
+          mProtectedBackingLayer = [[CALayer layer] retain];
+          mProtectedBackingLayer.position = CGPointZero;
+          mProtectedBackingLayer.anchorPoint = CGPointZero;
+          mProtectedBackingLayer.edgeAntialiasingMask = 0;
+          mProtectedBackingLayer.opaque = YES;
+          mProtectedBackingLayer.backgroundColor =
+              CGColorGetConstantColor(kCGColorBlack);
+          [mRoundedClipCALayer addSublayer:mProtectedBackingLayer];
+        }
       } else {
 #ifdef NIGHTLY_BUILD
         if (aIsVideo &&
@@ -1840,10 +1861,6 @@ bool NativeLayerCARepresentation::ApplyChanges(
 
       [mRoundedClipCALayer addSublayer:mContentCALayer];
     }
-  }
-
-  if (aSpecializeVideo && mMutatedIsDRM) {
-    ((AVSampleBufferDisplayLayer*)mContentCALayer).preventsCapture = aIsDRM;
   }
 
   bool shouldTintOpaqueness = StaticPrefs::gfx_core_animation_tint_opaque();
@@ -1885,6 +1902,9 @@ bool NativeLayerCARepresentation::ApplyChanges(
                                         aSize.height / aBackingScale);
     if (mOpaquenessTintLayer) {
       mOpaquenessTintLayer.bounds = mContentCALayer.bounds;
+    }
+    if (mProtectedBackingLayer) {
+      mProtectedBackingLayer.bounds = mContentCALayer.bounds;
     }
     mContentCALayer.contentsScale = aBackingScale;
   }
@@ -2009,6 +2029,9 @@ bool NativeLayerCARepresentation::ApplyChanges(
       if (mOpaquenessTintLayer) {
         mOpaquenessTintLayer.transform = mContentCALayer.transform;
       }
+      if (mProtectedBackingLayer) {
+        mProtectedBackingLayer.transform = mContentCALayer.transform;
+      }
     }
   }
 
@@ -2033,7 +2056,9 @@ bool NativeLayerCARepresentation::ApplyChanges(
       // forcing the layer contents to display that frame. Our call to
       // enqueueSampleBuffer will handle future async updates to the layer;
       // buffers queued with enqueueSampleBuffer overwrite the layer contents.
-      if (layerNeedsInitialization) {
+      // DRM frames are left to enqueueSampleBuffer alone, because capture of
+      // the layer contents was observed not to be blocked by preventsCapture.
+      if (layerNeedsInitialization && !aIsDRM) {
         mContentCALayer.contents = (id)surface;
       }
 

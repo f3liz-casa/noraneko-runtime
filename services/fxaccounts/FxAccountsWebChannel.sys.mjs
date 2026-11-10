@@ -37,6 +37,7 @@ import {
   ON_SERVICE_ENABLED_NOTIFICATION,
   PREF_LAST_FXA_USER_UID,
   PREF_LAST_FXA_USER_EMAIL,
+  SCOPE_APP_SYNC,
   SCOPE_OLD_SYNC,
   SCOPE_PROFILE,
   WEBCHANNEL_ID,
@@ -55,6 +56,10 @@ ChromeUtils.defineESModuleGetters(lazy, {
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   Weave: "resource://services-sync/main.sys.mjs",
   WebChannel: "resource://gre/modules/WebChannel.sys.mjs",
+});
+ChromeUtils.defineLazyGetter(lazy, "mpLocked", () => {
+  return ChromeUtils.importESModule("resource://services-sync/util.sys.mjs")
+    .Utils.mpLocked;
 });
 ChromeUtils.defineLazyGetter(lazy, "SelectableProfileService", () => {
   try {
@@ -80,7 +85,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
   "pairingVersion",
   "identity.fxaccounts.pairing.version",
-  1
+  2
 );
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
@@ -690,7 +695,9 @@ FxAccountsWebChannelHelpers.prototype = {
     // Importantly, the message from (a) is the one that actually has the service information we care about
     // (eg, the sync engine selections) - (c) *will* have `services.sync` but it will be an empty object.
     // This means we need to take care to not lose the services from (a) when processing (c).
-    const signedInUser = await this._fxAccounts.getSignedInUser([
+    let signedInUser = await this._fxAccounts._internal.getUserAccountData([
+      "uid",
+      "sessionToken",
       "requestedServices",
     ]);
     let existingServices;
@@ -700,6 +707,9 @@ FxAccountsWebChannelHelpers.prototype = {
           "the webchannel found a different user signed in - signing them out."
         );
         await this._disconnect();
+        // They are no longer signed in, so everything below treats this message
+        // as a new user signing in.
+        signedInUser = null;
       } else {
         existingServices = signedInUser.requestedServices
           ? JSON.parse(signedInUser.requestedServices)
@@ -738,16 +748,41 @@ FxAccountsWebChannelHelpers.prototype = {
 
     this.setPreviousAccountHashPref(accountData.uid);
 
-    // For scenarios like user is logged in via third-party but wants
-    // to enable sync (password) the server will send an additional login command
-    // we need to ensure we don't destroy the existing session
-    if (signedInUser && signedInUser.uid === accountData.uid) {
-      await this._fxAccounts._internal.updateUserAccountData(accountData);
-      log.debug("Webchannel finished updating already logged in user.");
-    } else {
+    // Reauth can omit the stored token, while third-party auth can repeat the
+    // current session; neither should replace the device.
+    const previousSessionToken = signedInUser?.sessionToken;
+    const isReplacementSession =
+      !!previousSessionToken &&
+      !!accountData.sessionToken &&
+      previousSessionToken !== accountData.sessionToken;
+
+    if (!signedInUser) {
       await this._fxAccounts._internal.setSignedInUser(accountData);
       log.debug("Webchannel finished logging a user in.");
+      return;
     }
+
+    if (isReplacementSession) {
+      // Our device record belongs to the old session, so forget it - the next
+      // registration then creates a new record rather than trying to move the
+      // old one, which the server rejects as a device/session conflict.
+      accountData.device = null;
+      accountData.encryptedSendTabKeys = null;
+    }
+    await this._fxAccounts._internal.updateUserAccountData(accountData);
+    if (isReplacementSession) {
+      // Destroying the session also removes its device record. Failing to
+      // clean up must not fail the login we've already stored.
+      log.debug("Webchannel is destroying the previous session.");
+      try {
+        await this._fxAccounts._internal.fxAccountsClient.signOut(
+          previousSessionToken
+        );
+      } catch (ex) {
+        log.warn("failed to destroy the previous session", ex);
+      }
+    }
+    log.debug("Webchannel finished updating already logged in user.");
   },
 
   /**
@@ -969,6 +1004,10 @@ FxAccountsWebChannelHelpers.prototype = {
    * If returning status information is not allowed or no user is signed into
    * Sync, `user_data` will be null.
    */
+  _isPrimaryPasswordLocked() {
+    return lazy.mpLocked();
+  },
+
   async getFxaStatus(service, sendingContext, isPairing, context) {
     let signedInUser = null;
 
@@ -987,6 +1026,13 @@ FxAccountsWebChannelHelpers.prototype = {
           sessionToken: userData.sessionToken,
           uid: userData.uid,
           verified: userData.verified,
+          // Firefox's own Sync entry points unlock the Primary Password
+          // before opening FxA, so hasSyncKey is only unreliable when FxA was
+          // reached directly while it is still locked; primaryPasswordLocked
+          // lets FxA tell those cases apart.
+          hasSyncKey:
+            await this._fxAccounts.keys.hasKeysForScope(SCOPE_APP_SYNC),
+          primaryPasswordLocked: this._isPrimaryPasswordLocked(),
         };
       }
     }

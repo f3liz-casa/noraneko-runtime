@@ -19,8 +19,8 @@ MacOS or Win16 operating systems.
 
 The types defined for process management are:
 
-> - {ref}`PRProcess`
-> - {ref}`PRProcessAttr`
+> - {doc}`prprocess`
+> - {doc}`prprocessattr`
 
 (process-management-functions)=
 
@@ -29,9 +29,9 @@ The types defined for process management are:
 The process manipulation function fall into these categories:
 
 - [Setting the Attributes of a New
-  Process](#Setting_the_Attributes_of_a_New_Process)
+  Process](#setting-the-attributes-of-a-new-process)
 - [Creating and Managing
-  Processes](#Creating_and_Managing_Processes)
+  Processes](#creating-and-managing-processes)
 
 (setting-the-attributes-of-a-new-process)=
 
@@ -40,7 +40,7 @@ The process manipulation function fall into these categories:
 The functions that create and manipulate attribute sets of new processes
 are:
 
-> - {ref}`PR_NewProcessAttr`
+> - {doc}`pr_newprocessattr`
 > - `PR_ResetProcessAttr`
 > - `PR_DestroyProcessAttr`
 > - `PR_ProcessAttrSetStdioRedirect`

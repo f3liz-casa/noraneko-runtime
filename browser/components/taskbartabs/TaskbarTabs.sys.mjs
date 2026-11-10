@@ -8,10 +8,10 @@
  * the Taskbar Tabs systems should interact with it through this interface.
  */
 
-import { TaskbarTabsRegistryStorage } from "resource:///modules/taskbartabs/TaskbarTabsRegistry.sys.mjs";
-import { TaskbarTabsWindowManager } from "resource:///modules/taskbartabs/TaskbarTabsWindowManager.sys.mjs";
-import { TaskbarTabsPin } from "resource:///modules/taskbartabs/TaskbarTabsPin.sys.mjs";
-import { TaskbarTabsUtils } from "resource:///modules/taskbartabs/TaskbarTabsUtils.sys.mjs";
+import { TaskbarTabsRegistryStorage } from "moz-src:///browser/components/taskbartabs/TaskbarTabsRegistry.sys.mjs";
+import { TaskbarTabsWindowManager } from "moz-src:///browser/components/taskbartabs/TaskbarTabsWindowManager.sys.mjs";
+import { TaskbarTabsPin } from "moz-src:///browser/components/taskbartabs/TaskbarTabsPin.sys.mjs";
+import { TaskbarTabsUtils } from "moz-src:///browser/components/taskbartabs/TaskbarTabsUtils.sys.mjs";
 
 let lazy = {};
 
@@ -80,6 +80,9 @@ export const TaskbarTabs = new (class {
    * attempted even if the Taskbar Tab already exists.
    * @param {DOMWindow?} [aDetails.window] - The window to associate any UI
    * with, if applicable.
+   * @returns {Promise<{created: boolean, taskbarTab: TaskbarTab,
+   * pin: ?Promise<{rejected: boolean}>}>} `pin` settles once the pin attempt,
+   * including any OS prompt, completes, or is null if no pin was attempted.
    */
   async findOrCreateTaskbarTab(aUrl, aUserContextId, aDetails = {}) {
     if (aDetails.manifest) {
@@ -103,9 +106,10 @@ export const TaskbarTabs = new (class {
       aDetails
     );
 
+    let pin = null;
     if (result.created || aDetails.ensurePinned) {
       // Don't wait for the pinning to complete.
-      this.#pinTaskbarTab(result.taskbarTab, result.icon, {
+      pin = this.#pinTaskbarTab(result.taskbarTab, result.icon, {
         window: aDetails.window ?? null,
       });
     }
@@ -113,6 +117,7 @@ export const TaskbarTabs = new (class {
     return {
       created: result.created,
       taskbarTab: result.taskbarTab,
+      pin,
     };
   }
 
@@ -152,7 +157,7 @@ export const TaskbarTabs = new (class {
       aDetails
     );
     this.#registry.patchTaskbarTab(aTaskbarTab, {
-      shortcutRelativePath: result,
+      shortcutRelativePath: result.shortcut,
     });
     return result;
   }

@@ -8,6 +8,7 @@ treeherder configuration and attributes for that platform.
 """
 
 import copy
+import functools
 import os
 from typing import Optional, Union
 
@@ -19,6 +20,7 @@ from taskgraph.util.yaml import load_yaml
 
 from gecko_taskgraph import GECKO
 from gecko_taskgraph.transforms.job import JobDescriptionSchema
+from gecko_taskgraph.util.hash import get_file_finder
 
 
 class SourceTestDescriptionSchema(Schema, forbid_unknown_fields=False, kw_only=True):
@@ -301,13 +303,22 @@ def handle_shell(config, jobs):
 
 
 @transforms.add
-def set_code_review_env(config, jobs):
+def handle_code_review(config, jobs):
     """
-    Add a CODE_REVIEW environment variable when running in code-review bot mode
+    Resolve code-review attribute and add a CODE_REVIEW environment variable when
+    running in code-review bot mode.
     """
     is_code_review = config.params["target_tasks_method"] == "codereview"
 
     for job in jobs:
+        resolve_keyed_by(
+            job,
+            "attributes.code-review",
+            item_name=job["name"],
+            project=config.params["project"],
+            level=config.params["level"],
+        )
+
         attrs = job.get("attributes", {})
         if is_code_review and attrs.get("code-review") is True:
             env = job["worker"].setdefault("env", {})
@@ -338,4 +349,28 @@ def remove_optimization_on_central(config, jobs):
             del job["when"]
         if "optimization" in job and "skip-unless-mozlint" in job["optimization"]:
             del job["optimization"]
+        yield job
+
+
+@functools.cache
+def root_json_files():
+    """Tracked JSON files at the root of the tree, minus try_task_config.json."""
+    finder = get_file_finder(GECKO)
+    return sorted(
+        path for path, _ in finder.find("*.json") if path != "try_task_config.json"
+    )
+
+
+@transforms.add
+def ignore_try_task_config(config, jobs):
+    """
+    ``**/*.json`` also matches the try_task_config.json that ``mach try`` commits
+    on top of every try push. Globs don't support negation, so narrow it to
+    JSON files in subdirectories plus the ones tracked at the root.
+    """
+    for job in jobs:
+        patterns = (job.get("when") or {}).get("files-changed") or []
+        if "**/*.json" in patterns:
+            i = patterns.index("**/*.json")
+            patterns[i : i + 1] = ["*/**/*.json", *root_json_files()]
         yield job

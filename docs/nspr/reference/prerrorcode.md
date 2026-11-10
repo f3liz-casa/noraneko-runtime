@@ -1,7 +1,7 @@
 # PRErrorCode
 
-Type for error codes that can be retrieved with {ref}`PR_GetError`. You can
-also set your own errors using {ref}`PR_SetError`.
+Type for error codes that can be retrieved with {doc}`pr_geterror`. You can
+also set your own errors using {doc}`pr_seterror`.
 
 ## Syntax
 
@@ -21,4 +21,4 @@ error codes have been defined. If NSPR's error handling is adopted by
 calling clients, then some sort of partitioning of the namespace will
 have to be employed. NSPR does not attempt to address this issue.
 
-For NSPR errors, see [Error Codes](NSPR_Error_Handling#Error_Code).
+For NSPR errors, see [Error Codes](nspr_error_handling.md#error-codes).

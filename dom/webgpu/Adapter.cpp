@@ -12,10 +12,13 @@
 #include "SupportedFeatures.h"
 #include "SupportedLimits.h"
 #include "ipc/WebGPUChild.h"
+#include "mozilla/Assertions.h"
+#include "mozilla/ErrorResult.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/WebGPUBinding.h"
 #include "mozilla/webgpu/ffi/wgpu.h"
+#include "nsDebug.h"
 
 namespace mozilla::webgpu {
 
@@ -223,12 +226,10 @@ struct FeatureImplementationStatus {
         return implemented(WGPUWEBGPU_FEATURE_FLOAT32_FILTERABLE);
 
       case dom::GPUFeatureName::Float32_blendable:
-        return unimplemented(
-            "https://bugzilla.mozilla.org/show_bug.cgi?id=1931630");
+        return implemented(WGPUWEBGPU_FEATURE_FLOAT32_BLENDABLE);
 
       case dom::GPUFeatureName::Clip_distances:
-        return unimplemented(
-            "https://bugzilla.mozilla.org/show_bug.cgi?id=1931629");
+        return implemented(WGPUWEBGPU_FEATURE_CLIP_DISTANCES);
 
       case dom::GPUFeatureName::Dual_source_blending:
         return implemented(WGPUWEBGPU_FEATURE_DUAL_SOURCE_BLENDING);
@@ -262,8 +263,24 @@ Adapter::Adapter(Instance* const aParent, WebGPUChild* const aChild,
       mLimits(new SupportedLimits(this, aInfo->limits)),
       mInfo(new AdapterInfo(this, aInfo)),
       mInfoInner(aInfo) {
-  ErrorResult ignoredRv;  // It's onerous to plumb this in from outside in this
-                          // case, and we don't really need to.
+  // It's onerous to plumb an `ErrorResult` in from outside in this case, and we
+  // don't really need to. `NS_ERROR_UNEXPECTED` means the JS scope we need is
+  // unavailable, which content can provoke by exhausting the JS stack; see
+  // bug 2074842.
+  const auto addFeature = [&](const dom::GPUFeatureName aFeature) {
+    IgnoredErrorResult rv;
+    mFeatures->Add(aFeature, rv);
+    if (rv.Failed()) {
+      if (rv.ErrorCodeIs(NS_ERROR_UNEXPECTED)) {
+        NS_WARNING(
+            "`Adapter::Adapter`: failed to add feature: got "
+            "`NS_ERROR_UNEXPECTED`");
+      } else {
+        MOZ_CRASH_UNSAFE_PRINTF("`Adapter::Adapter`: failed to add feature: %d",
+                                rv.ErrorCodeAsInt());
+      }
+    }
+  };
 
   static const auto FEATURE_BY_BIT = []() {
     auto ret =
@@ -300,7 +317,7 @@ Adapter::Adapter(Instance* const aParent, WebGPUChild* const aChild,
 
     const auto featureForBit = FEATURE_BY_BIT.find(bit);
     if (featureForBit != FEATURE_BY_BIT.end()) {
-      mFeatures->Add(featureForBit->second, ignoredRv);
+      addFeature(featureForBit->second);
     } else {
       // One of two cases:
       //
@@ -321,7 +338,7 @@ Adapter::Adapter(Instance* const aParent, WebGPUChild* const aChild,
   // > Core-defaulting adapters *always* support the
   // > `"core-features-and-limits"` feature. It is *automatically enabled* on
   // > devices created from such adapters.
-  mFeatures->Add(dom::GPUFeatureName::Core_features_and_limits, ignoredRv);
+  addFeature(dom::GPUFeatureName::Core_features_and_limits);
 
   // We clamp limits to defaults when requestDevice is called, but
   // we return the actual limits when only requestAdapter is called.
@@ -603,6 +620,10 @@ already_AddRefed<dom::Promise> Adapter::RequestDevice(
     // > devices created from such adapters.
     features->Add(dom::GPUFeatureName::Core_features_and_limits, aRv);
 
+    // Only a fallback for `WebGPUChild::ClearActorState`, which has no
+    // response to read the created device's limits from. Otherwise
+    // `wgpu_child_resolve_request_device_promise` builds them from the
+    // response, since wgpu-core may adjust what we ask for here.
     RefPtr<SupportedLimits> limits = new SupportedLimits(this, deviceLimits);
 
     ffi::WGPUFfiDeviceDescriptor ffiDesc = {};

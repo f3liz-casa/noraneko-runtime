@@ -81,6 +81,7 @@ dependencies {
 
     implementation project(':components:browser-domains')
     implementation project(':components:browser-engine-system')
+    implementation project(':components:browser-errorpages')
     implementation project(':components:browser-icons')
     implementation project(':components:browser-menu')
     implementation project(':components:browser-session-storage')
@@ -155,12 +156,6 @@ dependencies {
     implementation libs.mozilla.glean
 
     debugImplementation libs.leakcanary
-
-    testImplementation libs.androidx.test.core
-    testImplementation libs.androidx.test.junit
-    testImplementation libs.kotlinx.coroutines.test
-    testImplementation libs.mockito
-    testImplementation libs.robolectric
 
     androidTestImplementation project(':components:support-android-test')
 

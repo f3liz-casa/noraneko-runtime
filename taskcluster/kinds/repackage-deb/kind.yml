@@ -16,9 +16,6 @@ kind-dependencies:
     - build-signing
     - toolchain
 
-task-defaults:
-    run-on-repo-type: [hg]
-
 only-for-build-platforms:
     - linux64-shippable/opt
     - linux64-devedition/opt
@@ -37,8 +34,7 @@ tasks:
             docker-image:
                 in-tree: debian12-repackage
         mozharness:
-            run-as-root: true
-            use-caches: false
+            use-caches: [checkout]
             config:
                 by-build-platform:
                     linux64\b.*:

@@ -90,6 +90,20 @@ const PREF_URLBAR_DEFAULTS = /** @type {PreferenceDefinition[]} */ ([
   // 30 days since user input it as the default.
   ["autoFill.adaptiveHistory.useCountThreshold", [0.47, "float"]],
 
+  // Approximate number of times the user must have picked a URL with a path for
+  // a given input before it becomes an adaptive history autofill candidate.
+  // Converted into a `moz_inputhistory.use_count` threshold by
+  // `inputHistoryPicksToUseCount` in UrlbarProviderAutofill.sys.mjs, so the
+  // exact pick count depends on how the picks were spread over time.
+  ["autoFill.adaptiveHistory.urlMinPicks", 3],
+
+  // Days of idle decay assumed since the last pick when converting
+  // `urlMinPicks` into a use_count threshold.
+  ["autoFill.adaptiveHistory.urlPicksAgeDays", 14],
+
+  // The number of times URL canonization has been used in non-private windows.
+  ["canonizedURLCount", 0],
+
   // Feature gate pref for clipboard suggestions in the urlbar.
   ["clipboard.featureGate", false],
 
@@ -152,10 +166,6 @@ const PREF_URLBAR_DEFAULTS = /** @type {PreferenceDefinition[]} */ ([
   // Nimbus variable and is expected to be set via nimbus experiment
   // configuration.
   ["exposureResults", ""],
-
-  // When we send events to (privileged) extensions (urlbar API), we wait this
-  // amount of time in milliseconds for them to respond before timing out.
-  ["extension.timeout", 400],
 
   // When we send events to extensions that use the omnibox API, we wait this
   // amount of time in milliseconds for them to respond before timing out.
@@ -262,6 +272,11 @@ const PREF_URLBAR_DEFAULTS = /** @type {PreferenceDefinition[]} */ ([
   // The maximum number of tab mentions the Smartbar suggests.
   ["mentions.maxResults", 5],
 
+  // The maximum number of tab group mentions the Smartbar suggests. Capped
+  // separately from mentions.maxResults so groups and tabs are limited
+  // independently.
+  ["mentions.maxGroupResults", 5],
+
   // Comma-separated list of client variants to send to Merino
   ["merino.clientVariants", ""],
 
@@ -290,6 +305,14 @@ const PREF_URLBAR_DEFAULTS = /** @type {PreferenceDefinition[]} */ ([
   // Feature gate pref for the <moz-urlbar> on about:newtab and about:home. When
   // enabled, it supersedes New Tab's handoff search bar.
   ["newtab.featureGate", false],
+
+  // Layout variant A of the New Tab search bar. Only takes effect while
+  // `newtab.featureGate` is enabled.
+  ["newtab.variantA", false],
+
+  // Layout variant B of the New Tab search bar, with the search engine button
+  // above the input. Only takes effect while `newtab.featureGate` is enabled.
+  ["newtab.variantB", false],
 
   // Whether addresses and search results typed into the address bar
   // should be opened in new tabs by default.
@@ -331,40 +354,6 @@ const PREF_URLBAR_DEFAULTS = /** @type {PreferenceDefinition[]} */ ([
   // Whether or not use the Nova icon size for AMP suggestion.
   // Otherwise, use standard rich-suggestion size.
   ["quicksuggest.ampTopPickUseNovaIconSize", false],
-
-  // Whether the Firefox Suggest data collection opt-in result is enabled.
-  ["quicksuggest.contextualOptIn", false],
-
-  // The last time (as seconds) the user dismissed the Firefox Suggest contextual
-  // opt-in result.
-  ["quicksuggest.contextualOptIn.lastDismissedTime", 0],
-
-  // Number that the user dismissed the Firefox Suggest contextual opt-in result.
-  ["quicksuggest.contextualOptIn.dismissedCount", 0],
-
-  // Period until reshow the Firefox Suggest contextual opt-in result when first dismissed.
-  ["quicksuggest.contextualOptIn.firstReshowAfterPeriodDays", 7],
-
-  // Period until reshow the Firefox Suggest contextual opt-in result when second dismissed.
-  ["quicksuggest.contextualOptIn.secondReshowAfterPeriodDays", 14],
-
-  // Period until reshow the Firefox Suggest contextual opt-in result when third dismissed.
-  ["quicksuggest.contextualOptIn.thirdReshowAfterPeriodDays", 60],
-
-  // Number of impression for the Firefox Suggest contextual opt-in result.
-  ["quicksuggest.contextualOptIn.impressionCount", 0],
-
-  // Limit for impression to dismiss the Firefox Suggest contextual opt-in
-  // result.
-  ["quicksuggest.contextualOptIn.impressionLimit", 20],
-
-  // The first impression time (seconds) for the Firefox Suggest contextual
-  // opt-in result.
-  ["quicksuggest.contextualOptIn.firstImpressionTime", 0],
-
-  // Days until dismiss the Firefox Suggest contextual opt-in result after first
-  // impression.
-  ["quicksuggest.contextualOptIn.impressionDaysLimit", 5],
 
   // Comma-separated list of Suggest dynamic suggestion types to enable.
   ["quicksuggest.dynamicSuggestionTypes", ""],
@@ -615,6 +604,14 @@ const PREF_URLBAR_DEFAULTS = /** @type {PreferenceDefinition[]} */ ([
   // Whether results will include realtime sports suggestions.
   ["suggest.sports", true],
 
+  // If `browser.urlbar.temporal.featureGate` is true, this controls whether
+  // temporal search suggestions are turned on.
+  ["suggest.temporal", true],
+
+  // If `browser.urlbar.suggest.temporal` is true, this controls whether
+  // seasonal temporal search suggestions are shown.
+  ["suggest.temporal.seasonal", true],
+
   // Whether results will include top sites and the view will open on focus.
   ["suggest.topsites", true],
 
@@ -655,6 +652,12 @@ const PREF_URLBAR_DEFAULTS = /** @type {PreferenceDefinition[]} */ ([
   // The number of remaining times the user can interact with tab-to-search
   // onboarding results before we stop showing them.
   ["tabToSearch.onboard.interactionsLeft", 3],
+
+  // Feature gate pref for temporal search suggestions in the zero prefix view.
+  ["temporal.featureGate", false],
+
+  // The maximum number of temporal search suggestions to show.
+  ["temporal.rowCount", 3],
 
   // The number of times the user has been shown the onboarding search tip.
   ["tipShownCount.searchTip_onboard", 0],
@@ -1210,6 +1213,16 @@ class Preferences {
   }
 
   /**
+   * Flips `resultMenu.keyboardAccessible`.
+   */
+  toggleResultMenuKeyboardAccessible() {
+    this.set(
+      "resultMenu.keyboardAccessible",
+      !this.get("resultMenu.keyboardAccessible")
+    );
+  }
+
+  /**
    * Adds a value to a preference that handles multiple comma-separated values.
    * Throws an error if the preference does not have a comma-separated value.
    *
@@ -1400,6 +1413,8 @@ class Preferences {
     switch (pref) {
       case "browser.nova.enabled":
         this._map.delete("newtabFeatureGate");
+        this._map.delete("newtabVariantA");
+        this._map.delete("newtabVariantB");
         return;
       case "autoFill.adaptiveHistory.useCountThreshold":
         this._map.delete("autoFillAdaptiveHistoryUseCountThreshold");
@@ -1503,6 +1518,10 @@ class Preferences {
       case "newtabFeatureGate": {
         // The New Tab search bar is only themed for Nova.
         return this.get("browser.nova.enabled") && this._readPref(pref);
+      }
+      case "newtabVariantA":
+      case "newtabVariantB": {
+        return this.get("newtabFeatureGate") && this._readPref(pref);
       }
       case "defaultBehavior": {
         let val = 0;

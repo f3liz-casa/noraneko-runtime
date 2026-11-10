@@ -77,7 +77,11 @@
   <string name="about_content" tools:ignore="BrandUsage">%1$s аз ҷониби Mozilla истеҳсол карда шудааст.</string>
   <!-- Private Browsing -->
   <string name="private_browsing_common_myths">Асотири маълум дар бораи тамошобинии хусусӣ</string>
-  <!-- Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active. -->
+  <!--
+    Private Browsing
+
+    Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active.
+  -->
   <string name="private_browsing_a11y_session_announcement">Ҷаласаи тамошобинии хусусӣ</string>
   <!--
     True Private Browsing Mode
@@ -178,11 +182,7 @@
   <string name="recently_visited_menu_item_remove">Тоза кардан</string>
   <!-- Content description for the button which navigates the user to show all of their history. -->
   <string name="past_explorations_show_all_content_description_2">Нишон додани ҳамаи тадқиқотҳои охирин</string>
-  <!--
-    Browser Fragment
-
-    Content description (not visible, for screen readers etc.): Navigate backward (browsing history)
-  -->
+  <!-- Content description (not visible, for screen readers etc.): Navigate backward (browsing history) -->
   <string name="browser_menu_back">Бозгашт</string>
   <!-- Content description (not visible, for screen readers etc.): Navigate forward (browsing history) -->
   <string name="browser_menu_forward">Ба пеш</string>
@@ -313,8 +313,6 @@
   <string name="browser_menu_default_banner_title">Аз «%1$s» ба таври пешфарз истифода баред</string>
   <!-- Label text within the set as default banner -->
   <string name="browser_menu_default_banner_subtitle_2">Зудкор, хусусӣ ва барои шумо сохта шудааст.</string>
-  <!-- Content description (not visible, for screen readers etc.) for the button that dismisses the set as default banner in the menu -->
-  <string name="browser_menu_default_banner_dismiss_promotion">Пинҳон кардани таблиғу реклама</string>
   <!-- Content description (not visible, for screen readers etc.) for recommended extensions in main menu -->
   <string name="browser_menu_recommended_extensions_content_description">Маълумоти бештар</string>
   <!--
@@ -709,13 +707,19 @@
   <string name="search_widget_text_long">Ҷустуҷӯ дар Интернет</string>
   <!-- Content description (not visible, for screen readers etc.): Voice search -->
   <string name="search_widget_voice">Ҷустуҷӯи овозӣ</string>
+  <!-- Content description (not visible, for screen readers etc.): Button in the search widget that starts a search in a private tab -->
+  <string name="search_widget_private_search">Ҷустуҷӯи хусусӣ</string>
   <!--
     Preferences
 
     Title for the settings page
   -->
   <string name="settings">Танзимот</string>
-  <!-- Preference category for general settings -->
+  <!--
+    Preferences
+
+    Preference category for general settings
+  -->
   <string name="preferences_category_general">Умумӣ</string>
   <!-- Preference category for all links about Fenix -->
   <string name="preferences_category_about">Дар бораи барнома</string>
@@ -902,6 +906,10 @@
   <string name="preferences_open_links_in_apps_ask">Пурсидан пеш аз кушодан</string>
   <!-- Preference for open links in third party apps never open in apps option -->
   <string name="preferences_open_links_in_apps_never">Ҳеҷ гоҳ</string>
+  <!-- Preference category header for media related open links in apps settings -->
+  <string name="preferences_media_category">Расона</string>
+  <!-- Preference label for choosing whether links open in the YouTube app -->
+  <string name="preferences_open_links_in_youtube">Кушодани пайвандҳо дар барномаи «YouTube»</string>
   <!-- Preference category for file storage. -->
   <string name="preferences_category_file_storage">Захирагоҳи файлҳо</string>
   <!-- Preference title for downloads default location. -->
@@ -1284,8 +1292,6 @@
   <string name="preference_simple_toolbar">Оддӣ</string>
   <!-- Preference for using expanded toolbar -->
   <string name="preference_expanded_toolbar">Баркушода</string>
-  <!-- Preference description indicating the toolbar location preference is disabled when the tab strip is enabled -->
-  <string name="preference_toolbar_pref_disabled_explanation">Вақте ки навори варақаҳо нишон дода мешавад, навори нишонӣ бояд дар боло ҷойгир карда шавад.</string>
   <!-- New tab shortcut in toolbar customization -->
   <string name="toolbar_customize_shortcut_new_tab">Кушодани варақаи нав</string>
   <!-- Share shortcut in toolbar customization -->
@@ -1367,6 +1373,8 @@
   <string name="library_desktop_bookmarks_unfiled">Хатбаракҳои дигар</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">Таърих</string>
+  <!-- Content description (not visible, for screen readers etc.) for the check mark that replaces a site's icon in History and Recently closed tabs when the item is selected -->
+  <string name="library_item_selected_content_description">Интихоб шуд</string>
   <!-- Settings Page Title -->
   <string name="settings_title">Танзимот</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -1419,8 +1427,6 @@
   <string name="preferences_tabs">Варақаҳо</string>
   <!-- Title of preference that allows a user to specify the tab layout -->
   <string name="preferences_tab_layout">Тарҳи варақаҳо</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">Намоиши варақаҳо</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">Рӯйхат</string>
   <!-- Option for a grid tab view -->
@@ -1475,18 +1481,10 @@
   <string name="preferences_tab_organization">Ташкили варақаҳо</string>
   <!-- Title of the preference that allows a user to enable or disable the inactive tabs feature -->
   <string name="preferences_inactive_tabs_toggle_title">Варақаҳои ғайрифаъол</string>
-  <!--
-    Inactive tabs
-
-    Category header of a preference that allows a user to enable or disable the inactive tabs feature
-  -->
-  <string name="preferences_inactive_tabs">Варақаҳои куҳнаро ба ғайрифаъол интиқол диҳед</string>
   <!-- Summary of the preference that allows a user to enable or disable the inactive tabs feature. -->
   <string name="preferences_inactive_tabs_title">Варақаҳое, ки шумо ду ҳафта такроран надидаед, ба қисмати ғайрифаъол интиқол дода мешаванд.</string>
   <!-- Title of the preference that allows a user to enable or disable the tab groups feature -->
   <string name="preferences_tab_groups_title">Гурӯҳҳои варақаҳо</string>
-  <!-- Title for the preference to enable or disable the tab groups feature -->
-  <string name="preferences_tab_groups_feature">Фаъол кардани гурӯҳҳои варақаҳо</string>
   <!--
     Privacy report
 
@@ -1947,6 +1945,8 @@
   <string name="download_search_no_results_found">Ягон натиҷа ёфт нашуд</string>
   <!-- Text for the "Select all" button, which selects all downloaded items in the downloads list. -->
   <string name="download_select_all_items">Ҳамаро интихоб кардан</string>
+  <!-- Shown in the downloads list in place of a website name when a file came from a data: or blob: URL that has no website address. "data" refers to the data: URL scheme. -->
+  <string name="download_item_source_data">(иттилоот)</string>
   <!--
     Downloads Content Type Filters
 
@@ -2439,6 +2439,8 @@
   <string name="sync_send_tab_error_connection_title">Пайвастшавии Интернети худро тафтиш кунед</string>
   <!-- Send tab to synced devices: Connectivity Error message - Suggested user action after internet connection has been established -->
   <string name="sync_send_tab_error_connection_text">Сипас кӯшиш кунед, ки варақаи худро аз нав ирсол намоед.</string>
+  <!-- Send tab to synced devices: Connectivity Error button - When tapped, refreshes the list of connected devices. -->
+  <string name="sync_send_tab_error_connection_button">Аз нав кӯшиш кардан</string>
   <!--
     Notifications
 
@@ -2621,6 +2623,12 @@
   <string name="sign_in_create_account_text" tools:ignore="BrandUsage"><![CDATA[Ҳисоб надоред? Барои ҳамоҳангсозӣ кардани Firefox байни дастгоҳҳо, <u>ҳисоберо эҷод намоед</u>.]]></string>
   <!-- Text shown in confirmation dialog to sign out of account. %s is the name of the app (for example "Firefox"). -->
   <string name="sign_out_confirmation_message_2">%s ҳамоҳангсозиро бо ҳисоби шумо қатъ мекунад, аммо ягон маълумоти тамошобинии шуморо дар ин дастгоҳ нест намекунад.</string>
+  <!-- Title of the confirmation dialog shown when the user signs out of their account -->
+  <string name="sign_out_dialog_title">Аз ҳисоби худ мебароед?</string>
+  <!-- Body of the confirmation dialog shown when the user signs out of their account -->
+  <string name="sign_out_dialog_message">Маълумоти ҳамоҳангшуда дар ҳисоби шумо нигоҳ дошта мешавад.</string>
+  <!-- Text for the primary action button of the confirmation dialog shown when the user signs out of their account -->
+  <string name="sign_out_dialog_confirm_button">Баромад</string>
   <!-- Option to continue signing out of account shown in confirmation dialog to sign out of account -->
   <string name="sign_out_disconnect">Қатъ кардани пайваст</string>
   <!-- Option to cancel signing out shown in confirmation dialog to sign out of account -->
@@ -4508,6 +4516,10 @@
   <string name="lens_camera_mode_qr">Аксбардории «QR»</string>
   <!-- Toast shown when the user picks an image from the gallery in QR mode but no QR code is found in it -->
   <string name="lens_camera_qr_no_code_found">Дар тасвир ягон рамзи «QR» ёфт нашуд</string>
+  <!-- Button shown under an image picked from the gallery or taken with the camera while it is being sent to Google Lens. Tapping it stops the search and returns to the camera. -->
+  <string name="lens_camera_loading_cancel_button">Бекор кардан</string>
+  <!-- Action in the snackbar shown when an image picked from the gallery or taken with the camera could not be searched with Google Lens. Tapping it searches the same image again. -->
+  <string name="lens_camera_upload_failed_retry_button">Аз нав кӯшиш кардан</string>
   <!-- Title of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
   <string name="lens_opt_out_title">Онро ба воситаи «Google Lens» пайдо намоед</string>
   <!-- Description of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
@@ -4567,6 +4579,12 @@
 
     Content description for accessibility (used by screen readers): Description for the button that triggers the start of a signature workflow on the PDF displayed on the screen.
   -->
+  <string name="pdf_tools_sign_content_description_2">Илова кардани имзо</string>
+  <!--
+    PDF viewer toolbar and buttons
+
+    Content description for accessibility (used by screen readers): Description for the button that triggers the start of a signature workflow on the PDF displayed on the screen.
+  -->
   <string name="pdf_tools_sign_content_description">Имзо кардани «PDF»</string>
   <!-- Content description for accessibility (used by screen readers): Description of the button that downloads the PDF displayed on the screen to the user's device. -->
   <string name="pdf_tools_download_content_description">Боргирӣ кардани «PDF»</string>
@@ -4588,14 +4606,22 @@
   <string name="pdf_tools_signature_clear_button">Пок кардан</string>
   <!-- The text for the button that adds the signature the user has typed to the PDF. -->
   <string name="pdf_tools_signature_add_button">Илова кардан</string>
+  <!-- Content description for accessibility (used by screen readers): Description for the loading indicator when a signature is in the process of being added to a PDF. -->
+  <string name="pdf_tools_signature_adding_content_description">Дар ҳоли иловаи имзо</string>
+  <!--
+    Listen to page
+
+    Content description for the reader view panel: a group of buttons floating over the content, which allow customizing the reader view or activating the Listen to Page feature
+  -->
+  <string name="reader_mode_panel_content_description_2">Имконоти «Намоиши хонанда»</string>
   <!--
     Listen to page
 
     Content description for the reader mode panel: a group of buttons floating over the content
   -->
   <string name="reader_mode_panel_content_description">Имконоти реҷаи «Намоиши хонанда»</string>
-  <!-- Content description for the button in reader mode panel that turns on the read aloud feature (playback of content begins when button is pressed) -->
+  <!-- Content description for the button in the reader view panel that turns on the Listen to Page feature (playback of content begins when button is pressed) -->
   <string name="reader_mode_panel_listen_content_description">Бо овози баланд хонед</string>
-  <!-- Content description for media player displayed in Reader Mode when the Listen to Page (Read Aloud) feature is selected -->
+  <!-- Content description for media player displayed in Reader view when the Listen to Page (Read Aloud) feature is selected -->
   <string name="reader_mode_panel_media_player_content_description">Плеери расонаӣ</string>
 </resources>

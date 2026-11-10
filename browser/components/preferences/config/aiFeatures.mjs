@@ -25,7 +25,7 @@ const lazy = XPCOMUtils.declareLazy({
     "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
   ChatStore:
     "moz-src:///browser/components/aiwindow/ui/modules/ChatStore.sys.mjs",
-  GenAI: "resource:///modules/GenAI.sys.mjs",
+  GenAI: "moz-src:///browser/components/genai/GenAI.sys.mjs",
   MemoryStore:
     "moz-src:///browser/components/aiwindow/services/MemoryStore.sys.mjs",
   getCachedModelsData:
@@ -37,8 +37,7 @@ const lazy = XPCOMUtils.declareLazy({
 let previousAssistantModel = "No model";
 
 Preferences.addAll([
-  // browser.ai.control.* prefs defined in main.js
-  { id: "browser.ml.chat.provider", type: "string" },
+  // browser.ai.control.* and browser.ml.chat.provider prefs defined in main.js
   { id: "browser.ml.chat.shortcuts.smartwindow", type: "bool" },
   { id: "browser.smartwindow.apiKey", type: "string" },
   { id: "browser.smartwindow.enabled", type: "bool" },
@@ -605,10 +604,6 @@ makeAiControlSetting({
 
 // sidebar chatbot
 Preferences.addSetting({ id: "chatbotProviderItem" });
-Preferences.addSetting({
-  id: "chatbotProvider",
-  pref: "browser.ml.chat.provider",
-});
 Preferences.addSetting(
   /** @type {{ feature: OnDeviceModelFeaturesEnum } & SettingConfig } */ ({
     id: "aiControlSidebarChatbotSelect",

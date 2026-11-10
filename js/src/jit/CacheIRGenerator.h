@@ -18,6 +18,7 @@
 #include "jit/CacheIR.h"
 #include "jit/CacheIRWriter.h"
 #include "jit/ICState.h"
+#include "jit/InlinableNatives.h"
 #include "js/Id.h"
 #include "js/RootingAPI.h"
 #include "js/ScalarType.h"
@@ -84,9 +85,6 @@ class MOZ_RAII IRGenerator {
   // stack- allocated string.
   const char* stubName_ = nullptr;
 
-  IRGenerator(const IRGenerator&) = delete;
-  IRGenerator& operator=(const IRGenerator&) = delete;
-
   JSOp jsop() const { return JSOp(*pc_); }
 
   bool maybeGuardInt32Index(const Value& index, ValOperandId indexId,
@@ -107,6 +105,7 @@ class MOZ_RAII IRGenerator {
 
   StringOperandId emitToStringGuard(ValOperandId id, const Value& v);
 
+  bool calleeGuardIsIdentity(JSFunction* callee) const;
   void emitCalleeGuard(ObjOperandId calleeId, JSFunction* callee);
 
   void emitOptimisticClassGuard(ObjOperandId objId, JSObject* obj,
@@ -172,6 +171,9 @@ class MOZ_RAII IRGenerator {
   explicit IRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc,
                        CacheKind cacheKind, ICState state,
                        BaselineFrame* maybeFrame = nullptr);
+
+  IRGenerator(const IRGenerator&) = delete;
+  IRGenerator& operator=(const IRGenerator&) = delete;
 
   const CacheIRWriter& writerRef() const { return writer; }
   CacheKind cacheKind() const { return cacheKind_; }
@@ -782,6 +784,38 @@ class MOZ_RAII InlinableNativeIRGenerator {
     Seconds,
   };
 
+  enum class DurationComponent {
+    Years,
+    Months,
+    Weeks,
+    Days,
+    Hours,
+    Minutes,
+    Seconds,
+    Milliseconds,
+    Microseconds,
+    Nanoseconds,
+  };
+
+  enum class PackedTimeComponent {
+    Hour,
+    Minute,
+    Second,
+    Millisecond,
+    Microsecond,
+    Nanosecond,
+  };
+
+  enum class TemporalTimeObject {
+    PlainTime,
+    PlainDateTime,
+  };
+
+  enum class TemporalEpochObject {
+    Instant,
+    ZonedDateTime,
+  };
+
   AttachDecision tryAttachArrayPush();
   AttachDecision tryAttachArrayPopShift(InlinableNative native);
   AttachDecision tryAttachArrayJoin();
@@ -927,6 +961,11 @@ class MOZ_RAII InlinableNativeIRGenerator {
   AttachDecision tryAttachDateGet(DateComponent component);
   AttachDecision tryAttachDateNow();
   AttachDecision tryAttachDateParse();
+  AttachDecision tryAttachDurationGet(DurationComponent component);
+  AttachDecision tryAttachTemporalTimeGet(InlinableNative native,
+                                          TemporalTimeObject objectType,
+                                          PackedTimeComponent component);
+  AttachDecision tryAttachEpochMilliseconds(TemporalEpochObject objectType);
   AttachDecision tryAttachWeakMapHas();
   AttachDecision tryAttachWeakMapGet();
   AttachDecision tryAttachWeakSetHas();

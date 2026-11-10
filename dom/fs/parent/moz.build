@@ -10,6 +10,7 @@ EXPORTS.mozilla.dom += [
     "FileSystemAccessHandle.h",
     "FileSystemAccessHandleControlParent.h",
     "FileSystemAccessHandleParent.h",
+    "FileSystemCipherKeyManager.h",
     "FileSystemManagerParent.h",
     "FileSystemManagerParentFactory.h",
     "FileSystemParentTypes.h",
@@ -60,3 +61,14 @@ if CONFIG["COMPILE_ENVIRONMENT"]:
         "!data_encoding_ffi_generated.h",
         "!mime_guess_ffi_generated.h",
     ]
+
+SOURCE_HEADERS += [
+    "FileSystemContentTypeGuess.h",
+    "FileSystemHashSource.h",
+    "FileSystemHashStorageFunction.h",
+    "FileSystemStreamCallbacks.h",
+    "NotifyUtils.h",
+    "ResultConnection.h",
+    "ResultStatement.h",
+    "StartedTransaction.h",
+]

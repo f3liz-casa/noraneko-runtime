@@ -4,9 +4,10 @@ tags = "psm condprof"
 firefox-appdir = "browser"
 prefs = [
   "security.pki.certificate_transparency.mode=1",
+  "security.utility_pkcs11_module_process.enabled=true",
 ]
-run-if = [
-  "!msix", # Bug 1809477
+skip-if = [
+  "msix", # Bug 1809477
 ]
 support-files = [
   "bad_certs/**",
@@ -65,7 +66,10 @@ run-if = [
 tags = "remote-settings blocklist psm"
 
 ["test_broken_fips.js"]
-prefs = ["security.storage.encryption.sqlite.enabled=false"]
+prefs = [
+  "security.storage.encryption.sqlite.enabled=false",
+  "security.utility_pkcs11_module_process.enabled=false",
+]
 # FIPS has never been a thing on Android, so the workaround doesn't
 # exist on that platform.
 # FIPS still works on Linux, so this test doesn't make any sense there.
@@ -98,8 +102,7 @@ run-sequentially = ["true"] # hardcoded ports
 
 ["test_cert_expiration_canary.js"]
 run-if = [
-  "false",
-  #"nightly_build",
+  "nightly_build",
 ]
 
 ["test_cert_keyUsage.js"]
@@ -182,6 +185,10 @@ skip-if = [
   "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && msix",
 ]
 
+["test_ctap_cable_channel.js"]
+
+["test_ctap_cable_handshake.js"]
+
 ["test_data_storage.js"]
 prefs = ["security.storage.encryption.sqlite.enabled=false"]
 
@@ -192,7 +199,6 @@ run-if = [
 ]
 skip-if = [
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && opt && condprof",
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64' && opt && condprof",
   "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && opt && condprof",
 ]
 
@@ -208,13 +214,14 @@ run-sequentially = ["true"] # hardcoded ports
 run-sequentially = ["true"] # hardcoded ports
 
 ["test_enterprise_roots.js"]
-# This feature is implemented for Windows and OS X. However, we don't currently
-# have a way to test it on OS X.
+# This feature is implemented for Windows and OS X.
 run-if = [
   "os == 'mac'",
   "os == 'win'",
 ]
-skip-if = ["os == 'mac' && arch == 'aarch64'"]  # Asserts non-zero enterprise roots; fails on macOS aarch64 workers (see Bug 2037084 discussion)
+skip-if = [
+  "macos_vm", # Bug 2076510
+]
 
 ["test_ev_certs.js"]
 tags = "blocklist psm"
@@ -297,10 +304,9 @@ run-sequentially = ["true"] # hardcoded ports
 ["test_ocsp_url.js"]
 run-sequentially = ["true"] # hardcoded ports
 
+["test_onecrl_loads_bundle.js"]
+
 ["test_oskeystore.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1729538
-]
 
 ["test_osreauthenticator.js"]
 # Reauthentication has been implemented on Windows and MacOS, so running this
@@ -411,5 +417,6 @@ skip-if = [
 ["test_sts_preloadlist_selfdestruct.js"]
 
 ["test_trust_anchors.js"]
+prefs = ["security.utility_pkcs11_module_process.enabled=false"]
 
 ["test_x509.js"]

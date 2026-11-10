@@ -71,19 +71,6 @@ loader.lazyRequireGetter(
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
-const lazy = {};
-
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs",
-  { global: "contextual" }
-);
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "layoutCssAttrEnabled",
-  "layout.css.attr.enabled",
-  false
-);
-
 /**
  * An actor that represents a CSS style object on the protocol.
  *
@@ -603,22 +590,34 @@ class StyleRuleActor extends Actor {
           const registeredProperty = registeredProperties.find(
             prop => prop.name === decl.name
           );
-          if (
-            registeredProperty &&
-            // For now, we don't handle variable based on top of other variables. This would
-            // require to build some kind of dependency tree and check the validity for
-            // all the leaves.
-            !decl.value.includes("var(") &&
-            !InspectorUtils.valueMatchesSyntax(
-              targetDocument,
-              decl.value,
-              registeredProperty.syntax
-            )
-          ) {
-            // if the value doesn't match the syntax, it's invalid
-            decl.invalidAtComputedValueTime = true;
-            // pass the syntax down to the client so it can easily be used in a warning message
-            decl.syntax = registeredProperty.syntax;
+          if (registeredProperty) {
+            const declarationValue = decl.value;
+            let substitutedValue = null;
+            if (
+              declarationValue.includes("var(") ||
+              declarationValue.includes("attr(") ||
+              declarationValue.includes("env(")
+            ) {
+              substitutedValue = InspectorUtils.getSubstitutedValue(
+                declarationValue,
+                this.pageStyle.selectedElement,
+                this._pseudoElement
+              );
+            }
+
+            if (
+              !InspectorUtils.valueMatchesSyntax(
+                targetDocument,
+                decl.name,
+                substitutedValue || declarationValue,
+                registeredProperty.syntax
+              )
+            ) {
+              // if the value doesn't match the syntax, it's invalid
+              decl.invalidAtComputedValueTime = true;
+              // pass the syntax down to the client so it can easily be used in a warning message
+              decl.syntax = registeredProperty.syntax;
+            }
           }
 
           // We only compute `inherits` for css variable declarations.
@@ -1576,11 +1575,7 @@ class StyleRuleActor extends Actor {
         }
         if (
           lastStack.tokenType === "Function" &&
-          lastStack.functionName === "attr" &&
-          // only include attribute name/values if they would actually be matched.
-          // With the pref set to false, the rule still parses, but the condition will
-          // be unmatched, and showing the attributes could lead to confusion
-          lazy.layoutCssAttrEnabled
+          lastStack.functionName === "attr"
         ) {
           // the attribute name is the first ident after the function token
           if (!lastStack.attrNameFound) {
@@ -1672,6 +1667,7 @@ class StyleRuleActor extends Actor {
    *   `20`,
    * ]
    *
+   * @param {string} property: The CSS property the expression is applied to
    * @param {string} expression: The CSS expression to be explained
    * @param {string} pseudo: An optional pseudo-element type in cases when the CSS
    *        rule applies to a pseudo-element.
@@ -1679,7 +1675,7 @@ class StyleRuleActor extends Actor {
    *        If not passed, this.currentlySelectedElement will be used instead.
    * @returns Array<string>
    */
-  getCssExplainersData(expression, pseudo, inheritedNode) {
+  getCssExplainersData(property, expression, pseudo, inheritedNode) {
     let element = inheritedNode?.rawNode || this.currentlySelectedElement;
     // If we have a pseudo element, we want to pass its binding element
     // to the InspectorUtils method
@@ -1687,7 +1683,12 @@ class StyleRuleActor extends Actor {
       element =
         SharedCssLogic.getBindingElementAndPseudo(element).bindingElement;
     }
-    return InspectorUtils.getComputationSteps(expression, element, pseudo);
+    return InspectorUtils.getComputationSteps(
+      property,
+      expression,
+      element,
+      pseudo
+    );
   }
 }
 exports.StyleRuleActor = StyleRuleActor;

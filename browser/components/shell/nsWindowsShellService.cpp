@@ -109,8 +109,8 @@ struct SysFreeStringDeleter {
 };
 using BStrPtr = mozilla::UniquePtr<OLECHAR, SysFreeStringDeleter>;
 
-NS_IMPL_ISUPPORTS(nsWindowsShellService, nsIToolkitShellService,
-                  nsIShellService, nsIWindowsShellService)
+NS_IMPL_ISUPPORTS_INHERITED(nsWindowsShellService, nsShellService,
+                            nsIShellService, nsIWindowsShellService)
 
 /* Enable logging by setting MOZ_LOG to "nsWindowsShellService:5" for debugging
  * purposes. */
@@ -118,7 +118,6 @@ static LazyLogModule sLog("nsWindowsShellService");
 
 static bool PollAppsFolderForShortcut(const nsAString& aAppUserModelId,
                                       const TimeDuration aTimeout);
-static nsresult WriteBitmap(nsIFile* aFile, imgIContainer* aImage);
 
 static nsresult OpenKeyForReading(HKEY aKeyRoot, const nsAString& aKeyName,
                                   HKEY* aKey) {
@@ -276,6 +275,13 @@ nsWindowsShellService::IsDefaultBrowser(bool aForAllTypes,
     *aIsDefaultBrowser = IsPathDefaultForClass(pAAR, exePath, htmlClass);
   }
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::IsDefaultBrowserAsync(bool aForAllTypes,
+                                             JSContext* aContext,
+                                             mozilla::dom::Promise** _retval) {
+  return nsShellService::IsDefaultBrowserAsync(aForAllTypes, aContext, _retval);
 }
 
 NS_IMETHODIMP
@@ -706,215 +712,61 @@ nsWindowsShellService::SetDefaultBrowser(bool aForAllUsers) {
   return rv;
 }
 
-static nsresult WriteBitmap(nsIFile* aFile, imgIContainer* aImage) {
-  nsresult rv;
-
-  RefPtr<gfx::SourceSurface> surface = aImage->GetFrame(
-      imgIContainer::FRAME_FIRST,
-      imgIContainer::FLAG_SYNC_DECODE | imgIContainer::FLAG_ASYNC_NOTIFY);
-  NS_ENSURE_TRUE(surface, NS_ERROR_FAILURE);
-
-  // For either of the following formats we want to set the biBitCount member
-  // of the BITMAPINFOHEADER struct to 32, below. For that value the bitmap
-  // format defines that the A8/X8 WORDs in the bitmap byte stream be ignored
-  // for the BI_RGB value we use for the biCompression member.
-  MOZ_ASSERT(surface->GetFormat() == gfx::SurfaceFormat::B8G8R8A8 ||
-             surface->GetFormat() == gfx::SurfaceFormat::B8G8R8X8);
-
-  RefPtr<gfx::DataSourceSurface> dataSurface = surface->GetDataSurface();
-  NS_ENSURE_TRUE(dataSurface, NS_ERROR_FAILURE);
-
-  int32_t width = dataSurface->GetSize().width;
-  int32_t height = dataSurface->GetSize().height;
-  int32_t bytesPerPixel = 4 * sizeof(uint8_t);
-  uint32_t bytesPerRow = bytesPerPixel * width;
-
-  // initialize these bitmap structs which we will later
-  // serialize directly to the head of the bitmap file
-  BITMAPINFOHEADER bmi;
-  bmi.biSize = sizeof(BITMAPINFOHEADER);
-  bmi.biWidth = width;
-  bmi.biHeight = height;
-  bmi.biPlanes = 1;
-  bmi.biBitCount = (WORD)bytesPerPixel * 8;
-  bmi.biCompression = BI_RGB;
-  bmi.biSizeImage = bytesPerRow * height;
-  bmi.biXPelsPerMeter = 0;
-  bmi.biYPelsPerMeter = 0;
-  bmi.biClrUsed = 0;
-  bmi.biClrImportant = 0;
-
-  BITMAPFILEHEADER bf;
-  bf.bfType = 0x4D42;  // 'BM'
-  bf.bfReserved1 = 0;
-  bf.bfReserved2 = 0;
-  bf.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-  bf.bfSize = bf.bfOffBits + bmi.biSizeImage;
-
-  // get a file output stream
-  nsCOMPtr<nsIOutputStream> stream;
-  rv = NS_NewLocalFileOutputStream(getter_AddRefs(stream), aFile);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // (redundant) guard clause to assert stream is initialized
-  if (NS_WARN_IF(!stream)) {
-    MOZ_ASSERT(stream, "rv should have failed when stream is not initialized.");
-    return NS_ERROR_FAILURE;
-  }
-
-  gfx::DataSourceSurface::MappedSurface map;
-  if (!dataSurface->Map(gfx::DataSourceSurface::MapType::READ, &map)) {
-    // removal of file created handled later
-    rv = NS_ERROR_FAILURE;
-  }
-
-  // enter only if datasurface mapping succeeded
-  if (NS_SUCCEEDED(rv)) {
-    // write the bitmap headers and rgb pixel data to the file
-    uint32_t written;
-    rv = stream->Write((const char*)&bf, sizeof(BITMAPFILEHEADER), &written);
-    if (NS_SUCCEEDED(rv)) {
-      rv = stream->Write((const char*)&bmi, sizeof(BITMAPINFOHEADER), &written);
-      if (NS_SUCCEEDED(rv)) {
-        // write out the image data backwards because the desktop won't
-        // show bitmaps with negative heights for top-to-bottom
-        uint32_t i = map.mStride * height;
-        do {
-          i -= map.mStride;
-          rv = stream->Write(((const char*)map.mData) + i, bytesPerRow,
-                             &written);
-          if (NS_FAILED(rv)) {
-            break;
-          }
-        } while (i != 0);
-      }
-    }
-
-    dataSurface->Unmap();
-  }
-
-  stream->Close();
-
-  // Obtaining the file output stream results in a newly created file or
-  // truncates the file if it already exists. As such, it is necessary to
-  // remove the file if the write fails for some reason.
-  if (NS_FAILED(rv)) {
-    if (NS_WARN_IF(NS_FAILED(aFile->Remove(PR_FALSE)))) {
-      MOZ_LOG(sLog, LogLevel::Warning,
-              ("Failed to remove empty bitmap file : %s",
-               aFile->HumanReadablePath().get()));
-    }
-  }
-
-  return rv;
-}
-
 NS_IMETHODIMP
-nsWindowsShellService::SetDesktopBackground(dom::Element* aElement,
-                                            int32_t aPosition,
-                                            const nsACString& aImageName) {
-  if (!aElement || !aElement->IsHTMLElement(nsGkAtoms::img)) {
-    // XXX write background loading stuff!
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-
-  nsresult rv;
-  nsCOMPtr<nsIImageLoadingContent> imageContent =
-      do_QueryInterface(aElement, &rv);
-  if (!imageContent) return rv;
-
-  // get the image container
-  nsCOMPtr<imgIRequest> request;
-  rv = imageContent->GetRequest(nsIImageLoadingContent::CURRENT_REQUEST,
-                                getter_AddRefs(request));
-  if (!request) return rv;
-
-  nsCOMPtr<imgIContainer> container;
-  rv = request->GetImage(getter_AddRefs(container));
-  if (!container) return NS_ERROR_FAILURE;
-
-  // get the file name from localized strings, e.g. "Desktop Background", then
-  // append the extension (".bmp").
-  nsTArray<nsCString> resIds = {
-      "browser/setDesktopBackground.ftl"_ns,
-  };
-  RefPtr<Localization> l10n = Localization::Create(resIds, true);
-  nsAutoCString fileLeafNameUtf8;
-  IgnoredErrorResult locRv;
-  l10n->FormatValueSync("set-desktop-background-filename"_ns, {},
-                        fileLeafNameUtf8, locRv);
-  nsAutoString fileLeafName = NS_ConvertUTF8toUTF16(fileLeafNameUtf8);
-  fileLeafName.AppendLiteral(".bmp");
-
-  // get the profile root directory
-  nsCOMPtr<nsIFile> file;
-  rv = NS_GetSpecialDirectory(NS_APP_APPLICATION_REGISTRY_DIR,
-                              getter_AddRefs(file));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // eventually, the path is "%APPDATA%\Mozilla\Firefox\Desktop Background.bmp"
-  rv = file->Append(fileLeafName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+nsWindowsShellService::SetDesktopBackgroundFile(nsIFile* aFile,
+                                                int32_t aPosition) {
   nsAutoString path;
-  rv = file->GetPath(path);
+  nsresult rv = aFile->GetPath(path);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // write the bitmap to a file in the profile directory.
-  // We have to write old bitmap format for Windows 7 wallpaper support.
-  rv = WriteBitmap(file, container);
+  nsCOMPtr<nsIWindowsRegKey> regKey =
+      do_CreateInstance("@mozilla.org/windows-registry-key;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // if the file was written successfully, set it as the system wallpaper
-  if (NS_SUCCEEDED(rv)) {
-    nsCOMPtr<nsIWindowsRegKey> regKey =
-        do_CreateInstance("@mozilla.org/windows-registry-key;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+  rv = regKey->Create(nsIWindowsRegKey::ROOT_KEY_CURRENT_USER,
+                      u"Control Panel\\Desktop"_ns,
+                      nsIWindowsRegKey::ACCESS_SET_VALUE);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = regKey->Create(nsIWindowsRegKey::ROOT_KEY_CURRENT_USER,
-                        u"Control Panel\\Desktop"_ns,
-                        nsIWindowsRegKey::ACCESS_SET_VALUE);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsAutoString tile;
-    nsAutoString style;
-    switch (aPosition) {
-      case BACKGROUND_TILE:
-        style.Assign('0');
-        tile.Assign('1');
-        break;
-      case BACKGROUND_CENTER:
-        style.Assign('0');
-        tile.Assign('0');
-        break;
-      case BACKGROUND_STRETCH:
-        style.Assign('2');
-        tile.Assign('0');
-        break;
-      case BACKGROUND_FILL:
-        style.AssignLiteral("10");
-        tile.Assign('0');
-        break;
-      case BACKGROUND_FIT:
-        style.Assign('6');
-        tile.Assign('0');
-        break;
-      case BACKGROUND_SPAN:
-        style.AssignLiteral("22");
-        tile.Assign('0');
-        break;
-    }
-
-    rv = regKey->WriteStringValue(u"TileWallpaper"_ns, tile);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = regKey->WriteStringValue(u"WallpaperStyle"_ns, style);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = regKey->Close();
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    ::SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, (PVOID)path.get(),
-                            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+  nsAutoString tile;
+  nsAutoString style;
+  switch (aPosition) {
+    case BACKGROUND_TILE:
+      style.Assign('0');
+      tile.Assign('1');
+      break;
+    case BACKGROUND_CENTER:
+      style.Assign('0');
+      tile.Assign('0');
+      break;
+    case BACKGROUND_STRETCH:
+      style.Assign('2');
+      tile.Assign('0');
+      break;
+    case BACKGROUND_FILL:
+      style.AssignLiteral("10");
+      tile.Assign('0');
+      break;
+    case BACKGROUND_FIT:
+      style.Assign('6');
+      tile.Assign('0');
+      break;
+    case BACKGROUND_SPAN:
+      style.AssignLiteral("22");
+      tile.Assign('0');
+      break;
   }
-  return rv;
+
+  rv = regKey->WriteStringValue(u"TileWallpaper"_ns, tile);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = regKey->WriteStringValue(u"WallpaperStyle"_ns, style);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = regKey->Close();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  ::SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, (PVOID)path.get(),
+                          SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -2847,6 +2699,34 @@ nsWindowsShellService::SetShortcutsIcon(
   return NS_OK;
 }
 
+// A single enumerateInstallShortcuts result.
+class InstallShortcutInfo final : public nsIInstallShortcutInfo {
+ public:
+  NS_DECL_THREADSAFE_ISUPPORTS
+  NS_DECL_NSIINSTALLSHORTCUTINFO
+
+  InstallShortcutInfo(const nsAString& aPath, const nsAString& aLocation)
+      : mPath(aPath), mLocation(aLocation) {}
+
+ private:
+  ~InstallShortcutInfo() = default;
+
+  const nsString mPath;
+  const nsString mLocation;
+};
+
+NS_IMPL_ISUPPORTS(InstallShortcutInfo, nsIInstallShortcutInfo)
+
+NS_IMETHODIMP InstallShortcutInfo::GetPath(nsAString& aPath) {
+  aPath = mPath;
+  return NS_OK;
+}
+
+NS_IMETHODIMP InstallShortcutInfo::GetLocation(nsAString& aLocation) {
+  aLocation = mLocation;
+  return NS_OK;
+}
+
 static void CollectMatchingShortcutsInDir(const nsAString& aDirPath,
                                           const nsAString& aAUMID,
                                           const wchar_t aExePath[MAXPATHLEN],
@@ -2935,8 +2815,8 @@ static void CollectMatchingShortcutsInDir(const nsAString& aDirPath,
   FindClose(hFindFile);
 }
 
-static nsresult EnumerateInstallShortcutsImpl(const nsAString& aAUMID,
-                                              nsTArray<nsString>& aOut) {
+static nsresult EnumerateInstallShortcutsImpl(
+    const nsAString& aAUMID, nsTArray<RefPtr<InstallShortcutInfo>>& aOut) {
   wchar_t exePath[MAXPATHLEN] = {};
   if (NS_FAILED(BinaryPath::GetLong(exePath))) {
     return NS_ERROR_FAILURE;
@@ -2945,16 +2825,31 @@ static nsresult EnumerateInstallShortcutsImpl(const nsAString& aAUMID,
   nsAutoString shortcutSubstring;
   shortcutSubstring.AssignLiteral(MOZ_APP_DISPLAYNAME);
 
-  KNOWNFOLDERID folderIds[] = {FOLDERID_Desktop, FOLDERID_Programs};
-  for (KNOWNFOLDERID folderId : folderIds) {
+  auto collectTagged = [&](const nsAString& aDirPath,
+                           const char16_t* aLocation) {
+    nsTArray<nsString> paths;
+    CollectMatchingShortcutsInDir(aDirPath, aAUMID, exePath, shortcutSubstring,
+                                  paths);
+    for (const nsString& path : paths) {
+      aOut.AppendElement(
+          new InstallShortcutInfo(path, nsDependentString(aLocation)));
+    }
+  };
+
+  struct {
+    KNOWNFOLDERID folderId;
+    const char16_t* location;
+  } folders[] = {{FOLDERID_Desktop, u"Desktop"},
+                 {FOLDERID_Programs, u"Programs"},
+                 {FOLDERID_CommonPrograms, u"CommonPrograms"}};
+  for (const auto& folder : folders) {
     UniquePtr<wchar_t, mozilla::CoTaskMemFreeDeleter> folderPath;
-    HRESULT hr = SHGetKnownFolderPath(folderId, SHGFP_TYPE_CURRENT, nullptr,
-                                      getter_Transfers(folderPath));
+    HRESULT hr = SHGetKnownFolderPath(folder.folderId, SHGFP_TYPE_CURRENT,
+                                      nullptr, getter_Transfers(folderPath));
     if (FAILED(hr)) {
       continue;
     }
-    CollectMatchingShortcutsInDir(nsDependentString(folderPath.get()), aAUMID,
-                                  exePath, shortcutSubstring, aOut);
+    collectTagged(nsDependentString(folderPath.get()), folder.location);
   }
 
   UniquePtr<wchar_t, mozilla::CoTaskMemFreeDeleter> appDataPath;
@@ -2965,8 +2860,7 @@ static nsresult EnumerateInstallShortcutsImpl(const nsAString& aAUMID,
     taskbarPath.AppendLiteral(
         "\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar");
     if (taskbarPath.Length() < MAX_PATH) {
-      CollectMatchingShortcutsInDir(taskbarPath, aAUMID, exePath,
-                                    shortcutSubstring, aOut);
+      collectTagged(taskbarPath, u"Taskbar");
     }
   }
 
@@ -2996,7 +2890,7 @@ nsWindowsShellService::EnumerateInstallShortcuts(
           "EnumerateInstallShortcuts",
           [aAppUserModelId = nsString{aAppUserModelId},
            promiseHolder = std::move(promiseHolder)] {
-            nsTArray<nsString> results;
+            nsTArray<RefPtr<InstallShortcutInfo>> results;
             nsresult rv =
                 EnumerateInstallShortcutsImpl(aAppUserModelId, results);
 

@@ -31,6 +31,7 @@ export const SessionDataCategory = {
   Event: "event",
   GeolocationOverride: "geolocation-override",
   LocaleOverride: "locale-override",
+  MediaFeaturesOverride: "media-features-override",
   NetworkConditions: "network-conditions",
   PreloadScript: "preload-script",
   ResponseCollector: "response-collector",
@@ -58,8 +59,8 @@ export const SessionDataMethod = {
 
 export const SESSION_DATA_SHARED_DATA_KEY = "MessageHandlerSessionData";
 
-// This is a map from session id to session data, which will be persisted and
-// propagated to all processes using Services' sharedData.
+// This is a map from internal session id to session data, which will be
+// persisted and propagated to all processes using Services' sharedData.
 // We have to store this as a unique object under a unique shared data key
 // because new MessageHandlers in other processes will need to access this data
 // without any notion of a specific session.
@@ -155,7 +156,7 @@ export class SessionData {
 
   destroy() {
     // Update the sessionDataMap singleton.
-    sessionDataMap.delete(this.#messageHandler.sessionId);
+    sessionDataMap.delete(this.#messageHandler.internalSessionId);
 
     // Update sharedData and flush to force consistency.
     Services.ppmm.sharedData.set(SESSION_DATA_SHARED_DATA_KEY, sessionDataMap);
@@ -504,7 +505,7 @@ export class SessionData {
 
   #persist() {
     // Update the sessionDataMap singleton.
-    sessionDataMap.set(this.#messageHandler.sessionId, this.#data);
+    sessionDataMap.set(this.#messageHandler.internalSessionId, this.#data);
 
     // Update sharedData and flush to force consistency.
     Services.ppmm.sharedData.set(SESSION_DATA_SHARED_DATA_KEY, sessionDataMap);

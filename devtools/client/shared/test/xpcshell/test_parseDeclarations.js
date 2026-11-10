@@ -186,6 +186,45 @@ const TEST_DATA = [
       },
     ],
   },
+  // Test empty custom property with priority.
+  {
+    input: "--x: !important;",
+    expected: [
+      {
+        name: "--x",
+        value: "",
+        priority: "important",
+        offsets: [0, 16],
+        isCustomProperty: true,
+      },
+    ],
+  },
+  // Test empty custom property with priority without terminating ";".
+  {
+    input: "--x: !important",
+    expected: [
+      {
+        name: "--x",
+        value: "",
+        priority: "important",
+        offsets: [0, 15],
+        isCustomProperty: true,
+      },
+    ],
+  },
+  // Test uppercase priority
+  {
+    input: "p1: v1 !IMPORTANT;",
+    expected: [
+      {
+        name: "p1",
+        value: "v1",
+        priority: "important",
+        offsets: [0, 18],
+        declarationText: "p1: v1 !IMPORTANT;",
+      },
+    ],
+  },
   // Test trailing "!" without terminating ";".
   {
     input: "p1: v1 !",
@@ -837,7 +876,9 @@ const TEST_DATA = [
             rotate(-270deg);
         }
       }
-    );`,
+    );
+    --bar: [a b];
+    color: blue;`,
     expected: [
       {
         name: "--foo",
@@ -856,6 +897,41 @@ const TEST_DATA = [
         priority: "",
         offsets: [0, 1036],
         isCustomProperty: true,
+      },
+      {
+        name: "--bar",
+        value: "[a b]",
+        priority: "",
+        offsets: [1041, 1054],
+        isCustomProperty: true,
+      },
+      {
+        name: "color",
+        value: "blue",
+        priority: "",
+        offsets: [1059, 1071],
+      },
+    ],
+  },
+
+  // Regression test for bug 2077906 (which is a variant of the previous test case) - take
+  // CSS blocks into consideration before handling ; and : (i.e. don't advance to the
+  // property name or value automatically).
+  {
+    input: `--foo: { a: b; c: d }; color: red;`,
+    expected: [
+      {
+        name: "--foo",
+        value: "{ a: b; c: d }",
+        priority: "",
+        offsets: [0, 22],
+        isCustomProperty: true,
+      },
+      {
+        name: "color",
+        value: "red",
+        priority: "",
+        offsets: [23, 34],
       },
     ],
   },
@@ -1451,6 +1527,9 @@ const TEST_DATA = [
       width: var(--foobar, var(--fallback));
       -moz-appearance: none;
       --: 5;
+      --prio-parenthesis: token(!important);
+      --prio-square-bracket: [!important];
+      --prio-curly-bracket: {foo !important};
     `,
     expected: [
       {
@@ -1505,6 +1584,30 @@ const TEST_DATA = [
         priority: "",
         offsets: [184, 190],
         declarationText: "--: 5;",
+      },
+      {
+        name: "--prio-parenthesis",
+        value: "token(!important)",
+        priority: "",
+        offsets: [197, 235],
+        declarationText: "--prio-parenthesis: token(!important);",
+        isCustomProperty: true,
+      },
+      {
+        name: "--prio-square-bracket",
+        value: "[!important]",
+        priority: "",
+        offsets: [242, 278],
+        declarationText: "--prio-square-bracket: [!important];",
+        isCustomProperty: true,
+      },
+      {
+        name: "--prio-curly-bracket",
+        value: "{foo !important}",
+        priority: "",
+        offsets: [285, 324],
+        declarationText: "--prio-curly-bracket: {foo !important};",
+        isCustomProperty: true,
       },
     ],
   },
@@ -1621,8 +1724,7 @@ function assertDeclarations(input, actualDeclarations, expectedDeclarations) {
       const expected = expectedDeclarations[i];
       Assert.ok(!!actual);
       info(
-        "Check that the output item has the expected name, " +
-          "value and priority"
+        `Check that the output item has the expected name, value and priority for '${input}'`
       );
       Assert.equal(actual.name, expected.name, "Expected name");
       Assert.equal(actual.value, expected.value, "Expected value");
@@ -1661,6 +1763,10 @@ function assertDeclarations(input, actualDeclarations, expectedDeclarations) {
           "}"
       );
     }
-    Assert.equal(actualDeclarations.length, expectedDeclarations.length);
+    Assert.equal(
+      actualDeclarations.length,
+      expectedDeclarations.length,
+      `Got expected number of declarations when parsing "${input}"`
+    );
   }
 }

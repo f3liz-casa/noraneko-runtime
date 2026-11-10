@@ -69,7 +69,6 @@ class nsITimer;
 class nsPageSequenceFrame;
 class nsPIDOMWindowOuter;
 class nsPresShellEventCB;
-class nsRange;
 class nsRefreshDriver;
 class nsRegion;
 class nsTextFrame;
@@ -86,6 +85,7 @@ class ReflowCountMgr;
 
 namespace mozilla {
 class AccessibleCaretEventHub;
+struct AnchorPosAnchorInfo;
 class FallbackRenderer;
 class GeckoMVMContext;
 class nsDisplayList;
@@ -101,6 +101,10 @@ struct StyleAtom;
 struct AutoConnectedAncestorTracker;
 struct PointerInfo;
 
+// Cache used for storing top layer indices of anchor lists, grouped by name.
+using AnchorPosAnchorTopLayerIndexCache =
+    nsTHashMap<const nsAtom*, nsTArray<size_t>>;
+
 #ifdef ACCESSIBILITY
 namespace a11y {
 class DocAccessible;
@@ -112,6 +116,7 @@ class BrowserParent;
 class Element;
 class Event;
 class HTMLSlotElement;
+class Range;
 class Selection;
 class PerformanceMainThread;
 }  // namespace dom
@@ -381,7 +386,10 @@ class PresShell final : public nsStubDocumentObserver,
   enum class ResizeEventKind : uint8_t { Regular, Visual };
   void ScheduleResizeEventIfNeeded(ResizeEventKind = ResizeEventKind::Regular);
 
-  void PostScrollEvent(mozilla::Runnable*);
+  // Returns the current scroll event generation, which must be kept around by
+  // the caller to prevent duplicate scroll event entries.
+  [[nodiscard]] uint32_t PostScrollEvent(mozilla::Runnable*);
+  uint32_t GetScrollEventGeneration() const { return mScrollEventGeneration; }
 
   /**
    * Returns true if the document hosted by this presShell is in a devtools
@@ -422,12 +430,23 @@ class PresShell final : public nsStubDocumentObserver,
    */
   MOZ_CAN_RUN_SCRIPT_BOUNDARY bool DoFlushLayout(bool aInterruptible);
 
+  enum class MobileViewportManagerUpdate : uint8_t {
+    // The pres shell is initializing. Nothing is laid out yet, so don't reflow.
+    PresShellInit,
+    // Something that decides which mobile viewport manager the document needs
+    // changed (e.g. RDM was toggled). Reflows if the manager gets replaced.
+    ManagerTypeMayChange,
+    // As above, and the layout viewport size may have changed too (e.g. the
+    // viewport size override), so reflow even if the manager stays the same.
+    LayoutViewportSizeMayChange,
+  };
+
   /**
    * Note that the assumptions that determine whether we need a mobile viewport
    * manager may have changed.
    */
   MOZ_CAN_RUN_SCRIPT void MaybeRecreateMobileViewportManager(
-      bool aAfterInitialization);
+      MobileViewportManagerUpdate aUpdate);
 
   /**
    * Returns true if this document uses mobile viewport sizing (including
@@ -813,8 +832,10 @@ class PresShell final : public nsStubDocumentObserver,
   nsIFrame* GetAbsoluteContainingBlock(nsIFrame* aFrame);
 
   // https://drafts.csswg.org/css-anchor-position-1/#target
-  nsIFrame* GetAnchorPosAnchor(const ScopedNameRef& aName,
-                               const nsIFrame* aPositionedFrame) const;
+  nsIFrame* GetAnchorPosAnchor(
+      const ScopedNameRef& aName, const nsIFrame* aPositionedFrame,
+      uint32_t aPositionedFrameTreeDepth,
+      AnchorPosAnchorTopLayerIndexCache* aTopLayerIndexCache = nullptr) const;
   void CollectAnchorNames(const nsIFrame* aPositionedFrame,
                           nsTArray<nsString>& aResult);
   void AddAnchorPosAnchor(Span<const StyleAtom> aNames, nsIFrame* aFrame);
@@ -1716,7 +1737,7 @@ class PresShell final : public nsStubDocumentObserver,
    */
   MOZ_CAN_RUN_SCRIPT
   nsresult GoToAnchor(const nsAString& aAnchorName,
-                      const nsRange* aFirstTextDirective, bool aScroll,
+                      const dom::Range* aFirstTextDirective, bool aScroll,
                       ScrollFlags aAdditionalScrollFlags = ScrollFlags::None);
 
   /**
@@ -2148,11 +2169,11 @@ class PresShell final : public nsStubDocumentObserver,
   // given a display list, clip the items within the list to
   // the range
   nsRect ClipListToRange(nsDisplayListBuilder* aBuilder, nsDisplayList* aList,
-                         nsRange* aRange);
+                         dom::Range* aRange);
 
   // create a RangePaintInfo for the range aRange containing the
   // display list needed to paint the range to a surface
-  UniquePtr<RangePaintInfo> CreateRangePaintInfo(nsRange* aRange,
+  UniquePtr<RangePaintInfo> CreateRangePaintInfo(dom::Range* aRange,
                                                  nsRect& aSurfaceRect,
                                                  bool aForPrimarySelection);
 
@@ -3319,7 +3340,8 @@ class PresShell final : public nsStubDocumentObserver,
   // Note: Does not store implicit anchors, since many elements can be
   // potential implicit anchors (e.g. pseudo-elements' implicit anchor
   // is its originating element).
-  nsTHashMap<RefPtr<const nsAtom>, nsTArray<nsIFrame*>> mAnchorPosAnchors;
+  nsTHashMap<RefPtr<const nsAtom>, nsTArray<AnchorPosAnchorInfo>>
+      mAnchorPosAnchors;
   nsTArray<nsIFrame*> mAnchorPosPositioned;
 
   // Reflow roots that need to be reflowed.
@@ -3375,6 +3397,10 @@ class PresShell final : public nsStubDocumentObserver,
   nsTHashSet<ScrollContainerFrame*> mPendingScrollResnap;
   // Pending list of scroll/scrollend/etc events.
   nsTArray<RefPtr<Runnable>> mPendingScrollEvents;
+
+  // An always-non-zero generation number for scroll events. This lets callers
+  // know whether they've dispatched a scroll event this frame already.
+  uint32_t mScrollEventGeneration = 1;
 
   nsTHashSet<nsIContent*> mHiddenContentInForcedLayout;
 

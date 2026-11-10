@@ -135,8 +135,8 @@ impl WritingMode {
 
         let mut flags = WritingMode::empty();
 
-        let direction = inheritedbox_style.clone_direction();
-        let writing_mode = inheritedbox_style.clone_writing_mode();
+        let direction = *inheritedbox_style.get_direction();
+        let writing_mode = *inheritedbox_style.get_writing_mode();
 
         match direction {
             Direction::Ltr => {},
@@ -187,7 +187,7 @@ impl WritingMode {
             // vertical-lr values of writing-mode.
             match writing_mode {
                 WritingModeProperty::VerticalRl | WritingModeProperty::VerticalLr => {
-                    match inheritedbox_style.clone_text_orientation() {
+                    match *inheritedbox_style.get_text_orientation() {
                         TextOrientation::Mixed => {},
                         TextOrientation::Upright => {
                             flags.insert(WritingMode::UPRIGHT);
@@ -473,13 +473,6 @@ impl Debug for DebugWritingMode {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), Error> {
         write!(formatter, "{}", self.mode)
     }
-}
-
-// Used to specify the logical direction.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-pub enum Direction {
-    Inline,
-    Block,
 }
 
 /// A 2D size in flow-relative dimensions
@@ -1151,10 +1144,10 @@ impl<T: Copy + Add<T, Output = T>> LogicalMargin<T> {
     }
 
     #[inline]
-    pub fn start_end(&self, direction: Direction) -> T {
-        match direction {
-            Direction::Inline => self.inline_start + self.inline_end,
-            Direction::Block => self.block_start + self.block_end,
+    pub fn start_end(&self, axis: LogicalAxis) -> T {
+        match axis {
+            LogicalAxis::Inline => self.inline_start + self.inline_end,
+            LogicalAxis::Block => self.block_start + self.block_end,
         }
     }
 

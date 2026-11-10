@@ -5,8 +5,11 @@
 package mozilla.components.feature.search.telemetry
 
 import androidx.annotation.VisibleForTesting
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import mozilla.components.feature.search.RemoteSettingsRepository
 import mozilla.components.support.base.log.logger.Logger
-import mozilla.components.support.ktx.android.org.json.asSequence
 import mozilla.components.support.ktx.android.org.json.toList
 import mozilla.components.support.remotesettings.RemoteSettingsService
 import org.json.JSONArray
@@ -15,46 +18,32 @@ import org.json.JSONObject
 
 /** Parse SERP Telemetry json from remote config. */
 class SerpTelemetryRepository(
-    private val readJson: () -> JSONObject,
-    collectionName: String,
-    remoteSettingsService: RemoteSettingsService,
+    private val collectionName: String,
+    private val remoteSettingsService: RemoteSettingsService,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     val logger = Logger("SerpTelemetryRepository")
-    private var providerList: List<SearchProviderModel> = emptyList()
 
     @VisibleForTesting
     internal var remoteSettingsClient = remoteSettingsService.remoteSettingsService.makeClient(collectionName)
 
-    /** Provides list of search providers from remote server, cache or dump. */
-    suspend fun updateProviderList(): List<SearchProviderModel> {
-        val cacheLastModified = remoteSettingsClient.getLastModifiedTimestamp()
-        val cachedRecords = remoteSettingsClient.getRecords()
-        val localResponse = readJson()
-        if (
-            cachedRecords.isNullOrEmpty() ||
-                cacheLastModified == null ||
-                cacheLastModified <= localResponse.getString("timestamp").toULong()
-        ) {
-            providerList = parseLocalPreinstalledData(localResponse)
-        } else if (cacheLastModified > localResponse.getString("timestamp").toULong()) {
-            providerList = cachedRecords.mapNotNull {
-                it.fields.toSearchProviderModel()
-            }
+    /**
+     * Provides list of search providers from the Remote Settings server, its local cache or the dump packaged with
+     * application-services.
+     */
+    suspend fun updateProviderList(): List<SearchProviderModel> =
+        withContext(ioDispatcher) {
+            // Despite the name, this reads from the local Remote Settings database rather than the network:
+            // application-services seeds it with the dump packaged in the megazord, and syncing it with the
+            // server is scheduled separately by RemoteSettingsSyncScheduler.
+            RemoteSettingsRepository.fetchRemoteResponse(
+                    service = remoteSettingsService,
+                    collectionName = collectionName,
+                    client = remoteSettingsClient,
+                )
+                ?.mapNotNull { it.fields.toSearchProviderModel() }
+                .orEmpty()
         }
-        return providerList
-    }
-
-    /** Parses local json response. */
-    @VisibleForTesting
-    internal fun parseLocalPreinstalledData(jsonObject: JSONObject): List<SearchProviderModel> {
-        return jsonObject
-            .getJSONArray("data")
-            .asSequence()
-            .mapNotNull {
-                (it as JSONObject).toSearchProviderModel()
-            }
-            .toList()
-    }
 }
 
 @VisibleForTesting

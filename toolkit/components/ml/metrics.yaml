@@ -74,8 +74,10 @@ firefox.ai.runtime:
       Records a successful engine creation within a tracked flow
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1997016
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_reviews:
       - https://phabricator.services.mozilla.com/D270909
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_sensitivity:
       - interaction
     notification_emails:
@@ -83,6 +85,12 @@ firefox.ai.runtime:
     expires: never
     extra_keys:
       flow_id: *flow_id
+      host_process: &host_process
+        description: >
+          The process serving the engine: "inference" for the content
+          inference process, "hwinference" for the HWInference utility
+          process.
+        type: string
       engineId:
         type: string
         description: >
@@ -131,9 +139,11 @@ firefox.ai.runtime:
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1891685
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1997016
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_reviews:
       - https://phabricator.services.mozilla.com/D238583
       - https://phabricator.services.mozilla.com/D270909
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_sensitivity:
       - interaction
     notification_emails:
@@ -141,6 +151,7 @@ firefox.ai.runtime:
     expires: never
     extra_keys:
       flow_id: *flow_id
+      host_process: *host_process
       modelId:
         type: string
         description: model id
@@ -164,9 +175,11 @@ firefox.ai.runtime:
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1891685
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1997016
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_reviews:
       - https://phabricator.services.mozilla.com/D238583
       - https://phabricator.services.mozilla.com/D270909
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_sensitivity:
       - interaction
     notification_emails:
@@ -174,6 +187,7 @@ firefox.ai.runtime:
     expires: never
     extra_keys:
       flow_id: *flow_id
+      host_process: *host_process
       modelId:
         type: string
         description: model id
@@ -193,8 +207,10 @@ firefox.ai.runtime:
       Records a successful inference run within a tracked flow
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1997016
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_reviews:
       - https://phabricator.services.mozilla.com/D270909
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_sensitivity:
       - interaction
     notification_emails:
@@ -202,6 +218,7 @@ firefox.ai.runtime:
     expires: never
     extra_keys:
       flow_id: *flow_id
+      host_process: *host_process
       tokenizing_time:
         type: quantity
         description: >
@@ -334,6 +351,7 @@ firefox.ai.runtime:
       The performance and memory characteristics of a single run of the inference engine.
     extra_keys:
       flow_id: *flow_id
+      host_process: *host_process
       cpu_milliseconds:
         description: The combined milliseconds of every cpu core that was running.
         type: quantity
@@ -400,37 +418,17 @@ firefox.ai.runtime:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2029250
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2016214
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2047026
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1992779
       - https://phabricator.services.mozilla.com/D270909
       - https://bugzilla.mozilla.org/show_bug.cgi?id=2016214
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2046983
     data_sensitivity:
       - interaction
     notification_emails:
       - firefox-ai-and-ml@mozilla.com
     expires: never
-
-  onnx_native_availability:
-    type: labeled_counter
-    description: >
-      Whether the native ONNX runtime could be loaded in the inference process,
-      as reported by InferenceSession.isAvailable().
-      It is recorded at most once per profile, guarded by the
-      browser.ml.onnxNativeAvailabilityReported pref.
-    labels:
-      - available
-      - unavailable
-      - probe_error
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=2063024
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=2063024
-    data_sensitivity:
-      - technical
-    notification_emails:
-      - vpollet@mozilla.com
-      - enordin@mozilla.com
-    expires: 160
 
 model_management:
   remove_initiated:

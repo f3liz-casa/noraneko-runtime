@@ -423,8 +423,6 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   bool IsHTMLLink(nsIURI** aURI) const;
 
   // HTML element methods
-  void Compact() { mAttrs.Compact(); }
-
   void UpdateEditableState(bool aNotify) override;
 
   bool ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
@@ -794,7 +792,7 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   MOZ_CAN_RUN_SCRIPT void AfterSetPopoverAttr();
 
   mozilla::EventListenerManager* GetEventListenerManagerForAttr(
-      nsAtom* aAttrName, bool* aDefer) override;
+      nsAtom* aAttrName) override;
 
   /**
    * Handles dispatching a simulated click on `this` on space or enter.
@@ -832,7 +830,8 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   }
 
   void SetHTMLAttr(nsAtom* aName, const nsAString& aValue) {
-    SetAttr(kNameSpaceID_None, aName, aValue, true);
+    SetAttr(kNameSpaceID_None, aName, aValue, true,
+            mozilla::dom::IsKnownNewAttr::No);
   }
   void SetHTMLAttr(nsAtom* aName, const nsAString& aValue,
                    mozilla::ErrorResult& aError) {
