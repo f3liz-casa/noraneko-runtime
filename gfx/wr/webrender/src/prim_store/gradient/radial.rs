@@ -8,11 +8,10 @@
 //!
 //! Radial gradients are rendered as quads with the gradient pattern (ps_quad_gradient).
 
-use api::{ExtendMode, GradientStop};
+use api::{AlphaMode, ExtendMode, GradientStop};
 use api::units::*;
 use crate::pattern::gradient::{radial_gradient_pattern};
-use crate::pattern::{Pattern, PatternBuilder, PatternBuilderContext, PatternBuilderState};
-use crate::scene_building::IsVisible;
+use crate::pattern::{Pattern, PatternBuilder, PatternBuilderState};
 use crate::intern::{Internable, InternDebug, Handle as InternHandle};
 use crate::internal_types::LayoutPrimitiveInfo;
 use crate::prim_store::{InternablePrimitive};
@@ -42,8 +41,9 @@ impl InternDebug for RadialGradientKey {}
 pub struct RadialGradientTemplate {
     pub common: PrimTemplateCommonData,
     pub extend_mode: ExtendMode,
+    pub alpha_mode: AlphaMode,
     pub params: RadialGradientParams,
-    pub center: LayoutPoint,
+    pub center: LayoutVector2D,
     /// Per-axis fraction of `common.prim_size` covered by one tile of the
     /// gradient pattern. Multiply by `common.prim_size` at use to recover the
     /// absolute stretch_size.
@@ -57,22 +57,16 @@ pub struct RadialGradientTemplate {
 impl PatternBuilder for RadialGradientTemplate {
     fn build(
         &self,
-        _sub_rect: Option<DeviceRect>,
-        offset: LayoutVector2D,
-        ctx: &PatternBuilderContext,
+        pattern_rect: &LayoutRect,
         state: &mut PatternBuilderState,
     ) -> Pattern {
-        // RadialGradientTemplate stores the center point relative to the primitive
-        // origin, but the shader works with start/end points in "proper" layout
-        // coordinates (relative to the primitive's spatial node).
-        let center = self.center.cast_unit() + ctx.prim_origin.to_vector() + offset;
-
         radial_gradient_pattern(
-            center,
+            pattern_rect.min + self.center,
             self.params.start_radius,
             self.params.end_radius,
             self.params.ratio_xy,
             self.extend_mode,
+            self.alpha_mode,
             &self.stops,
             state.frame_gpu_data,
         )
@@ -107,6 +101,7 @@ impl From<RadialGradientKey> for RadialGradientTemplate {
             common,
             center: item.center.into(),
             extend_mode: item.extend_mode,
+            alpha_mode: item.alpha_mode,
             params: item.params,
             stretch_ratio: item.stretch_ratio.into(),
             tile_spacing: item.tile_spacing.into(),
@@ -146,12 +141,6 @@ impl InternablePrimitive for RadialGradient {
         PrimitiveKind::RadialGradient {
             data_handle,
         }
-    }
-}
-
-impl IsVisible for RadialGradient {
-    fn is_visible(&self) -> bool {
-        true
     }
 }
 

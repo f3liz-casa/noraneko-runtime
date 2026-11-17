@@ -200,6 +200,11 @@ class TErrorResult {
 
   explicit TErrorResult(nsresult aRv) : TErrorResult() { AssignErrorCode(aRv); }
 
+  // Not to be implemented, to make sure people always pass this by
+  // reference, not by value.
+  TErrorResult(const TErrorResult&) = delete;
+  void operator=(const TErrorResult&) = delete;
+
   operator ErrorResult&();
   operator const ErrorResult&() const;
   operator OOMReporter&();
@@ -232,10 +237,7 @@ class TErrorResult {
     nsresult rv = ErrorCode();
     SuppressException();
     // Don't propagate out our internal error codes that have special meaning.
-    if (rv == NS_ERROR_INTERNAL_ERRORRESULT_TYPEERROR ||
-        rv == NS_ERROR_INTERNAL_ERRORRESULT_RANGEERROR ||
-        rv == NS_ERROR_INTERNAL_ERRORRESULT_JS_EXCEPTION ||
-        rv == NS_ERROR_INTERNAL_ERRORRESULT_DOMEXCEPTION) {
+    if (NS_ERROR_GET_MODULE(rv) == NS_ERROR_MODULE_ERRORRESULT) {
       // What to pick here?
       return NS_ERROR_DOM_INVALID_STATE_ERR;
     }
@@ -655,11 +657,6 @@ class TErrorResult {
   // The thread that created this TErrorResult
   NS_DECL_OWNINGTHREAD;
 #endif
-
-  // Not to be implemented, to make sure people always pass this by
-  // reference, not by value.
-  TErrorResult(const TErrorResult&) = delete;
-  void operator=(const TErrorResult&) = delete;
 } JS_HAZ_ROOTED;
 
 struct JustAssertCleanupPolicy {

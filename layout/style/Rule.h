@@ -102,7 +102,10 @@ class Rule : public nsISupports, public nsWrapperCache, public SupportsWeakPtr {
   virtual void GetCssText(nsACString& aCssText) const = 0;
   void SetCssText(const nsACString& aCssText);
   Rule* GetParentRule() const;
-  StyleSheet* GetParentStyleSheet() const { return GetStyleSheet(); }
+  already_AddRefed<Rule> GetParentRuleForBindings() const;
+  already_AddRefed<StyleSheet> GetParentStyleSheet() const {
+    return do_AddRef(GetStyleSheet());
+  }
   nsINode* GetAssociatedDocumentOrShadowRoot() const {
     if (!mSheet) {
       return nullptr;
@@ -122,6 +125,8 @@ class Rule : public nsISupports, public nsWrapperCache, public SupportsWeakPtr {
     }
   };
   ContainingRuleState GetContainingRuleStateForParsing() const;
+
+  bool SupportsDeclarations();
 
  protected:
   // True if we're known-live for cycle collection purposes.

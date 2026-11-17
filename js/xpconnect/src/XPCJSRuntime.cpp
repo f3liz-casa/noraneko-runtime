@@ -29,6 +29,8 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/UniquePtr.h"
 
+#include <memory>
+
 #include "AccessCheck.h"
 #include "ExpandedPrincipal.h"
 #include "jsapi.h"
@@ -1476,9 +1478,6 @@ static void ReportZoneStats(const JS::ZoneStats& zStats,
 
   ZRREPORT_BYTES(pathPrefix + "jit-zone"_ns, zStats.jitZone, "The JIT zone.");
 
-  ZRREPORT_BYTES(pathPrefix + "cacheir-stubs"_ns, zStats.cacheIRStubs,
-                 "The JIT's IC stubs (excluding code).");
-
   ZRREPORT_BYTES(pathPrefix + "object-fuses"_ns, zStats.objectFuses,
                  "Information about constant object properties.");
 
@@ -1835,6 +1834,10 @@ static void ReportRealmStats(const JS::RealmStats& realmStats,
 
   ZRREPORT_BYTES(realmJSPathPrefix + "alloc-sites"_ns, realmStats.allocSites,
                  "GC allocation site data associated with IC stubs.");
+
+  ZRREPORT_BYTES(realmJSPathPrefix + "cacheir-stubs"_ns,
+                 realmStats.cacheIRStubs,
+                 "The JIT's IC stubs (excluding code).");
 
   ZRREPORT_BYTES(realmJSPathPrefix + "ion-data"_ns, realmStats.ionData,
                  "The IonMonkey JIT's compilation data (IonScripts).");
@@ -3269,7 +3272,8 @@ void XPCJSRuntime::Initialize(JSContext* cx) {
   // isRunOnce mode and compiled function bodies (from
   // JS::CompileFunction). In practice, this means content scripts and event
   // handlers.
-  mozilla::UniquePtr<XPCJSSourceHook> hook(new XPCJSSourceHook);
+  mozilla::UniquePtr<XPCJSSourceHook> hook =
+      std::make_unique<XPCJSSourceHook>();
   js::SetSourceHook(cx, std::move(hook));
 
   // Register memory reporters and distinguished amount functions.

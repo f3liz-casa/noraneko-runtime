@@ -10,7 +10,7 @@ const { NimbusTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/NimbusTestUtils.sys.mjs"
 );
 const WebProtocolHandlerRegistrar = ChromeUtils.importESModule(
-  "resource:///modules/WebProtocolHandlerRegistrar.sys.mjs"
+  "moz-src:///browser/components/protocolhandler/WebProtocolHandlerRegistrar.sys.mjs"
 ).WebProtocolHandlerRegistrar.prototype;
 
 add_setup(async () => {
@@ -101,11 +101,6 @@ add_task(async function promptShownForLocalHandler() {
       document.querySelector(selector_mailto_prompt),
       "The prompt is shown when an executable is configured as handler."
     );
-    Assert.equal(
-      Glean.protocolhandlerMailto.handlerPromptShown.os_default.testGetValue(),
-      1,
-      "Glean records that the prompt has been displayed."
-    );
   });
 });
 
@@ -115,12 +110,6 @@ function test_rollout(
   dismissNotNowMinutes = 15,
   dismissXClickMinutes = 15
 ) {
-  /* Since we use labeled counters to count how often the mailto infobar was
-   * displayed or interacted with between two metrics pings, we do want to
-   * make sure in testing that we start counting at 0 for each individual test
-   * case which uses the rolled out feature.
-   */
-  Services.fog.testResetFOG();
   return NimbusTestUtils.enrollWithFeatureConfig(
     {
       featureId: NimbusFeatures.mailto.featureId,
@@ -164,11 +153,6 @@ add_task(async function check_no_button() {
       null,
       document.querySelector(selector_mailto_prompt),
       "prompt hidden after button_no clicked."
-    );
-    Assert.equal(
-      Glean.protocolhandlerMailto.promptClicked.dismiss_os_default.testGetValue(),
-      1,
-      "Glean has recorded that the no button was clicked."
     );
 
     await WebProtocolHandlerRegistrar._askUserToSetMailtoHandler(
@@ -238,12 +222,6 @@ add_task(async function check_x_button() {
       "test completed within one minute, confirmed by the time after" +
         " which the permission manager would show the bar again after a dismiss."
     );
-
-    Assert.equal(
-      Glean.protocolhandlerMailto.promptClicked.dismiss_os_default.testGetValue(),
-      1,
-      "Glean recorded metrics about the click on the x button."
-    );
   });
 
   await cleanup();
@@ -259,6 +237,53 @@ add_task(async function check_x_button() {
       document.querySelector(selector_mailto_prompt),
       "infobar shown after reset timeout for 'mailto-infobar-dismissed'" +
         " in permission manager."
+    );
+  });
+
+  await cleanup();
+});
+
+add_task(async function check_never_button() {
+  let cleanup = await test_rollout(true, true, 0, 0);
+  Services.perms.removeByType("mailto-infobar-dismissed");
+
+  await BrowserTestUtils.withNewTab("https://example.com/", async browser => {
+    let button_never = document.querySelector(
+      "[data-l10n-id='protocolhandler-never-allow-button']"
+    );
+    Assert.notEqual(null, button_never, "is the never-button there?");
+
+    await button_never.click();
+    Assert.equal(
+      null,
+      document.querySelector(selector_mailto_prompt),
+      "prompt hidden after button_never clicked."
+    );
+    Assert.deepEqual(
+      SitePermissions.getForPrincipal(
+        browser.contentPrincipal,
+        "register-protocol-handler"
+      ),
+      { state: SitePermissions.BLOCK, scope: SitePermissions.SCOPE_PERSISTENT },
+      "Never allow persists a BLOCK permission."
+    );
+
+    await WebProtocolHandlerRegistrar._askUserToSetMailtoHandler(
+      browser,
+      protocol,
+      Services.io.newURI("https://example.com"),
+      "https://example.com"
+    );
+
+    Assert.equal(
+      null,
+      document.querySelector(selector_mailto_prompt),
+      "prompt stays hidden after the never button was clicked."
+    );
+
+    SitePermissions.removeFromPrincipal(
+      browser.contentPrincipal,
+      "register-protocol-handler"
     );
   });
 

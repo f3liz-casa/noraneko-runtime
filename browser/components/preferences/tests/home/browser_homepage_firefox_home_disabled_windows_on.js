@@ -8,8 +8,6 @@ const NEWTAB_ENABLED_PREF = "browser.newtabpage.enabled";
 const DEFAULT_HOMEPAGE_URL = "about:home";
 // @nova-cleanup(remove-conditional): Delete this constant; the firefoxLogo gate in assertSectionEnabled below and the _classic task become unconditional after cleanup.
 const NOVA_ENABLED_PREF = "browser.newtabpage.activity-stream.nova.enabled";
-const WEATHER_SYSTEM_PREF =
-  "browser.newtabpage.activity-stream.widgets.system.weather.enabled";
 // @nova-cleanup(remove-conditional): Delete this constant; only used by the test_firefox_home_enabled_when_windows_is_home_classic task below.
 const CLASSIC_WEATHER_SYSTEM_PREF =
   "browser.newtabpage.activity-stream.system.showWeather";
@@ -22,7 +20,6 @@ add_setup(async function () {
       [HOMEPAGE_PREF, DEFAULT_HOMEPAGE_URL],
       [NEWTAB_ENABLED_PREF, false],
       // Enable conditionally-visible settings so we can test they stay enabled
-      [WEATHER_SYSTEM_PREF, true],
       ["browser.newtabpage.activity-stream.widgets.system.enabled", true],
       ["browser.newtabpage.activity-stream.feeds.system.topstories", true],
     ],
@@ -43,17 +40,18 @@ async function assertSectionEnabled(win) {
     "Message bar is hidden when New windows is Firefox Home"
   );
 
-  // firefoxLogo is only registered when Nova is enabled.
+  // firefoxLogo is only registered when Nova is enabled. With Nova on and the
+  // widgets container on, Weather is managed with the other widgets; without
+  // Nova it has its own row.
   const novaEnabled = Services.prefs.getBoolPref(NOVA_ENABLED_PREF, false);
   for (let settingId of [
     "webSearch",
-    "weather",
     "widgets",
     "shortcuts",
     "stories",
     "supportFirefox",
     "recentActivity",
-    ...(novaEnabled ? ["firefoxLogo"] : []),
+    ...(novaEnabled ? ["firefoxLogo"] : ["weatherStandalone"]),
   ]) {
     let control = await settingControlRenders(settingId, win);
     ok(

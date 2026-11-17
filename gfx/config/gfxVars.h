@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "MediaCodecsSupport.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/gfx/GraphicsMessages.h"
@@ -18,6 +19,24 @@ namespace mozilla::gfx {
 
 class gfxVarReceiver;
 class MOZ_STACK_CLASS gfxVarsCollectUpdates;
+
+#ifdef MOZ_WIDGET_ANDROID
+#  define GFX_VARS_LIST_ANDROID(_)                               \
+    _(PlatformMediaCodecsSupported, MediaCodecsSupported,        \
+      MediaCodecsSupported())                                    \
+    _(PlatformMediaCodecs10BitSupported, MediaCodecsSupported,   \
+      MediaCodecsSupported())                                    \
+    _(PlatformH264HwDecodeMaxSize, IntSize, IntSize())           \
+    _(PlatformHEVCHwDecodeMaxSize, IntSize, IntSize())           \
+    _(PlatformVP8HwDecodeMaxSize, IntSize, IntSize())            \
+    _(PlatformVP9HwDecodeMaxSize, IntSize, IntSize())            \
+    _(PlatformAV1HwDecodeMaxSize, IntSize, IntSize())            \
+    _(PlatformUnmappedSwDecodeMimeTypes, nsCString, nsCString()) \
+    _(PlatformUnmappedHwDecodeMimeTypes, nsCString, nsCString()) \
+    _(WidevineSupport, DrmSchemeSupport, DrmSchemeSupport::Unknown)
+#else
+#  define GFX_VARS_LIST_ANDROID(_)
+#endif
 
 // Generator for graphics vars.
 #define GFX_VARS_LIST(_)                                           \
@@ -125,9 +144,10 @@ class MOZ_STACK_CLASS gfxVarsCollectUpdates;
   _(AdapterVendorID, nsCString, nsCString())                       \
   _(AdapterDeviceID, nsCString, nsCString())                       \
   _(AdapterDriverVersion, nsCString, nsCString())                  \
-  _(UseAImageReaderVideoGpuProcessAndroid, bool, false)            \
+  _(ForceAImageReaderAndroid, bool, false)                         \
   _(AllowMetalAngleWebGL, bool, false)                             \
   _(CanUseVulkanHardwareVideoDecoding, bool, false)                \
+  GFX_VARS_LIST_ANDROID(_)                                         \
 /* Add new entries above this line. */
 
 // Some graphics settings are computed on the UI process and must be
@@ -273,6 +293,8 @@ class gfxVars final {
   }
 
   using ArrayOfuint64_t = nsTArray<uint64_t>;
+  using MediaCodecsSupported = media::MediaCodecsSupported;
+  using DrmSchemeSupport = media::DrmSchemeSupport;
 
   GFX_VARS_LIST(GFX_VAR_DECL)
 #undef GFX_VAR_DECL
@@ -287,6 +309,7 @@ class gfxVars final {
 };
 
 #undef GFX_VARS_LIST
+#undef GFX_VARS_LIST_ANDROID
 
 // Helper class that batches changes to gfxVars into a single update to minimize
 // churn for receivers. This is particularly useful for the media processes

@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { actionCreators as ac, actionTypes as at } from "common/Actions.mjs";
 import { SPACE_IDS } from "common/PageLayoutVariants.mjs";
+import { SpaceActiveContext } from "content-src/lib/SpaceActiveContext";
 
 // Tab label and icon per space. The section inside keeps its own heading.
 const SPACE_META = {
@@ -27,6 +28,44 @@ const SPACE_META = {
 const SWIPE_THRESHOLD_PX = 50;
 const SWIPE_END_MS = 200;
 
+// What a space falls back to previewing when it has no medium story card: its
+// first widget, else its first Recent activity card.
+const PREVIEW_FALLBACK_SELECTOR = ".widgets-container > *, .card-outer";
+
+/**
+ * The item a space previews: its first organic story card that is medium at
+ * the current column count, so every story preview has the same shape, else
+ * its first widget or Recent activity card. Sponsored cards are skipped. CardSections gives each card a size
+ * class per column count, `col-<count>-<size>`, and the count in force is the
+ * --sections-col-count its grid sets; the grid is a subgrid of the page, so
+ * its own tracks do not say.
+ *
+ * @param {Element} panel - the space's panel
+ * @returns {Element|null|undefined} undefined while any story card is still a
+ *   placeholder, as placeholders carry no size classes; null for nothing to
+ *   preview
+ */
+function findPreviewItem(panel) {
+  const cards = [...panel.querySelectorAll(".ds-card")];
+  if (cards.some(card => card.classList.contains("placeholder"))) {
+    return undefined;
+  }
+  const medium = cards.find(card => {
+    if (card.matches(".ds-spoc, .ds-spoc-rectangle")) {
+      return false;
+    }
+    const grid = card.closest(".ds-section-grid");
+    const columns = grid
+      ? getComputedStyle(grid).getPropertyValue("--sections-col-count").trim()
+      : "";
+    return card.classList.contains(`col-${columns}-medium`);
+  });
+  return medium ?? panel.querySelector(PREVIEW_FALLBACK_SELECTOR);
+}
+// The -moz-element() name the previewed item is painted through. Set inline,
+// as stylelint reads the #id as a hex colour.
+const PREVIEW_IMAGE_ID = "spaces-preview-item";
+
 // Computed direction, not the dir attribute: about:newtab carries none on
 // <html>, so the attribute can read empty in an RTL build. Only called from
 // event handlers -- the startup cache renders without a window, so this cannot
@@ -43,13 +82,37 @@ function isRtl() {
  * unmounting instead would re-fire impressions on every return.
  *
  * @param {object} props
- * @param {Array<{id: string, content: React.ReactNode}>} props.spaces - populated
- *   spaces, in tablist order
+ * @param {Array<{id: string, content: React.ReactNode, label?: string,
+ *   icon?: string, iconFamily?: string, previewImage?: string,
+ *   ready?: boolean}>} props.spaces - populated spaces, in tablist order.
+ *   label, icon and iconFamily are set for config-driven spaces and absent for
+ *   the V1 ones; previewImage comes from the config or the preview variant's
+ *   image set. ready is false while a space's content is still loading, which
+ *   holds back its first-item preview.
+ * @param {string} [props.defaultId] - space to open on, when that is not the
+ *   leftmost one. Defaults to the leftmost.
+ * @param {boolean} [props.arrows] - navigate with an arrow at each edge
+ * @param {boolean} [props.tablist] - navigate with the tablist. Defaults to on
+ *   unless arrows are
+ * @param {boolean} [props.preview] - show a preview of the space a tab leads
+ *   to: of the next space until the first interaction with the tablist, then
+ *   of whichever tab is hovered. The space's previewImage if it has one, else
+ *   its first item, and nothing for a space with neither. Needs the tablist.
+ * @param {boolean} [props.peek] - preview the spaces on either side of the
+ *   active one in the page margins
  * @param {Function} props.dispatch - Redux dispatch, for switch telemetry
  */
-export function Spaces({ spaces, dispatch }) {
+export function Spaces({
+  spaces,
+  defaultId,
+  arrows,
+  tablist = !arrows,
+  preview,
+  peek,
+  dispatch,
+}) {
   // By id, not index: turning a space off shifts the indices after it.
-  const [activeId, setActiveId] = useState(spaces[0]?.id);
+  const [activeId, setActiveId] = useState(defaultId ?? spaces[0]?.id);
   // Falls back to the leftmost space when the active one is turned off.
   const activeIndex = Math.max(
     spaces.findIndex(space => space.id === activeId),
@@ -57,9 +120,106 @@ export function Spaces({ spaces, dispatch }) {
   );
   // Hydration is itself a change of translate, so animate from the second render.
   const [animate, setAnimate] = useState(false);
+  // The side whose peek is hovered, "prev" or "next".
+  const [peekHover, setPeekHover] = useState(null);
   const tablistRef = useRef(null);
+  const containerRef = useRef(null);
   // Keyboard switches move focus to the new tab; pointer clicks do not.
   const focusActiveTab = useRef(false);
+
+  const [hoveredId, setHoveredId] = useState(null);
+  const [previewInteracted, setPreviewInteracted] = useState(false);
+  // { id, found }: whether that space had a first item to paint.
+  const [previewItem, setPreviewItem] = useState(null);
+  const activeSpaceId = spaces[activeIndex]?.id;
+  const nextSpaceId = spaces[(activeIndex + 1) % spaces.length]?.id;
+  let previewId = null;
+  if (preview) {
+    previewId = hoveredId ?? (previewInteracted ? null : nextSpaceId);
+  }
+  // The active space is already on screen.
+  if (previewId === activeSpaceId) {
+    previewId = null;
+  }
+  const previewSpace = spaces.find(space => space.id === previewId);
+  const previewImage = previewSpace?.previewImage;
+  // Until then the first item may be a placeholder, or something that the
+  // loaded content will push down.
+  const previewReady = previewSpace?.ready !== false;
+
+  // Painted live with -moz-element() rather than copied, so the item keeps the
+  // styles its own space gives it, and no copy reports impressions.
+  useEffect(() => {
+    if (!previewId || previewImage || !previewReady) {
+      return undefined;
+    }
+    const panel = containerRef.current?.querySelector(
+      `#spaces-panel-${previewId}`
+    );
+    if (!panel) {
+      return undefined;
+    }
+    let observer;
+    let registered = false;
+    // DSCard stays a placeholder until it is seen or the page goes idle, and a
+    // clipped space is never seen, so this waits for the idle render.
+    const settle = () => {
+      const item = findPreviewItem(panel);
+      if (item === undefined) {
+        return false;
+      }
+      observer?.disconnect();
+      setPreviewItem({ id: previewId, found: !!item });
+      if (item) {
+        // A clipped space never scrolls into view, so its lazy images would
+        // never load and the preview would paint the card without them.
+        for (const img of item.querySelectorAll('img[loading="lazy"]')) {
+          img.setAttribute("loading", "eager");
+        }
+        document.mozSetImageElement?.(PREVIEW_IMAGE_ID, item);
+        registered = true;
+      }
+      return true;
+    };
+    if (!settle()) {
+      observer = new MutationObserver(settle);
+      observer.observe(panel, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    }
+    return () => {
+      observer?.disconnect();
+      if (registered) {
+        document.mozSetImageElement?.(PREVIEW_IMAGE_ID, null);
+      }
+    };
+  }, [previewId, previewImage, previewReady]);
+
+  let previewContent = null;
+  if (previewImage) {
+    // Preview images are 2x, so the descriptor gives their designed size.
+    previewContent = (
+      <img
+        className="spaces-preview-image"
+        srcSet={`${previewImage} 2x`}
+        alt=""
+      />
+    );
+  } else if (!previewReady) {
+    previewContent = null;
+  } else if (previewItem?.id === previewId && previewItem.found) {
+    previewContent = (
+      <div
+        className="spaces-preview-item"
+        style={{
+          backgroundImage: `-moz-element(#${PREVIEW_IMAGE_ID})`,
+        }}
+      />
+    );
+  }
 
   useEffect(() => {
     setAnimate(true);
@@ -80,6 +240,8 @@ export function Spaces({ spaces, dispatch }) {
         return;
       }
       setActiveId(spaces[index].id);
+      setPreviewInteracted(true);
+      setPeekHover(null);
       dispatch(
         ac.OnlyToMain({
           type: at.SPACES_USER_EVENT,
@@ -184,62 +346,184 @@ export function Spaces({ spaces, dispatch }) {
     [activeIndex, switchTo]
   );
 
+  // Labelled with the space it leads to.
+  const renderArrow = (offset, direction) => {
+    // Wraps, so the first space's previous arrow leads to the last.
+    const targetIndex = (activeIndex + offset + spaces.length) % spaces.length;
+    const target = spaces[targetIndex];
+    return (
+      target && (
+        <div className={`spaces-arrow-rail ${direction}`}>
+          <moz-button
+            class="spaces-arrow"
+            type="primary"
+            iconsrc={`chrome://global/skin/icons/shaft-arrow-${direction === "prev" ? "left" : "right"}.svg`}
+            iconposition={direction === "prev" ? "end" : undefined}
+            label={target.label}
+            data-l10n-id={
+              target.label ? undefined : SPACE_META[target.id].l10nId
+            }
+            // Marks keyboard focus for the CSS name reveal. A mouse click also
+            // focuses the arrow, and moz-button does not expose :focus-visible,
+            // so this asks its inner button instead.
+            onFocus={event =>
+              event.currentTarget.toggleAttribute(
+                "focusvisible",
+                !!event.currentTarget.shadowRoot?.activeElement?.matches(
+                  ":focus-visible"
+                )
+              )
+            }
+            onBlur={event =>
+              event.currentTarget.removeAttribute("focusvisible")
+            }
+            onClick={() => switchTo(targetIndex, "arrow")}
+          />
+        </div>
+      )
+    );
+  };
+
+  // The spaces on either side of the active one show a peek.
+  const peekSideOf = index =>
+    (peek && { [-1]: "prev", 1: "next" }[index - activeIndex]) || null;
+  // Hovering a peek or its tab slides that peek in.
+  const peekHoverHandlers = side => ({
+    onMouseEnter: () => setPeekHover(side),
+    onMouseLeave: () => setPeekHover(null),
+  });
+
+  // The peeked spaces show through in the margins, inert. These boxes over
+  // them handle hover and click.
+  const peekBoxes = spaces.map((space, index) => {
+    const side = peekSideOf(index);
+    return (
+      side && (
+        // Keyboard users switch with the tablist; this is a pointer shortcut.
+        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+        <div
+          key={side}
+          className={`spaces-peek-box ${side}`}
+          aria-hidden="true"
+          onClick={() => switchTo(index, "peek")}
+          {...peekHoverHandlers(side)}
+        />
+      )
+    );
+  });
+
   return (
     <div
-      className="spaces-container"
+      className={`spaces-container${peekHover ? ` peek-hover-${peekHover}` : ""}`}
+      ref={containerRef}
       onWheel={onWheel}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
+      {arrows && (
+        <>
+          {renderArrow(-1, "prev")}
+          {renderArrow(1, "next")}
+        </>
+      )}
       <div className="spaces-frame">
+        {peekBoxes}
         {/* A real tablist, so arrow-key traversal comes with the pattern. */}
-        <div className="spaces-tablist-slot">
-          <div
-            className="spaces-tablist"
-            role="tablist"
-            ref={tablistRef}
-            onKeyDown={onTabKeyDown}
-          >
-            {spaces.map((space, index) => {
-              const isActive = index === activeIndex;
-              return (
-                <button
-                  key={space.id}
-                  id={`spaces-tab-${space.id}`}
-                  className={`spaces-tab${isActive ? " active" : ""}`}
-                  role="tab"
-                  type="button"
-                  aria-selected={isActive}
-                  aria-controls={`spaces-panel-${space.id}`}
-                  tabIndex={isActive ? 0 : -1}
-                  onClick={() => switchTo(index, "tab")}
-                >
-                  <img
-                    className="spaces-tab-icon"
-                    src={SPACE_META[space.id].iconsrc}
-                    alt=""
-                  />
-                  <span data-l10n-id={SPACE_META[space.id].l10nId} />
-                </button>
-              );
-            })}
+        {tablist && (
+          <div className="spaces-tablist-slot">
+            <div
+              className="spaces-tablist"
+              role="tablist"
+              ref={tablistRef}
+              onKeyDown={onTabKeyDown}
+              onFocus={preview ? () => setPreviewInteracted(true) : undefined}
+              onPointerLeave={preview ? () => setHoveredId(null) : undefined}
+            >
+              {spaces.map((space, index) => {
+                const isActive = index === activeIndex;
+                const peekSide = peekSideOf(index);
+                return (
+                  <button
+                    key={space.id}
+                    id={`spaces-tab-${space.id}`}
+                    className={`spaces-tab${isActive ? " active" : ""}`}
+                    role="tab"
+                    type="button"
+                    aria-selected={isActive}
+                    aria-controls={`spaces-panel-${space.id}`}
+                    tabIndex={isActive ? 0 : -1}
+                    style={
+                      preview
+                        ? { "--spaces-tab-anchor": `--spaces-tab-${space.id}` }
+                        : undefined
+                    }
+                    onPointerEnter={
+                      preview
+                        ? () => {
+                            setHoveredId(space.id);
+                            setPreviewInteracted(true);
+                          }
+                        : undefined
+                    }
+                    onClick={() =>
+                      switchTo(index, preview ? "preview_tab" : "tab")
+                    }
+                    {...(peekSide ? peekHoverHandlers(peekSide) : {})}
+                  >
+                    {/* A thematic space carries its own label and icon from
+                  the layout config; SPACE_META covers the V1 spaces, whose
+                  labels are localized. An icon the config got wrong is simply
+                  absent, and the label still names the tab. */}
+                    {(space.icon ?? SPACE_META[space.id]?.iconsrc) && (
+                      <img
+                        className="spaces-tab-icon"
+                        src={space.icon ?? SPACE_META[space.id].iconsrc}
+                        data-icon-family={space.iconFamily}
+                        alt=""
+                      />
+                    )}
+                    {space.label ? (
+                      <span>{space.label}</span>
+                    ) : (
+                      <span data-l10n-id={SPACE_META[space.id].l10nId} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {/* After the tablist, as an anchored box must follow its anchor. */}
+            {previewId && previewContent && (
+              <div
+                className="spaces-preview"
+                aria-hidden="true"
+                style={{
+                  "--spaces-preview-anchor": `--spaces-tab-${previewId}`,
+                }}
+              >
+                {previewContent}
+              </div>
+            )}
           </div>
-        </div>
+        )}
         <div className={`spaces-track${animate ? " animate" : ""}`}>
           {spaces.map((space, index) => {
             const isActive = index === activeIndex;
+            const peekSide = peekSideOf(index);
             return (
               <div
                 key={space.id}
                 id={`spaces-panel-${space.id}`}
-                className={`space${isActive ? " active" : ""}`}
+                className={`space${isActive ? " active" : ""}${peekSide ? ` peeking peeking-${peekSide}` : ""}`}
                 style={{ "--space-offset": index - activeIndex }}
-                role="tabpanel"
-                aria-labelledby={`spaces-tab-${space.id}`}
+                // Without the tablist there are no tabs to label the panels.
+                role={tablist ? "tabpanel" : undefined}
+                aria-labelledby={tablist ? `spaces-tab-${space.id}` : undefined}
                 aria-hidden={isActive ? undefined : "true"}
                 inert={!isActive}
               >
-                {space.content}
+                <SpaceActiveContext.Provider value={isActive}>
+                  {space.content}
+                </SpaceActiveContext.Provider>
               </div>
             );
           })}

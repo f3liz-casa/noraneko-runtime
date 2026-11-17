@@ -160,11 +160,11 @@ fn section_header_with_name<'sc, MM: ReadModuleMemory>(
 }
 
 pub fn read_build_id_from_file(
-    process_inspector: &ProcessInspector,
+    process_inspector: &dyn ProcessInspector,
     path: &Path,
 ) -> Result<Vec<u8>, Error> {
     let module_memory_reader = process_inspector
-        .map_module_into_memory(path, 0)
+        .map_module_into_memory(path.into(), 0)
         .map_err(Error::MapModuleFailed)?;
     read_build_id_from_module(module_memory_reader)
 }
@@ -191,7 +191,7 @@ pub fn read_build_id_from_module(module_memory: impl ReadModuleMemory) -> Result
 }
 
 pub fn read_soname_from_file(
-    process_inspector: &ProcessInspector,
+    process_inspector: &dyn ProcessInspector,
     path: &Path,
     offset: usize,
 ) -> Result<String, Error> {
@@ -206,7 +206,7 @@ pub fn read_soname_from_file(
     }
 
     let module_memory_reader = process_inspector
-        .map_module_into_memory(path, offset)
+        .map_module_into_memory(path.into(), offset)
         .map_err(Error::MapModuleFailed)?;
 
     let memory_len = module_memory_reader.len().map_err(Error::MapModuleFailed)?;
@@ -288,6 +288,30 @@ impl<MM: ReadModuleMemory> ModuleReader<MM> {
             header,
             context,
         })
+    }
+
+    /// The object's ELF header.
+    pub fn header(&self) -> &elf::Header {
+        &self.header
+    }
+
+    /// The object's program header table.
+    pub fn program_headers(&self) -> Result<elf::ProgramHeaders, Error> {
+        self.read_program_headers()
+    }
+
+    /// The object's dynamic linking entries, up to the `DT_NULL` terminator.
+    pub fn dynamic_entries(&self) -> Result<Vec<elf::dynamic::Dyn>, Error> {
+        let program_headers = self.read_program_headers()?;
+
+        let dynamic_segment_header = program_headers
+            .iter()
+            .find(|h| h.p_type == elf::program_header::PT_DYNAMIC)
+            .ok_or(Error::NoDynamicSection)?;
+
+        let dynamic_section = self.read_segment(dynamic_segment_header)?;
+
+        DynIter::new(&dynamic_section, self.context).collect()
     }
 
     /// Find a note referenced by the program headers.

@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "OggRLBox.h"
 #include "OpusParser.h"
@@ -744,6 +745,7 @@ bool OpusState::Init(void) {
   opusData.mHeadersBinaryBlob->AppendElements(mHeaders.PeekFront()->packet,
                                               mHeaders.PeekFront()->bytes);
   mInfo.mCodecSpecificConfig = AudioCodecSpecificVariant{std::move(opusData)};
+  SetOpusOutputChannels(mInfo);
 
   mHeaders.Erase();
   LOG(LogLevel::Debug, ("Opus decoder init"));
@@ -1254,7 +1256,8 @@ bool SkeletonState::DecodeIndex(ogg_packet* aPacket) {
     return (mActive = false);
   }
 
-  UniquePtr<nsKeyFrameIndex> keyPoints(new nsKeyFrameIndex(startTime, endTime));
+  UniquePtr<nsKeyFrameIndex> keyPoints =
+      std::make_unique<nsKeyFrameIndex>(startTime, endTime);
 
   p = aPacket->packet + INDEX_KEYPOINT_OFFSET;
   const unsigned char* limit = aPacket->packet + aPacket->bytes;
@@ -1397,7 +1400,7 @@ bool SkeletonState::DecodeFisbone(ogg_packet* aPacket) {
   int64_t msgLength = aPacket->bytes - checked_fields_pos.value();
   char* msgProbe = (char*)aPacket->packet + checked_fields_pos.value();
   char* msgHead = msgProbe;
-  UniquePtr<MessageField> field(new MessageField());
+  auto field = std::make_unique<MessageField>();
 
   const static FieldPatternType kFieldTypeMaps[] = {
       {"Content-Type:", eContentType},

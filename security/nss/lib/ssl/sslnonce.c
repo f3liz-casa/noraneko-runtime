@@ -167,8 +167,8 @@ void
 ssl_DestroySID(sslSessionID *sid, PRBool freeIt)
 {
     SSL_TRC(8, ("SSL: destroy sid: sid=0x%x cached=%d", sid, sid->cached));
-    PORT_Assert(sid->references == 0);
-    PORT_Assert(sid->cached != in_client_cache);
+    PORT_ReleaseAssert(sid->references == 0);
+    PORT_ReleaseAssert(sid->cached != in_client_cache);
 
     if (sid->u.ssl3.locked.sessionTicket.ticket.data) {
         SECITEM_FreeItem(&sid->u.ssl3.locked.sessionTicket.ticket,
@@ -188,8 +188,8 @@ ssl_DestroySID(sslSessionID *sid, PRBool freeIt)
     PORT_Free((void *)sid->peerID);
     PORT_Free((void *)sid->urlSvrName);
 
-    if (sid->peerCert) {
-        CERT_DestroyCertificate(sid->peerCert);
+    if (sid->peerCertDER.data) {
+        SECITEM_FreeItem(&sid->peerCertDER, PR_FALSE);
     }
     if (sid->peerCertStatus.items) {
         SECITEM_FreeArray(&sid->peerCertStatus, PR_FALSE);
@@ -216,7 +216,7 @@ ssl_DestroySID(sslSessionID *sid, PRBool freeIt)
 static void
 ssl_FreeLockedSID(sslSessionID *sid)
 {
-    PORT_Assert(sid->references >= 1);
+    PORT_ReleaseAssert(sid->references >= 1);
     if (--sid->references == 0) {
         ssl_DestroySID(sid, PR_TRUE);
     }
@@ -242,6 +242,7 @@ sslSessionID *
 ssl_ReferenceSID(sslSessionID *sid)
 {
     LOCK_CACHE;
+    PORT_ReleaseAssert(sid->references > 0);
     sid->references++;
     UNLOCK_CACHE;
     return sid;
@@ -562,13 +563,10 @@ ssl_DecodeResumptionToken(sslSessionID *sid, const PRUint8 *encodedToken,
         return SECFailure;
     }
     if (readerBuffer.len) {
-        PORT_Assert(!sid->peerCert);
+        PORT_Assert(!sid->peerCertDER.data);
         SECItem tempItem = { siBuffer, (unsigned char *)readerBuffer.buf,
                              readerBuffer.len };
-        sid->peerCert = CERT_NewTempCertificate(NULL, /* dbHandle */
-                                                &tempItem,
-                                                NULL, PR_FALSE, PR_TRUE);
-        if (!sid->peerCert) {
+        if (SECITEM_CopyItem(NULL, &sid->peerCertDER, &tempItem) != SECSuccess) {
             return SECFailure;
         }
     }
@@ -905,8 +903,8 @@ ssl_EncodeResumptionToken(sslSessionID *sid, sslBuffer *encodedTokenBuf)
         return SECFailure;
     }
 
-    rv = sslBuffer_AppendVariable(encodedTokenBuf, sid->peerCert->derCert.data,
-                                  sid->peerCert->derCert.len, 3);
+    rv = sslBuffer_AppendVariable(encodedTokenBuf, sid->peerCertDER.data,
+                                  sid->peerCertDER.len, 3);
     if (rv != SECSuccess) {
         return SECFailure;
     }

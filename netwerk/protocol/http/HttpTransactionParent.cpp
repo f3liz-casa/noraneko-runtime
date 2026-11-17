@@ -117,7 +117,7 @@ nsresult HttpTransactionParent::Init(
   mChannelId = channelId;
   mTransactionObserver = std::move(transactionObserver);
   mCaps = caps;
-  mConnInfo = cinfo->Clone();
+  mConnInfo = cinfo;
   mIsHttp3Used = cinfo->IsHttp3();
 
   HttpConnectionInfoCloneArgs infoArgs;
@@ -149,11 +149,11 @@ nsresult HttpTransactionParent::Init(
   // TODO: Figure out if we have to implement nsIThreadRetargetableRequest in
   // bug 1544378.
   if (!SendInit(caps, infoArgs, *requestHead, ipcStream, requestContentLength,
-                browserId, trafficCategory, requestContextID, classOfService,
-                initialRwin, responseTimeoutEnabled, mChannelId,
-                !!mTransactionObserver, throttleQueue, mIsDocumentLoad,
-                aParentIpAddressSpace, aLnaPermissionStatus, mRedirectStart,
-                mRedirectEnd)) {
+                mRequestBodyIsStreaming, browserId, trafficCategory,
+                requestContextID, classOfService, initialRwin,
+                responseTimeoutEnabled, mChannelId, !!mTransactionObserver,
+                throttleQueue, mIsDocumentLoad, aParentIpAddressSpace,
+                aLnaPermissionStatus, mRedirectStart, mRedirectEnd)) {
     return NS_ERROR_FAILURE;
   }
 
@@ -424,7 +424,7 @@ bool HttpTransactionParent::Http3Disabled() const {
 
 already_AddRefed<nsHttpConnectionInfo> HttpTransactionParent::GetConnInfo()
     const {
-  RefPtr<nsHttpConnectionInfo> connInfo = mConnInfo->Clone();
+  RefPtr<nsHttpConnectionInfo> connInfo = mConnInfo;
   return connInfo.forget();
 }
 

@@ -8,22 +8,15 @@
 
 "use strict";
 
-const TEST_TOP_SITE = "https://fake.example.com";
-
 add_setup(async function () {
   let sidebarRevampEnabled = Services.prefs.getBoolPref(
     "sidebar.revamp",
     false
   );
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0],
-      // Ensure there is one top site in the list.
-      ["browser.newtabpage.activity-stream.default.sites", TEST_TOP_SITE],
-    ],
+    set: [["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0]],
   });
-
-  await updateTopSites(sites => sites?.length == 1);
+  UrlbarTestUtils.registerZeroPrefixProvider();
 
   for (let i = 0; i < UrlbarPrefs.get("maxRichResults"); i++) {
     await PlacesTestUtils.addVisits("http://example.com/" + i);
@@ -236,6 +229,7 @@ add_task(async function tabNoSearchStringSearchMode() {
   info(
     "Tab through the toolbar when refocusing a Urlbar in search mode with the keyboard."
   );
+  await PlacesTestUtils.addVisits("https://example.com/");
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
     window,
     value: "",
@@ -263,6 +257,7 @@ add_task(async function tabNoSearchStringSearchMode() {
 
   gURLBar.blur();
   await UrlbarTestUtils.promisePopupClose(window);
+  await PlacesUtils.history.clear();
 });
 
 add_task(async function tabOnTopSites() {

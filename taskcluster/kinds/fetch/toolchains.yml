@@ -44,34 +44,6 @@ gcc-8.5.0:
         strip-components: 1
         add-prefix: gcc-source/
 
-gcc-9.5.0:
-    description: GCC 9.5.0 source code
-    fetch:
-        type: static-url
-        url: https://ftp.gnu.org/gnu/gcc/gcc-9.5.0/gcc-9.5.0.tar.xz
-        sha256: 27769f64ef1d4cd5e2be8682c0c93f9887983e6cfd1a927ce5a0a2915a95cf8f
-        size: 72462752
-        gpg-signature:
-            sig-url: "{url}.sig"
-            key-path: build/unix/build-gcc/7F74F97C103468EE5D750B583AB00996FC26A641.key
-        artifact-name: gcc-source.tar.zst
-        strip-components: 1
-        add-prefix: gcc-source/
-
-gcc-10.5.0:
-    description: GCC 10.5.0 source code
-    fetch:
-        type: static-url
-        url: https://ftp.gnu.org/gnu/gcc/gcc-10.5.0/gcc-10.5.0.tar.xz
-        sha256: 25109543fdf46f397c347b5d8b7a2c7e5694a5a51cce4b9c6e1ea8a71ca307c1
-        size: 77846412
-        gpg-signature:
-            sig-url: "{url}.sig"
-            key-path: build/unix/build-gcc/7F74F97C103468EE5D750B583AB00996FC26A641.key
-        artifact-name: gcc-source.tar.zst
-        strip-components: 1
-        add-prefix: gcc-source/
-
 gcc-11.5.0:
     description: GCC 11.5.0 source code
     fetch:
@@ -168,13 +140,13 @@ nasm-2.14.02:
         sha256: e24ade3e928f7253aa8c14aa44726d1edf3f98643f87c9d72ec1df44b26be8f5
         size: 827620
 
-nasm-3.01:
-    description: nasm 3.01 source code
+nasm:
+    description: nasm 3.02 source code
     fetch:
         type: static-url
-        url: https://www.nasm.us/pub/nasm/releasebuilds/3.01/nasm-3.01.tar.xz
-        sha256: b7324cbe86e767b65f26f467ed8b12ad80e124e3ccb89076855c98e43a9eddd4
-        size: 1499136
+        url: https://www.nasm.us/pub/nasm/releasebuilds/3.02/nasm-3.02.tar.xz
+        sha256: 87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d
+        size: 1531636
 
 wix-3.14.0:
     description: wix 3.14.0 binary release
@@ -218,12 +190,12 @@ nsis-3.07-win:
         add-prefix: nsis/
 
 upx:
-    description: upx 5.2.0 source
+    description: upx 5.2.1 source
     fetch:
         type: static-url
-        url: https://github.com/upx/upx/releases/download/v5.2.0/upx-5.2.0-src.tar.xz
-        sha256: af99e526d5759de94412aea1104d5e4ca406cb725295f8633ecc9e843dc1ce1c
-        size: 1764768
+        url: https://github.com/upx/upx/releases/download/v5.2.1/upx-5.2.1-src.tar.xz
+        sha256: a7d457be4ef942e46844ee8f301206b111394cbcbde3599747a6904c54ff116b
+        size: 1778024
         artifact-name: upx-src.tar.zst
         strip-components: 1
         add-prefix: upx/
@@ -232,9 +204,9 @@ wine:
     description: wine source code
     fetch:
         type: static-url
-        url: https://dl.winehq.org/wine/source/11.x/wine-11.10.tar.xz
-        sha256: e4c35ebe26f4f8eef5f2143e24a1fb9fd103f1d46132ad4755479227d086b8e7
-        size: 45603064
+        url: https://dl.winehq.org/wine/source/11.x/wine-11.17.tar.xz
+        sha256: 8e752e29bba2901ad9f915139345c6ee67184b099d425704d915971ca5c055fc
+        size: 46726496
         gpg-signature:
             sig-url: "{url}.sign"
             key-path: build/unix/build-gcc/DA23579A74D4AD9AF9D3F945CEFAC8EAAF17519D.key
@@ -283,7 +255,7 @@ libdmg-hfsplus:
     fetch:
         type: git
         repo: https://github.com/mozilla/libdmg-hfsplus/
-        revision: d6287b5afc2406b398de42f74eba432f2123b937
+        revision: e18579b391950589b9ed16ee630c54ce4319bb29
 
 hfsplus-tools:
     description: hfstools-plus source code
@@ -318,12 +290,12 @@ rust-size:
         revision: ab659d93b1faba95307df952aefe3fbed3583669
 
 rust-analyzer-linux64:
-    description: rust-analyzer 2026-08-10.1
+    description: rust-analyzer 2026-10-12
     fetch:
         type: static-url
-        url: https://github.com/rust-lang/rust-analyzer/releases/download/2026-08-10.1/rust-analyzer-x86_64-unknown-linux-gnu.gz
-        sha256: d42908a7dc7b89250ae881a0919e477296843665c98574ecc8fe16ba60cecefb
-        size: 14805784
+        url: https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-x86_64-unknown-linux-gnu.gz
+        sha256: 040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf0ec66fd7a97f31db3
+        size: 14939384
         artifact-name: rust-analyzer.gz
 
 gn:
@@ -331,23 +303,23 @@ gn:
     fetch:
         type: git
         repo: https://gn.googlesource.com/gn
-        revision: 6f8c0328ee29c76e3566a216f2f0cf2992daa6ed
+        revision: 6b0190f746976a2e3b26ed529a9d487ae2587868
 
 grcov:
     description: grcov source code
     fetch:
         type: git
         repo: https://github.com/mozilla/grcov
-        # 0.10.7 release
-        revision: 6efbc1d7604a22fae6ba145d1c3637f0bec7b1e6
+        # 0.10.8 release + fix for bug 2033336
+        revision: 86d5001522d6eff66794fbd8d644807f73870d0b
 
 sccache:
     description: sccache source code
     fetch:
         type: git
         repo: https://github.com/mozilla/sccache
-        # 0.17.0 release
-        revision: c037e117c7625a2668633574028a6addf2a96a6e
+        # 0.18.0 release
+        revision: 01c35e69b97f516c2ebfbdb418b5cd6277bde280
 
 fxc2:
     description: fxc2 source code
@@ -361,7 +333,7 @@ mingw-w64:
     fetch:
         type: git
         repo: https://git.code.sf.net/p/mingw-w64/mingw-w64
-        revision: f91a6c237774954bce1018572dfda796eed4f8db
+        revision: 85c7dd4cce5ab74b679f9ca74efa49a7f5e4bd5a
 
 mingw-w64-trunk:
     description: mingw-w64 master branch source code
@@ -371,13 +343,6 @@ mingw-w64-trunk:
         type: git
         repo: https://git.code.sf.net/p/mingw-w64/mingw-w64
         branch: master
-
-llvm-mingw:
-    description: llvm-mingw source code
-    fetch:
-        type: git
-        repo: https://github.com/mstorsjo/llvm-mingw
-        revision: 9f8e5cebd6dbbb7546e8917e6c59284699a48d26
 
 android-ndk-rs:
     description: android-ndk-rs source code
@@ -391,13 +356,6 @@ android-ndk-rs:
         # Example: https://github.com/rust-mobile/cargo-apk/issues/74
         repo: https://github.com/jamienicol/android-ndk-rs
         revision: abddf7b2a3f491637440e0418087f68fb4a401c1
-
-clang-14:
-    description: clang 14.0.5 source code
-    fetch:
-        type: git
-        repo: https://github.com/llvm/llvm-project
-        revision: 4bc1d0b51c8e488d78ab69c8b19cfbcd1f7db6a4
 
 clang-19:
     description: clang 19.1.7 source code
@@ -479,23 +437,23 @@ win64-ninja:
         add-prefix: ninja/bin/
 
 macosx64-cmake:
-    description: cmake 4.3.3
+    description: cmake 4.4.3
     fetch:
         type: static-url
-        url: https://github.com/Kitware/CMake/releases/download/v4.3.3/cmake-4.3.3-macos-universal.tar.gz
-        sha256: 5221a13450c7a0219a2a0d1b6c9085eb06489721fafd8488ccebc1584175d2fb
-        size: 87452640
+        url: https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-macos-universal.tar.gz
+        sha256: 0c5d65251c14cc884bfa16bdbed3c263ce5bffe2e21c0d0d00962cb0610464fa
+        size: 89445170
         artifact-name: cmake.tar.zst
         strip-components: 3
         add-prefix: cmake/
 
 cmake:
-    description: cmake 4.3.3 source code
+    description: cmake 4.4.3 source code
     fetch:
         type: static-url
-        url: https://github.com/Kitware/CMake/releases/download/v4.3.3/cmake-4.3.3.tar.gz
-        sha256: cba4bb7a44edf2877bb6f059932896383babe435b3a8c3b5df48b4aa41c9bb85
-        size: 12971567
+        url: https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3.tar.gz
+        sha256: c46400618b4f1f2b43507f24fb22f3ae830c3416cf23b776e16e1d413aa892f0
+        size: 13288228
         artifact-name: cmake.tar.zst
         strip-components: 1
         add-prefix: cmake/
@@ -519,7 +477,7 @@ fix-stacks:
     fetch:
         type: git
         repo: https://github.com/mozilla/fix-stacks/
-        revision: 1fb1bcc8cb4dd65fbe342853954651563a0a88e7
+        revision: 0cabeccc13b8254962599b81d5bcc658e9730baf
 
 upload-symbols-linux64:
     description: upload-symbols command-line client
@@ -533,12 +491,12 @@ upload-symbols-linux64:
         add-prefix: upload-symbols-cli/
 
 7zz:
-    description: 7-zip 26.01 source code
+    description: 7-zip 26.03 source code
     fetch:
         type: static-url
-        url: https://github.com/ip7z/7zip/releases/download/26.01/7z2601-src.tar.xz
-        sha256: b2389e0e930b2f9a348cf0fe7d9870a46482a8ec044ee0bdf42e2136db31c3d6
-        size: 1543032
+        url: https://github.com/ip7z/7zip/releases/download/26.03/7z2603-src.tar.xz
+        sha256: 9cbde5099c6deb73691b0579063da5827522ccbbcba3f0020fd04e8c8c16c0d4
+        size: 1552200
         artifact-name: 7z-src.tar.zst
         add-prefix: 7zz/
 
@@ -576,9 +534,9 @@ jdk-8-linux64:
     description: Java 8 JDK
     fetch:
         type: static-url
-        url: https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u482-b08/OpenJDK8U-jdk_x64_linux_hotspot_8u482b08.tar.gz
-        sha256: e74becad56b4cc01f1556a671e578d3788789f5257f9499f6fbed84e63a55ecf
-        size: 103525252
+        url: https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u502-b07/OpenJDK8U-jdk_x64_linux_hotspot_8u502b07.tar.gz
+        sha256: b8f5440f64f50193c01f67dacba55c9660caffe13b908baf6bd1955f4dd4c3ea
+        size: 103536381
         artifact-name: jdk-8.tar.zst
         strip-components: 1
         add-prefix: jdk-8/
@@ -608,17 +566,6 @@ nodejs-12-linux64:
         strip-components: 1
         add-prefix: node/
 
-nodejs-22-linux64-arm64:
-    description: nodejs 22 for arm64 linux
-    fetch:
-        type: static-url
-        url: https://nodejs.org/dist/v22.16.0/node-v22.16.0-linux-arm64.tar.xz
-        sha256: eab80cb88f8fda1e65f5e8d0420c9809bdb320b03fd34976ab7161b6e703b910
-        size: 29126496
-        artifact-name: nodejs.tar.zst
-        strip-components: 1
-        add-prefix: node/
-
 nodejs-22-macosx64:
     description: nodejs 22 for x64 macOS
     fetch:
@@ -626,17 +573,6 @@ nodejs-22-macosx64:
         url: https://nodejs.org/dist/v22.16.0/node-v22.16.0-darwin-x64.tar.xz
         sha256: 5c34638f2c0e3f3aaa7b3a94b58304765a169730da1896ebba8515ea4d987a9c
         size: 26966604
-        artifact-name: nodejs.tar.zst
-        strip-components: 1
-        add-prefix: node/
-
-nodejs-22-macosx64-arm64:
-    description: nodejs 22 for arm64 macOS
-    fetch:
-        type: static-url
-        url: https://nodejs.org/dist/v22.16.0/node-v22.16.0-darwin-arm64.tar.xz
-        sha256: aaf7fc3c936f1b359bc312b63638e41f258689ac2303966ad932cda18c54ea00
-        size: 24867980
         artifact-name: nodejs.tar.zst
         strip-components: 1
         add-prefix: node/
@@ -652,46 +588,57 @@ nodejs-22-win32:
         strip-components: 1
         add-prefix: node/
 
-nodejs-22-win64:
-    description: nodejs 22 for x64 Windows
-    fetch:
-        type: static-url
-        url: https://nodejs.org/dist/v22.16.0/node-v22.16.0-win-x64.zip
-        sha256: 21c2d9735c80b8f86dab19305aa6a9f6f59bbc808f68de3eef09d5832e3bfbbd
-        size: 35466975
-        artifact-name: nodejs.tar.zst
-        strip-components: 1
-        add-prefix: node/
-
-nodejs-22-win-arm64:
-    description: nodejs 22 for arm64 Windows
-    fetch:
-        type: static-url
-        url: https://nodejs.org/dist/v22.16.0/node-v22.16.0-win-arm64.zip
-        sha256: 31e885dcd06355f67b4be8cca86464270d83d0f5b8d4e3d4369c16ed22a5f4fa
-        size: 31373500
-        artifact-name: nodejs.tar.zst
-        strip-components: 1
-        add-prefix: node/
-
-nodejs-22-source:
-    description: nodejs 22 source
-    fetch:
-        type: static-url
-        url: https://nodejs.org/dist/v22.16.0/node-v22.16.0.tar.gz
-        sha256: 108f250ff79cc103b464b3ef41fa60f4866e4e6c962117171adaac7325ebdab2
-        size: 100514588
-        artifact-name: nodejs.tar.zst
-        strip-components: 1
-        add-prefix: node/
-
 nodejs-24-linux64:
     description: nodejs 24 for x64 linux
     fetch:
         type: static-url
-        url: https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.xz
-        sha256: 472655581fb851559730c48763e0c9d3bc25975c59d518003fc0849d3e4ba0f6
-        size: 31164460
+        url: https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz
+        sha256: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+        size: 31890184
+        artifact-name: nodejs.tar.zst
+        strip-components: 1
+        add-prefix: node/
+
+nodejs-24-linux64-arm64:
+    description: nodejs 24 for arm64 linux
+    fetch:
+        type: static-url
+        url: https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.xz
+        sha256: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+        size: 30843004
+        artifact-name: nodejs.tar.zst
+        strip-components: 1
+        add-prefix: node/
+
+nodejs-24-macosx64-arm64:
+    description: nodejs 24 for arm64 macOS
+    fetch:
+        type: static-url
+        url: https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.xz
+        sha256: 6239d4cf92d864487ec8cd3615038f7b67e7f58b77b21cd2f09ea9fbd68065fe
+        size: 27386080
+        artifact-name: nodejs.tar.zst
+        strip-components: 1
+        add-prefix: node/
+
+nodejs-24-win64:
+    description: nodejs 24 for x64 Windows
+    fetch:
+        type: static-url
+        url: https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip
+        sha256: 158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541
+        size: 37618919
+        artifact-name: nodejs.tar.zst
+        strip-components: 1
+        add-prefix: node/
+
+nodejs-24-win-arm64:
+    description: nodejs 24 for arm64 Windows
+    fetch:
+        type: static-url
+        url: https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-arm64.zip
+        sha256: 8779b1bde1d39f8d420e3b57aa657b39891af434d3de44a919044cec06785921
+        size: 33679608
         artifact-name: nodejs.tar.zst
         strip-components: 1
         add-prefix: node/
@@ -715,12 +662,12 @@ msix-packaging:
         revision: 1d068315fc1cff43c04837816c28a4a66cba22c1
 
 pkgconf:
-    description: pkgconf 2.5.1
+    description: pkgconf 3.0.7
     fetch:
         type: static-url
-        url: https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz
-        sha256: cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243
-        size: 328064
+        url: https://distfiles.ariadne.space/pkgconf/pkgconf-3.0.7.tar.xz
+        sha256: c926ff491cbd9a331a589160811bd97ab1749b4d5198a519338f2cdfabe6940a
+        size: 427648
         artifact-name: pkgconf.tar.zst
         strip-components: 1
         add-prefix: pkgconf/
@@ -744,7 +691,7 @@ symbol-scrapers:
     fetch:
         type: git
         repo: https://github.com/mozilla/symbol-scrapers
-        revision: 7070f9a4fa7a71413d84c80b3a53ae233e72ee55
+        revision: 7d405538e2f687b37e62445ae177db8a95405665
 
 openssl-1.1.1w:
     description: openssl 1.1.1w source code
@@ -758,12 +705,12 @@ openssl-1.1.1w:
         add-prefix: openssl-source/
 
 xz:
-    description: xz 5.8.3 source code
+    description: xz 5.8.4 source code
     fetch:
         type: static-url
-        url: https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.xz
-        sha256: fff1ffcf2b0da84d308a14de513a1aa23d4e9aa3464d17e64b9714bfdd0bbfb6
-        size: 1548064
+        url: https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.xz
+        sha256: 4ce24038fd4221e0d13bc1a2de7a4db56e90b92b3bf75321f6c14be73f65de4b
+        size: 1567192
         artifact-name: xz-source.tar.zst
         strip-components: 1
         add-prefix: xz-source/
@@ -822,11 +769,11 @@ windows-rs:
         add-prefix: windows-rs/
 
 libxml2:
-    description: libxml2 2.15.3 source code
+    description: libxml2 2.15.4 source code
     fetch:
         type: git
         repo: https://gitlab.gnome.org/GNOME/libxml2
-        revision: c94eb0210183b9d7cb43f8e7fddc6be55843ef49
+        revision: 96498992efa48d52b0e8b83058bd88dbdaf153c1
 
 mozilla-pdf.js:
     description: Mozilla pdf.js Github repo
@@ -845,11 +792,11 @@ xmlstarlet-1.6.1:
         artifact-name: xmlstarlet.deb
 
 uv:
-    description: uv 0.11.28 source code
+    description: uv 0.13.4 source code
     fetch:
         type: git
         repo: https://github.com/astral-sh/uv
-        revision: ebf0f43d7c4267876fc256f5fce75982c33f4399
+        revision: 7456b60bc6bc348e13e06e3691bf08e78d3aef54
 
 dxc-src:
     description: Source code for mozilla's DXC fork
@@ -868,12 +815,12 @@ jj:
         revision: 2508982cde5c7e4db0933e0b6469f9e778e71e28
 
 searchfox-cli:
-    description: searchfox-cli 0.19.0 source code
+    description: searchfox-cli 0.20.5 source code
     fetch:
         type: static-url
-        url: https://crates.io/api/v1/crates/searchfox-cli/0.19.0/download
-        sha256: 25612ec327e523e8e253f009a55157eae079431bdc8a93d1015c59dada4f6b3f
-        size: 26768
+        url: https://crates.io/api/v1/crates/searchfox-cli/0.20.5/download
+        sha256: e77e5334075599c4263b973effbb42d63769cb4cdd0dc6c1a8b5a39662e3ef65
+        size: 26871
         artifact-name: searchfox-cli.tar.zst
         strip-components: 1
         add-prefix: searchfox-cli/
@@ -890,34 +837,34 @@ socorro-cli:
         add-prefix: socorro-cli/
 
 stmo-cli:
-    description: stmo-cli 0.9.1 source code
+    description: stmo-cli 0.12.0 source code
     fetch:
         type: static-url
-        url: https://crates.io/api/v1/crates/stmo-cli/0.9.1/download
-        sha256: c76a2f976d24294c145a8d7a22ee9e7e048b054d29d397c43d5007144badd7e8
-        size: 88219
+        url: https://crates.io/api/v1/crates/stmo-cli/0.12.0/download
+        sha256: fa6b363ab846d1f637eb158fe90386378d1e5aa7c509e034c4e108963155bb86
+        size: 110603
         artifact-name: stmo-cli.tar.zst
         strip-components: 1
         add-prefix: stmo-cli/
 
 treeherder-cli:
-    description: treeherder-cli 0.2.16 source code
+    description: treeherder-cli 0.3.1 source code
     fetch:
         type: static-url
-        url: https://crates.io/api/v1/crates/treeherder-cli/0.2.16/download
-        sha256: 918230aacff5e5b71a42290a2d2d8ad82480b7c3dca565cfe4abd63abafde6ff
-        size: 126790
+        url: https://crates.io/api/v1/crates/treeherder-cli/0.3.1/download
+        sha256: a44fbca9fa66907d2aa9f8491a923a7402e5619e55a508b3269ea74b77f96cd2
+        size: 141088
         artifact-name: treeherder-cli.tar.zst
         strip-components: 1
         add-prefix: treeherder-cli/
 
 webspec-index:
-    description: webspec-index 0.12.0 source code
+    description: webspec-index 0.14.0 source code
     fetch:
         type: static-url
-        url: https://crates.io/api/v1/crates/webspec-index/0.12.0/download
-        sha256: 1a82dc18333061cf11092ebf7f8f509ca36ae682b525ed3e8701c9b9c8f8ad2f
-        size: 184601
+        url: https://crates.io/api/v1/crates/webspec-index/0.14.0/download
+        sha256: fb284978424cd61eca5b3343056353d362354d0088c08dcaec2878028ab00555
+        size: 1249963
         artifact-name: webspec-index.tar.zst
         strip-components: 1
         add-prefix: webspec-index/
@@ -927,7 +874,7 @@ firefox-profiler:
     fetch:
         type: git
         repo: https://github.com/firefox-devtools/profiler
-        revision: a04f7ea013f28042d203b2c2db3fc632506d2903
+        revision: d019001a67a2d34ca2276ece14e9a60a29e671ef
 
 # See https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/downloads
 # We can't catch regressions from these updates in CI. Testing should focus on
@@ -937,7 +884,7 @@ windowsappsdk-redist:
     description: Windows App SDK Redistributable
     fetch:
         type: static-url
-        url: https://aka.ms/windowsappsdk/2.2/2.2.0/Microsoft.WindowsAppRuntime.Redist.2.2.zip
-        sha256: ab078d5b1d730f093ed4e1a33d0e709d1dbca85fa4a10f546cc6824e3b48057f
-        size: 478796379
+        url: https://aka.ms/windowsappsdk/2.5/2.5.1/Microsoft.WindowsAppRuntime.Redist.2.5.zip
+        sha256: 3c6d3b4d80a194bb4f9a9a91e00f074b7d539929ab53fb7dde3ef9d8a21ddbb4
+        size: 528498305
         artifact-name: Microsoft.WindowsAppRuntime.Redist.tar.zst

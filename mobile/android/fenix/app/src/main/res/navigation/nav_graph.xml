@@ -58,11 +58,6 @@
         app:launchSingleTop="true" />
 
     <action
-      android:id="@+id/action_global_ip_protection_dialog"
-      app:destination="@+id/ipProtectionOnboardingDialogFragment"
-      app:launchSingleTop="true" />
-
-    <action
       android:id="@+id/action_global_ip_protection_unavailable_dialog"
       app:destination="@+id/ipProtectionUnavailableDialogFragment"
       app:launchSingleTop="true" />
@@ -191,7 +186,7 @@
         app:destination="@id/tabsSettingsFragment" />
     <action
         android:id="@+id/action_global_menuDialogFragment"
-        app:destination="@id/menu_graph" />
+        app:destination="@id/menu_dialog_graph" />
     <action
         android:id="@+id/action_global_trustPanelFragment"
         app:destination="@id/trust_panel_graph" />
@@ -201,11 +196,11 @@
         app:popUpToInclusive="true"
         app:destination="@+id/unlockPrivateTabsFragment"/>
     <action
-        android:id="@+id/action_global_customReviewPromptDialogFragment"
-        app:destination="@id/customReviewPromptDialogFragment" />
-    <action
         android:id="@+id/action_global_to_installedAddonDetailsFragment"
         app:destination="@id/installedAddonDetailsFragment" />
+    <action
+        android:id="@+id/action_global_addonDetailsFragment"
+        app:destination="@id/addonDetailsFragment" />
     <action
         android:id="@+id/action_global_to_downloadAddonDialogFragment"
         app:destination="@id/downloadAddonDialogFragment" />
@@ -217,6 +212,11 @@
     <action
         android:id="@+id/action_global_protections_dashboard"
         app:destination="@+id/global_protections_dashboard"/>
+
+    <action
+        android:id="@+id/action_global_pairFragment"
+        app:destination="@+id/pairFragment"
+        app:launchSingleTop="true"/>
 
     <fragment
         android:id="@+id/tabManagementFragment"
@@ -237,6 +237,14 @@
             android:id="@+id/action_tabManagementFragment_to_global_protections_dashboard"
             app:destination="@id/global_protections_dashboard" />
     </fragment>
+
+    <dialog
+        android:id="@+id/tabGroupFlowFragment"
+        android:name="org.mozilla.fenix.tabgroups.flow.TabGroupFlowFragment">
+        <argument
+            android:name="entryPoint"
+            app:argType="org.mozilla.fenix.tabgroups.flow.TabGroupFlowEntryPoint" />
+    </dialog>
 
     <fragment
         android:id="@+id/startupFragment"
@@ -300,6 +308,9 @@
         <action
             android:id="@+id/action_homeFragment_to_global_protections_dashboard"
             app:destination="@id/global_protections_dashboard" />
+        <action
+          android:id="@+id/action_homeFragment_to_menuFragment"
+          app:destination="@id/menu_graph" />
     </fragment>
 
     <fragment
@@ -367,9 +378,6 @@
     <dialog
         android:id="@+id/ipProtectionOnboardingDialogFragment"
         android:name="org.mozilla.fenix.ipprotection.ui.IPProtectionBottomSheetFragment">
-        <action
-           android:id="@+id/action_ipProtectionOnboardingDialogFragment_to_ipProtectionFragment"
-           app:destination="@id/ipProtectionFragment" />
         <argument
             android:name="surface"
             app:argType="org.mozilla.fenix.ipprotection.store.Surface"
@@ -437,6 +445,9 @@
             app:popUpTo="@id/storiesFragment"
             app:popUpToInclusive="false"
             app:launchSingleTop="true" />
+        <action
+          android:id="@+id/action_browserFragment_to_menuFragment"
+          app:destination="@id/menu_graph" />
     </fragment>
 
     <fragment
@@ -454,6 +465,19 @@
         <argument
             android:name="isSandboxCustomTab"
             app:argType="boolean" />
+        <action
+            android:id="@+id/action_externalAppBrowserFragment_to_menuFragment"
+            app:destination="@id/menu_graph">
+            <argument
+                android:name="customTabSessionId"
+                android:defaultValue="@null"
+                app:argType="string"
+                app:nullable="true" />
+            <argument
+                android:name="isSandboxCustomTab"
+                android:defaultValue="false"
+                app:argType="boolean" />
+        </action>
     </fragment>
 
     <fragment
@@ -1490,6 +1514,11 @@
             android:id="@+id/searchEngineFragment"
             android:name="org.mozilla.fenix.settings.search.SearchEngineFragment"
             android:label="@string/preferences_search">
+            <argument
+                android:name="preference_to_scroll_to"
+                android:defaultValue="@null"
+                app:argType="string"
+                app:nullable="true" />
             <action
                 android:id="@+id/action_searchEngineFragment_to_defaultEngineFragment"
                 app:destination="@+id/defaultEngineFragment" />
@@ -1767,7 +1796,7 @@
     </navigation>
 
     <navigation
-        android:id="@+id/menu_graph"
+        android:id="@+id/menu_dialog_graph"
         app:startDestination="@id/menuDialogFragment">
         <argument
             android:name="accesspoint"
@@ -1826,8 +1855,81 @@
             <action
                 android:id="@+id/action_menuDialogFragment_to_ipProtectionFragment"
                 app:destination="@id/ipProtectionFragment" />
+            <action
+                android:id="@+id/action_menuDialogFragment_to_tabGroupFlowFragment"
+                app:destination="@id/tabGroupFlowFragment" />
         </dialog>
     </navigation>
+
+  <navigation
+    android:id="@+id/menu_graph"
+    app:startDestination="@id/menuFragment">
+    <argument
+      android:name="accessPoint"
+      app:argType="org.mozilla.fenix.components.menu.MenuAccessPoint" />
+    <argument
+      android:name="customTabSessionId"
+      android:defaultValue="@null"
+      app:nullable="true"
+      app:argType="string" />
+    <argument
+      android:name="isSandboxCustomTab"
+      android:defaultValue="false"
+      app:argType="boolean" />
+
+    <dialog
+      android:id="@+id/menuFragment"
+      android:name="org.mozilla.fenix.components.menu.MenuFragment">
+      <argument
+        android:name="accessPoint"
+        app:argType="org.mozilla.fenix.components.menu.MenuAccessPoint" />
+      <argument
+        android:name="customTabSessionId"
+        android:defaultValue="@null"
+        app:argType="string"
+        app:nullable="true" />
+      <argument
+        android:name="isSandboxCustomTab"
+        android:defaultValue="false"
+        app:argType="boolean" />
+
+      <action
+        android:id="@+id/action_menuFragment_to_translationsDialogFragment"
+        app:destination="@id/translationsDialogFragment" />
+
+      <action
+        android:id="@+id/action_menuFragment_to_summarizationFragment"
+        app:destination="@id/summarizationFragment" />
+
+      <action
+        android:id="@+id/action_menuFragment_to_webCompatReporterFragment"
+        app:destination="@id/webCompatReporterFragment" />
+
+      <action
+        android:id="@+id/action_menuFragment_to_createShortcutFragment"
+        app:destination="@id/createShortcutFragment" />
+
+      <action
+        android:id="@+id/action_menuFragment_to_loginsListFragment"
+        app:destination="@id/savedLogins" />
+
+      <action
+        android:id="@+id/action_menuFragment_to_storiesFragment"
+        app:destination="@id/storiesFragment"
+        app:popUpTo="@id/storiesFragment"
+        app:popUpToInclusive="false"
+        app:launchSingleTop="true" />
+
+      <action
+        android:id="@+id/action_menuFragment_to_fenixCustomizeMenuFragment"
+        app:destination="@id/fenixCustomizeMenuFragment" />
+    </dialog>
+  </navigation>
+
+    <fragment
+      android:id="@+id/fenixCustomizeMenuFragment"
+      android:name="org.mozilla.fenix.components.menu.FenixCustomizeMenuFragment"
+      android:label="FenixCustomizeMenuFragment" />
 
     <navigation
         android:id="@+id/trust_panel_graph"
@@ -1907,8 +2009,4 @@
             app:argType="string"
             app:nullable="true" />
     </dialog>
-
-    <dialog
-        android:id="@+id/customReviewPromptDialogFragment"
-        android:name="org.mozilla.fenix.reviewprompt.CustomReviewPromptBottomSheetFragment" />
 </navigation>

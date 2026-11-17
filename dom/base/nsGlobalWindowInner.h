@@ -117,6 +117,7 @@ class MediaQueryList;
 class OwningExternalOrWindowProxy;
 class Promise;
 class PostMessageEvent;
+class PushManager;
 struct RequestInit;
 class RequestOrUTF8String;
 class SharedWorker;
@@ -468,6 +469,11 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   static void ShutDown();
   static bool IsCallerChrome();
 
+  // Called on a trusted mouseup or dragend, and when a drag session ends, as
+  // the mouse button is up even if no dragend was dispatched. Lifts the drag
+  // service suppression that CanMoveResizeWindows added while it was down.
+  static void MouseButtonReleased();
+
   friend class WindowStateHolder;
 
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS_AMBIGUOUS(
@@ -655,6 +661,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   nsPIDOMWindowOuter* GetInProcessScriptableParent() override;
   mozilla::dom::Element* GetFrameElement(nsIPrincipal& aSubjectPrincipal,
                                          mozilla::ErrorResult& aError);
+  MOZ_CAN_RUN_SCRIPT
   mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> Open(
       const nsAString& aUrl, const nsAString& aName, const nsAString& aOptions,
       mozilla::ErrorResult& aError);
@@ -671,6 +678,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   }
 
   mozilla::dom::DocumentPictureInPicture* DocumentPictureInPicture();
+  mozilla::dom::PushManager* GetPushManager(JSContext* aCx,
+                                            mozilla::ErrorResult& aRv);
 
   // https://w3c.github.io/webappsec-secure-contexts/#dom-window-issecurecontext
   bool IsSecureContext() const;
@@ -885,6 +894,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   bool DidFireDocElemInserted() const { return mDidFireDocElemInserted; }
   void SetDidFireDocElemInserted() { mDidFireDocElemInserted = true; }
 
+  MOZ_CAN_RUN_SCRIPT
   mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> OpenDialog(
       JSContext* aCx, const nsAString& aUrl, const nsAString& aName,
       const nsAString& aOptions,
@@ -1311,7 +1321,11 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
     return mClientSource.get();
   }
 
+  void HoldOldPrincipal(nsIPrincipal* aPrincipal);
+
  private:
+  void ClearOldPrincipalsIfNotNestedEventLoop();
+
   RefPtr<mozilla::dom::ContentMediaController> mContentMediaController;
 
   RefPtr<mozilla::dom::WebTaskSchedulerMainThread> mWebTaskScheduler;
@@ -1412,6 +1426,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   RefPtr<mozilla::dom::DocumentPictureInPicture> mDocumentPiP;
   RefPtr<mozilla::dom::Worklet> mPaintWorklet;
   RefPtr<mozilla::dom::External> mExternal;
+  RefPtr<mozilla::dom::PushManager> mPushManager;
 
   RefPtr<mozilla::dom::Storage> mLocalStorage;
   RefPtr<mozilla::dom::Storage> mSessionStorage;
@@ -1525,6 +1540,12 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   RefPtr<mozilla::dom::DataTransfer> mCurrentPasteDataTransfer;
 
   nsTArray<nsCString> mMediaSourceURLs;
+
+  // Holder for past principals to keep them alive so that we need to refcount
+  // them only when we actually swap principals and we don't need to refcount
+  // them on hot code paths in bindings that use raw pointers and must not
+  // get the principal deleted from underneath them.
+  nsTArray<nsCOMPtr<nsIPrincipal>> mOldPrincipals;
 
   // These fields are used by the inner and outer windows to prevent
   // programatically moving the window while the mouse is down.

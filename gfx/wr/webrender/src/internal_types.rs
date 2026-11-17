@@ -291,15 +291,9 @@ impl Filter {
             Filter::Opacity(api::PropertyBinding::Value(amount), _) => amount >= 1.0,
             Filter::Saturate(amount) => amount == 1.0,
             Filter::Sepia(amount) => amount == 0.0,
-            Filter::DropShadows(ref shadows) => {
-                for shadow in shadows {
-                    if shadow.offset.x != 0.0 || shadow.offset.y != 0.0 || shadow.blur_radius != 0.0 {
-                        return false;
-                    }
-                }
-
-                true
-            }
+            // A shadow with no offset and no blur is still visible beneath
+            // any translucent pixels of the source.
+            Filter::DropShadows(ref shadows) => shadows.iter().all(|shadow| shadow.color.a == 0.0),
             Filter::ColorMatrix(ref matrix) => {
                 **matrix == [
                     1.0, 0.0, 0.0, 0.0,
@@ -400,7 +394,7 @@ impl From<FilterOp> for Filter {
             FilterOp::SVGFEDiffuseLightingDistant{node, surface_scale, diffuse_constant, kernel_unit_length_x, kernel_unit_length_y, azimuth, elevation} => Filter::SVGGraphNode(node.into(), FilterGraphOp::SVGFEDiffuseLightingDistant{surface_scale, diffuse_constant, kernel_unit_length_x, kernel_unit_length_y, azimuth, elevation}),
             FilterOp::SVGFEDiffuseLightingPoint{node, surface_scale, diffuse_constant, kernel_unit_length_x, kernel_unit_length_y, x, y, z} => Filter::SVGGraphNode(node.into(), FilterGraphOp::SVGFEDiffuseLightingPoint{surface_scale, diffuse_constant, kernel_unit_length_x, kernel_unit_length_y, x, y, z}),
             FilterOp::SVGFEDiffuseLightingSpot{node, surface_scale, diffuse_constant, kernel_unit_length_x, kernel_unit_length_y, x, y, z, points_at_x, points_at_y, points_at_z, cone_exponent, limiting_cone_angle} => Filter::SVGGraphNode(node.into(), FilterGraphOp::SVGFEDiffuseLightingSpot{surface_scale, diffuse_constant, kernel_unit_length_x, kernel_unit_length_y, x, y, z, points_at_x, points_at_y, points_at_z, cone_exponent, limiting_cone_angle}),
-            FilterOp::SVGFEDisplacementMap{node, scale, x_channel_selector, y_channel_selector} => Filter::SVGGraphNode(node.into(), FilterGraphOp::SVGFEDisplacementMap{scale, x_channel_selector, y_channel_selector}),
+            FilterOp::SVGFEDisplacementMap{node, scale_x, scale_y, x_channel_selector, y_channel_selector} => Filter::SVGGraphNode(node.into(), FilterGraphOp::SVGFEDisplacementMap{scale_x, scale_y, x_channel_selector, y_channel_selector}),
             FilterOp::SVGFEDropShadow{node, color, dx, dy, std_deviation_x, std_deviation_y} => Filter::SVGGraphNode(node.into(), FilterGraphOp::SVGFEDropShadow{color, dx, dy, std_deviation_x, std_deviation_y}),
             FilterOp::SVGFEFlood{node, color} => Filter::SVGGraphNode(node.into(), FilterGraphOp::SVGFEFlood{color}),
             FilterOp::SVGFEGaussianBlur{node, std_deviation_x, std_deviation_y} => Filter::SVGGraphNode(node.into(), FilterGraphOp::SVGFEGaussianBlur{std_deviation_x, std_deviation_y}),

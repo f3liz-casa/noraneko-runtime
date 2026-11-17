@@ -6,6 +6,7 @@
 #define DOM_WEBTRANSPORT_API_WEBTRANSPORT_H_
 
 #include "mozilla/dom/BufferSourceBindingFwd.h"
+#include "mozilla/dom/PWebTransport.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/WebTransportBinding.h"
 #include "mozilla/dom/WebTransportChild.h"
@@ -24,6 +25,7 @@
 
 namespace mozilla::dom {
 
+class Headers;
 class WebTransportError;
 class WebTransportDatagramDuplexStream;
 class WebTransportIncomingStreamsAlgorithms;
@@ -90,10 +92,18 @@ class WebTransport final : public nsISupports, public nsWrapperCache {
   void NewDatagramReceived(nsTArray<uint8_t>&& aData,
                            const mozilla::TimeStamp& aTimeStamp);
 
+  void OnDatagramReady(uint64_t aDatagramId);
+
   void RemoteClosed(bool aCleanly, const uint32_t& aCode,
-                    const nsACString& aReason);
+                    const nsACString& aReason,
+                    const Maybe<WebTransportStatsData>& aStats);
 
   void SetNegotiatedProtocol(const nsACString& aProtocol);
+  void SetResponseHeaders(
+      nsTArray<mozilla::ipc::WebTransportHeader>&& aHeaders);
+
+  // WebIDL
+  Headers* GetResponseHeaders() { return mResponseHeaders; }
 
   void OnStreamResetOrStopSending(uint64_t aStreamId,
                                   const StreamResetOrStopSendingError& aError);
@@ -109,13 +119,15 @@ class WebTransport final : public nsISupports, public nsWrapperCache {
       const WebTransportOptions& aOptions, ErrorResult& aError);
 
   already_AddRefed<Promise> GetStats(ErrorResult& aError);
-  already_AddRefed<Promise> ExportKeyingMaterial(
-      const BufferSource& aLabel, const Optional<BufferSource>& aContext,
-      ErrorResult& aError);
+  already_AddRefed<Promise> ExportKeyingMaterial(const BufferSource& aLabel,
+                                                 const BufferSource& aContext,
+                                                 uint32_t aOutputLength,
+                                                 ErrorResult& aError);
 
   already_AddRefed<Promise> Ready() { return do_AddRef(mReady); }
   WebTransportReliabilityMode Reliability();
   WebTransportCongestionControl CongestionControl();
+  static bool SupportsReliableOnly(const GlobalObject& aGlobal);
   void GetProtocol(nsAString& aProtocol);
   already_AddRefed<Promise> Draining() { return do_AddRef(mDraining); }
   already_AddRefed<Promise> Closed() { return do_AddRef(mClosed); }
@@ -154,6 +166,11 @@ class WebTransport final : public nsISupports, public nsWrapperCache {
       const WebTransportSendStreamOptions& aOptions,
       WebTransportSendGroup* aSendGroup, int64_t aSendOrder, ErrorResult& aRv);
 
+  // Issues the IPC GetStats request and wires the response to aPromise. Used
+  // both immediately (when connected) and deferred until [[Ready]] settles
+  // (when called during "connecting").
+  void SendGetStatsRequest(Promise* aPromise);
+
   nsCOMPtr<nsIGlobalObject> mGlobal;
   // We are the owner of WebTransportChild.  We must call Shutdown() on it
   // before we're destroyed.
@@ -186,6 +203,7 @@ class WebTransport final : public nsISupports, public nsWrapperCache {
       mIncomingUnidirectionalAlgorithm;
   WebTransportReliabilityMode mReliability;
   nsString mProtocol;
+  RefPtr<Headers> mResponseHeaders;
   // Incoming streams get queued here.  Use a TArray though it's working as
   // a FIFO - rarely will there be more than one entry in these arrays, so
   // the overhead of mozilla::Queue is unneeded
@@ -199,6 +217,14 @@ class WebTransport final : public nsISupports, public nsWrapperCache {
   RefPtr<ReadableStream> mIncomingBidirectionalStreams;
   RefPtr<WebTransportDatagramDuplexStream> mDatagrams;
   RefPtr<Promise> mClosed;
+
+  Maybe<WebTransportStatsData> mCachedStats;
+  uint64_t mCachedDroppedIncoming = 0;
+  uint64_t mCachedExpiredIncoming = 0;
+
+  // Close pending state and queued GetStats requests
+  bool mClosePending = false;
+  nsTArray<RefPtr<Promise>> mPendingGetStatsPromises;
 };
 
 }  // namespace mozilla::dom

@@ -19,12 +19,46 @@ import {
   GET_AITAB_BY_SLUG_AND_VERSION,
   GET_AITAB_VERSIONS_BY_SLUG,
   GET_AITAB_PAGES_BY_CONV_ID,
+  DELETE_AITAB_PAGES_BY_SLUG,
+  SLUG_EXISTS,
+  DELETE_AITAB_VERSIONS_BEFORE,
 } from "moz-src:///browser/components/aiwindow/ui/modules/AITabSql.sys.mjs";
 import { SQLiteStoreBase } from "moz-src:///browser/components/aiwindow/ui/modules/SQLiteStoreBase.sys.mjs";
 import {
   parseJSONOrNull,
   toJSONOrNull,
 } from "moz-src:///browser/components/aiwindow/ui/modules/ChatUtils.sys.mjs";
+
+/**
+ * Represents a row from the aitab_pages table in the
+ * ai-tab-pages-store.sqlite database.
+ *
+ * @typedef {object} AITabRow
+ * @property {string} uuid - Identifier for this version.
+ * @property {string} convId - Conversation that owns the page.
+ * @property {string|null} toolConvId - Conversation used to generate the page.
+ * @property {string} slug - URL identifier shared across versions.
+ * @property {number} version - Sequential version number.
+ * @property {string} title - Page title.
+ * @property {number} createdAt - Creation time in microseconds since the Unix epoch.
+ * @property {number} updatedAt - Update time in microseconds since the Unix epoch.
+ * @property {object|null} context - Inputs used to generate the page.
+ * @property {*} components - Component data decoded from stored JSON.
+ * @property {object|null} localState - Saved component state, such as checkboxes.
+ */
+
+// How far #mintSlug will count before giving up on a readable slug.
+const MAX_SLUG_SUFFIX = 50;
+
+/**
+ * @param {Date} date
+ * @returns {string} The local calendar date as YYYY-MM-DD.
+ */
+function formatLocalDate(date) {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
 
 /**
  * Simple interface to store and retrieve AITab UI specific data
@@ -65,13 +99,17 @@ class AITabStore extends SQLiteStoreBase {
   }
 
   /**
-   * Creates a new tab: the first version for a new conv_id. Rejects if the
-   * conv_id already has a version (use edit instead).
+   * Creates a new tab at version 1.
+   *
+   * `page.slug` is the slug the caller would like; the stored slug is derived
+   * from it and is returned on the result, so callers must read it back
+   * rather than assume they got what they asked for. Slugs come from page
+   * titles, which repeat, so this is the layer that settles who holds one.
    *
    * @param {object} page - Page fields: convId, slug, title, and optional
-   *   context, components, localState
-   * @returns {Promise<object>} The persisted page (with generated uuid,
-   *   version, and timestamps)
+   *   toolConvId, context, components, localState
+   * @returns {Promise<object>} The persisted page (with the slug it was
+   *   stored under, plus generated uuid, version, and timestamps)
    */
   async create(page) {
     return this.#insertNextVersion(page, { expectNew: true });
@@ -79,11 +117,11 @@ class AITabStore extends SQLiteStoreBase {
 
   /**
    * Persists an edit as a new version of an existing tab. The version is the
-   * current highest version for the conv_id plus one. Rejects if the conv_id
-   * has no existing version (use create instead).
+   * current highest version for the slug plus one. Rejects if the slug has no
+   * existing version (use create instead).
    *
    * @param {object} page - Page fields: convId, slug, title, and optional
-   *   context, components, localState
+   *   toolConvId, context, components, localState
    * @returns {Promise<object>} The newly persisted version
    */
   async edit(page) {
@@ -95,7 +133,7 @@ class AITabStore extends SQLiteStoreBase {
    * "load the page" query: a slug-only URL implies the newest version.
    *
    * @param {string} slug
-   * @returns {Promise<?object>} The latest version, or null if no tab matches
+   * @returns {Promise<AITabRow|null>} The latest version, or null if no tab matches
    */
   async getBySlug(slug) {
     await this.#ensureConnection();
@@ -163,6 +201,47 @@ class AITabStore extends SQLiteStoreBase {
   }
 
   /**
+   * Deletes every version of the tab with the given slug older than
+   * `version`, leaving that one as the only version of the page.
+   *
+   * The version numbers of the rows that remain are untouched, so the next
+   * write still lands above them: this prunes history without resetting it.
+   *
+   * @param {string} slug
+   * @param {number} version - The version to keep.
+   */
+  async deleteVersionsBefore(slug, version) {
+    await this.#ensureConnection();
+
+    await this.connection.execute(DELETE_AITAB_VERSIONS_BEFORE, {
+      slug,
+      version,
+    });
+  }
+
+  /**
+   * Deletes every version of the tab with the given slug.
+   *
+   * Keyed on slug rather than conv_id to use the (slug, version) index. The
+   * UNIQUE constraint on that index means a slug belongs to exactly one
+   * conversation, so this cannot reach another tab's rows.
+   *
+   * The conversation each row names in `tool_conv_id` lives in a different
+   * database file, so nothing cascades from here: callers must also delete it
+   * through `ConversationStore.deleteConversationById`, using an id read off
+   * the page before this call takes the row that carries it. Delete the pages
+   * first — a conversation left without pages is unreachable, whereas pages
+   * left without a conversation still load by slug.
+   *
+   * @param {string} slug
+   */
+  async deleteBySlug(slug) {
+    await this.#ensureConnection();
+
+    await this.connection.execute(DELETE_AITAB_PAGES_BY_SLUG, { slug });
+  }
+
+  /**
    * Converts an aitab_pages result row into a plain page object.
    *
    * @param {mozIStorageRow} row
@@ -172,6 +251,7 @@ class AITabStore extends SQLiteStoreBase {
     return {
       uuid: row.getResultByName("uuid"),
       convId: row.getResultByName("conv_id"),
+      toolConvId: row.getResultByName("tool_conv_id"),
       slug: row.getResultByName("slug"),
       version: row.getResultByName("version"),
       title: row.getResultByName("title"),
@@ -184,26 +264,35 @@ class AITabStore extends SQLiteStoreBase {
   }
 
   /**
-   * Inserts the next version row for a conv_id. The version is computed as
-   * MAX(existing version) + 1 (so 1 for a new tab). The version read and
-   * the insert run in one transaction so concurrent writers can't collide on
-   * the same version number.
+   * Inserts the next version row for a slug. A create mints a free slug and
+   * stores version 1; an edit addresses the slug it was given and stores
+   * MAX(existing version) + 1. Resolving the slug or version and inserting
+   * the row run in one transaction, so two writers cannot settle on the same
+   * pair.
+   *
+   * Keyed on slug rather than conv_id because the slug is the page's identity
+   * and what UNIQUE (slug, version) is enforced on; a conversation can hold
+   * more than one page.
    *
    * @param {object} page
    * @param {string} page.convId - Conversation id the page belongs to
+   * @param {?string} [page.toolConvId] - Id of the conversation the page was
+   *   composed in, in the ConversationStore. Null when it is not known, which
+   *   is the case for every page stored before the column existed.
    * @param {string} page.slug - Opaque URL token supplied by the caller
    * @param {string} page.title - Human-readable title of the page
    * @param {*} [page.context] - Context describing how the page was created
    * @param {*} [page.components] - Component list describing how the page renders
    * @param {*} [page.localState] - Component state (checkboxes, etc.)
    * @param {object} opts
-   * @param {boolean} opts.expectNew - True for create (this must be the first
-   *   version); false for edit (a prior version must already exist).
+   * @param {boolean} opts.expectNew - True for create (mint a free slug and
+   *   store version 1); false for edit (a prior version must exist).
    * @returns {Promise<object>}
    */
   async #insertNextVersion(
     {
       convId,
+      toolConvId = null,
       slug,
       title,
       context = null,
@@ -217,30 +306,34 @@ class AITabStore extends SQLiteStoreBase {
     const uuid = crypto.randomUUID();
     const now = Date.now() * 1000;
     let version;
+    // A create can be moved off the slug it asked for; an edit names a page
+    // that already exists and has to keep it.
+    let storedSlug = slug;
 
     await this.connection
       .executeTransaction(async () => {
-        const rows = await this.connection.execute(GET_NEXT_VERSION, {
-          conv_id: convId,
-        });
-        version = rows[0].getResultByName("next_version");
+        if (expectNew) {
+          storedSlug = await this.#mintSlug(slug);
+          version = 1;
+        } else {
+          const rows = await this.connection.execute(GET_NEXT_VERSION, {
+            slug,
+          });
+          version = rows[0].getResultByName("next_version");
 
-        // version === 1 means this conv_id has no prior rows.
-        if (expectNew && version !== 1) {
-          throw new Error(
-            `create() called for existing tab "${convId}"; use edit()`
-          );
-        }
-        if (!expectNew && version === 1) {
-          throw new Error(
-            `edit() called for unknown tab "${convId}"; use create()`
-          );
+          // version === 1 means this slug has no prior rows.
+          if (version === 1) {
+            throw new Error(
+              `edit() called for unknown tab "${slug}"; use create()`
+            );
+          }
         }
 
         await this.connection.executeCached(AITAB_PAGE_INSERT, {
           uuid,
           conv_id: convId,
-          slug,
+          tool_conv_id: toolConvId,
+          slug: storedSlug,
           version,
           title,
           created_at: now,
@@ -262,7 +355,8 @@ class AITabStore extends SQLiteStoreBase {
     return {
       uuid,
       convId,
-      slug,
+      toolConvId,
+      slug: storedSlug,
       version,
       title,
       createdAt: now,
@@ -271,6 +365,40 @@ class AITabStore extends SQLiteStoreBase {
       components,
       localState,
     };
+  }
+
+  /**
+   * A slug no tab holds yet, derived from `base`.
+   *
+   * Titles repeat. A taken slug gets today's date, then a counter:
+   * `base`, `base_YYYY-MM-DD`, `base_YYYY-MM-DD_1`, ...
+   * The check and the save happen together, so two pages saved at once can't get the same slug.
+   *
+   * Only called for a create, so `base` itself is available far more often
+   * than not and the loop usually ends on its first pass.
+   *
+   * @param {string} base - The slug the caller asked for.
+   * @returns {Promise<string>}
+   */
+  async #mintSlug(base) {
+    const dated = `${base}_${formatLocalDate(new Date())}`;
+    const candidates = [base, dated];
+    for (let suffix = 1; suffix <= MAX_SLUG_SUFFIX; suffix++) {
+      candidates.push(`${dated}_${suffix}`);
+    }
+
+    for (const candidate of candidates) {
+      const rows = await this.connection.execute(SLUG_EXISTS, {
+        slug: candidate,
+      });
+      if (!rows[0].getResultByName("taken")) {
+        return candidate;
+      }
+    }
+
+    // Enough same-titled pages to exhaust the numbered suffixes. Readability
+    // is already lost by this point, so take a slug that needs no search.
+    return `${dated}_${crypto.randomUUID().slice(0, 8)}`;
   }
 
   async #ensureConnection() {

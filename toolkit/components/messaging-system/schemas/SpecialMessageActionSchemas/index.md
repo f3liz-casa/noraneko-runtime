@@ -175,7 +175,9 @@ window or tab closed before sign-in could be completed.
 
 ### `SHOW_MIGRATION_WIZARD`
 
-* args: (none)
+* args:
+  * `source` (optional): key of the browser to pre-select, e.g. `"chrome"`
+  * `tabModal` (optional): `true` to open the wizard as a dialog over the current tab instead of in about:preferences
 
 Opens import wizard to bring in settings and data from another browser.
 
@@ -210,6 +212,12 @@ Opens `about:protections`
 ### `OPEN_PROTECTION_PANEL`
 
 Opens the protection panel behind on the lock icon of the awesomebar
+
+### `OPEN_SMARTWINDOW_MONITOR_CREATE`
+
+Opens the Smart Window Monitor toolbar panel straight to the create form.
+
+* args: (none)
 
 ### `DISABLE_STP_DOORHANGERS`
 
@@ -545,6 +553,14 @@ Any message that uses this action should have `canCreateSelectableProfiles` as p
 
 - args: (none)
 
+### `RESET_PROFILE`
+
+Opens the refresh confirmation dialog, which resets the current profile and restarts the browser
+
+Any message that uses this action should have `canResetProfile` as part of the targeting, to ensure we don't show a message where the action will not work.
+
+- args: (none)
+
 ### `SUBMIT_ONBOARDING_OPT_OUT_PING`
 
 Submits a Glean `onboarding-opt-out` ping.  Should only be used during preonboarding (but this is not enforced).
@@ -687,6 +703,26 @@ Removes Firefox from Windows login items.
 
 - args: (none)
 
+### `ENABLE_CLOSED_BROWSER_NOTIFICATIONS`
+
+Turns on web notifications delivered while Firefox is closed, by setting the user-owned pref `app.backgroundNotifications.helper.enabled`.
+
+The helper that delivers them also needs `app.backgroundNotifications.helper.available`, which Nimbus owns, so this action has no effect unless the feature is available to the client.
+
+Windows only; a no-op on other platforms.
+
+- args: (none)
+
+### `DISABLE_CLOSED_BROWSER_NOTIFICATIONS`
+
+Turns off web notifications delivered while Firefox is closed, and stops the helper that delivers them.
+
+This writes only the user-owned pref, never the Nimbus-owned one, so a user opting out is not unenrolled from an experiment that made the feature available.
+
+Windows only; a no-op on other platforms.
+
+- args: (none)
+
 ### `SET_BROWSER_ICON`
 
 Changes the browser icon to the one identified by `id` using `CustomIconManager`. Icon ids that are not present in the catalog are ignored. The `"default"` id reverts to the browser's own icon. Windows only, and not supported on MSIX (packaged) builds.
@@ -701,3 +737,20 @@ Changes the browser icon to the one identified by `id` using `CustomIconManager`
 ### `GET_REFERRAL_CODE`
 
 Gets the user's referral code (or generates one if it doesn't exist), and opens about:referrals with the code as a param. Throws an error if referrals are not enabled.
+
+### `SELECT_AND_MARK_MENU_ITEM`
+
+Open the app menu and mark an item inside it, to point the user at a feature.
+Marking of a nested item is cancelled if the user opens a different subview.
+
+* args:
+```ts
+{
+  data: {
+    // ids of the items to select and mark. The first is in the app menu's
+    // main view; each later id is marked once the user opens the subview
+    // holding it.
+    itemIds: string[],
+  }
+}
+```

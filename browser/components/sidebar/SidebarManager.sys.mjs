@@ -26,7 +26,8 @@ const DEFAULT_HORIZONTAL_VISIBILITY = "hide-on-close";
 // New panels that are ready to be introduced to new sidebar users should be added to this list;
 // ensure your feature flag is enabled at the same time you do this and that its the same value as
 // what you added to .
-const DEFAULT_LAUNCHER_TOOLS = "aichat,syncedtabs,history,bookmarks,opentabs";
+const DEFAULT_LAUNCHER_TOOLS =
+  "opentabs,bookmarks,aichat,history,syncedtabs,passwords";
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
@@ -261,31 +262,6 @@ class SidebarManager extends EventTarget {
       );
       this.#savedVisibility = null;
     }
-  }
-
-  /**
-   * Has the new sidebar launcher already been visible and "used" in this profile?
-   */
-  get hasSidebarLauncherBeenVisible() {
-    // Its possible sidebar.revamp was enabled previously, but we can effectively reset if its currently false
-    if (!lazy.sidebarRevampEnabled) {
-      return false;
-    }
-    if (lazy.verticalTabsEnabled) {
-      return true;
-    }
-    // this pref tells us a sidebar panel has been opened, so it implies the launcher has
-    // been visible, but can't reliably indicate that the launcher has *not* been visible.
-    if (Services.prefs.getBoolPref("sidebar.new-sidebar.has-used", false)) {
-      return true;
-    }
-    // check if the launcher has ever been visible (in this session) in any of our open windows,
-    for (let w of lazy.BrowserWindowTracker.getOrderedWindows()) {
-      if (w.SidebarController.launcherEverVisible) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /**

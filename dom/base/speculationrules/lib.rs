@@ -55,6 +55,7 @@ pub enum ReferrerPolicy {
 
 #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[repr(u8)]
 pub enum Requirement {
     AnonymousClientIpWhenCrossOrigin,
 }
@@ -290,6 +291,12 @@ impl SpeculationRuleSet {
         }
         counters
     }
+
+    pub fn has_document_rules(&self) -> bool {
+        self.0
+            .iter()
+            .any(|rule| matches!(rule.source, Source::Document))
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -297,4 +304,11 @@ pub unsafe extern "C" fn speculation_rule_set_use_counters(
     rules: &SpeculationRuleSet,
 ) -> SpeculationRulesUsage {
     rules.use_counters()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn speculation_rule_set_has_document_rules(
+    rules: &SpeculationRuleSet,
+) -> bool {
+    rules.has_document_rules()
 }

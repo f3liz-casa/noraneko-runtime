@@ -325,7 +325,9 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
   void GetType(nsAString& aType);
   void GetHref(nsAString& aHref, ErrorResult& aRv);
   // GetOwnerNode is defined above.
-  StyleSheet* GetParentStyleSheet() const { return GetParentSheet(); }
+  already_AddRefed<StyleSheet> GetParentStyleSheet() const {
+    return do_AddRef(GetParentSheet());
+  }
   void GetTitle(nsAString& aTitle);
   dom::MediaList* Media();
   bool Disabled() const { return bool(mState & State::Disabled); }
@@ -339,7 +341,7 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
   // Can't be inline because we can't include ImportRule here.  And can't be
   // called GetOwnerRule because that would be ambiguous with the ImportRule
   // version.
-  css::Rule* GetDOMOwnerRule() const;
+  already_AddRefed<css::Rule> GetDOMOwnerRule() const;
   dom::CSSRuleList* GetCssRules(nsIPrincipal& aSubjectPrincipal, ErrorResult&);
   uint32_t InsertRule(const nsACString& aRule, uint32_t aIndex,
                       nsIPrincipal& aSubjectPrincipal, ErrorResult& aRv);

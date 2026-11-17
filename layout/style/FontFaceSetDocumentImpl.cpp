@@ -53,12 +53,9 @@ void FontFaceSetDocumentImpl::Initialize() {
   // In theory the load type of a docshell could change after the document
   // is loaded, but handling that doesn't seem too important.
   if (nsCOMPtr<nsIDocShell> docShell = mDocument->GetDocShell()) {
-    uint32_t loadType;
-    uint32_t flags;
-    if ((NS_SUCCEEDED(docShell->GetLoadType(&loadType)) &&
-         ((loadType >> 16) & nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE)) ||
-        (NS_SUCCEEDED(docShell->GetDefaultLoadFlags(&flags)) &&
-         (flags & nsIRequest::LOAD_BYPASS_CACHE))) {
+    if (((docShell->GetLoadType() >> 16) &
+         nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE) ||
+        (docShell->GetDefaultLoadFlags() & nsIRequest::LOAD_BYPASS_CACHE)) {
       mBypassCache = true;
     }
   }
@@ -198,14 +195,21 @@ TimeStamp FontFaceSetDocumentImpl::GetNavigationStartTimeStamp() {
   return navStart;
 }
 
+// There may be outstanding style changes that will trigger the loading of new
+// fonts. If we're in the loaded state already, we need to flush layout to
+// initiate any such loads so that if mReady is currently resolved we replace it
+// with a new pending Promise. (That replacement will happen under this flush
+// call.)
 void FontFaceSetDocumentImpl::EnsureReady() {
   MOZ_ASSERT(NS_IsMainThread());
+  {
+    RecursiveMutexAutoLock lock(mMutex);
+    if (mStatus == FontFaceSetLoadStatus::Loading) {
+      return;
+    }
+  }
 
-  // There may be outstanding style changes that will trigger the loading of
-  // new fonts.  We need to flush layout to initiate any such loads so that
-  // if mReady is currently resolved we replace it with a new pending Promise.
-  // (That replacement will happen under this flush call.)
-  if (!ReadyPromiseIsPending() && mDocument) {
+  if (mDocument) {
     mDocument->FlushPendingNotifications(FlushType::Layout);
   }
 }
@@ -629,9 +633,10 @@ StyleLockedFontFaceRule* FontFaceSetDocumentImpl::FindRuleForEntry(
   NS_ASSERTION(!aFontEntry->mIsUserFontContainer, "only platform font entries");
   for (uint32_t i = 0; i < mRuleFaces.Length(); ++i) {
     FontFaceImpl* f = mRuleFaces[i].mFontFace;
-    gfxUserFontEntry* entry = f->GetUserFontEntry();
-    if (entry && entry->GetPlatformFontEntry() == aFontEntry) {
-      return f->GetRule();
+    if (gfxUserFontEntry* entry = f->GetUserFontEntry()) {
+      if (entry->PlatformFontEntryEquals(aFontEntry)) {
+        return f->GetRule();
+      }
     }
   }
   return nullptr;

@@ -54,13 +54,12 @@ will lead to a smoother, more rapid process of review and acceptance.
 - Error messages that appear in web platform environments should
   explain the reason for the error, and use web platform terminology
   (as opposed to internal Firefox terminology). More details can be
-  found in the {ref}`helpful error messages guide
-  <Helpful error messages for web developers>`.
+  found in the {doc}`helpful error messages guide <helpful-error-messages>`.
 
 ## Style
 
 - Follow the [style
-  guide](https://firefox-source-docs.mozilla.org/code-quality/coding-style/index.html)
+  guide](/code-quality/coding-style/index.md)
   for the language and module in question.
 - Follow local style for the surrounding code, even if that local style
   isn't formally documented.

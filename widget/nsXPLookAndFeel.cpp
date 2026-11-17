@@ -544,6 +544,9 @@ static constexpr struct {
     {"browser.display.permit_backplate"_ns, widget::ThemeChangeKind::Style},
     {"ui.use_standins_for_native_colors"_ns, widget::ThemeChangeKind::Style},
     {"privacy.resistFingerprinting"_ns, widget::ThemeChangeKind::Style},
+    // This could be dealt with in nsPresContext::PreferenceChanged but
+    // accessibility telemetry gets recorded in PreferenceSheet.
+    {"layout.css.always_underline_links"_ns, widget::ThemeChangeKind::Style},
     // End of PreferenceSheet prefs.
 };
 
@@ -663,11 +666,11 @@ nscolor nsXPLookAndFeel::GetStandinForNativeColor(ColorID aID,
     case ColorID::Activeborder:
     case ColorID::Inactiveborder:
     case ColorID::Buttonborder:
-      return NS_RGB(0x8f, 0x8f, 0x9d);
+      return NS_RGB(0x81, 0x7f, 0x84);
 
       COLOR(MozButtonhoverborder, 0x67, 0x67, 0x74)
       COLOR(MozButtonactiveborder, 0x48, 0x48, 0x51)
-      COLORA(MozButtondisabledborder, 0x8f, 0x8f, 0x9d, 0x7f)
+      COLORA(MozButtondisabledborder, 0xc7, 0xc6, 0xcb, 0x7f)
 
       COLOR(Graytext, 0x6D, 0x6D, 0x6D)
       COLOR(Highlight, 0x33, 0x99, 0xFF)
@@ -787,8 +790,10 @@ Maybe<nscolor> nsXPLookAndFeel::GenericDarkColor(ColorID aID) {
     case ColorID::Threedlightshadow:
     case ColorID::Threedhighlight:
     case ColorID::Buttonborder:
+      color = NS_RGB(0x94, 0x92, 0x97);
+      break;
     case ColorID::MozButtondisabledborder:
-      color = NS_RGB(0x8f, 0x8f, 0x9d);
+      color = NS_RGBA(0x51, 0x50, 0x54, 0x7f);
       break;
     case ColorID::MozButtonactiveborder:
       color = NS_RGB(0xd0, 0xd0, 0xd7);

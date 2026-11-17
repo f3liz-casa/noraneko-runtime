@@ -17,7 +17,8 @@ use crate::values::computed::position::TryTacticAdjustment;
 use crate::values::computed::{NonNegativeNumber, Percentage, Zoom};
 use crate::values::generics::NonNegative;
 use crate::values::generics::length::{
-    GenericLengthOrNumber, GenericLengthPercentageOrNormal, GenericMaxSize, GenericSize,
+    GenericFitTolerance, GenericLengthOrNumber, GenericLengthPercentageOrNormal, GenericMaxSize,
+    GenericSize,
 };
 #[cfg(feature = "gecko")]
 use crate::values::generics::position::TreeScoped;
@@ -32,7 +33,7 @@ use thin_vec::ThinVec;
 pub use super::image::Image;
 pub use super::length_percentage::{LengthPercentage, NonNegativeLengthPercentage};
 pub use crate::values::specified::url::UrlOrNone;
-pub use crate::values::specified::{Angle, BorderStyle, Time};
+pub use crate::values::specified::{Angle, BorderStyle, NoCalcPercentage, Time};
 
 /// Some boilerplate to share between negative and non-negative
 /// length-percentage or auto.
@@ -452,6 +453,9 @@ impl From<NonNegativeLength> for Au {
 pub type NonNegativeLengthPercentageOrNormal =
     GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
 
+/// A computed `fit-tolerance` value.
+pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
+
 /// Either a non-negative `<length>` or a `<number>`.
 pub type NonNegativeLengthOrNumber = GenericLengthOrNumber<NonNegativeLength, NonNegativeNumber>;
 
@@ -548,6 +552,14 @@ impl TryTacticAdjustment for Size {
             #[cfg(feature = "gecko")]
             Self::MozAvailable => {},
         }
+    }
+}
+
+impl TryTacticAdjustment for NoCalcPercentage {
+    fn try_tactic_adjustment(&mut self, old_side: PhysicalSide, new_side: PhysicalSide) {
+        let mut percentage = Percentage(self.get());
+        percentage.try_tactic_adjustment(old_side, new_side);
+        *self = NoCalcPercentage::new(percentage.0);
     }
 }
 

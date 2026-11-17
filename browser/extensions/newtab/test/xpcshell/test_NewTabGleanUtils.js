@@ -111,6 +111,48 @@ add_task(async function test_registerMetricsAndPings_validFormat() {
 });
 
 /**
+ * Test case: A failed metric registration doesn't block later ones
+ * Verifies that registration continues past a failing metric, and reports
+ * the failure in its result
+ */
+add_task(async function test_registerMetricsAndPings_continuesAfterFailure() {
+  const sandbox = test_setup();
+
+  NewTabGleanUtils.readJSON.returns({
+    metrics: {
+      newtab_category: {
+        failing_metric: {
+          type: "text",
+          pings: ["newtab"],
+          disabled: false,
+        },
+        later_metric: {
+          type: "text",
+          lifetime: "ping",
+          pings: ["newtab"],
+          disabled: false,
+        },
+      },
+    },
+  });
+
+  let result =
+    await NewTabGleanUtils.registerMetricsAndPings(TEST_RESOURCE_URI);
+  Assert.ok(!result, "Registration reports the failed metric");
+  Assert.strictEqual(
+    Glean.newtab.metricRegistered.failing_metric.testGetValue(),
+    false,
+    "Failing metric is recorded as not registered"
+  );
+  Assert.ok(
+    Glean.newtab.metricRegistered.later_metric.testGetValue(),
+    "Metric after the failing one is still registered"
+  );
+
+  sandbox.restore();
+});
+
+/**
  * Test case: Handle ping configuration options name from runtime-metrics JSON
  * Verifies successful registration of pings with ping config options (such as `include_client_id`)
  * in snake case inside runtime-metrics JSON
@@ -334,6 +376,48 @@ add_task(async function test_registerMetricIfNeeded_eventMetrics() {
 });
 
 /**
+ * Test case: Re-registering a built-in event metric with new extra keys
+ * Verifies the runtime definition takes over, so events with the new key are
+ * recorded instead of dropped.
+ */
+add_task(
+  async function test_registerMetricIfNeeded_existingEventNewExtraKeys() {
+    Services.fog.testResetFOG();
+
+    Assert.ok(
+      "featureHighlightDismiss" in Glean.newtab,
+      "Test relies on newtab.feature_highlight_dismiss being a built-in event"
+    );
+
+    NewTabGleanUtils.registerMetricIfNeeded({
+      name: "feature_highlight_dismiss",
+      category: "newtab",
+      type: "event",
+      // Bug 1954203: custom pings aren't re-registered after testResetFOG.
+      pings: ["events"],
+      lifetime: "ping",
+      disabled: false,
+      extraArgs: {
+        allowed_extra_keys: ["feature", "newtab_visit_id", "new_extra"],
+      },
+    });
+
+    Glean.newtab.featureHighlightDismiss.record({
+      feature: "test-feature",
+      new_extra: "new value",
+    });
+
+    const events = Glean.newtab.featureHighlightDismiss.testGetValue();
+    Assert.equal(events?.length, 1, "Event with the new extra key is recorded");
+    Assert.equal(
+      events[0].extra.new_extra,
+      "new value",
+      "New extra key value is recorded"
+    );
+  }
+);
+
+/**
  * Test case: Non-event metric registration
  * Verifies that non-event metrics cannot use the record method
  * Tests that appropriate errors are thrown when trying to record non-event metrics
@@ -409,5 +493,48 @@ add_task(
     let data = Glean.testCategory.memdist1.testGetValue();
     Assert.equal(2, data.count, "Recorded sample count");
     Assert.equal(24 * 1024 * 1024, data.sum, "Sum is in bytes for MB unit");
+  }
+);
+
+/**
+ * Labeled timing distribution metric registration Verifies that extraArgs
+ * (time_unit and ordered_labels) reach the runtime registration.
+ */
+add_task(
+  async function test_registerMetricIfNeeded_labeledTimingDistributionMetrics() {
+    const optionsWithExtra = {
+      name: "labeledtimingdist1",
+      category: "test_category",
+      type: "labeled_timing_distribution",
+      pings: ["metrics"],
+      lifetime: "ping",
+      disabled: false,
+      extraArgs: {
+        time_unit: "millisecond",
+        ordered_labels: ["first_label", "second_label"],
+      },
+    };
+
+    NewTabGleanUtils.registerMetricIfNeeded(optionsWithExtra);
+
+    Assert.ok(
+      Glean.newtab.metricRegistered.labeledtimingdist1.testGetValue(),
+      "Glean metricRegistered telemetry sent with value as true"
+    );
+
+    Glean.testCategory.labeledtimingdist1.first_label.accumulateSingleSample(3);
+
+    // Read through the built-in metrics ping, which is what
+    // newtab.opened_page_dwell_time relies on a runtime registration being
+    // allowed to name.
+    let data =
+      Glean.testCategory.labeledtimingdist1.first_label.testGetValue("metrics");
+    Assert.equal(1, data.count, "Recorded sample count");
+    Assert.equal(3 * 1000000, data.sum, "Sum is in nanoseconds for ms unit");
+    Assert.equal(
+      null,
+      Glean.testCategory.labeledtimingdist1.second_label.testGetValue(),
+      "The other label was registered and is empty"
+    );
   }
 );

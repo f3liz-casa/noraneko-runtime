@@ -9,11 +9,11 @@ import android.os.Bundle
 import android.view.View
 import android.widget.CheckBox
 import android.widget.TextView
-import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.app.ActivityCompat
 import androidx.core.net.toUri
+import androidx.core.view.WindowCompat
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +30,7 @@ import mozilla.components.concept.sync.Profile
 import mozilla.components.feature.qr.QrFeature
 import mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient
 import mozilla.components.service.fxa.FxaAuthData
+import mozilla.components.service.fxa.FxaService
 import mozilla.components.service.fxa.ServerConfig
 import mozilla.components.service.fxa.manager.FxaAccountManager
 import mozilla.components.support.base.log.Log
@@ -74,7 +75,7 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        enableEdgeToEdge()
+        WindowCompat.enableEdgeToEdge(window)
         window.setupPersistentInsets(true)
 
         RustLog.enable()
@@ -99,6 +100,7 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
                         val url =
                             accountManager.beginAuthentication(
                                 pairingUrl = pairingUrl,
+                                service = FxaService.Sync.identifier,
                                 entrypoint = SampleFxAEntryPoint.HomeMenu,
                                 authScopes = scopes,
                             )
@@ -144,7 +146,11 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
     }
 
     private suspend fun beginAuthentication(): String? =
-        accountManager.beginAuthentication(entrypoint = SampleFxAEntryPoint.HomeMenu, authScopes = scopes)
+        accountManager.beginAuthentication(
+            service = FxaService.Sync.identifier,
+            entrypoint = SampleFxAEntryPoint.HomeMenu,
+            authScopes = scopes,
+        )
 
     override fun onDestroy() {
         super.onDestroy()

@@ -5,20 +5,19 @@
 
 #![allow(clippy::excessive_precision)]
 
-use crate::{
-    BLOCK_DIM, GROUP_DIM,
-    bit_reader::BitReader,
-    error::Error,
-    headers::{encodings::*, extra_channels::ExtraChannelInfo},
-    image::Rect,
-    util::FloorLog2,
-};
+use std::cmp::min;
 
 use jxl_macros::UnconditionalCoder;
 use num_derive::FromPrimitive;
-use std::cmp::min;
 
 use super::Animation;
+use crate::bit_reader::BitReader;
+use crate::error::Error;
+use crate::headers::encodings::*;
+use crate::headers::extra_channels::ExtraChannelInfo;
+use crate::image::Rect;
+use crate::util::FloorLog2;
+use crate::{BLOCK_DIM, GROUP_DIM};
 
 #[derive(UnconditionalCoder, Copy, Clone, PartialEq, Debug, FromPrimitive)]
 pub enum FrameType {
@@ -76,22 +75,30 @@ pub struct Passes {
 
 impl Passes {
     pub fn downsampling_bracket(&self, pass: usize) -> (usize, usize) {
-        let mut max_shift = 2;
+        let mut max_shift = 3;
         let mut min_shift = 3;
-        for i in 0..pass + 1 {
+        for i in 0..=pass {
+            max_shift = min_shift;
+            let mut found = false;
             for j in 0..self.num_ds as usize {
                 if i == self.last_pass[j] as usize {
                     min_shift = self.downsample[j].floor_log2();
+                    found = true;
                 }
             }
             if i + 1 == self.num_passes as usize {
                 min_shift = 0;
+                found = true;
             }
-            if i != pass {
-                max_shift = min_shift.saturating_sub(1);
+            if !found {
+                min_shift = max_shift;
             }
         }
-        (min_shift as usize, max_shift as usize)
+        if min_shift < max_shift {
+            (min_shift as usize, (max_shift - 1) as usize)
+        } else {
+            (1, 0)
+        }
     }
 }
 
@@ -144,6 +151,7 @@ pub struct RestorationFilterNonserialized {
 
 #[derive(UnconditionalCoder, Debug, PartialEq, Clone)]
 #[nonserialized(RestorationFilterNonserialized)]
+#[validate]
 pub struct RestorationFilter {
     #[all_default]
     all_default: bool,
@@ -233,6 +241,21 @@ pub struct RestorationFilter {
 
     #[default(Extensions::default())]
     extensions: Extensions,
+}
+
+impl RestorationFilter {
+    fn check(&self, _nonserialized: &RestorationFilterNonserialized) -> Result<(), Error> {
+        if (1.0 + (self.gab_x_weight1 + self.gab_x_weight2) * 4.0).abs() < 1e-6
+            || (1.0 + (self.gab_y_weight1 + self.gab_y_weight2) * 4.0).abs() < 1e-6
+            || (1.0 + (self.gab_b_weight1 + self.gab_b_weight2) * 4.0).abs() < 1e-6
+        {
+            return Err(Error::FloatNaNOrInf);
+        }
+        if !self.epf_sigma_for_modular.is_finite() || self.epf_sigma_for_modular <= 0.0 {
+            return Err(Error::FloatNaNOrInf);
+        }
+        Ok(())
+    }
 }
 
 pub struct PermutationNonserialized {
@@ -363,13 +386,13 @@ pub struct FrameHeader {
     && (frame_type == kRegularFrame || frame_type == kSkipProgressive) */
     #[default(BlendingInfo::default(&field_nonserialized))]
     #[condition(frame_type == FrameType::RegularFrame || frame_type == FrameType::SkipProgressive)]
-    #[nonserialized(num_extra_channels : nonserialized.num_extra_channels, full_frame : full_frame)]
+    #[nonserialized(num_extra_channels : nonserialized.num_extra_channels, full_frame)]
     pub blending_info: BlendingInfo,
 
     #[size_coder(explicit(nonserialized.num_extra_channels))]
     #[condition(frame_type == FrameType::RegularFrame || frame_type == FrameType::SkipProgressive)]
     #[default_element(BlendingInfo::default(&field_nonserialized))]
-    #[nonserialized(num_extra_channels : nonserialized.num_extra_channels, full_frame: full_frame)]
+    #[nonserialized(num_extra_channels : nonserialized.num_extra_channels, full_frame)]
     pub ec_blending_info: Vec<BlendingInfo>,
 
     #[coder(u2S(0, 1, Bits(8), Bits(32)))]
@@ -411,7 +434,7 @@ pub struct FrameHeader {
     pub name: String,
 
     #[default(RestorationFilter::default(&field_nonserialized))]
-    #[nonserialized(encoding : encoding)]
+    #[nonserialized(encoding)]
     pub restoration_filter: RestorationFilter,
 
     #[default(Extensions::default())]
@@ -516,21 +539,6 @@ impl FrameHeader {
         self.hshift(2) == 0 && self.vshift(2) == 0 &&  // Cr
         self.hshift(1) == 0 && self.vshift(1) == 0 // Y
     }
-    pub fn is420(&self) -> bool {
-        self.hshift(0) == 1 && self.vshift(0) == 1 &&  // Cb
-        self.hshift(2) == 1 && self.vshift(2) == 1 &&  // Cr
-        self.hshift(1) == 0 && self.vshift(1) == 0 // Y
-    }
-    pub fn is422(&self) -> bool {
-        self.hshift(0) == 1 && self.vshift(0) == 0 &&  // Cb
-        self.hshift(2) == 1 && self.vshift(2) == 0 &&  // Cr
-        self.hshift(1) == 0 && self.vshift(1) == 0 // Y
-    }
-    pub fn is440(&self) -> bool {
-        self.hshift(0) == 0 && self.vshift(0) == 1 &&  // Cb
-        self.hshift(2) == 0 && self.vshift(2) == 1 &&  // Cr
-        self.hshift(1) == 0 && self.vshift(1) == 0 // Y
-    }
 
     pub fn is_visible(&self) -> bool {
         (self.is_last || self.duration > 0)
@@ -586,14 +594,6 @@ impl FrameHeader {
         (
             self.width.div_ceil(1 << (3 * self.lf_level)) as usize,
             self.height.div_ceil(1 << (3 * self.lf_level)) as usize,
-        )
-    }
-
-    pub fn size_padded_upsampled(&self) -> (usize, usize) {
-        let (xsize, ysize) = self.size_padded();
-        (
-            xsize * self.upsampling as usize,
-            ysize * self.upsampling as usize,
         )
     }
 
@@ -666,11 +666,9 @@ impl FrameHeader {
     }
 
     pub fn postprocess(&mut self, nonserialized: &FrameHeaderNonserialized) {
-        if self.upsampling > 1 {
-            for i in 0..nonserialized.extra_channel_info.len() {
-                let dim_shift = nonserialized.extra_channel_info[i].dim_shift();
-                self.ec_upsampling[i] <<= dim_shift;
-            }
+        for i in 0..nonserialized.extra_channel_info.len() {
+            let dim_shift = nonserialized.extra_channel_info[i].dim_shift();
+            self.ec_upsampling[i] <<= dim_shift;
         }
         if self.encoding != Encoding::VarDCT || !nonserialized.xyb_encoded {
             self.x_qm_scale = 2;
@@ -678,16 +676,15 @@ impl FrameHeader {
     }
 
     fn check(&self, nonserialized: &FrameHeaderNonserialized) -> Result<(), Error> {
-        if self.upsampling > 1
-            && let Some((dim_shift, effective_upsampling)) = nonserialized
-                .extra_channel_info
-                .iter()
-                .zip(&self.ec_upsampling)
-                .find_map(|(info, ec_upsampling)| {
-                    let effective_upsampling = ec_upsampling << info.dim_shift();
-                    ((effective_upsampling < self.upsampling) || (effective_upsampling > 8))
-                        .then_some((info.dim_shift(), effective_upsampling))
-                })
+        if let Some((dim_shift, effective_upsampling)) = nonserialized
+            .extra_channel_info
+            .iter()
+            .zip(&self.ec_upsampling)
+            .find_map(|(info, ec_upsampling)| {
+                let effective_upsampling = ec_upsampling << info.dim_shift();
+                ((effective_upsampling < self.upsampling) || (effective_upsampling > 8))
+                    .then_some((info.dim_shift(), effective_upsampling))
+            })
         {
             return Err(Error::InvalidEcUpsampling(
                 self.upsampling,
@@ -696,12 +693,18 @@ impl FrameHeader {
             ));
         }
 
+        // `postprocess` shifts `ec_upsampling` by `dim_shift` after this runs, so compare
+        // against the effective upsampling the render pipeline will see. Otherwise a frame that
+        // declares matching upsampling passes here and still ends up with the extra channels
+        // upsampled before the patches stage and the color channels after it.
         if self.has_patches()
             && self.upsampling != 1
-            && let Some(&ec_upsampling) = self
-                .ec_upsampling
+            && let Some(ec_upsampling) = nonserialized
+                .extra_channel_info
                 .iter()
-                .find(|&&ec_upsampling| ec_upsampling != self.upsampling)
+                .zip(&self.ec_upsampling)
+                .map(|(info, ec_upsampling)| ec_upsampling << info.dim_shift())
+                .find(|&ec_upsampling| ec_upsampling != self.upsampling)
         {
             return Err(Error::PatchesUnsupportedMixedUpsampling(
                 self.upsampling,
@@ -777,13 +780,14 @@ impl FrameHeader {
 
 #[cfg(test)]
 mod test_frame_header {
+    use test_log::test;
+
     use super::super::bit_depth::BitDepth;
     use super::super::extra_channels::{ExtraChannel, ExtraChannelInfo};
     use super::super::permutation::Permutation;
     use super::super::toc::Toc;
     use super::*;
     use crate::tests::decode::read_headers_and_toc;
-    use test_log::test;
 
     #[test]
     fn test_basic() {

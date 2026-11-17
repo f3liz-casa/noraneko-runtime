@@ -26,6 +26,7 @@
 #include "jit/shared/Assembler-shared.h"
 #include "jit/TrampolineNatives.h"
 #include "js/AllocPolicy.h"
+#include "js/GCVector.h"
 #include "js/ProfilingFrameIterator.h"
 #include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
@@ -78,12 +79,11 @@ class BaselineICFallbackCode {
                                size_t(BaselineICFallbackKind::Count)>;
   OffsetArray offsets_ = {};
 
-  // Keep track of offset into various baseline stubs' code at return
-  // point from called script.
-  using BailoutReturnArray =
+  // Keep track of offset into various baseline stubs' bailout stub code.
+  using BailoutStubArray =
       mozilla::EnumeratedArray<BailoutReturnKind, uint32_t,
                                size_t(BailoutReturnKind::Count)>;
-  BailoutReturnArray bailoutReturnOffsets_ = {};
+  BailoutStubArray bailoutStubOffsets_ = {};
 
  public:
   BaselineICFallbackCode() = default;
@@ -94,14 +94,14 @@ class BaselineICFallbackCode {
     offsets_[kind] = offset;
   }
   void initCode(JitCode* code) { code_ = code; }
-  void initBailoutReturnOffset(BailoutReturnKind kind, uint32_t offset) {
-    bailoutReturnOffsets_[kind] = offset;
+  void initBailoutStubOffset(BailoutReturnKind kind, uint32_t offset) {
+    bailoutStubOffsets_[kind] = offset;
   }
   TrampolinePtr addr(BaselineICFallbackKind kind) const {
     return TrampolinePtr(code_->raw() + offsets_[kind]);
   }
-  uint8_t* bailoutReturnAddr(BailoutReturnKind kind) const {
-    return code_->raw() + bailoutReturnOffsets_[kind];
+  uint8_t* bailoutStubAddr(BailoutReturnKind kind) const {
+    return code_->raw() + bailoutStubOffsets_[kind];
   }
 };
 
@@ -148,6 +148,9 @@ class JitRuntime {
   // Thunk that invalides an (Ion compiled) caller on the Ion stack.
   WriteOnceData<uint32_t> invalidatorOffset_{0};
 
+  // Shared handler for Baseline debug-mode OSR.
+  WriteOnceData<uint32_t> baselineDebugModeOSRHandlerOffset_{0};
+
   // Thunk that calls the GC pre barrier.
   WriteOnceData<uint32_t> valuePreBarrierOffset_{0};
   WriteOnceData<uint32_t> stringPreBarrierOffset_{0};
@@ -181,6 +184,11 @@ class JitRuntime {
   mozilla::EnumeratedArray<DebugTrapHandlerKind, WriteOnceData<JitCode*>,
                            size_t(DebugTrapHandlerKind::Count)>
       debugTrapHandlers_;
+
+  // Return sites in JitCode belonging to recompiled baseline scripts that have
+  // pending live frames.
+  MainThreadData<JS::GCVector<DebugModeOSRReturnSite, 0, SystemAllocPolicy>>
+      debugModeOSRReturnSites_;
 
   // BaselineInterpreter state.
   BaselineInterpreter baselineInterpreter_;
@@ -241,6 +249,11 @@ class JitRuntime {
   MainThreadData<uint32_t> disallowArbitraryCode_{false};
 #endif
 
+  // Flag that can be set from JIT code to indicate that we're calling
+  // a function whose alias set does not include stores to ObjectFields.
+  // See handleGrowSlotsForPureCall.
+  MainThreadData<uint32_t> inPureCall_{false};
+
   bool generateTrampolines(JSContext* cx);
   bool generateBaselineICFallbackCode(JSContext* cx);
 
@@ -265,6 +278,7 @@ class JitRuntime {
 
   void generateBailoutHandler(MacroAssembler& masm, Label* bailoutTail);
   void generateInvalidator(MacroAssembler& masm, Label* bailoutTail);
+  void generateBaselineDebugModeOSRHandler(MacroAssembler& masm);
   uint32_t generatePreBarrier(JSContext* cx, MacroAssembler& masm,
                               MIRType type);
   void generateIonGenericCallStub(MacroAssembler& masm,
@@ -362,6 +376,9 @@ class JitRuntime {
   }
 #endif
 
+  bool inPureCall() const { return inPureCall_; }
+  const void* addressOfInPureCall() const { return &inPureCall_.refNoCheck(); }
+
   uint8_t* allocateIonOsrTempData(size_t size);
   void freeIonOsrTempData();
 
@@ -400,6 +417,10 @@ class JitRuntime {
 
   TrampolinePtr getInvalidationThunk() const {
     return trampolineCode(invalidatorOffset_);
+  }
+
+  TrampolinePtr getBaselineDebugModeOSRHandler() const {
+    return trampolineCode(baselineDebugModeOSRHandlerOffset_);
   }
 
   EnterJitCode enterJit() const {
@@ -516,6 +537,18 @@ class JitRuntime {
 
   void ionLazyLinkListRemove(JSRuntime* rt, js::jit::IonCompileTask* task);
   void ionLazyLinkListAdd(JSRuntime* rt, js::jit::IonCompileTask* task);
+
+  void handleGrowSlotsForPureCall(JSContext* cx);
+
+  [[nodiscard]] bool reserveDebugModeOSRReturnSites(JSContext* cx,
+                                                    size_t count);
+  void addDebugModeOSRReturnSite(BaselineScript* baselineScript,
+                                 const RetAddrEntry& retAddrEntry);
+  void releaseDebugModeOSRReturnSite(DebugModeOSRReturnSite* site);
+  DebugModeOSRReturnSite* lookupDebugModeOSRReturnSite(
+      const uint8_t* returnAddress);
+
+  static void TraceDebugModeOSRReturnSites(JSTracer* trc);
 };
 
 }  // namespace jit

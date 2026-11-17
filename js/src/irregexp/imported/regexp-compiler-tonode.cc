@@ -77,7 +77,7 @@ Node* Tree::ToNode(Compiler* compiler, Node* on_success) {
     // We can always return this even though it may not be the expected
     // subclass because all call sites already have to check for this case.
     Zone* zone = compiler->zone();
-    return zone->New<EndNode>(EndNode::BACKTRACK, zone);
+    return zone->New<EndNode>(EndNode::BACKTRACK, compiler->flags(), zone);
   }
   return ToNodeImpl(compiler, on_success);
 }
@@ -86,10 +86,11 @@ Node* Atom::ToNodeImpl(Compiler* compiler, Node* on_success) {
   Zone* zone = compiler->zone();
   ZoneList<TextElement>* elms = zone->New<ZoneList<TextElement>>(1, zone);
   elms->Add(TextElement::FromAtom(this), zone);
-  TextNode* result =
-      zone->New<TextNode>(elms, compiler->read_backward(), on_success);
+  TextNode* result = zone->New<TextNode>(elms, compiler->read_backward(),
+                                         on_success, compiler->flags());
   if (compiler->one_byte() && !result->CanMatchLatin1(compiler)) {
-    Node* backtrack = zone->New<EndNode>(EndNode::BACKTRACK, zone);
+    Node* backtrack =
+        zone->New<EndNode>(EndNode::BACKTRACK, compiler->flags(), zone);
     REGISTER_NODE(backtrack);
     return backtrack;
   }
@@ -100,10 +101,11 @@ Node* Atom::ToNodeImpl(Compiler* compiler, Node* on_success) {
 
 Node* Text::ToNodeImpl(Compiler* compiler, Node* on_success) {
   Zone* zone = compiler->zone();
-  TextNode* result =
-      zone->New<TextNode>(elements(), compiler->read_backward(), on_success);
+  TextNode* result = zone->New<TextNode>(elements(), compiler->read_backward(),
+                                         on_success, compiler->flags());
   if (compiler->one_byte() && !result->CanMatchLatin1(compiler)) {
-    Node* backtrack = zone->New<EndNode>(EndNode::BACKTRACK, zone);
+    Node* backtrack =
+        zone->New<EndNode>(EndNode::BACKTRACK, compiler->flags(), zone);
     REGISTER_NODE(backtrack);
     return backtrack;
   }
@@ -279,7 +281,8 @@ void AddBmpCharacters(Compiler* compiler, ChoiceNode* result, Node* on_success,
       ToCanonicalZoneList(splitter->bmp(), compiler->zone());
   if (bmp == nullptr) return;
   Node* node = TextNode::CreateForCharacterRanges(
-      compiler->zone(), bmp, compiler->read_backward(), on_success);
+      compiler->zone(), bmp, compiler->read_backward(), on_success,
+      compiler->flags());
   REGISTER_NODE(node);
   result->AddAlternative(GuardedAlternative(node));
 }
@@ -380,7 +383,7 @@ void AddNonBmpSurrogatePairs(Compiler* compiler, ChoiceNode* result,
     Node* node = TextNode::CreateForSurrogatePair(
         zone, leading_with_full_trailing_range,
         CharacterRange::Range(kTrailSurrogateStart, kTrailSurrogateEnd),
-        compiler->read_backward(), on_success);
+        compiler->read_backward(), on_success, compiler->flags());
     REGISTER_NODE(node);
     result->AddAlternative(GuardedAlternative(node));
   }
@@ -389,9 +392,9 @@ void AddNonBmpSurrogatePairs(Compiler* compiler, ChoiceNode* result,
         CharacterRange::Range(ExtractFrom(it.first), ExtractTo(it.first));
     ZoneList<CharacterRange>* trailing_ranges = it.second;
     CharacterRange::Canonicalize(trailing_ranges);
-    Node* node =
-        TextNode::CreateForSurrogatePair(zone, leading_range, trailing_ranges,
-                                         compiler->read_backward(), on_success);
+    Node* node = TextNode::CreateForSurrogatePair(
+        zone, leading_range, trailing_ranges, compiler->read_backward(),
+        on_success, compiler->flags());
     REGISTER_NODE(node);
     result->AddAlternative(GuardedAlternative(node));
   }
@@ -402,14 +405,15 @@ Node* NegativeLookaroundAgainstReadDirectionAndMatch(
     ZoneList<CharacterRange>* match, Node* on_success, bool read_backward) {
   Zone* zone = compiler->zone();
   Node* match_node = TextNode::CreateForCharacterRanges(
-      zone, match, read_backward, on_success);
+      zone, match, read_backward, on_success, compiler->flags());
   REGISTER_NODE(match_node);
   int stack_register = compiler->UnicodeLookaroundStackRegister();
   int position_register = compiler->UnicodeLookaroundPositionRegister();
   Lookaround::Builder lookaround(false, match_node, compiler, stack_register,
                                  position_register);
   Node* negative_match = TextNode::CreateForCharacterRanges(
-      zone, lookbehind, !read_backward, lookaround.on_match_success());
+      zone, lookbehind, !read_backward, lookaround.on_match_success(),
+      compiler->flags());
   REGISTER_NODE(negative_match);
   return lookaround.ForMatch(compiler, negative_match);
 }
@@ -423,11 +427,12 @@ Node* MatchAndNegativeLookaroundInReadDirection(
   Lookaround::Builder lookaround(false, on_success, compiler, stack_register,
                                  position_register);
   Node* negative_match = TextNode::CreateForCharacterRanges(
-      zone, lookahead, read_backward, lookaround.on_match_success());
+      zone, lookahead, read_backward, lookaround.on_match_success(),
+      compiler->flags());
   REGISTER_NODE(negative_match);
   Node* node = TextNode::CreateForCharacterRanges(
-      zone, match, read_backward,
-      lookaround.ForMatch(compiler, negative_match));
+      zone, match, read_backward, lookaround.ForMatch(compiler, negative_match),
+      compiler->flags());
   REGISTER_NODE(node);
   return node;
 }
@@ -487,7 +492,8 @@ void AddLoneTrailSurrogates(Compiler* compiler, ChoiceNode* result,
 Node* UnanchoredAdvance(Compiler* compiler, Node* on_success) {
   // This implements ES2015 21.2.5.2.3, AdvanceStringIndex.
   DCHECK(!compiler->read_backward());
-  Node* node = compiler->zone()->New<UnanchoredAdvanceNode>(on_success);
+  Node* node = compiler->zone()->New<UnanchoredAdvanceNode>(on_success,
+                                                            compiler->flags());
   REGISTER_NODE(node);
   return node;
 }
@@ -516,7 +522,7 @@ void CharacterRange::AddUnicodeCaseEquivalents(ZoneList<CharacterRange>* ranges,
   }
   // Clear the ranges list without freeing the backing store.
   ranges->Rewind(0);
-  set.closeOver(USET_SIMPLE_CASE_INSENSITIVE);
+  CaseFolding::CloseOver(set, CaseFolding::Mode::kUnicode);
   for (int i = 0; i < set.getRangeCount(); i++) {
     ranges->Add(Range(set.getRangeStart(i), set.getRangeEnd(i)), zone);
   }
@@ -541,10 +547,11 @@ Node* ClassRanges::ToNodeImpl(Compiler* compiler, Node* on_success) {
 
   if (!IsEitherUnicode(compiler->flags()) || compiler->one_byte() ||
       contains_split_surrogate()) {
-    TextNode* result =
-        zone->New<TextNode>(this, compiler->read_backward(), on_success);
+    TextNode* result = zone->New<TextNode>(this, compiler->read_backward(),
+                                           on_success, compiler->flags());
     if (compiler->one_byte() && !result->CanMatchLatin1(compiler)) {
-      Node* backtrack = zone->New<EndNode>(EndNode::BACKTRACK, zone);
+      Node* backtrack =
+          zone->New<EndNode>(EndNode::BACKTRACK, compiler->flags(), zone);
       REGISTER_NODE(backtrack);
       return backtrack;
     }
@@ -585,7 +592,8 @@ Node* ClassRanges::ToNodeImpl(Compiler* compiler, Node* on_success) {
   }
 
   if (ranges->length() == 0) {
-    Node* backtrack = zone->New<EndNode>(EndNode::BACKTRACK, zone);
+    Node* backtrack =
+        zone->New<EndNode>(EndNode::BACKTRACK, compiler->flags(), zone);
     REGISTER_NODE(backtrack);
     return backtrack;
   }
@@ -600,7 +608,7 @@ Node* ClassRanges::ToNodeImpl(Compiler* compiler, Node* on_success) {
   //   units (irregexp operates only on code units).
   // - Lone surrogates: these require lookarounds to ensure we don't match in
   //   the middle of a surrogate pair.
-  ChoiceNode* result = zone->New<ChoiceNode>(2, zone);
+  ChoiceNode* result = zone->New<ChoiceNode>(2, compiler->flags(), zone);
   UnicodeRangeSplitter splitter(ranges);
   AddBmpCharacters(compiler, result, on_success, &splitter);
   AddNonBmpSurrogatePairs(compiler, result, on_success, &splitter);
@@ -625,7 +633,8 @@ Node* ClassSetOperand::ToNodeImpl(Compiler* compiler, Node* on_success) {
   if (size == 0) {
     // If neither ranges nor strings are present, the operand is equal to an
     // empty range (matching nothing).
-    Node* backtrack = zone->New<EndNode>(EndNode::BACKTRACK, zone);
+    Node* backtrack =
+        zone->New<EndNode>(EndNode::BACKTRACK, compiler->flags(), zone);
     REGISTER_NODE(backtrack);
     return backtrack;
   }
@@ -802,27 +811,37 @@ int CompareFirstChar(Tree* const* a, Tree* const* b) {
 
 #ifdef V8_INTL_SUPPORT
 
-int CompareCaseInsensitive(const icu::UnicodeString& a,
-                           const icu::UnicodeString& b) {
-  return a.caseCompare(b, U_FOLD_CASE_DEFAULT);
+CaseFolding::Mode CaseFoldingMode(Flags flags) {
+  return IsEitherUnicode(flags) ? CaseFolding::Mode::kUnicode
+                                : CaseFolding::Mode::kNonUnicode;
 }
 
-int CompareFirstCharCaseInsensitive(Tree* const* a, Tree* const* b) {
+// Use the matcher's case equivalence (see
+// TextNode::GetCaseIndependentLetters). Full case folding would, for example,
+// conflate U+017F and 's' under /i.
+int CompareCaseInsensitive(CaseFolding::Mode mode, base::uc16 a, base::uc16 b) {
+  if (a == b) return 0;
+  return CaseFolding::EquivalenceKey(a, mode) -
+         CaseFolding::EquivalenceKey(b, mode);
+}
+
+int CompareFirstCharCaseInsensitive(CaseFolding::Mode mode, Tree* const* a,
+                                    Tree* const* b) {
   Atom* atom1 = FirstAtom(*a);
   Atom* atom2 = FirstAtom(*b);
-  return CompareCaseInsensitive(icu::UnicodeString{atom1->data().at(0)},
-                                icu::UnicodeString{atom2->data().at(0)});
+  return CompareCaseInsensitive(mode, atom1->data().at(0), atom2->data().at(0));
 }
 
-bool Equals(bool ignore_case, const icu::UnicodeString& a,
-            const icu::UnicodeString& b) {
+bool Equals(bool ignore_case, CaseFolding::Mode mode, base::uc16 a,
+            base::uc16 b) {
   if (a == b) return true;
-  if (ignore_case) return CompareCaseInsensitive(a, b) == 0;
+  if (ignore_case) return CompareCaseInsensitive(mode, a, b) == 0;
   return false;  // Case-sensitive equality already checked above.
 }
 
-bool CharAtEquals(bool ignore_case, int index, const Atom* a, const Atom* b) {
-  return Equals(ignore_case, a->data().at(index), b->data().at(index));
+bool CharAtEquals(bool ignore_case, CaseFolding::Mode mode, int index,
+                  const Atom* a, const Atom* b) {
+  return Equals(ignore_case, mode, a->data().at(index), b->data().at(index));
 }
 
 #else
@@ -901,19 +920,19 @@ bool Disjunction::SortConsecutiveAtoms(Compiler* compiler) {
       if (!StartsWithAtom(alternative)) break;
       i++;
     }
-    // Sort atoms to get ones with common prefixes together.
-    // This step is more tricky if we are in a case-independent regexp,
-    // because it would change /is|I/ to /I|is/, and order matters when
-    // the regexp parts don't match only disjoint starting points. To fix
-    // this we have a version of CompareFirstChar that uses case-
-    // independent character classes for comparison.
+    // Sort atoms to bring common prefixes together. A case-insensitive sort
+    // must preserve the order of alternatives whose first characters are
+    // equivalent: changing /is|I/ to /I|is/ would change the match result.
     DCHECK_LT(first_atom, alternatives->length());
     DCHECK_LE(i, alternatives->length());
     DCHECK_LE(first_atom, i);
     if (IsIgnoreCase(compiler->flags())) {
 #ifdef V8_INTL_SUPPORT
-      alternatives->StableSort(CompareFirstCharCaseInsensitive, first_atom,
-                               i - first_atom);
+      const CaseFolding::Mode mode = CaseFoldingMode(compiler->flags());
+      auto compare_closure = [mode](Tree* const* a, Tree* const* b) {
+        return CompareFirstCharCaseInsensitive(mode, a, b);
+      };
+      alternatives->StableSort(compare_closure, first_atom, i - first_atom);
 #else
       unibrow::Mapping<unibrow::Ecma262Canonicalize>* canonicalize =
           compiler->isolate()->regexp_macro_assembler_canonicalize();
@@ -936,6 +955,9 @@ void Disjunction::RationalizeConsecutiveAtoms(Compiler* compiler) {
   ZoneList<Tree*>* alternatives = this->alternatives();
   int length = alternatives->length();
   const bool ignore_case = IsIgnoreCase(compiler->flags());
+#ifdef V8_INTL_SUPPORT
+  const CaseFolding::Mode mode = CaseFoldingMode(compiler->flags());
+#endif  // V8_INTL_SUPPORT
 
   int write_posn = 0;
   int i = 0;
@@ -949,7 +971,7 @@ void Disjunction::RationalizeConsecutiveAtoms(Compiler* compiler) {
     Atom* const atom = FirstAtom(alternative);
 
 #ifdef V8_INTL_SUPPORT
-    icu::UnicodeString common_prefix(atom->data().at(0));
+    base::uc16 common_prefix = atom->data().at(0);
 #else
     unibrow::Mapping<unibrow::Ecma262Canonicalize>* const canonicalize =
         compiler->isolate()->regexp_macro_assembler_canonicalize();
@@ -966,8 +988,8 @@ void Disjunction::RationalizeConsecutiveAtoms(Compiler* compiler) {
       if (!StartsWithAtom(alternative)) break;
       Atom* const alt_atom = FirstAtom(alternative);
 #ifdef V8_INTL_SUPPORT
-      icu::UnicodeString new_prefix(alt_atom->data().at(0));
-      if (!Equals(ignore_case, new_prefix, common_prefix)) break;
+      base::uc16 new_prefix = alt_atom->data().at(0);
+      if (!Equals(ignore_case, mode, new_prefix, common_prefix)) break;
 #else
       unibrow::uchar new_prefix = alt_atom->data().at(0);
       if (!Equals(ignore_case, canonicalize, new_prefix, common_prefix)) break;
@@ -988,7 +1010,7 @@ void Disjunction::RationalizeConsecutiveAtoms(Compiler* compiler) {
         Atom* old_atom = FirstAtom(alternatives->at(j + first_with_prefix));
         for (int k = 1; k < prefix_length; k++) {
 #ifdef V8_INTL_SUPPORT
-          if (!CharAtEquals(ignore_case, k, alt_atom, old_atom)) {
+          if (!CharAtEquals(ignore_case, mode, k, alt_atom, old_atom)) {
 #else
           if (!CharAtEquals(ignore_case, canonicalize, k, alt_atom, old_atom)) {
 #endif  // V8_INTL_SUPPORT
@@ -1118,9 +1140,17 @@ Node* Disjunction::ToNodeImpl(Compiler* compiler, Node* on_success) {
   ZoneList<Tree*>* alternatives = this->alternatives();
 
   if (alternatives->length() > 2) {
-    bool found_consecutive_atoms = SortConsecutiveAtoms(compiler);
-    if (found_consecutive_atoms) RationalizeConsecutiveAtoms(compiler);
-    TRACE_WITH_NODE("* After rationalizing consecutive atoms: ", this);
+    if (!compiler->read_backward() && v8_flags.regexp_optimization) {
+      // We deliberately disable SortConsecutiveAtoms and
+      // RationalizeConsecutiveAtoms in lookbehinds rather than keep
+      // rationalizing already-adjacent runs. Lookbehind disjunctions must keep
+      // source order. The code generator already turns off quick checks,
+      // Boyer-Moore and first-char dispatch when reading backward, so the
+      // passes buy almost nothing there.
+      bool found_consecutive_atoms = SortConsecutiveAtoms(compiler);
+      if (found_consecutive_atoms) RationalizeConsecutiveAtoms(compiler);
+      TRACE_WITH_NODE("* After rationalizing consecutive atoms: ", this);
+    }
     FixSingleCharacterDisjunctions(compiler);
     TRACE_WITH_NODE("* After fixing single character disjunctions: ", this);
     if (alternatives->length() == 1) {
@@ -1130,8 +1160,8 @@ Node* Disjunction::ToNodeImpl(Compiler* compiler, Node* on_success) {
 
   int length = alternatives->length();
 
-  ChoiceNode* result =
-      compiler->zone()->New<ChoiceNode>(length, compiler->zone());
+  ChoiceNode* result = compiler->zone()->New<ChoiceNode>(
+      length, compiler->flags(), compiler->zone());
   for (int i = 0; i < length; i++) {
     GuardedAlternative alternative(
         alternatives->at(i)->ToNode(compiler, on_success));
@@ -1144,7 +1174,8 @@ Node* Disjunction::ToNodeImpl(Compiler* compiler, Node* on_success) {
   if (node_length >= 2) return result;
   if (node_length == 1) return result->alternatives()->at(0).node();
   Zone* zone = on_success->zone();
-  Node* backtrack = zone->New<EndNode>(EndNode::BACKTRACK, zone);
+  Node* backtrack =
+      zone->New<EndNode>(EndNode::BACKTRACK, compiler->flags(), zone);
   REGISTER_NODE(backtrack);
   return backtrack;
 }
@@ -1166,7 +1197,7 @@ Node* BoundaryAssertionAsLookaround(Compiler* compiler, Node* on_success,
                                  zone);
   int stack_register = compiler->UnicodeLookaroundStackRegister();
   int position_register = compiler->UnicodeLookaroundPositionRegister();
-  ChoiceNode* result = zone->New<ChoiceNode>(2, zone);
+  ChoiceNode* result = zone->New<ChoiceNode>(2, compiler->flags(), zone);
   // Add two choices. The (non-)boundary could start with a word or
   // a non-word-character.
   for (int i = 0; i < 2; i++) {
@@ -1179,14 +1210,16 @@ Node* BoundaryAssertionAsLookaround(Compiler* compiler, Node* on_success,
     Lookaround::Builder lookbehind(lookbehind_for_word, on_success, compiler,
                                    stack_register, position_register);
     Node* backward = TextNode::CreateForCharacterRanges(
-        zone, word_range, true, lookbehind.on_match_success());
+        zone, word_range, true, lookbehind.on_match_success(),
+        compiler->flags());
     REGISTER_NODE(backward);
     // Look to the right.
     Lookaround::Builder lookahead(lookahead_for_word,
                                   lookbehind.ForMatch(compiler, backward),
                                   compiler, stack_register, position_register);
     Node* forward = TextNode::CreateForCharacterRanges(
-        zone, word_range, false, lookahead.on_match_success());
+        zone, word_range, false, lookahead.on_match_success(),
+        compiler->flags());
     REGISTER_NODE(forward);
     result->AddAlternative(
         GuardedAlternative(lookahead.ForMatch(compiler, forward)));
@@ -1202,33 +1235,35 @@ Node* Assertion::ToNodeImpl(Compiler* compiler, Node* on_success) {
 
   switch (assertion_type()) {
     case Type::START_OF_LINE: {
-      Node* node = AssertionNode::AfterNewline(on_success);
+      Node* node = AssertionNode::AfterNewline(on_success, compiler->flags());
       REGISTER_NODE(node);
       return node;
     }
     case Type::START_OF_INPUT: {
-      Node* node = AssertionNode::AtStart(on_success);
+      Node* node = AssertionNode::AtStart(on_success, compiler->flags());
       REGISTER_NODE(node);
       return node;
     }
     case Type::BOUNDARY: {
-      Node* node = NeedsUnicodeCaseEquivalents(compiler->flags())
-                       ? BoundaryAssertionAsLookaround(compiler, on_success,
-                                                       Type::BOUNDARY)
-                       : AssertionNode::AtBoundary(on_success);
+      Node* node =
+          NeedsUnicodeCaseEquivalents(compiler->flags())
+              ? BoundaryAssertionAsLookaround(compiler, on_success,
+                                              Type::BOUNDARY)
+              : AssertionNode::AtBoundary(on_success, compiler->flags());
       REGISTER_NODE(node);
       return node;
     }
     case Type::NON_BOUNDARY: {
-      Node* node = NeedsUnicodeCaseEquivalents(compiler->flags())
-                       ? BoundaryAssertionAsLookaround(compiler, on_success,
-                                                       Type::NON_BOUNDARY)
-                       : AssertionNode::AtNonBoundary(on_success);
+      Node* node =
+          NeedsUnicodeCaseEquivalents(compiler->flags())
+              ? BoundaryAssertionAsLookaround(compiler, on_success,
+                                              Type::NON_BOUNDARY)
+              : AssertionNode::AtNonBoundary(on_success, compiler->flags());
       REGISTER_NODE(node);
       return node;
     }
     case Type::END_OF_INPUT: {
-      Node* node = AssertionNode::AtEnd(on_success);
+      Node* node = AssertionNode::AtEnd(on_success, compiler->flags());
       REGISTER_NODE(node);
       return node;
     }
@@ -1253,20 +1288,24 @@ Node* Assertion::ToNodeImpl(Compiler* compiler, Node* on_success) {
       ZoneList<TextElement>* crlf_elms =
           zone->New<ZoneList<TextElement>>(1, zone);
       crlf_elms->Add(TextElement::FromAtom(crlf_atom), zone);
-      AssertionNode* crlf_at_end = AssertionNode::AtEnd(submatch_success);
+      AssertionNode* crlf_at_end =
+          AssertionNode::AtEnd(submatch_success, compiler->flags());
       REGISTER_NODE(crlf_at_end);
       TextNode* crlf_matcher =
-          zone->New<TextNode>(crlf_elms, false, crlf_at_end);
+          zone->New<TextNode>(crlf_elms, false, crlf_at_end, compiler->flags());
       REGISTER_NODE(crlf_matcher);
       // Alt B: [LF CR LS PS] then AT_END.
       ClassRanges* lt_atom =
           zone->New<ClassRanges>(StandardCharacterSet::kLineTerminator);
-      AssertionNode* lt_at_end = AssertionNode::AtEnd(submatch_success);
+      AssertionNode* lt_at_end =
+          AssertionNode::AtEnd(submatch_success, compiler->flags());
       REGISTER_NODE(lt_at_end);
-      TextNode* lt_matcher = zone->New<TextNode>(lt_atom, false, lt_at_end);
+      TextNode* lt_matcher =
+          zone->New<TextNode>(lt_atom, false, lt_at_end, compiler->flags());
       REGISTER_NODE(lt_matcher);
       // Inner choice: CRLF first, then single LT.
-      ChoiceNode* inner_choice = zone->New<ChoiceNode>(2, zone);
+      ChoiceNode* inner_choice =
+          zone->New<ChoiceNode>(2, compiler->flags(), zone);
       inner_choice->AddAlternative(GuardedAlternative(crlf_matcher));
       inner_choice->AddAlternative(GuardedAlternative(lt_matcher));
       REGISTER_NODE(inner_choice);
@@ -1274,10 +1313,10 @@ Node* Assertion::ToNodeImpl(Compiler* compiler, Node* on_success) {
       Node* lookahead_node = lookahead.ForMatch(compiler, inner_choice);
       // Outer choice: either the trailing-terminator lookahead matches, or
       // we're already at end-of-input.
-      ChoiceNode* result = zone->New<ChoiceNode>(2, zone);
+      ChoiceNode* result = zone->New<ChoiceNode>(2, compiler->flags(), zone);
       result->AddAlternative(GuardedAlternative(lookahead_node));
-      result->AddAlternative(
-          GuardedAlternative(AssertionNode::AtEnd(on_success)));
+      result->AddAlternative(GuardedAlternative(
+          AssertionNode::AtEnd(on_success, compiler->flags())));
       REGISTER_NODE(result);
       return result;
     }
@@ -1288,7 +1327,7 @@ Node* Assertion::ToNodeImpl(Compiler* compiler, Node* on_success) {
       int stack_pointer_register = compiler->AllocateRegister();
       int position_register = compiler->AllocateRegister();
       // The ChoiceNode to distinguish between a newline and end-of-input.
-      ChoiceNode* result = zone->New<ChoiceNode>(2, zone);
+      ChoiceNode* result = zone->New<ChoiceNode>(2, compiler->flags(), zone);
       // Create a newline atom.
       ZoneList<CharacterRange>* newline_ranges =
           zone->New<ZoneList<CharacterRange>>(3, zone);
@@ -1298,22 +1337,23 @@ Node* Assertion::ToNodeImpl(Compiler* compiler, Node* on_success) {
           stack_pointer_register, position_register,
           0,   // No captures inside.
           -1,  // Ignored if no captures.
-          on_success);
+          on_success, compiler->flags());
       REGISTER_NODE(submatch_success);
       ClassRanges* newline_atom =
           zone->New<ClassRanges>(StandardCharacterSet::kLineTerminator);
-      TextNode* newline_matcher =
-          zone->New<TextNode>(newline_atom, false, submatch_success);
+      TextNode* newline_matcher = zone->New<TextNode>(
+          newline_atom, false, submatch_success, compiler->flags());
       REGISTER_NODE(newline_matcher);
       // Create an end-of-input matcher.
       Node* end_of_line = ActionNode::BeginPositiveSubmatch(
           stack_pointer_register, position_register, newline_matcher,
-          submatch_success);
+          submatch_success, compiler->flags());
       REGISTER_NODE(end_of_line);
       // Add the two alternatives to the ChoiceNode.
       GuardedAlternative eol_alternative(end_of_line);
       result->AddAlternative(eol_alternative);
-      GuardedAlternative end_alternative(AssertionNode::AtEnd(on_success));
+      GuardedAlternative end_alternative(
+          AssertionNode::AtEnd(on_success, compiler->flags()));
       result->AddAlternative(end_alternative);
       REGISTER_NODE(result);
       return result;
@@ -1329,10 +1369,11 @@ Node* BackReference::ToNodeImpl(Compiler* compiler, Node* on_success) {
   // back-references to unmatched captures are treated as empty, we can simply
   // create back-references to all possible captures.
   for (auto capture : *captures()) {
+    capture->set_is_backreferenced();
     backref_node = compiler->zone()->New<BackReferenceNode>(
         Capture::StartRegister(capture->index()),
         Capture::EndRegister(capture->index()), compiler->read_backward(),
-        backref_node);
+        backref_node, compiler->flags());
     REGISTER_NODE(backref_node);
   }
   return backref_node;
@@ -1360,22 +1401,8 @@ class V8_NODISCARD ModifiersScope {
 }  // namespace
 
 Node* Group::ToNodeImpl(Compiler* compiler, Node* on_success) {
-  // If no flags are modified, simply convert and return the body.
-  if (flags() == compiler->flags()) {
-    return body_->ToNode(compiler, on_success);
-  }
-  // Reset flags for successor node.
-  const Flags old_flags = compiler->flags();
-  on_success = ActionNode::ModifyFlags(old_flags, on_success);
-
-  // Convert body using modifier.
   ModifiersScope modifiers_scope(compiler, flags());
-  Node* body = body_->ToNode(compiler, on_success);
-  if (body->IsBacktrack()) return body;
-
-  // Wrap body into modifier node.
-  Node* modified_body = ActionNode::ModifyFlags(flags(), body);
-  return modified_body;
+  return body_->ToNode(compiler, on_success);
 }
 
 Lookaround::Builder::Builder(bool is_positive, Node* on_success,
@@ -1389,12 +1416,12 @@ Lookaround::Builder::Builder(bool is_positive, Node* on_success,
   if (is_positive_) {
     on_match_success_ = ActionNode::PositiveSubmatchSuccess(
         stack_pointer_register, position_register, capture_register_count,
-        capture_register_start, on_success_);
+        capture_register_start, on_success_, compiler->flags());
   } else {
     Zone* zone = on_success_->zone();
     on_match_success_ = zone->New<NegativeSubmatchSuccess>(
         stack_pointer_register, position_register, capture_register_count,
-        capture_register_start, zone);
+        capture_register_start, compiler->flags(), zone);
   }
   REGISTER_NODE(on_match_success_);
 }
@@ -1403,7 +1430,8 @@ Node* Lookaround::Builder::ForMatch(Compiler* compiler, Node* match) {
   if (is_positive_) {
     ActionNode* on_match_success = on_match_success_->AsActionNode();
     Node* node = ActionNode::BeginPositiveSubmatch(
-        stack_pointer_register_, position_register_, match, on_match_success);
+        stack_pointer_register_, position_register_, match, on_match_success,
+        compiler->flags());
     REGISTER_NODE(node);
     return node;
   } else {
@@ -1414,10 +1442,12 @@ Node* Lookaround::Builder::ForMatch(Compiler* compiler, Node* match) {
     // NegativeLookaroundChoiceNode is a special ChoiceNode that ignores the
     // first exit when calculating quick checks.
     ChoiceNode* choice_node = zone->New<NegativeLookaroundChoiceNode>(
-        GuardedAlternative(match), GuardedAlternative(on_success_), zone);
+        GuardedAlternative(match), GuardedAlternative(on_success_),
+        compiler->flags(), zone);
     REGISTER_NODE(choice_node);
     Node* node = ActionNode::BeginNegativeSubmatch(
-        stack_pointer_register_, position_register_, choice_node);
+        stack_pointer_register_, position_register_, choice_node,
+        compiler->flags());
     REGISTER_NODE(node);
     return node;
   }
@@ -1449,21 +1479,24 @@ Node* Lookaround::ToNodeImpl(Compiler* compiler, Node* on_success) {
 }
 
 Node* Capture::ToNodeImpl(Compiler* compiler, Node* on_success) {
-  return ToNode(body(), index(), compiler, on_success);
+  return ToNode(body(), compiler, on_success, this);
 }
 
 // static
-Node* Capture::ToNode(Tree* body, int index, Compiler* compiler,
-                      Node* on_success) {
+Node* Capture::ToNode(Tree* body, Compiler* compiler, Node* on_success,
+                      const Capture* capture) {
   DCHECK_NOT_NULL(body);
+  int index = capture == nullptr ? 0 : capture->index();
   int start_reg = Capture::StartRegister(index);
   int end_reg = Capture::EndRegister(index);
   if (compiler->read_backward()) std::swap(start_reg, end_reg);
-  Node* store_end = ActionNode::StorePosition(end_reg, on_success);
+  Node* store_end = ActionNode::StorePosition(end_reg, on_success,
+                                              compiler->flags(), capture);
   REGISTER_NODE(store_end);
   Node* body_node = body->ToNode(compiler, store_end);
   if (body_node->IsBacktrack()) return body_node;
-  Node* node = ActionNode::StorePosition(start_reg, body_node);
+  Node* node = ActionNode::StorePosition(start_reg, body_node,
+                                         compiler->flags(), capture);
   REGISTER_NODE(node);
   return node;
 }
@@ -1721,22 +1754,8 @@ void CharacterRange::AddCaseEquivalents(Isolate* isolate, Zone* zone,
     others.add(from, to);
   }
 
-  // Compute the set of additional characters that should be added,
-  // using UnicodeSet::closeOver. ECMA 262 defines slightly different
-  // case-folding rules than Unicode, so some characters that are
-  // added by closeOver do not match anything other than themselves in
-  // JS. For example, 'ſ' (U+017F LATIN SMALL LETTER LONG S) is the
-  // same case-insensitive character as 's' or 'S' according to
-  // Unicode, but does not match any other character in JS. To handle
-  // this case, we add such characters to the IgnoreSet and filter
-  // them out. We filter twice: once before calling closeOver (to
-  // prevent 'ſ' from adding 's'), and once after calling closeOver
-  // (to prevent 's' from adding 'ſ'). See regexp/special-case.h for
-  // more information.
   icu::UnicodeSet already_added(others);
-  others.removeAll(CaseFolding::IgnoreSet());
-  others.closeOver(USET_CASE_INSENSITIVE);
-  others.removeAll(CaseFolding::IgnoreSet());
+  CaseFolding::CloseOver(others, CaseFolding::Mode::kNonUnicode);
   others.removeAll(already_added);
 
   // Add others to the ranges
@@ -2243,7 +2262,7 @@ Node* Quantifier::ToNode(int min, int max, bool is_greedy, Tree* body,
       body->CaptureRegisters(StackLimiter(Node::kRecursionBudget));
   if (!capture_registers.is_valid()) {
     compiler->SetRegExpTooBig();
-    return zone->New<EndNode>(EndNode::BACKTRACK, zone);
+    return zone->New<EndNode>(EndNode::BACKTRACK, compiler->flags(), zone);
   }
 
   // At the start of the next iteration of a quantifier the captures must be
@@ -2288,7 +2307,8 @@ Node* Quantifier::ToNode(int min, int max, bool is_greedy, Tree* body,
         Node* answer = on_success;
         for (int i = 0; i < max; i++) {
           TRACE("* Iteration " << i + 1 << " / " << max);
-          ChoiceNode* alternation = zone->New<ChoiceNode>(2, zone);
+          ChoiceNode* alternation =
+              zone->New<ChoiceNode>(2, compiler->flags(), zone);
           if (is_greedy) {
             alternation->AddAlternative(
                 GuardedAlternative(body->ToNode(compiler, answer)));
@@ -2313,19 +2333,21 @@ Node* Quantifier::ToNode(int min, int max, bool is_greedy, Tree* body,
   bool needs_counter = has_min || has_max;
   int reg_ctr =
       needs_counter ? compiler->AllocateRegister() : Compiler::kNoRegister;
-  LoopChoiceNode* center = zone->New<LoopChoiceNode>(
-      body->min_match() == 0, compiler->read_backward(), zone);
+  LoopChoiceNode* center = zone->New<LoopChoiceNode>(body->min_match() == 0,
+                                                     compiler->read_backward(),
+                                                     compiler->flags(), zone);
   if (not_at_start && !compiler->read_backward()) center->set_not_at_start();
   Node* loop_return = center;
   if (needs_counter) {
-    loop_return = ActionNode::IncrementRegister(reg_ctr, loop_return);
+    loop_return =
+        ActionNode::IncrementRegister(reg_ctr, loop_return, compiler->flags());
     REGISTER_NODE(loop_return);
   }
   if (body_can_be_empty) {
     // If the body can be empty we need to check if it was and then
     // backtrack.
-    loop_return =
-        ActionNode::EmptyMatchCheck(body_start_reg, reg_ctr, min, loop_return);
+    loop_return = ActionNode::EmptyMatchCheck(body_start_reg, reg_ctr, min,
+                                              loop_return, compiler->flags());
     REGISTER_NODE(loop_return);
   }
   Node* body_node = body->ToNode(compiler, loop_return);
@@ -2341,12 +2363,14 @@ Node* Quantifier::ToNode(int min, int max, bool is_greedy, Tree* body,
   if (body_can_be_empty) {
     // If the body can be empty we need to store the start position
     // so we can bail out if it was empty.
-    body_node = ActionNode::RestorePosition(body_start_reg, body_node);
+    body_node = ActionNode::RestorePosition(body_start_reg, body_node,
+                                            compiler->flags());
     REGISTER_NODE(body_node);
   }
   if (needs_capture_clearing) {
     // Before entering the body of this loop we need to clear captures.
-    body_node = ActionNode::ClearCaptures(capture_registers, body_node);
+    body_node = ActionNode::ClearCaptures(capture_registers, body_node,
+                                          compiler->flags());
     REGISTER_NODE(body_node);
   }
   GuardedAlternative body_alt(body_node);
@@ -2371,11 +2395,12 @@ Node* Quantifier::ToNode(int min, int max, bool is_greedy, Tree* body,
   if (min > 0 && body->min_match() > 0 && !compiler->read_backward()) {
     uint8_t eats = base::saturated_cast<uint8_t>(
         std::min(256, min) * std::min(256, body->min_match()));
-    result = ActionNode::EatsAtLeast(eats, result);
+    result = ActionNode::EatsAtLeast(eats, result, compiler->flags());
     REGISTER_NODE(result);
   }
   if (needs_counter) {
-    result = ActionNode::SetRegisterForLoop(reg_ctr, 0, result);
+    result =
+        ActionNode::SetRegisterForLoop(reg_ctr, 0, result, compiler->flags());
     REGISTER_NODE(result);
   }
   return result;

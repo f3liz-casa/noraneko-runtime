@@ -1,6 +1,7 @@
 [DEFAULT]
 prefs = [
   "apz.zoom-to-focused-input.enabled=false",
+  # Bug 2077709
   "dom.navigation.navigationRateLimit.count=0",
   "test.ime_content_observer.assert_invalid_cache=true",
   "ui.dragThresholdX=4", # Bug 1873142
@@ -32,7 +33,6 @@ skip-if = [
 ["test_abs_positioner_positioning_elements.html"]
 skip-if = [
   "os == 'android'", # Bug 1525959
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64' && debug", # Bug 1929435
   "xorigin", # Inconsistent pass/fail in opt and debug
 ]
 
@@ -492,7 +492,7 @@ skip-if = [
 
 ["test_execCommandPaste_noTarget.html"]
 skip-if = [
-  "os == 'linux' && os_version == '22.04' && arch == 'x86_64' && display == 'wayland'", # Bug 1935188
+  "os == 'linux' && display == 'wayland'", # Bug 2005351
 ]
 
 ["test_focus_caret_navigation_between_nested_editors.html"]
@@ -521,6 +521,8 @@ skip-if = [
 
 ["test_insertText_around_text_node_in_plaintext_mode.html"]
 
+["test_insertText_during_composition.html"]
+
 ["test_join_split_node_direction_change_command.html"]
 
 ["test_keypress_untrusted_event.html"]
@@ -528,6 +530,11 @@ skip-if = [
 ["test_label_contenteditable.html"]
 
 ["test_mailcite_backspace_at_end_of_inline_reply.html"]
+skip-if = [
+  "xorigin", # Testing internal API for comm-central
+]
+
+["test_mailcite_insert_text_after_split.html"]
 skip-if = [
   "xorigin", # Testing internal API for comm-central
 ]
@@ -545,14 +552,12 @@ skip-if = [
 ["test_middle_click_paste.html"]
 skip-if = [
   "headless",
-  "os == 'linux' && os_version == '22.04' && arch == 'x86_64' && display == 'wayland' && opt", # Bug 1870753
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && opt", # Bug 1870753
+  "os == 'linux' && display == 'wayland'", # Bug 2005351
 ]
 
 ["test_native_key_bindings_in_shadow.html"]
 skip-if = [
   "os == 'android'", # Depends on NativeKeyBindings used only on Linux and macOS
-  "os == 'win'", # Depends on NativeKeyBindings used only on Linux and macOS
 ]
 
 ["test_nested_editor.html"]
@@ -652,6 +657,8 @@ skip-if = [
 
 ["test_pasteImgTextarea.html"]
 
+["test_pasteTransferable_data_in_paste_event.html"]
+
 ["test_pasteURLFromTransferable.html"]
 
 ["test_paste_as_quote_in_text_control.html"]
@@ -711,6 +718,9 @@ skip-if = [
 ]
 
 ["test_state_change_on_reframe.html"]
+
+["test_svg_designMode_blur.html"]
+support-files = ["file_svg_designMode_blur.svg"]
 
 ["test_tb_htmlmail_reply_below_quote.html"]
 

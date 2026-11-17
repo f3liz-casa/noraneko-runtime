@@ -7,18 +7,16 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 const lazy = XPCOMUtils.declareLazy({
   AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
   E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
-});
-
-ChromeUtils.defineLazyGetter(lazy, "logConsole", function () {
-  return console.createInstance({
-    prefix: "MozNewTabRemoteRendererProtocolParent",
-    maxLogLevel: Services.prefs.getBoolPref(
-      "browser.newtabpage.activity-stream.remote-renderer.log",
-      false
-    )
-      ? "Debug"
-      : "Warn",
-  });
+  logConsole: () =>
+    console.createInstance({
+      prefix: "MozNewTabRemoteRendererProtocolParent",
+      maxLogLevel: Services.prefs.getBoolPref(
+        "browser.newtabpage.activity-stream.remote-renderer.log",
+        false
+      )
+        ? "Debug"
+        : "Warn",
+    }),
 });
 
 /**
@@ -67,8 +65,7 @@ export class MozNewTabRemoteRendererProtocolParent extends JSWindowActorParent {
 
       if (uri.scheme !== "moz-newtab-remote-renderer") {
         throw new Error(
-          "Expected scheme moz-newtab-remote-renderer, but got ",
-          uri.scheme
+          `Expected scheme moz-newtab-remote-renderer, but got ${uri.scheme}`
         );
       }
     } catch (e) {

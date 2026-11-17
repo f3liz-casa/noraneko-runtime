@@ -549,7 +549,9 @@ static bool CreateExtraBindingInfoVector(
     bool isShadowed = false;
 
     id = unwrappedBindingKeys[i];
-    cx->recordRefToId(id);
+    if (!cx->wrapOrRecordRefToId(&id)) {
+      return false;
+    }
 
     bool found;
     if (!HasProperty(cx, cx->global(), id, &found)) {
@@ -594,7 +596,9 @@ static WithEnvironmentObject* CreateExtraBindingsEnvironment(
     }
 
     id = unwrappedBindingKeys[i];
-    cx->recordRefToId(id);
+    if (!cx->wrapOrRecordRefToId(&id)) {
+      return nullptr;
+    }
     JS::Rooted<JS::Value> val(cx, unwrappedBindingValues[i]);
     if (!cx->compartment()->wrap(cx, &val) ||
         !NativeDefineDataProperty(cx, extraBindingsObj, id, val, 0)) {
@@ -1504,6 +1508,7 @@ static bool DelazifyCanonicalScriptedFunctionImpl(
       .setSelfHostingMode(false)
       .setEagerDelazificationStrategy(lazy->delazificationMode())
       .setEagerBaselineStrategy(JS::EagerBaselineOption::None);
+  options.allowHTMLComments = !lazy->hasModuleGoal();
 
   Rooted<CompilationInput> input(cx, CompilationInput(options));
   input.get().initFromLazy(cx, lazy, ss);
@@ -1615,6 +1620,7 @@ static const CompilationStencil* DelazifyCanonicalScriptedFunctionImpl(
       .setScriptSourceOffset(sourceStart)
       .setNoScriptRval(false)
       .setSelfHostingMode(false);
+  options.allowHTMLComments = !extra.hasModuleGoal();
 
   // CompilationInput initialized with initFromStencil only reference
   // information from the CompilationStencil context and the ref-counted

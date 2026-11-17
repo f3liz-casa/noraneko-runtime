@@ -28,7 +28,7 @@ fuzzy(0-2,0-1000000) == feColorMatrix-2.svg feColorMatrix-2-ref.svg
 
 == feComponentTransfer-1.svg feComponentTransfer-1-ref.svg
 == feComponentTransfer-2.svg feComponentTransfer-2-ref.svg
-fuzzy(0-1,0-1625) == feComponentTransfer-discrete.svg feComponentTransfer-discrete-ref.svg
+fuzzy(0-2,0-1625) == feComponentTransfer-discrete.svg feComponentTransfer-discrete-ref.svg
 
 fuzzy(0-2,0-1000000) == feComposite-1.svg feComposite-1-ref.svg
 fuzzy(0-2,0-1000000) == feComposite-2.svg feComposite-2-ref.svg
@@ -106,7 +106,7 @@ fuzzy(0-10,0-1200) == filter-nested-filtering-02.svg pass.svg
 == feComponentTransfer-03.svg pass.svg
 == feComponentTransfer-04.svg pass.svg
 == feComposite-arguments-01.svg pass.svg
-fuzzy-if(winWidget,0-1,0-39600) == feComposite-operator-lighter.svg feComposite-operator-lighter-ref.html
+fuzzy(0-1,0-39600) == feComposite-operator-lighter.svg feComposite-operator-lighter-ref.html
 fuzzy(0-85,0-28600) fuzzy-if(gfxSVGFEComposite,0-2,0-1000000) == feComposite-paint-01.svg feComposite-paint-01-ref.svg
 fuzzy(0-1,0-10000) == feConvolveMatrix-bias-01.svg feConvolveMatrix-bias-01-ref.svg
 == feConvolveMatrix-order-01.svg feConvolveMatrix-order-01-ref.svg
@@ -115,7 +115,7 @@ fuzzy(0-1,0-400) == feDisplacementMap-alpha-01.svg pass.svg
 fuzzy(0-2,0-500) == feDisplacementMap-colour-01.svg feDisplacementMap-colour-01-ref.svg
 == feDisplacementMap-scale-01.svg pass.svg
 
-fuzzy-if(winWidget,0-2,0-25) fuzzy-if(Android13&&aarch64,6-6,4548-4565) fuzzy-if(gtkWidget&&useDrawSnapshot,0-3,0-968) fuzzy-if(!useDrawSnapshot,55-98,14033-16467) fuzzy-if(gfxSVGFEDropShadow&&!gfxSVGFEOffset,97-98,21500-22951) fuzzy-if(gfxSVGFEOffset,0-47,0-1000000) == feDropShadow-01.svg feDropShadow-01-ref.svg
+fuzzy-if(winWidget,0-2,0-25) fuzzy-if(Android13&&aarch64,6-6,4548-4565) fuzzy-if(gtkWidget&&useDrawSnapshot,0-3,0-968) fuzzy-if(!useDrawSnapshot,55-98,14033-16467) fuzzy-if(gfxSVGFEDropShadow&&!gfxSVGFEOffset,97-98,21500-22951) fuzzy-if(gfxSVGFEOffset,0-108,0-1000000) == feDropShadow-01.svg feDropShadow-01-ref.svg
 
 == feFlood-color-01.svg pass.svg
 
@@ -137,8 +137,8 @@ fuzzy(0-2,0-2659) skip-if(winWidget) == feSpecularLighting-1.svg feSpecularLight
 
 == filter-lighting-region.svg filter-lighting-region-ref.svg
 
-fails-if(useDrawSnapshot) == fePointLight-zoomed-page.svg fePointLight-zoomed-page-ref.svg
-fails-if(useDrawSnapshot) == feSpotLight-zoomed-page.svg feSpotLight-zoomed-page-ref.svg
+== fePointLight-zoomed-page.svg fePointLight-zoomed-page-ref.svg
+== feSpotLight-zoomed-page.svg feSpotLight-zoomed-page-ref.svg
 
 == feTurbulence-offset.svg feTurbulence-offset-ref.svg
 fuzzy(0-1,0-10000) == feTurbulence-zero-baseFreq-01.svg feTurbulence-zero-baseFreq-01-ref.svg

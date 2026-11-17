@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include "Blur.h"
 #include "DataSurfaceHelpers.h"
@@ -49,7 +50,7 @@
 #  include "ScaledFontDWrite.h"
 #endif
 
-#if defined(ACCESSIBILITY) && defined(MOZ_ENABLE_SKIA_PDF)
+#ifdef ACCESSIBILITY
 #  include "mozilla/a11y/PdfStructTreeBuilder.h"
 #  include "skia/include/docs/SkPDFDocument.h"
 #endif
@@ -823,9 +824,6 @@ void DrawTargetSkia::DrawSurfaceWithShadow(SourceSurface* aSurface,
   mCanvas->save();
   mCanvas->resetMatrix();
 
-  SkPaint paint;
-  paint.setBlendMode(GfxOpToSkiaOp(aOperator));
-
   // bug 1201272
   // We can't use the SkDropShadowImageFilter here because it applies the xfer
   // mode first to render the bitmap to a temporary layer, and then implicitly
@@ -834,27 +832,35 @@ void DrawTargetSkia::DrawSurfaceWithShadow(SourceSurface* aSurface,
   // composite the resulting shadow, so we must instead use a SkBlurImageFilter
   // to blur the image ourselves.
 
-  SkPaint shadowPaint;
-  shadowPaint.setBlendMode(GfxOpToSkiaOp(aOperator));
-
-  auto shadowDest = IntPoint::Round(aDest + aShadow.mOffset);
-
-  sk_sp<SkImageFilter> blurFilter(
-      SkImageFilters::Blur(aShadow.mSigma, aShadow.mSigma, nullptr));
-
-  shadowPaint.setImageFilter(blurFilter);
-  shadowPaint.setColor(ColorToSkColor(aShadow.mColor, 1.0f));
-
   // Extract the alpha channel of the image into a bitmap. If the image is A8
   // format already, then we can directly reuse the bitmap rather than create a
   // new one as the surface only needs to be drawn from once.
   if (sk_sp<SkImage> alphaImage = ExtractAlphaImage(image, true)) {
-    mCanvas->drawImage(alphaImage, shadowDest.x, shadowDest.y,
-                       SkSamplingOptions(SkFilterMode::kLinear), &shadowPaint);
+    SkPaint shadowPaint;
+    shadowPaint.setBlendMode(GfxOpToSkiaOp(aOperator));
+    shadowPaint.setColor(ColorToSkColor(aShadow.mColor, 1.0f));
+    auto shadowDest = IntPoint::Round(aDest + aShadow.mOffset);
+    SkPoint offset = SkPoint::Make(0, 0);
+    sk_sp<SkImage> blurred(GaussianBlur::BlurAlphaMask(
+        alphaImage.get(), Point(aShadow.mSigma, aShadow.mSigma), offset));
+    if (blurred) {
+      mCanvas->drawImage(
+          blurred, shadowDest.x + offset.x(), shadowDest.y + offset.y(),
+          SkSamplingOptions(SkFilterMode::kLinear), &shadowPaint);
+    } else {
+      sk_sp<SkImageFilter> blurFilter(
+          SkImageFilters::Blur(aShadow.mSigma, aShadow.mSigma, nullptr));
+      shadowPaint.setImageFilter(blurFilter);
+      mCanvas->drawImage(alphaImage, shadowDest.x, shadowDest.y,
+                         SkSamplingOptions(SkFilterMode::kLinear),
+                         &shadowPaint);
+    }
   }
 
   if (aSurface->GetFormat() != SurfaceFormat::A8) {
     // Composite the original image after the shadow
+    SkPaint paint;
+    paint.setBlendMode(GfxOpToSkiaOp(aOperator));
     auto dest = IntPoint::Round(aDest);
     mCanvas->drawImage(image, dest.x, dest.y,
                        SkSamplingOptions(SkFilterMode::kLinear), &paint);
@@ -878,13 +884,15 @@ void DrawTargetSkia::FillRect(const Rect& aRect, const Pattern& aPattern,
   // The sprite blitting path in Skia can be faster than the shader blitter for
   // operators other than source (or source-over with opaque surface). So, when
   // possible/beneficial, route to DrawSurface which will use the sprite
-  // blitter.
+  // blitter. For vector canvases (e.g. PDF) we always want DrawSurface, since
+  // otherwise the image is emitted as a tiling pattern.
   if (aPattern.GetType() == PatternType::SURFACE &&
       aOptions.mCompositionOp != CompositionOp::OP_SOURCE) {
-    const SurfacePattern& pat = static_cast<const SurfacePattern&>(aPattern);
+    const auto& pat = static_cast<const SurfacePattern&>(aPattern);
     // Verify there is a valid surface and a pattern matrix without skew.
     if (pat.mSurface &&
-        (aOptions.mCompositionOp != CompositionOp::OP_OVER ||
+        (!IsBackedByPixels(mCanvas) ||
+         aOptions.mCompositionOp != CompositionOp::OP_OVER ||
          GfxFormatToSkiaAlphaType(pat.mSurface->GetFormat()) !=
              kOpaque_SkAlphaType) &&
         !pat.mMatrix.HasNonAxisAlignedTransform()) {
@@ -1335,14 +1343,48 @@ void DrawTargetSkia::DrawGlyphs(ScaledFont* aFont, const GlyphBuffer& aBuffer,
   // Limit the amount of internal batch allocations Skia does.
   const uint32_t kMaxGlyphBatchSize = 8192;
 
+  const bool haveClusters =
+      mSupportsGlyphSourceText && aBuffer.mText && aBuffer.mClusters;
+
   for (uint32_t offset = 0; offset < aBuffer.mNumGlyphs;) {
     uint32_t batchSize =
         std::min(aBuffer.mNumGlyphs - offset, kMaxGlyphBatchSize);
+    if (haveClusters) {
+      // Each batch only includes the source text for its own glyphs, so avoid
+      // splitting glyphs which share a cluster across batches.
+      const uint32_t* clusters = aBuffer.mClusters + offset;
+      while (offset + batchSize < aBuffer.mNumGlyphs && batchSize > 1 &&
+             clusters[batchSize] == clusters[batchSize - 1]) {
+        --batchSize;
+      }
+    }
+    uint32_t minByte = 0;
+    uint32_t textSize = 0;
+    if (haveClusters) {
+      // Associate this run with the source text it was shaped from, so
+      // backends that support it (e.g. SkPDF) can produce a correct
+      // ToUnicode/ActualText mapping even for glyphs reached via OpenType
+      // substitution. mClusters specifies, for each glyph, the byte offset in
+      // mText of the source character(s) it came from.
+      minByte = aBuffer.mClusters[offset];
+      const uint32_t maxByte = offset + batchSize < aBuffer.mNumGlyphs
+                                   ? aBuffer.mClusters[offset + batchSize]
+                                   : aBuffer.mTextLength;
+      textSize = maxByte - minByte;
+    }
     SkTextBlobBuilder builder;
-    auto runBuffer = builder.allocRunPos(font, batchSize);
+    auto runBuffer = haveClusters
+                         ? builder.allocRunTextPos(font, batchSize, textSize)
+                         : builder.allocRunPos(font, batchSize);
+    if (haveClusters) {
+      memcpy(runBuffer.utf8text, aBuffer.mText + minByte, textSize);
+    }
     for (uint32_t i = 0; i < batchSize; i++, offset++) {
       runBuffer.glyphs[i] = aBuffer.mGlyphs[offset].mIndex;
       runBuffer.points()[i] = PointToSkPoint(aBuffer.mGlyphs[offset].mPosition);
+      if (haveClusters) {
+        runBuffer.clusters[i] = aBuffer.mClusters[offset] - minByte;
+      }
     }
 
     sk_sp<SkTextBlob> text = builder.make();
@@ -1616,8 +1658,7 @@ bool DrawTarget::Draw3DTransformedSurface(SourceSurface* aSurface,
   }
   // Transform the surface bounds and clip to this DT.
   IntRect xformBounds = RoundedOut(fullMat.TransformAndClipBounds(
-      Rect(Point(0, 0), Size(aSurface->GetSize())),
-      Rect(Point(0, 0), Size(GetSize()))));
+      Rect(Point(0, 0), Size(aSurface->GetSize())), Rect(GetRect())));
   if (xformBounds.IsEmpty()) {
     return true;
   }
@@ -1990,8 +2031,9 @@ bool DrawTargetSkia::Init(const IntSize& aSize, SurfaceFormat aFormat) {
   return true;
 }
 
-bool DrawTargetSkia::Init(SkCanvas* aCanvas) {
+bool DrawTargetSkia::Init(SkCanvas* aCanvas, bool aSupportsGlyphSourceText) {
   mCanvas = aCanvas;
+  mSupportsGlyphSourceText = aSupportsGlyphSourceText;
 
   SkImageInfo imageInfo = mCanvas->imageInfo();
 
@@ -2146,11 +2188,18 @@ void DrawTargetSkia::PushClipRect(const Rect& aRect) {
 }
 
 void DrawTargetSkia::PopClip() {
+  if (!mPushedLayers.empty() &&
+      mCanvas->getSaveCount() <= mPushedLayers.back().mSaveCount) {
+    return;
+  }
   mCanvas->restore();
   SetTransform(GetTransform());
 }
 
 bool DrawTargetSkia::RemoveAllClips() {
+  if (!mPushedLayers.empty()) {
+    return false;
+  }
   mCanvas->restoreToCount(1);
   SetTransform(GetTransform());
   return true;
@@ -2267,6 +2316,7 @@ void DrawTargetSkia::PushLayerWithBlend(bool aOpaque, Float aOpacity,
           (aCopyBackground ? SkCanvas::kInitWithPrevious_SaveLayerFlag : 0));
 
   mCanvas->saveLayer(saveRec);
+  mPushedLayers.back().mSaveCount = mCanvas->getSaveCount();
 
   SetPermitSubpixelAA(aOpaque);
 
@@ -2302,6 +2352,10 @@ void DrawTargetSkia::PopLayer() {
     }
   }
 
+  // Remove any unbalanced saves before the layer restore.
+  if (mCanvas->getSaveCount() > layer.mSaveCount) {
+    mCanvas->restoreToCount(layer.mSaveCount);
+  }
   // Restore the layer itself, and the clip we pushed for the mask bounds.
   mCanvas->restore();
   if (layer.mMask) {
@@ -2343,6 +2397,13 @@ void DrawTargetSkia::DetachAllSnapshots() {
   if (mSnapshot) {
     if (mSnapshot->hasOneRef()) {
       // No owners outside of this DrawTarget's own reference. Just dump it.
+      // Raster snapshot images borrow our pixels, which we're about to change,
+      // so nothing may hold on to them past the lock GetSkImageForSurface
+      // hands out either.
+      SkPixmap pixmap;
+      MOZ_DIAGNOSTIC_ASSERT(!mSnapshot->mImage || mSnapshot->mImage->unique() ||
+                                !mSnapshot->mImage->peekPixels(&pixmap),
+                            "Snapshot image outlived its lock");
       mSnapshot = nullptr;
       return;
     }
@@ -2363,7 +2424,7 @@ void DrawTargetSkia::MarkChanged() {
 }
 
 void DrawTargetSkia::AccessibleId(uint64_t aInnerWindowId, uint64_t aAccId) {
-#if defined(ACCESSIBILITY) && defined(MOZ_ENABLE_SKIA_PDF)
+#ifdef ACCESSIBILITY
   int pdfId =
       mozilla::a11y::PdfStructTreeBuilder::GetPdfId(aInnerWindowId, aAccId);
   SkPDF::SetNodeId(mCanvas, pdfId);

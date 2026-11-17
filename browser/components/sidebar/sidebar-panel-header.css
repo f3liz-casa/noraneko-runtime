@@ -6,7 +6,6 @@
 
 :host {
   padding-block: var(--space-large);
-  margin-block-start: calc(var(--space-large) * -1);
 }
 
 .sidebar-panel-heading {
@@ -16,9 +15,6 @@
   -moz-context-properties: fill;
   fill: currentColor;
   font-size: 15px;
-  /* Keep the header (and its close button focus outline) clear of the panel
-     content below, e.g. a search input. */
-  margin-block-end: var(--space-small);
 
   > h4 {
     margin-block: var(--sidebar-panel-header-heading-margin-block);

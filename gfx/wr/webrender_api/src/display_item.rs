@@ -11,7 +11,7 @@ use crate::{APZScrollGeneration, HasScrollLinkedEffect, PipelineId, PropertyBind
 use crate::serde::{Serialize, Deserialize};
 use crate::color::ColorF;
 use crate::image::{ColorDepth, ImageKey};
-use crate::key_types::EdgeMask;
+use crate::key_types::{EdgeMask, StretchSizeKey};
 use crate::units::*;
 use std::hash::{Hash, Hasher};
 
@@ -54,6 +54,11 @@ bitflags! {
         const ANTIALISED = 1 << 4;
         /// If true, this primitive is used as a background for checkerboarding
         const CHECKERBOARD_BACKGROUND = 1 << 5;
+        /// For an image primitive: the texture was rasterized at the device
+        /// size of the primitive rect. If the rect's snapped extent disagrees
+        /// with the texture by a device pixel, the texture is drawn 1:1 from
+        /// the snapped origin instead of being stretched to fit.
+        const RASTERIZED_FOR_RECT = 1 << 6;
     }
 }
 
@@ -150,7 +155,6 @@ pub enum DisplayItem {
     RadialGradient(RadialGradientDisplayItem),
     ConicGradient(ConicGradientDisplayItem),
     Image(ImageDisplayItem),
-    RepeatingImage(RepeatingImageDisplayItem),
     YuvImage(YuvImageDisplayItem),
     BackdropFilter(BackdropFilterDisplayItem),
 
@@ -196,7 +200,6 @@ pub enum DebugDisplayItem {
     RadialGradient(RadialGradientDisplayItem),
     ConicGradient(ConicGradientDisplayItem),
     Image(ImageDisplayItem),
-    RepeatingImage(RepeatingImageDisplayItem),
     YuvImage(YuvImageDisplayItem),
     BackdropFilter(BackdropFilterDisplayItem),
 
@@ -233,6 +236,11 @@ pub struct RectClipDisplayItem {
     pub id: ClipId,
     pub spatial_id: SpatialId,
     pub clip_rect: LayoutRect,
+    /// Keep the clip at its exact position instead of snapping it to the
+    /// device pixel grid, like primitives with `PrimitiveFlags::ANTIALIASING`.
+    /// Used for clips defined in the same space as anti-aliased content (e.g.
+    /// SVG user space).
+    pub anti_aliased: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
@@ -245,6 +253,8 @@ pub struct RoundedRectClipDisplayItem {
     /// ClipOut edge must stay a constant distance from the snapped element
     /// (bug 2052033). All public callers leave this 0.
     pub snap_outset: f32,
+    /// See `RectClipDisplayItem::anti_aliased`.
+    pub anti_aliased: bool,
 }
 
 /// The minimum and maximum allowable offset for a sticky frame in a single dimension.
@@ -320,15 +330,17 @@ pub struct ScrollFrameDescriptor {
 /// A solid or an animating color to draw (may not actually be a rectangle due to complex clips)
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
 pub struct RectangleDisplayItem {
-    pub common: CommonItemProperties,
-    pub bounds: LayoutRect,
-    pub color: PropertyBinding<ColorF>,
-    /// Which edges get anti-aliased under a transform. A rect is the one item
-    /// that says, because the display list builder splits one primitive into
-    /// abutting rects (the solid margins around a clamped radial gradient) and
-    /// the interior edges must not be anti-aliased or they seam. There is no
-    /// aligned equivalent: that mask is `EdgeMask::empty()` for every primitive.
-    pub transformed_aa_edges: EdgeMask,
+    pub spatial_id: SpatialId,
+    pub clip_chain_id: ClipChainId,
+    /// Everything else - bounds, clip rect, flags, colour and the transformed
+    /// AA edge mask - lives in the interned entry. The mask is per rectangle
+    /// because the display list builder splits one primitive into abutting
+    /// rects (the solid margins around a clamped radial gradient) whose
+    /// interior edges must not be anti-aliased or they seam.
+    ///
+    /// `Handle::INVALID` marks a fully transparent checkerboard background,
+    /// recorded only so the scene builder can place its tile cache barrier.
+    pub rect: crate::interning::Handle<crate::interned_prims::RectangleKey>,
 }
 
 /// A minimal hit-testable item for the parent browser's convenience, and is
@@ -685,19 +697,32 @@ pub enum ExtendMode {
     Repeat,
 }
 
+/// Whether the colors of gradient stops are interpolated with premultiplied
+/// alpha (as CSS gradients require) or with unpremultiplied alpha (as SVG
+/// gradients require).
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Hash, Eq, MallocSizeOf, PartialEq, Serialize, Deserialize, PeekPoke)]
+pub enum AlphaMode {
+    Premultiplied,
+    Unpremultiplied,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
 pub struct Gradient {
-    pub start_point: LayoutPoint,
-    pub end_point: LayoutPoint,
+    /// Relative to the primitive bounds.
+    pub start: LayoutVector2D,
+    /// Relative to the primitive bounds.
+    pub end: LayoutVector2D,
     pub extend_mode: ExtendMode,
+    pub alpha_mode: AlphaMode,
 } // IMPLICIT: stops: Vec<GradientStop>
 
 impl Gradient {
     pub fn is_valid(&self) -> bool {
-        self.start_point.x.is_finite() &&
-            self.start_point.y.is_finite() &&
-            self.end_point.x.is_finite() &&
-            self.end_point.y.is_finite()
+        self.start.x.is_finite() &&
+            self.start.y.is_finite() &&
+            self.end.x.is_finite() &&
+            self.end.y.is_finite()
     }
 }
 
@@ -726,11 +751,13 @@ pub struct GradientStop {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
 pub struct RadialGradient {
-    pub center: LayoutPoint,
+    /// Relative to the primitive bounds.
+    pub center: LayoutVector2D,
     pub radius: LayoutSize,
     pub start_offset: f32,
     pub end_offset: f32,
     pub extend_mode: ExtendMode,
+    pub alpha_mode: AlphaMode,
 } // IMPLICIT stops: Vec<GradientStop>
 
 impl RadialGradient {
@@ -744,11 +771,13 @@ impl RadialGradient {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
 pub struct ConicGradient {
-    pub center: LayoutPoint,
+    /// Relative to the primitive bounds.
+    pub center: LayoutVector2D,
     pub angle: f32,
     pub start_offset: f32,
     pub end_offset: f32,
     pub extend_mode: ExtendMode,
+    pub alpha_mode: AlphaMode,
 } // IMPLICIT stops: Vec<GradientStop>
 
 impl ConicGradient {
@@ -780,7 +809,7 @@ pub struct RadialGradientDisplayItem {
     pub tile_spacing: LayoutSize,
     /// Which edges get anti-aliased under a transform. Narrowed by
     /// `optimize_radial_gradient` where the gradient abuts a solid margin it
-    /// split off; see `RectangleDisplayItem::transformed_aa_edges`.
+    /// split off; see `RectangleDisplayItem::rect`.
     pub transformed_aa_edges: EdgeMask,
 }
 
@@ -957,6 +986,10 @@ pub struct StackingContext {
     /// than two that have to agree.
     pub raster_space: RasterSpace,
     pub flags: StackingContextFlags,
+    /// Non-zero for a shadow emitted by the display list builder's shadow
+    /// desugaring: the offset its contents were translated by relative to the
+    /// shadowed content, so they can be snapped relative to it.
+    pub shadow_offset: LayoutVector2D,
 }
 // IMPLICIT: filters: Vec<FilterOp>, filter_datas: Vec<FilterData>, filter_primitives: Vec<FilterPrimitive>
 
@@ -1637,11 +1670,11 @@ pub enum FilterOp {
         limiting_cone_angle: f32 },
     /// calculate a distorted version of first input image using offset values
     /// from second input image at specified intensity
-    /// parameters: FilterOpGraphNode, scale, xChannelSelector, yChannelSelector
+    /// parameters: FilterOpGraphNode, scale_x, scale_y, xChannelSelector, yChannelSelector
     /// SVG filter semantics - selectable input(s), selectable between linear
     /// (default) and sRGB color space for calculations
     /// Spec: https://www.w3.org/TR/filter-effects-1/#InterfaceSVGFEDisplacementMapElement
-    SVGFEDisplacementMap { node: FilterOpGraphNode, scale: f32,
+    SVGFEDisplacementMap { node: FilterOpGraphNode, scale_x: f32, scale_y: f32,
         x_channel_selector: u32, y_channel_selector: u32 },
     /// create and merge a dropshadow version of the specified image's alpha
     /// channel with specified offset and blur radius
@@ -1950,10 +1983,9 @@ pub struct IframeDisplayItem {
     pub ignore_missing_pipeline: bool,
 }
 
-/// This describes an image that fills the specified area. It stretches or shrinks
-/// the image as necessary. While RepeatingImageDisplayItem could otherwise provide
-/// a superset of the functionality, it has been problematic inferring the desired
-/// repetition properties when snapping changes the size of the primitive.
+/// An image drawn over `bounds`, either stretched to fill it or tiled across
+/// it. The builder's `push_image` and `push_repeating_image` both produce this
+/// item; which one it was is in `stretch_size`.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
 pub struct ImageDisplayItem {
     pub common: CommonItemProperties,
@@ -1961,24 +1993,10 @@ pub struct ImageDisplayItem {
     // FIXME: this should ideally just be `tile_origin` here, with the clip_rect
     // defining the bounds of the item. Needs non-trivial backend changes.
     pub bounds: LayoutRect,
-    pub image_key: ImageKey,
-    pub image_rendering: ImageRendering,
-    pub alpha_type: AlphaType,
-    /// A hack used by gecko to color a simple bitmap font used for tofu glyphs
-    pub color: ColorF,
-}
-
-/// This describes a background-image and its tiling. It repeats in a grid to fill
-/// the specified area.
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
-pub struct RepeatingImageDisplayItem {
-    pub common: CommonItemProperties,
-    /// The area to tile the image over (first tile starts at origin of this rect)
-    // FIXME: this should ideally just be `tile_origin` here, with the clip_rect
-    // defining the bounds of the item. Needs non-trivial backend changes.
-    pub bounds: LayoutRect,
-    /// How large to make a single tile of the image (common case: bounds.size)
-    pub stretch_size: LayoutSize,
+    /// How large to make a single tile of the image. An axis that fills the
+    /// bounds is recorded as such rather than by its size, so a stretched
+    /// image's key does not depend on how big it is drawn.
+    pub stretch_size: StretchSizeKey,
     /// The space between tiles (common case: 0)
     pub tile_spacing: LayoutSize,
     pub image_key: ImageKey,
@@ -2078,6 +2096,19 @@ pub enum YuvData {
 }
 
 impl YuvData {
+    /// The planes actually referenced, padded with `ImageKey::DUMMY` to the
+    /// three a yuv primitive holds.
+    pub fn planes(&self) -> [ImageKey; 3] {
+        match *self {
+            YuvData::NV12(p0, p1)
+            | YuvData::P010(p0, p1)
+            | YuvData::NV16(p0, p1)
+            | YuvData::P210(p0, p1) => [p0, p1, ImageKey::DUMMY],
+            YuvData::PlanarYCbCr(p0, p1, p2) => [p0, p1, p2],
+            YuvData::InterleavedYCbCr(p0) => [p0, ImageKey::DUMMY, ImageKey::DUMMY],
+        }
+    }
+
     pub fn get_format(&self) -> YuvFormat {
         match *self {
             YuvData::NV12(..) => YuvFormat::NV12,
@@ -2418,7 +2449,6 @@ impl DisplayItem {
             DisplayItem::Gradient(..) => "gradient",
             DisplayItem::Iframe(..) => "iframe",
             DisplayItem::Image(..) => "image",
-            DisplayItem::RepeatingImage(..) => "repeating_image",
             DisplayItem::Line(..) => "line",
             DisplayItem::PopReferenceFrame => "pop_reference_frame",
             DisplayItem::PopStackingContext => "pop_stacking_context",
@@ -2461,6 +2491,7 @@ impl_default_for_enums! {
     BorderStyle => None,
     BoxShadowClipMode => Outset,
     ExtendMode => Clamp,
+    AlphaMode => Premultiplied,
     FilterOp => Identity,
     ComponentTransferFuncType => Identity,
     ClipMode => Clip,

@@ -20,8 +20,11 @@ ChromeUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
 const DEFAULT_HOST = "localhost";
 const DEFAULT_PORT = 9222;
 
-// Adds various command-line arguments as environment variables to preserve
-// their values when the application is restarted internally.
+// Environment variables used to configure the Remote Agent. Using environment
+// variables ensures that their values are preserved when the application is
+// restarted internally.
+//
+// Set to "1" to grant the remote agent access to privileged processes.
 const ENV_ALLOW_SYSTEM_ACCESS = "MOZ_REMOTE_ALLOW_SYSTEM_ACCESS";
 
 const SHARED_DATA_ACTIVE_KEY = "RemoteAgent:Active";
@@ -29,6 +32,9 @@ const SHARED_DATA_IS_BROWSER_AUTOMATION_KEY =
   "RemoteAgent:IsBrowserAutomationRunning";
 
 const PREF_DYNAMIC_START_ENABLED = "remote.experimental.dynamicstart.enabled";
+
+// Locked by the DisableDeveloperTools enterprise policy.
+const PREF_POLICY_DISABLED = "remote.policy.disabled";
 
 const EXIT_CODE_NOT_AVAILABLE = 69;
 
@@ -104,18 +110,6 @@ class RemoteAgentParentProcess {
 
   get allowSystemAccess() {
     return this.#allowSystemAccess;
-  }
-
-  set allowSystemAccess(value) {
-    // Return early if system access is already marked being allowed.
-    // There is also no possibility to disallow once it got allowed except
-    // quitting Firefox and starting it again.
-    if (this.#allowSystemAccess || !value) {
-      return;
-    }
-
-    this.#allowSystemAccess = true;
-    Services.env.set(ENV_ALLOW_SYSTEM_ACCESS, "1");
   }
 
   /**
@@ -242,14 +236,6 @@ class RemoteAgentParentProcess {
     }
   }
 
-  #handleAllowSystemAccessFlag(cmdLine) {
-    try {
-      return cmdLine.handleFlag("remote-allow-system-access", false);
-    } catch (e) {
-      return false;
-    }
-  }
-
   /**
    * Check if the provided URI's host is an IP address.
    *
@@ -329,7 +315,7 @@ class RemoteAgentParentProcess {
             reject();
           }
         },
-        { interval: 250, timeout: 5000 }
+        { interval: 250, timeout: 5000, throws: null }
       );
 
       if (!this.#server._socket) {
@@ -449,7 +435,6 @@ class RemoteAgentParentProcess {
       cmdLine.handleFlag("remote-debugging-port", false);
     }
 
-    cmdLine.handleFlag("remote-allow-system-access", false);
     cmdLine.handleFlagWithParam("remote-allow-hosts", false);
     cmdLine.handleFlagWithParam("remote-allow-origins", false);
   }
@@ -468,9 +453,14 @@ class RemoteAgentParentProcess {
       case "command-line-startup":
         Services.obs.removeObserver(this, topic);
 
+        // The flags are still consumed by nsICommandLineHandler::handle().
+        if (Services.prefs.getBoolPref(PREF_POLICY_DISABLED, false)) {
+          lazy.logger.warn("Remote Agent is disabled by enterprise policy");
+          break;
+        }
+
         this.#allowHosts = this.#handleAllowHostsFlag(subject);
         this.#allowOrigins = this.#handleAllowOriginsFlag(subject);
-        this.allowSystemAccess = this.#handleAllowSystemAccessFlag(subject);
 
         this.#enabled = this.#handleRemoteDebuggingPortFlag(subject);
 
@@ -587,6 +577,11 @@ class RemoteAgentParentProcess {
       return -1;
     }
 
+    if (Services.prefs.getBoolPref(PREF_POLICY_DISABLED, false)) {
+      lazy.logger.warn("Start aborted, Remote Agent is disabled by policy");
+      return -1;
+    }
+
     if (this.running) {
       lazy.logger.debug(
         `Start aborted, RemoteAgent already running (running=${this.running})`
@@ -655,8 +650,7 @@ class RemoteAgentParentProcess {
   --remote-allow-hosts <hosts> Values of the Host header to allow for incoming requests.
                      Please read security guidelines at https://firefox-source-docs.mozilla.org/remote/Security.html
   --remote-allow-origins <origins> Values of the Origin header to allow for incoming requests.
-                     Please read security guidelines at https://firefox-source-docs.mozilla.org/remote/Security.html
-  --remote-allow-system-access Enable privileged access to the application's parent process\n`;
+                     Please read security guidelines at https://firefox-source-docs.mozilla.org/remote/Security.html\n`;
 
   QueryInterface = ChromeUtils.generateQI([
     "nsICommandLineHandler",

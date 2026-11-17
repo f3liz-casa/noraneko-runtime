@@ -11,7 +11,8 @@ let lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
-  TaskbarTabsUtils: "resource:///modules/taskbartabs/TaskbarTabsUtils.sys.mjs",
+  TaskbarTabsUtils:
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsUtils.sys.mjs",
   URILoadingHelper: "resource:///modules/URILoadingHelper.sys.mjs",
 });
 
@@ -102,11 +103,12 @@ export class BrowserDOMWindow {
   ) {
     let win, needToFocusWin;
 
-    // try the current window. if we're in a popup or a taskbar tab, fall
-    // back on the most recent browser window
+    // try the current window. if we're in a popup, a taskbar tab or a mini
+    // window, fall back on the most recent browser window
     if (
       this.win.toolbar.visible &&
-      !lazy.TaskbarTabsUtils.isTaskbarTabWindow(this.win)
+      !lazy.TaskbarTabsUtils.isTaskbarTabWindow(this.win) &&
+      !this.win.document.documentElement.hasAttribute("mini-window")
     ) {
       win = this.win;
     } else {
@@ -119,7 +121,11 @@ export class BrowserDOMWindow {
       return null;
     }
 
-    if (aIsExternal && (!aURI || aURI.spec == "about:blank")) {
+    if (
+      aIsExternal &&
+      aWhere !== Ci.nsIBrowserDOMWindow.OPEN_NEWTAB_BACKGROUND &&
+      (!aURI || aURI.spec == "about:blank")
+    ) {
       win.BrowserCommands.openTab(); // this also focuses the location bar
       win.focus();
       return win.gBrowser.selectedBrowser;

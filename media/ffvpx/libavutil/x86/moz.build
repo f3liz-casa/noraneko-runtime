@@ -15,7 +15,6 @@ SOURCES += [
     'lls.asm',
     'lls_init.c',
     'pixelutils.asm',
-    'pixelutils_init.c',
     'tx_float.asm',
     'tx_float_init.c',
 ]
@@ -23,3 +22,14 @@ SOURCES += [
 FINAL_LIBRARY = 'mozavutil'
 
 include('/media/ffvpx/ffvpxcommon.mozbuild')
+
+SOURCE_HEADERS += [
+	"asm.h",
+	"bswap.h",
+	"cpu.h",
+	"crc.h",
+	"intmath.h",
+	"intreadwrite.h",
+	"pixelutils.h",
+	"timer.h",
+]

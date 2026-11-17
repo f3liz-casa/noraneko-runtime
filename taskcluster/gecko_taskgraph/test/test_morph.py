@@ -69,6 +69,18 @@ def make_taskgraph():
             {
                 "try_mode": "try_task_config",
                 "try_task_config": {
+                    "rebuild": 10,
+                    "tasks": ["a"],
+                },
+                "project": "try",
+            },
+            {"a-1": 10, "a-2": 10},
+            id="duplicates a task chunked after it was selected",
+        ),
+        pytest.param(
+            {
+                "try_mode": "try_task_config",
+                "try_task_config": {
                     "tasks": ["a-*"],
                 },
                 "project": "try",
@@ -212,14 +224,50 @@ def test_make_index_tasks(make_taskgraph, graph_config):
 
 
 @pytest.mark.parametrize(
-    "has_ccov,expected_task_added",
+    "enable_always_target,should_raise",
     (
-        pytest.param(True, True, id="with ccov tasks"),
-        pytest.param(False, False, id="without ccov tasks"),
+        pytest.param(False, False, id="always target disabled"),
+        pytest.param(["docker-image"], True, id="docker-image always targeted"),
+        pytest.param(True, True, id="everything always targeted"),
+    ),
+)
+def test_add_eager_cache_index_tasks_missing_docker_image(
+    make_taskgraph, graph_config, enable_always_target, should_raise
+):
+    task = Task(
+        kind="toolchain",
+        label="a",
+        attributes={"eager_indexes": ["gecko.cache.a"]},
+        task={},
+    )
+    taskgraph, label_to_taskid = make_taskgraph({task.label: task})
+    params = Parameters(strict=False, enable_always_target=enable_always_target)
+
+    if should_raise:
+        with pytest.raises(RuntimeError):
+            morph.add_eager_cache_index_tasks(
+                taskgraph, label_to_taskid, params, graph_config
+            )
+    else:
+        new_taskgraph, new_label_to_taskid = morph.add_eager_cache_index_tasks(
+            taskgraph, label_to_taskid, params, graph_config
+        )
+        assert new_label_to_taskid == {"a": "a-tid"}
+        assert set(new_taskgraph.tasks) == {"a"}
+
+
+@pytest.mark.parametrize(
+    "project,has_ccov,expected_task_added",
+    (
+        pytest.param("mozilla-central", True, True, id="with ccov tasks"),
+        pytest.param("mozilla-central", False, False, id="without ccov tasks"),
+        pytest.param("comm-central", True, True, id="comm-central"),
+        pytest.param("try", True, False, id="try"),
+        pytest.param("try-comm-central", True, False, id="try-comm-central"),
     ),
 )
 def test_add_code_coverage_task(
-    make_taskgraph, graph_config, has_ccov, expected_task_added
+    make_taskgraph, graph_config, project, has_ccov, expected_task_added
 ):
     tasks = {}
     if has_ccov:
@@ -247,6 +295,7 @@ def test_add_code_coverage_task(
         strict=False,
         owner="test@example.com",
         head_repository="https://hg.mozilla.org/mozilla-central",
+        project=project,
     )
 
     taskgraph, label_to_taskid = morph.add_code_coverage_task(

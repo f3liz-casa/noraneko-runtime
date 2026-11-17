@@ -543,7 +543,8 @@ class ContentParent final : public PContentParent,
 
   mozilla::ipc::IPCResult RecvNotifyShutdownSuccess();
 
-  PContentPermissionRequestParent* AllocPContentPermissionRequestParent(
+  already_AddRefed<PContentPermissionRequestParent>
+  AllocPContentPermissionRequestParent(
       const nsTArray<PermissionRequest>& aRequests, nsIPrincipal* aPrincipal,
       nsIPrincipal* aTopLevelPrincipal, const bool& aIsHandlingUserInput,
       const bool& aMaybeUnsafePermissionDelegate, const TabId& aTabId,
@@ -555,9 +556,6 @@ class ContentParent final : public PContentParent,
       nsIPrincipal* aTopLevelPrincipal, const bool& aIsHandlingUserInput,
       const bool& aMaybeUnsafePermissionDelegate, const TabId& tabId,
       const bool& aIgnoreAllowSitePermission) override;
-
-  bool DeallocPContentPermissionRequestParent(
-      PContentPermissionRequestParent* actor);
 
   void ForkNewProcess(bool aBlocking);
 
@@ -753,8 +751,9 @@ class ContentParent final : public PContentParent,
    * removed from this list, but will still be in the sContentParents list for
    * the GetAll/GetAllEvenIfDead APIs.
    */
-  static nsClassHashtable<nsGenericHashKey<RemoteType>,
-                          nsTArray<ContentParent*>>* sBrowserContentParents;
+  static mozilla::StaticAutoPtr<
+      nsClassHashtable<nsGenericHashKey<RemoteType>, nsTArray<ContentParent*>>>
+      sBrowserContentParents;
   static mozilla::StaticAutoPtr<LinkedList<ContentParent>> sContentParents;
 
   void AddShutdownBlockers();
@@ -1072,6 +1071,13 @@ class ContentParent final : public PContentParent,
       StructuredCloneData* aStack = nullptr);
 
  public:
+  /**
+   * Returns the canonical browsing context for `aContext` if it's managed by
+   * this ContentParent and is current, otherwise null.
+   */
+  CanonicalBrowsingContext* GetBrowsingContextIfCurrent(
+      const MaybeDiscardedWindowContext& aContext);
+
   mozilla::ipc::IPCResult RecvCommitBrowsingContextTransaction(
       const MaybeDiscarded<BrowsingContext>& aContext,
       BrowsingContext::BaseTransaction&& aTransaction, uint64_t aEpoch);
@@ -1079,9 +1085,6 @@ class ContentParent final : public PContentParent,
   mozilla::ipc::IPCResult RecvCommitWindowContextTransaction(
       const MaybeDiscarded<WindowContext>& aContext,
       WindowContext::BaseTransaction&& aTransaction, uint64_t aEpoch);
-
-  mozilla::ipc::IPCResult RecvAddSecurityState(
-      const MaybeDiscarded<WindowContext>& aContext, uint32_t aStateFlags);
 
   mozilla::ipc::IPCResult RecvFirstIdle();
 
@@ -1125,8 +1128,10 @@ class ContentParent final : public PContentParent,
 
   mozilla::ipc::IPCResult RecvAcquireHWInferenceProcess();
 
+#  ifdef MOZ_WEBSPEECH
   mozilla::ipc::IPCResult RecvCreateSpeechRecognition(
       Endpoint<hwinference::PSpeechRecognitionParent>&& aEndpoint);
+#  endif
 
   mozilla::ipc::IPCResult RecvReleaseHWInferenceConnection();
 #endif  // !ANDROID
@@ -1223,6 +1228,7 @@ class ContentParent final : public PContentParent,
       const nsACString& aTrackingOrigin, uint32_t aCookieBehavior,
       const ContentBlockingNotifier::StorageAccessPermissionGrantedReason&
           aReason,
+      const Maybe<bool>& aHadPriorUserInteraction,
       CompleteAllowAccessForResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvStoreUserInteractionAsPermission(
@@ -1275,7 +1281,7 @@ class ContentParent final : public PContentParent,
 
 #if defined(XP_WIN)
   mozilla::ipc::IPCResult RecvGetModulesTrust(
-      ModulePaths&& aModPaths, bool aRunAtNormalPriority,
+      ModuleIdentifiers&& aModIdents, bool aRunAtNormalPriority,
       GetModulesTrustResolver&& aResolver);
 #endif  // defined(XP_WIN)
 
@@ -1291,8 +1297,8 @@ class ContentParent final : public PContentParent,
       const MaybeDiscarded<BrowsingContext>& aContext);
 
   mozilla::ipc::IPCResult RecvNotifyOnHistoryReload(
-      const MaybeDiscarded<BrowsingContext>& aContext, const bool& aForceReload,
-      NotifyOnHistoryReloadResolver&& aResolver);
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const uint32_t& aReloadFlags, NotifyOnHistoryReloadResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvHistoryCommit(
       const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
@@ -1339,9 +1345,9 @@ class ContentParent final : public PContentParent,
   RecvSessionHistoryEntryStoreWindowNameInContiguousEntries(
       const MaybeDiscarded<BrowsingContext>& aContext, const nsAString& aName);
 
-  mozilla::ipc::IPCResult RecvGetLoadingSessionHistoryInfoFromParent(
+  mozilla::ipc::IPCResult RecvAdoptChildSHEntry(
       const MaybeDiscarded<BrowsingContext>& aContext,
-      GetLoadingSessionHistoryInfoFromParentResolver&& aResolver);
+      AdoptChildSHEntryResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvSynchronizeNavigationAPIState(
       const MaybeDiscarded<BrowsingContext>& aContext,
@@ -1351,13 +1357,14 @@ class ContentParent final : public PContentParent,
       const MaybeDiscarded<BrowsingContext>& aContext);
 
   mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntry(
-      const MaybeDiscarded<BrowsingContext>& aContext,
+      const MaybeDiscarded<WindowContext>& aContext,
       const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
-      uint32_t aLoadType, uint32_t aUpdatedCacheKey, const nsID& aChangeID);
+      uint32_t aLoadType, uint32_t aUpdatedCacheKey, const nsID& aChangeID,
+      const Maybe<NewSessionHistorySharedState>& aNewSharedState);
 
   mozilla::ipc::IPCResult RecvReplaceActiveSessionHistoryEntry(
-      const MaybeDiscarded<BrowsingContext>& aContext,
-      SessionHistoryInfo&& aInfo);
+      const MaybeDiscarded<WindowContext>& aContext, SessionHistoryInfo&& aInfo,
+      const Maybe<NewSessionHistorySharedState>& aNewSharedState);
 
   mozilla::ipc::IPCResult RecvRemoveDynEntriesFromActiveSessionHistoryEntry(
       const MaybeDiscarded<BrowsingContext>& aContext);
@@ -1390,9 +1397,9 @@ class ContentParent final : public PContentParent,
 
   mozilla::ipc::IPCResult RecvGeckoTraceExport(ByteBuf&& aBuf);
 
-  mozilla::ipc::IPCResult RecvSetContainerFeaturePolicy(
+  mozilla::ipc::IPCResult RecvSetContainerPermissionsPolicy(
       const MaybeDiscardedBrowsingContext& aContainerContext,
-      MaybeFeaturePolicyInfo&& aContainerFeaturePolicyInfo);
+      MaybePermissionsPolicyInfo&& aContainerPermissionsPolicyInfo);
 
   mozilla::ipc::IPCResult RecvUpdateAncestorOriginsList(
       const MaybeDiscardedBrowsingContext& aContext);
@@ -1471,11 +1478,9 @@ class ContentParent final : public PContentParent,
  private:
   // Return an existing ContentParent if possible. Otherwise, `nullptr`.
   static UniqueContentParentKeepAlive GetUsedBrowserProcess(
-      const RemoteType& aRemoteType, nsTArray<ContentParent*>& aContentParents,
-      uint32_t aMaxContentParents, bool aPreferUsed, ProcessPriority aPriority,
-      uint64_t aBrowserId);
+      const RemoteType& aRemoteType, bool aPreferUsed, uint64_t aBrowserId);
 
-  void AddToPool(nsTArray<ContentParent*>&);
+  void AddToPool();
   void RemoveFromPool(nsTArray<ContentParent*>&);
   void AssertNotInPool();
 
@@ -1496,7 +1501,7 @@ class ContentParent final : public PContentParent,
   // release these objects in ShutDownProcess.  See the comment there for more
   // details.
 
-  GeckoChildProcessHost* mSubprocess;
+  RefPtr<GeckoChildProcessHost> mSubprocess;
   const TimeStamp mLaunchTS;  // used to calculate time to start content process
   TimeStamp mLaunchYieldTS;   // used to calculate async launch main thread time
 

@@ -59,6 +59,7 @@
 #include "mozilla/dom/HTMLBodyElement.h"
 #include "mozilla/dom/HTMLDocumentBinding.h"
 #include "mozilla/dom/HTMLIFrameElement.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/ShadowIncludingTreeIterator.h"
 #include "mozilla/dom/nsCSPContext.h"
@@ -76,7 +77,6 @@
 #include "nsMimeTypes.h"
 #include "nsNodeInfoManager.h"
 #include "nsParser.h"
-#include "nsRange.h"
 #include "nsSandboxFlags.h"
 
 using namespace mozilla;
@@ -613,31 +613,9 @@ void nsHTMLDocument::NamedGetter(JSContext* aCx, const nsAString& aName,
     return;
   }
 
-  bool collect = false;
 #ifdef NIGHTLY_BUILD
-  bool preventShadowing = false;
-  if (StaticPrefs::dom_document_name_getter_prevent_shadowing_enabled()) {
-    if (HTMLDocument_Binding::InterfaceHasProperty(aName)) {
-      preventShadowing = true;
-      collect = mShadowedHTMLDocumentProperties.Length() <= 10;
-    }
-  } else
-#endif
-  {
-    // To limit the possible performance/memory impact, only collect at most 10
-    // properties.
-    collect = mShadowedHTMLDocumentProperties.Length() <= 10 &&
-              HTMLDocument_Binding::InterfaceHasProperty(aName);
-  }
-
-  if (collect) {
-    if (!mShadowedHTMLDocumentProperties.Contains(aName)) {
-      mShadowedHTMLDocumentProperties.AppendElement(aName);
-    }
-  }
-
-#ifdef NIGHTLY_BUILD
-  if (preventShadowing) {
+  if (StaticPrefs::dom_document_name_getter_prevent_shadowing_enabled() &&
+      HTMLDocument_Binding::InterfaceHasProperty(aName)) {
     AutoTArray<nsString, 1> params;
     params.AppendElement(aName);
     nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns, this,
@@ -848,14 +826,6 @@ void nsHTMLDocument::GetFormsAndFormControls(ContentList** aFormList,
                                              ContentList** aFormControlList) {
   RefPtr<ContentListHolder> holder = mContentListHolder;
   if (!holder) {
-    // Flush our content model so it'll be up to date
-    // If this becomes unnecessary and the following line is removed,
-    // please also remove the corresponding flush operation from
-    // nsHtml5TreeBuilderCppSupplement.h. (Look for "See bug 497861." there.)
-    // XXXsmaug nsHtml5TreeBuilderCppSupplement doesn't seem to have such flush
-    //         anymore.
-    FlushPendingNotifications(FlushType::Content);
-
     RefPtr<ContentList> htmlForms = GetExistingForms();
     if (!htmlForms) {
       // If the document doesn't have an existing forms content list, create a

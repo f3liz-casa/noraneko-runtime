@@ -90,6 +90,7 @@ function errorWithResult(message, result = Cr.NS_ERROR_FAILURE) {
 export var PushService = {
   _service: null,
   _state: PUSH_SERVICE_UNINIT,
+  _ignoreNewMessages: false,
   _db: null,
   _options: null,
   _visibleNotifications: new Map(),
@@ -148,6 +149,35 @@ export var PushService = {
     return this._activated;
   },
 
+  _notifyReady: null,
+  _ready: null,
+
+  /**
+   * Whether the push service has finished activating.
+   *
+   * @type {boolean}
+   */
+  get isReady() {
+    return this._state > PUSH_SERVICE_ACTIVATING;
+  },
+
+  /**
+   * Resolves once the push service has finished activating.
+   *
+   * @returns {Promise<void>}
+   */
+  ready() {
+    if (this.isReady) {
+      return Promise.resolve();
+    }
+    if (!this._ready) {
+      this._ready = new Promise(resolve => {
+        this._notifyReady = resolve;
+      });
+    }
+    return this._ready;
+  },
+
   _makePendingKey(aPageRecord) {
     return aPageRecord.scope + "|" + aPageRecord.originAttributes;
   },
@@ -196,6 +226,11 @@ export var PushService = {
       this._activated = null;
     }
     this._state = aNewState;
+    if (this._notifyReady && aNewState > PUSH_SERVICE_ACTIVATING) {
+      this._notifyReady();
+      this._notifyReady = null;
+      this._ready = null;
+    }
   },
 
   async _changeStateOfflineEvent(offline, calledFromConnEnabledEvent) {
@@ -484,6 +519,7 @@ export var PushService = {
     }
 
     this._setState(PUSH_SERVICE_ACTIVATING);
+    this._ignoreNewMessages = false;
 
     prefs.addObserver("serverURL", this);
     Services.obs.addObserver(this, "quit-application");
@@ -735,6 +771,20 @@ export var PushService = {
         );
       }
     );
+  },
+
+  /**
+   * Stop handling new push messages. Messages already being handled keep
+   * going. New ones aren't acked, so the server sends them again on the next
+   * connection.
+   */
+  ignoreNewMessages() {
+    lazy.console.debug("ignoreNewMessages()");
+    this._ignoreNewMessages = true;
+  },
+
+  get ignoresNewMessages() {
+    return this._ignoreNewMessages;
   },
 
   /**
@@ -1001,22 +1051,23 @@ export var PushService = {
       Glean.webPush.apiNotify.add(1);
     }
 
+    let handled;
     if (payload) {
-      lazy.gPushNotifier.notifyPushWithData(
+      handled = lazy.gPushNotifier.notifyPushWithData(
         aPushRecord.scope,
         aPushRecord.principal,
         messageID,
         payload
       );
     } else {
-      lazy.gPushNotifier.notifyPush(
+      handled = lazy.gPushNotifier.notifyPush(
         aPushRecord.scope,
         aPushRecord.principal,
         messageID
       );
     }
 
-    return Ci.nsIPushErrorReporter.ACK_DELIVERED;
+    return handled.then(() => Ci.nsIPushErrorReporter.ACK_DELIVERED);
   },
 
   getByKeyID(aKeyID) {
@@ -1025,6 +1076,31 @@ export var PushService = {
 
   getAllUnexpired() {
     return this._db.getAllUnexpired();
+  },
+
+  /**
+   * Returns the unexpired subscriptions, excluding system subscriptions such
+   * as the one held by Firefox Accounts.
+   *
+   * Resolves with an empty array when push has not started, is
+   * disabled, or fails to activate.
+   *
+   * @returns {Promise<PushRecord[]>}
+   */
+  async getAllUnexpiredNonSystem() {
+    if (!prefs.getBoolPref("connection.enabled")) {
+      return [];
+    }
+    try {
+      await this._checkActivated();
+    } catch {
+      return [];
+    }
+    if (!this._db) {
+      return [];
+    }
+    let records = await this.getAllUnexpired();
+    return records.filter(record => !record.systemRecord);
   },
 
   _sendRequest(action, ...params) {
@@ -1498,9 +1574,6 @@ export var PushService = {
         this._notifySubscriptionChangeObservers(record);
       }
       if (!record.isExpired()) {
-        if (!record.systemRecord) {
-          Glean.webPush.unsubscribedByClearingData.add();
-        }
         // Only unregister active registrations, since we already told the
         // server about expired ones.
         this._backgroundUnregister(

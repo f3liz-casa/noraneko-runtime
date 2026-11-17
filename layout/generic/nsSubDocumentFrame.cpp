@@ -162,6 +162,7 @@ void nsSubDocumentFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
 }
 
 void nsSubDocumentFrame::UpdateEmbeddedBrowsingContextDependentData() {
+  MOZ_ASSERT(!nsContentUtils::IsSafeToRunScript());
   if (!mFrameLoader) {
     return;
   }
@@ -201,24 +202,25 @@ void nsSubDocumentFrame::ShowViewer() {
   if (!frameloader->IsRemoteFrame() && !PresContext()->IsDynamic()) {
     // We let the printing code take care of loading the document and
     // initializing the shell.
-  } else {
-    AutoWeakFrame weakThis(this);
-    mCallingShow = true;
-    bool didCreateDoc = frameloader->Show(this);
-    if (!weakThis.IsAlive()) {
-      return;
-    }
-    mCallingShow = false;
-    mDidCreateDoc = didCreateDoc;
-    if (!HasAnyStateBits(NS_FRAME_FIRST_REFLOW)) {
-      frameloader->UpdatePositionAndSize(this);
-    }
-    if (!weakThis.IsAlive()) {
-      return;
-    }
-    UpdateEmbeddedBrowsingContextDependentData();
-    InvalidateFrame();
+    return;
   }
+  AutoWeakFrame weakThis(this);
+  mCallingShow = true;
+  bool didCreateDoc = frameloader->Show(this);
+  if (!weakThis.IsAlive()) {
+    return;
+  }
+  mCallingShow = false;
+  mDidCreateDoc = didCreateDoc;
+  if (!HasAnyStateBits(NS_FRAME_FIRST_REFLOW)) {
+    frameloader->UpdatePositionAndSize(this);
+  }
+  if (!weakThis.IsAlive()) {
+    return;
+  }
+  nsAutoScriptBlocker sb;
+  UpdateEmbeddedBrowsingContextDependentData();
+  InvalidateFrame();
 }
 
 Document* nsSubDocumentFrame::GetExtantSubdocument() {
@@ -305,7 +307,7 @@ static void WrapBackgroundColorInOwnLayer(nsDisplayListBuilder* aBuilder,
                                           nsDisplayList* aList) {
   for (nsDisplayItem* item : aList->TakeItems()) {
     if (item->GetType() == DisplayItemType::TYPE_BACKGROUND_COLOR) {
-      nsDisplayList tmpList(aBuilder);
+      nsDisplayList tmpList;
       tmpList.AppendToTop(item);
       item = MakeDisplayItemWithIndex<nsDisplayOwnLayer>(
           aBuilder, aFrame, /* aIndex = */ nsDisplayOwnLayer::OwnLayerForSubdoc,
@@ -436,7 +438,7 @@ void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
                        presContext->IsRootContentDocumentCrossProcess() ||
                        (sf && sf->IsScrollingActive());
 
-  nsDisplayList childItems(aBuilder);
+  nsDisplayList childItems;
 
   if (subdocRootFrame) {
     DisplayListClipState::AutoSaveRestore nestedClipState(aBuilder);

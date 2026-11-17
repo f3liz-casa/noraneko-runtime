@@ -102,6 +102,43 @@ internal open class ForeignBytes : Structure() {
 
     class ByValue : ForeignBytes(), Structure.ByValue
 }
+
+// Converter for `&[u8]` / `[ByRef] bytes` arguments.
+//
+// Only `lower` is valid — zero-copy byte buffers only flow foreign -> Rust,
+// and only in argument position. `lift`, `read`, `write`, and
+// `allocationSize` have no sound implementation here and all panic at
+// runtime. The `FfiConverter` interface is implemented so that the
+// compiler enforces the full method set (rather than relying on eyeball).
+//
+// The provided `ByteBuffer` MUST be direct — only direct buffers have a
+// stable native address that JNA can expose via `getDirectBufferPointer`.
+// The returned `ForeignBytes.ByValue` is only valid for the duration of
+// the FFI call; the Rust side treats it as a borrow.
+internal object FfiConverterByRefBytes : FfiConverter<java.nio.ByteBuffer, ForeignBytes.ByValue> {
+    override fun lower(value: java.nio.ByteBuffer): ForeignBytes.ByValue {
+        require(value.isDirect) { "UniFFI zero-copy &[u8] requires a direct ByteBuffer. Use ByteBuffer.allocateDirect()." }
+        val remaining = value.remaining()
+        val fb = ForeignBytes.ByValue()
+        fb.len = remaining
+        // Zero-length direct buffers: skip getDirectBufferPointer (platform-variable behavior)
+        // and pass null. The Rust side treats (null, 0) as &[].
+        fb.data = if (remaining == 0) null else com.sun.jna.Native.getDirectBufferPointer(value)
+        return fb
+    }
+
+    override fun lift(value: ForeignBytes.ByValue): java.nio.ByteBuffer =
+        error("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
+
+    override fun read(buf: java.nio.ByteBuffer): java.nio.ByteBuffer =
+        error("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+
+    override fun write(value: java.nio.ByteBuffer, buf: java.nio.ByteBuffer): Unit =
+        error("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+
+    override fun allocationSize(value: java.nio.ByteBuffer): ULong =
+        error("ByRef bytes have no RustBuffer allocation size: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+}
 /**
  * The FfiConverter interface handles converter types to and from the FFI
  *
@@ -638,18 +675,24 @@ internal object IntegrityCheckingUniffiLib {
         Native.register(IntegrityCheckingUniffiLib::class.java, findLibraryName(componentName = "search"))
         uniffiCheckContractApiVersion(this)
     }
-    external fun uniffi_search_checksum_method_searchengineselector_clear_search_config(
-    ): Short
+
+    internal fun ensureInitialized() = Unit
     external fun uniffi_search_checksum_method_searchengineselector_filter_engine_configuration(
-    ): Short
+    ): Int
+    external fun uniffi_search_checksum_method_searchengineselector_filter_engine_configuration_v3(
+    ): Int
     external fun uniffi_search_checksum_method_searchengineselector_set_config_overrides(
-    ): Short
+    ): Int
     external fun uniffi_search_checksum_method_searchengineselector_set_search_config(
-    ): Short
+    ): Int
+    external fun uniffi_search_checksum_method_searchengineselector_set_search_config_v3(
+    ): Int
     external fun uniffi_search_checksum_method_searchengineselector_use_remote_settings_server(
-    ): Short
+    ): Int
+    external fun uniffi_search_checksum_method_searchengineselector_use_remote_settings_server_v3(
+    ): Int
     external fun uniffi_search_checksum_constructor_searchengineselector_new(
-    ): Short
+    ): Int
     external fun ffi_search_uniffi_contract_version(
     ): Int
 
@@ -669,21 +712,27 @@ internal object UniffiLib {
         mozilla.appservices.remotesettings.uniffiEnsureInitialized()
         
     }
+
+    internal fun ensureInitialized() = Unit
     external fun uniffi_search_fn_clone_searchengineselector(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_search_fn_free_searchengineselector(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_search_fn_constructor_searchengineselector_new(uniffi_out_err: UniffiRustCallStatus, 
     ): Long
-    external fun uniffi_search_fn_method_searchengineselector_clear_search_config(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
     external fun uniffi_search_fn_method_searchengineselector_filter_engine_configuration(`ptr`: Long,`userEnvironment`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_search_fn_method_searchengineselector_filter_engine_configuration_v3(`ptr`: Long,`userEnvironment`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_search_fn_method_searchengineselector_set_config_overrides(`ptr`: Long,`overrides`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_search_fn_method_searchengineselector_set_search_config(`ptr`: Long,`configuration`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_search_fn_method_searchengineselector_set_search_config_v3(`ptr`: Long,`configuration`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_search_fn_method_searchengineselector_use_remote_settings_server(`ptr`: Long,`service`: Long,`applyEngineOverrides`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_search_fn_method_searchengineselector_use_remote_settings_server_v3(`ptr`: Long,`service`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun ffi_search_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -700,7 +749,7 @@ internal object UniffiLib {
     external fun ffi_search_rust_future_free_u8(`handle`: Long,
     ): Unit
     external fun ffi_search_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
+    ): Int
     external fun ffi_search_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
     external fun ffi_search_rust_future_cancel_i8(`handle`: Long,
@@ -716,7 +765,7 @@ internal object UniffiLib {
     external fun ffi_search_rust_future_free_u16(`handle`: Long,
     ): Unit
     external fun ffi_search_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Short
+    ): Int
     external fun ffi_search_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
     external fun ffi_search_rust_future_cancel_i16(`handle`: Long,
@@ -807,10 +856,10 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
  * @suppress
  */
 public fun uniffiEnsureInitialized() {
-    IntegrityCheckingUniffiLib
-    // UniffiLib() initialized as objects are used, but we still need to explicitly
-    // reference it so initialization across crates works as expected.
-    UniffiLib
+    // Call arbitrary methods on IntegrityCheckingUniffiLib and UniffiLib to ensure that
+    // their init blocks run. This ensures initialization across crates works as expected.
+    IntegrityCheckingUniffiLib.ensureInitialized()
+    UniffiLib.ensureInitialized()
 }
 
 // Async support
@@ -1165,18 +1214,18 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
 public interface SearchEngineSelectorInterface {
     
     /**
-     * Clears the search configuration from memory if it is known that it is
-     * not required for a time, e.g. if the configuration will only be re-filtered
-     * after an app/environment update.
+     * Filters the search configuration with the user's given environment,
+     * and returns the set of engines and parameters that should be presented
+     * to the user.
      */
-    fun `clearSearchConfig`()
+    fun `filterEngineConfiguration`(`userEnvironment`: SearchUserEnvironment): RefinedSearchConfig
     
     /**
      * Filters the search configuration with the user's given environment,
      * and returns the set of engines and parameters that should be presented
      * to the user.
      */
-    fun `filterEngineConfiguration`(`userEnvironment`: SearchUserEnvironment): RefinedSearchConfig
+    fun `filterEngineConfigurationV3`(`userEnvironment`: SearchUserEnvironmentV3): RefinedSearchConfigV3
     
     fun `setConfigOverrides`(`overrides`: kotlin.String)
     
@@ -1190,17 +1239,34 @@ public interface SearchEngineSelectorInterface {
     fun `setSearchConfig`(`configuration`: kotlin.String)
     
     /**
+     * Sets the search configuration from the given string. If the configuration
+     * string is unchanged since the last update, the cached configuration is
+     * reused to avoid unnecessary reprocessing. This helps optimize performance,
+     * particularly during test runs where the same configuration may be used
+     * repeatedly.
+     */
+    fun `setSearchConfigV3`(`configuration`: kotlin.String)
+    
+    /**
      * Sets the RemoteSettingsService to use. The selector will create the
      * relevant remote settings client(s) from the service.
      *
      * # Params:
      * - `service`: The remote settings service instance for the application.
-     * - `options`: The remote settings options to be passed to the client(s).
      * - `apply_engine_overrides`: Whether or not to apply overrides from
      * `search-config-v2-overrides` to the selected engines. Should be false unless the
      * application supports the click URL feature.
      */
     fun `useRemoteSettingsServer`(`service`: RemoteSettingsService, `applyEngineOverrides`: kotlin.Boolean)
+    
+    /**
+     * Sets the RemoteSettingsService to use. The selector will create the
+     * relevant remote settings client(s) from the service.
+     *
+     * # Params:
+     * - `service`: The remote settings service instance for the application.
+     */
+    fun `useRemoteSettingsServerV3`(`service`: RemoteSettingsService)
     
     companion object
 }
@@ -1248,6 +1314,11 @@ open class SearchEngineSelector: Disposable, AutoCloseable, SearchEngineSelector
 
     private val wasDestroyed = AtomicBoolean(false)
     private val callCounter = AtomicLong(1)
+
+    /**
+     * Whether the current object has been destroyed and its reference is gone in the Rust side.
+     */
+    val uniffiIsDestroyed: Boolean get() = wasDestroyed.get()
 
     override fun destroy() {
         // Only allow a single call to this method.
@@ -1316,23 +1387,6 @@ open class SearchEngineSelector: Disposable, AutoCloseable, SearchEngineSelector
 
     
     /**
-     * Clears the search configuration from memory if it is known that it is
-     * not required for a time, e.g. if the configuration will only be re-filtered
-     * after an app/environment update.
-     */override fun `clearSearchConfig`()
-        = 
-    callWithHandle {
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_search_fn_method_searchengineselector_clear_search_config(
-        it,
-        _status)
-}
-    }
-    
-    
-
-    
-    /**
      * Filters the search configuration with the user's given environment,
      * and returns the set of engines and parameters that should be presented
      * to the user.
@@ -1343,7 +1397,28 @@ open class SearchEngineSelector: Disposable, AutoCloseable, SearchEngineSelector
     uniffiRustCallWithError(SearchApiException) { _status ->
     UniffiLib.uniffi_search_fn_method_searchengineselector_filter_engine_configuration(
         it,
+        
         FfiConverterTypeSearchUserEnvironment.lower(`userEnvironment`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Filters the search configuration with the user's given environment,
+     * and returns the set of engines and parameters that should be presented
+     * to the user.
+     */
+    @Throws(SearchApiException::class)override fun `filterEngineConfigurationV3`(`userEnvironment`: SearchUserEnvironmentV3): RefinedSearchConfigV3 {
+            return FfiConverterTypeRefinedSearchConfigV3.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchApiException) { _status ->
+    UniffiLib.uniffi_search_fn_method_searchengineselector_filter_engine_configuration_v3(
+        it,
+        
+        FfiConverterTypeSearchUserEnvironmentV3.lower(`userEnvironment`),_status)
 }
     }
     )
@@ -1357,6 +1432,7 @@ open class SearchEngineSelector: Disposable, AutoCloseable, SearchEngineSelector
     uniffiRustCallWithError(SearchApiException) { _status ->
     UniffiLib.uniffi_search_fn_method_searchengineselector_set_config_overrides(
         it,
+        
         FfiConverterString.lower(`overrides`),_status)
 }
     }
@@ -1377,6 +1453,28 @@ open class SearchEngineSelector: Disposable, AutoCloseable, SearchEngineSelector
     uniffiRustCallWithError(SearchApiException) { _status ->
     UniffiLib.uniffi_search_fn_method_searchengineselector_set_search_config(
         it,
+        
+        FfiConverterString.lower(`configuration`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Sets the search configuration from the given string. If the configuration
+     * string is unchanged since the last update, the cached configuration is
+     * reused to avoid unnecessary reprocessing. This helps optimize performance,
+     * particularly during test runs where the same configuration may be used
+     * repeatedly.
+     */
+    @Throws(SearchApiException::class)override fun `setSearchConfigV3`(`configuration`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(SearchApiException) { _status ->
+    UniffiLib.uniffi_search_fn_method_searchengineselector_set_search_config_v3(
+        it,
+        
         FfiConverterString.lower(`configuration`),_status)
 }
     }
@@ -1390,7 +1488,6 @@ open class SearchEngineSelector: Disposable, AutoCloseable, SearchEngineSelector
      *
      * # Params:
      * - `service`: The remote settings service instance for the application.
-     * - `options`: The remote settings options to be passed to the client(s).
      * - `apply_engine_overrides`: Whether or not to apply overrides from
      * `search-config-v2-overrides` to the selected engines. Should be false unless the
      * application supports the click URL feature.
@@ -1400,7 +1497,29 @@ open class SearchEngineSelector: Disposable, AutoCloseable, SearchEngineSelector
     uniffiRustCall() { _status ->
     UniffiLib.uniffi_search_fn_method_searchengineselector_use_remote_settings_server(
         it,
-        FfiConverterTypeRemoteSettingsService.lower(`service`),FfiConverterBoolean.lower(`applyEngineOverrides`),_status)
+        
+        FfiConverterTypeRemoteSettingsService.lower(`service`),
+        FfiConverterBoolean.lower(`applyEngineOverrides`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Sets the RemoteSettingsService to use. The selector will create the
+     * relevant remote settings client(s) from the service.
+     *
+     * # Params:
+     * - `service`: The remote settings service instance for the application.
+     */override fun `useRemoteSettingsServerV3`(`service`: RemoteSettingsService)
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_search_fn_method_searchengineselector_use_remote_settings_server_v3(
+        it,
+        
+        FfiConverterTypeRemoteSettingsService.lower(`service`),_status)
 }
     }
     
@@ -1704,6 +1823,79 @@ public object FfiConverterTypeRefinedSearchConfig: FfiConverterRustBuffer<Refine
 
 
 /**
+ * Details of the search engines to display to the user, generated as a result
+ * of processing the search configuration v3.
+ */
+data class RefinedSearchConfigV3 (
+    /**
+     * A sorted list of engines. Clients may use the engine in the order that
+     * this list is specified, or they may implement their own order if they
+     * have other requirements.
+     *
+     * The application default engines should not be assumed from this order in
+     * case of future changes.
+     *
+     * The sort order is:
+     *
+     * * Application Default Engine
+     * * Application Default Engine for Private Mode (if specified & different)
+     * * Engines sorted by descending `SearchEngineDefinitionV3.orderHint`
+     * * Any other engines in alphabetical order (locale based comparison)
+     */
+    var `engines`: List<SearchEngineDefinitionV3>
+    , 
+    /**
+     * The identifier of the engine that should be used for the application
+     * default engine. If this is undefined, an error has occurred, and the
+     * application should either default to the first engine in the engines
+     * list or otherwise handle appropriately.
+     */
+    var `appDefaultEngineId`: kotlin.String?
+    , 
+    /**
+     * If specified, the identifier of the engine that should be used for the
+     * application default engine in private browsing mode.
+     * Only desktop uses this currently.
+     */
+    var `appPrivateDefaultEngineId`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRefinedSearchConfigV3: FfiConverterRustBuffer<RefinedSearchConfigV3> {
+    override fun read(buf: ByteBuffer): RefinedSearchConfigV3 {
+        return RefinedSearchConfigV3(
+            FfiConverterSequenceTypeSearchEngineDefinitionV3.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RefinedSearchConfigV3) = (
+            FfiConverterSequenceTypeSearchEngineDefinitionV3.allocationSize(value.`engines`) +
+            FfiConverterOptionalString.allocationSize(value.`appDefaultEngineId`) +
+            FfiConverterOptionalString.allocationSize(value.`appPrivateDefaultEngineId`)
+    )
+
+    override fun write(value: RefinedSearchConfigV3, buf: ByteBuffer) {
+            FfiConverterSequenceTypeSearchEngineDefinitionV3.write(value.`engines`, buf)
+            FfiConverterOptionalString.write(value.`appDefaultEngineId`, buf)
+            FfiConverterOptionalString.write(value.`appPrivateDefaultEngineId`, buf)
+    }
+}
+
+
+
+/**
  * A definition for an individual search engine to be presented to the user.
  */
 data class SearchEngineDefinition (
@@ -1841,6 +2033,185 @@ public object FfiConverterTypeSearchEngineDefinition: FfiConverterRustBuffer<Sea
             FfiConverterTypeSearchEngineUrls.write(value.`urls`, buf)
             FfiConverterOptionalUInt.write(value.`orderHint`, buf)
             FfiConverterOptionalString.write(value.`clickUrl`, buf)
+    }
+}
+
+
+
+/**
+ * A search-config-v3 definition for an individual search engine to be
+ * presented to the user.
+ */
+data class SearchEngineDefinitionV3 (
+    /**
+     * A list of aliases for this engine.
+     */
+    var `aliases`: List<kotlin.String>
+    , 
+    /**
+     * The character set this engine uses for queries.
+     */
+    var `charset`: kotlin.String
+    , 
+    /**
+     * The classification of search engine according to the main search types.
+     */
+    var `classification`: SearchEngineClassificationV3
+    , 
+    /**
+     * The identifier of the search engine. This is used as an internal
+     * identifier, e.g. for saving the user's settings for the engine. It is
+     * also used to form the base telemetry id and may be extended by telemetrySuffix.
+     */
+    var `identifier`: kotlin.String
+    , 
+    /**
+     * Indicates the date until which the engine variant or subvariant is considered new
+     * (format: YYYY-MM-DD).
+     */
+    var `isNewUntil`: kotlin.String?
+    , 
+    /**
+     * The user visible name of the search engine.
+     */
+    var `name`: kotlin.String
+    , 
+    /**
+     * This search engine is presented as an option that the user may enable.
+     * The application should not include these in the default list of the
+     * user's engines. If not supported, it should filter them out.
+     */
+    var `optional`: kotlin.Boolean
+    , 
+    /**
+     * The partner details for the engine.
+     * The key is the search access point to use, e.g. `default`, `newtab`,
+     * `context`, `widget`, `topsite` (this list may be incomplete, see the
+     * search-config v3 schema for a full list).
+     */
+    var `partner`: Map<kotlin.String, SearchEnginePartnerDetails>?
+    , 
+    /**
+     * The URLs associated with the search engine.
+     */
+    var `urls`: SearchEngineUrls
+    , 
+    /**
+     * A hint to the order that this engine should be in the engine list. This
+     * is derived from the `engineOrders` section of the search configuration.
+     * The higher the number, the nearer to the front it should be.
+     * If the number is not specified, other methods of sorting may be relied
+     * upon (e.g. alphabetical).
+     */
+    var `orderHint`: kotlin.UInt?
+    , 
+    /**
+     * Whether the search engine has been deprecated. If this is true, then
+     * the engine will be removed from the configuration soon. The client should
+     * not display the configuration engine but may copy the engine details to a
+     * user-installed engine.
+     */
+    var `deprecated`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchEngineDefinitionV3: FfiConverterRustBuffer<SearchEngineDefinitionV3> {
+    override fun read(buf: ByteBuffer): SearchEngineDefinitionV3 {
+        return SearchEngineDefinitionV3(
+            FfiConverterSequenceString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeSearchEngineClassificationV3.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalMapStringTypeSearchEnginePartnerDetails.read(buf),
+            FfiConverterTypeSearchEngineUrls.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SearchEngineDefinitionV3) = (
+            FfiConverterSequenceString.allocationSize(value.`aliases`) +
+            FfiConverterString.allocationSize(value.`charset`) +
+            FfiConverterTypeSearchEngineClassificationV3.allocationSize(value.`classification`) +
+            FfiConverterString.allocationSize(value.`identifier`) +
+            FfiConverterOptionalString.allocationSize(value.`isNewUntil`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterBoolean.allocationSize(value.`optional`) +
+            FfiConverterOptionalMapStringTypeSearchEnginePartnerDetails.allocationSize(value.`partner`) +
+            FfiConverterTypeSearchEngineUrls.allocationSize(value.`urls`) +
+            FfiConverterOptionalUInt.allocationSize(value.`orderHint`) +
+            FfiConverterBoolean.allocationSize(value.`deprecated`)
+    )
+
+    override fun write(value: SearchEngineDefinitionV3, buf: ByteBuffer) {
+            FfiConverterSequenceString.write(value.`aliases`, buf)
+            FfiConverterString.write(value.`charset`, buf)
+            FfiConverterTypeSearchEngineClassificationV3.write(value.`classification`, buf)
+            FfiConverterString.write(value.`identifier`, buf)
+            FfiConverterOptionalString.write(value.`isNewUntil`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterBoolean.write(value.`optional`, buf)
+            FfiConverterOptionalMapStringTypeSearchEnginePartnerDetails.write(value.`partner`, buf)
+            FfiConverterTypeSearchEngineUrls.write(value.`urls`, buf)
+            FfiConverterOptionalUInt.write(value.`orderHint`, buf)
+            FfiConverterBoolean.write(value.`deprecated`, buf)
+    }
+}
+
+
+
+data class SearchEnginePartnerDetails (
+    /**
+     * The partner code to use.
+     */
+    var `code`: kotlin.String?
+    , 
+    /**
+     * The telemetry suffix to use.
+     */
+    var `telemetrySuffix`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchEnginePartnerDetails: FfiConverterRustBuffer<SearchEnginePartnerDetails> {
+    override fun read(buf: ByteBuffer): SearchEnginePartnerDetails {
+        return SearchEnginePartnerDetails(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SearchEnginePartnerDetails) = (
+            FfiConverterOptionalString.allocationSize(value.`code`) +
+            FfiConverterOptionalString.allocationSize(value.`telemetrySuffix`)
+    )
+
+    override fun write(value: SearchEnginePartnerDetails, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`code`, buf)
+            FfiConverterOptionalString.write(value.`telemetrySuffix`, buf)
     }
 }
 
@@ -2192,6 +2563,104 @@ public object FfiConverterTypeSearchUserEnvironment: FfiConverterRustBuffer<Sear
 
 
 /**
+ * The user's environment that is used for filtering the search configuration v3.
+ */
+data class SearchUserEnvironmentV3 (
+    /**
+     * The current locale of the application that the user is using.
+     */
+    var `locale`: kotlin.String
+    , 
+    /**
+     * The home region that the user is currently identified as being within.
+     * On desktop & android there is a 14 day lag after detecting a region
+     * change before the home region changes. TBD: iOS?
+     */
+    var `region`: kotlin.String
+    , 
+    /**
+     * The update channel of the user's build.
+     */
+    var `updateChannel`: SearchUpdateChannelV3
+    , 
+    /**
+     * The distribution id for the user's build.
+     */
+    var `distributionId`: kotlin.String
+    , 
+    /**
+     * The search related experiment id that the user is included within. On
+     * desktop this is the `searchConfiguration.experiment` variable.
+     */
+    var `experiment`: kotlin.String
+    , 
+    /**
+     * The application name that the user is using.
+     */
+    var `appName`: SearchApplicationNameV3
+    , 
+    /**
+     * The application version that the user is using.
+     */
+    var `version`: kotlin.String
+    , 
+    /**
+     * The device type that the user is using.
+     */
+    var `deviceType`: SearchDeviceTypeV3
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchUserEnvironmentV3: FfiConverterRustBuffer<SearchUserEnvironmentV3> {
+    override fun read(buf: ByteBuffer): SearchUserEnvironmentV3 {
+        return SearchUserEnvironmentV3(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeSearchUpdateChannelV3.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeSearchApplicationNameV3.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeSearchDeviceTypeV3.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SearchUserEnvironmentV3) = (
+            FfiConverterString.allocationSize(value.`locale`) +
+            FfiConverterString.allocationSize(value.`region`) +
+            FfiConverterTypeSearchUpdateChannelV3.allocationSize(value.`updateChannel`) +
+            FfiConverterString.allocationSize(value.`distributionId`) +
+            FfiConverterString.allocationSize(value.`experiment`) +
+            FfiConverterTypeSearchApplicationNameV3.allocationSize(value.`appName`) +
+            FfiConverterString.allocationSize(value.`version`) +
+            FfiConverterTypeSearchDeviceTypeV3.allocationSize(value.`deviceType`)
+    )
+
+    override fun write(value: SearchUserEnvironmentV3, buf: ByteBuffer) {
+            FfiConverterString.write(value.`locale`, buf)
+            FfiConverterString.write(value.`region`, buf)
+            FfiConverterTypeSearchUpdateChannelV3.write(value.`updateChannel`, buf)
+            FfiConverterString.write(value.`distributionId`, buf)
+            FfiConverterString.write(value.`experiment`, buf)
+            FfiConverterTypeSearchApplicationNameV3.write(value.`appName`, buf)
+            FfiConverterString.write(value.`version`, buf)
+            FfiConverterTypeSearchDeviceTypeV3.write(value.`deviceType`, buf)
+    }
+}
+
+
+
+/**
  * The list of possible submission methods for search engine urls.
  */
 
@@ -2330,6 +2799,50 @@ public object FfiConverterTypeSearchApplicationName: FfiConverterRustBuffer<Sear
 
 
 
+/**
+ * The list of possible application names that are supported by
+ * search-config-v3.
+ */
+
+enum class SearchApplicationNameV3 {
+    
+    FIREFOX_ANDROID,
+    FIREFOX_IOS,
+    FOCUS_ANDROID,
+    FOCUS_IOS,
+    FIREFOX_WIN,
+    FIREFOX_MACOSX,
+    FIREFOX_LINUX,
+    UNKNOWN;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchApplicationNameV3: FfiConverterRustBuffer<SearchApplicationNameV3> {
+    override fun read(buf: ByteBuffer) = try {
+        SearchApplicationNameV3.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: SearchApplicationNameV3) = 4UL
+
+    override fun write(value: SearchApplicationNameV3, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 enum class SearchDeviceType {
     
@@ -2357,6 +2870,44 @@ public object FfiConverterTypeSearchDeviceType: FfiConverterRustBuffer<SearchDev
     override fun allocationSize(value: SearchDeviceType) = 4UL
 
     override fun write(value: SearchDeviceType, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+/**
+ * The list of possible device types for search-config-v3.
+ */
+
+enum class SearchDeviceTypeV3 {
+    
+    SMARTPHONE,
+    TABLET,
+    NONE;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchDeviceTypeV3: FfiConverterRustBuffer<SearchDeviceTypeV3> {
+    override fun read(buf: ByteBuffer) = try {
+        SearchDeviceTypeV3.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: SearchDeviceTypeV3) = 4UL
+
+    override fun write(value: SearchDeviceTypeV3, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -2403,6 +2954,45 @@ public object FfiConverterTypeSearchEngineClassification: FfiConverterRustBuffer
 
 
 /**
+ * The list of acceptable classifications for a search engine in
+ * search-config-v3.
+ */
+
+enum class SearchEngineClassificationV3 {
+    
+    AI,
+    GENERAL,
+    UNKNOWN;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchEngineClassificationV3: FfiConverterRustBuffer<SearchEngineClassificationV3> {
+    override fun read(buf: ByteBuffer) = try {
+        SearchEngineClassificationV3.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: SearchEngineClassificationV3) = 4UL
+
+    override fun write(value: SearchEngineClassificationV3, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+/**
  * The list of possible update channels for a user's build.
  * Use `default` for a self-build or an unknown channel.
  */
@@ -2436,6 +3026,48 @@ public object FfiConverterTypeSearchUpdateChannel: FfiConverterRustBuffer<Search
     override fun allocationSize(value: SearchUpdateChannel) = 4UL
 
     override fun write(value: SearchUpdateChannel, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+/**
+ * The list of possible update channels for a user's build, for
+ * search-config-v3. Use `default` for a self-build or an unknown channel.
+ */
+
+enum class SearchUpdateChannelV3 {
+    
+    NIGHTLY,
+    AURORA,
+    BETA,
+    RELEASE,
+    ESR,
+    DEFAULT;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchUpdateChannelV3: FfiConverterRustBuffer<SearchUpdateChannelV3> {
+    override fun read(buf: ByteBuffer) = try {
+        SearchUpdateChannelV3.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: SearchUpdateChannelV3) = 4UL
+
+    override fun write(value: SearchUpdateChannelV3, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -2704,6 +3336,38 @@ public object FfiConverterOptionalMapStringString: FfiConverterRustBuffer<Map<ko
 /**
  * @suppress
  */
+public object FfiConverterOptionalMapStringTypeSearchEnginePartnerDetails: FfiConverterRustBuffer<Map<kotlin.String, SearchEnginePartnerDetails>?> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, SearchEnginePartnerDetails>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterMapStringTypeSearchEnginePartnerDetails.read(buf)
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, SearchEnginePartnerDetails>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterMapStringTypeSearchEnginePartnerDetails.allocationSize(value)
+        }
+    }
+
+    override fun write(value: Map<kotlin.String, SearchEnginePartnerDetails>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterMapStringTypeSearchEnginePartnerDetails.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
     override fun read(buf: ByteBuffer): List<kotlin.String> {
         val len = buf.getInt()
@@ -2750,6 +3414,34 @@ public object FfiConverterSequenceTypeSearchEngineDefinition: FfiConverterRustBu
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeSearchEngineDefinition.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSearchEngineDefinitionV3: FfiConverterRustBuffer<List<SearchEngineDefinitionV3>> {
+    override fun read(buf: ByteBuffer): List<SearchEngineDefinitionV3> {
+        val len = buf.getInt()
+        return List<SearchEngineDefinitionV3>(len) {
+            FfiConverterTypeSearchEngineDefinitionV3.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SearchEngineDefinitionV3>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSearchEngineDefinitionV3.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SearchEngineDefinitionV3>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSearchEngineDefinitionV3.write(it, buf)
         }
     }
 }
@@ -2817,6 +3509,45 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
         value.forEach { (k, v) ->
             FfiConverterString.write(k, buf)
             FfiConverterString.write(v, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterMapStringTypeSearchEnginePartnerDetails: FfiConverterRustBuffer<Map<kotlin.String, SearchEnginePartnerDetails>> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, SearchEnginePartnerDetails> {
+        val len = buf.getInt()
+        return buildMap<kotlin.String, SearchEnginePartnerDetails>(len) {
+            repeat(len) {
+                val k = FfiConverterString.read(buf)
+                val v = FfiConverterTypeSearchEnginePartnerDetails.read(buf)
+                this[k] = v
+            }
+        }
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, SearchEnginePartnerDetails>): ULong {
+        val spaceForMapSize = 4UL
+        val spaceForChildren = value.map { (k, v) ->
+            FfiConverterString.allocationSize(k) +
+            FfiConverterTypeSearchEnginePartnerDetails.allocationSize(v)
+        }.sum()
+        return spaceForMapSize + spaceForChildren
+    }
+
+    override fun write(value: Map<kotlin.String, SearchEnginePartnerDetails>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        // The parens on `(k, v)` here ensure we're calling the right method,
+        // which is important for compatibility with older android devices.
+        // Ref https://blog.danlew.net/2017/03/16/kotlin-puzzler-whose-line-is-it-anyways/
+        value.forEach { (k, v) ->
+            FfiConverterString.write(k, buf)
+            FfiConverterTypeSearchEnginePartnerDetails.write(v, buf)
         }
     }
 }

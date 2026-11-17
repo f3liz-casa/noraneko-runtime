@@ -72,7 +72,7 @@ This kind performs a standalone bootstrap of a Firefox build from various system
 
 Hazard builds are similar to "regular' builds, but use a compiler extension to
 extract a bunch of data from the build and then analyze that data looking for
-hazardous behaviors. See <https://firefox-source-docs.mozilla.org/js/HazardAnalysis/index.html>
+hazardous behaviors. See {doc}`/js/HazardAnalysis/index`
 
 ## l10n
 
@@ -121,6 +121,10 @@ unit tests, source-code analysis, or measurement work. While source-test tasks r
 a source checkout, it is still possible for them to depend on a build artifact, though
 often they do not.
 
+## source-test-appservices
+
+Copies of source-test tasks that build application-services in tree.
+
 ## code-review
 
 Publish issues found by source-test tasks on Phabricator.
@@ -161,10 +165,12 @@ Toolchain builds create the compiler toolchains used to build Firefox. These
 will eventually be dependencies of the builds themselves, but for the moment
 are run manually via try pushes and the results uploaded to tooltool.
 
-## toolchain-dxc-upload
+## toolchain-symbols-upload
 
-Upload Windows symbols for `DirectXShaderCompiler` to tecken, based on builds in `toolchain-dxc`.
-Maintained by Firefox's WebGPU team.
+Upload symbols to tecken for the libraries built by `toolchain` tasks, which the
+Gecko build copies into `dist/bin` rather than building itself and so never dumps
+symbols for. Pairs with each toolchain task setting `enable-full-crashsymbols`:
+currently `dxcompiler.dll` and `onnxruntime`.
 
 ## spidermonkey
 
@@ -509,7 +515,7 @@ Sets up bouncer products for partners.
 
 ## release-early-tagging
 
-Utilises treescript to perform tagging that should happen near the start of a release.
+Utilises landoscript to perform tagging that should happen near the start of a release.
 
 ## release-eme-free-repack
 
@@ -853,13 +859,25 @@ used for verifying third party Rust code is consistent.
 
 Build android-components.
 
+## build-components-appservices
+
+Copies of build-components tasks that build application-services in tree.
+
 ## build-bundle
 
 Build Focus, Klar, and Fenix android app bundles.
 
+## build-bundle-appservices
+
+Copies of build-bundle tasks that build application-services in tree.
+
 ## build-apk
 
 Build Focus, Klar, and Fenix apks.
+
+## build-apk-appservices
+
+Copies of build-apk tasks that build application-services in tree.
 
 ## build-samples-browser
 
@@ -877,17 +895,33 @@ Sign Focus, Klar, and Fenix android app bundles.
 
 Sign Focus, Klar, and Fenix apks.
 
+## signing-apk-appservices
+
+Sign the apks built by build-apk-appservices.
+
 ## test-components
 
 Test android-components
+
+## test-components-appservices
+
+Copies of test-components tasks that build application-services in tree.
 
 ## test-apk
 
 Test Focus, Klar, and Fenix apks.
 
+## test-apk-appservices
+
+Copies of test-apk tasks that build application-services in tree.
+
 ## ui-test-apk
 
 User interface tests for Focus, Klar, and Fenix apks.
+
+## ui-test-apk-appservices
+
+User interface tests for the apks signed by signing-apk-appservices.
 
 ## android-browsertime
 
@@ -909,13 +943,11 @@ A beetmover task for android components.
 
 A beetmover task for android APKs and AABs.
 
-## push-apks
+## push-android
 
-Push Focus and Fenix APKs to the Samsung Galaxy Store.
-
-## push-bundle
-
-Push Focus and Fenix AABs to Google Play.
+Push Focus, Klar and Fenix to the Android app stores: AABs to Google Play,
+Focus and Fenix APKs to the Samsung Galaxy Store, Fenix APKs to the Huawei
+AppGallery, and the Fenix universal APK to the vivo App Store.
 
 ## android-l10n
 

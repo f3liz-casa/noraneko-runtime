@@ -5,6 +5,7 @@
 /**
  * @import {OpenedConnection} from "resource://gre/modules/Sqlite.sys.mjs"
  * @import {Query} from "./UrlbarProvidersManager.sys.mjs"
+ * @import {UrlbarAutofillData} from "chrome://browser/content/urlbar/UrlbarResult.mjs"
  */
 
 /**
@@ -12,33 +13,79 @@
  */
 
 import {
+  INPUT_HISTORY_USE_DECAY,
   UrlbarProvider,
   UrlbarUtils,
 } from "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs";
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   AboutPagesUtils: "resource://gre/modules/AboutPagesUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   UrlbarPrefs: "moz-src:///browser/components/urlbar/UrlbarPrefs.sys.mjs",
   UrlbarResult: "chrome://browser/content/urlbar/UrlbarResult.mjs",
   UrlbarShared: "chrome://browser/content/urlbar/UrlbarShared.mjs",
   UrlUtils: "resource://gre/modules/UrlUtils.sys.mjs",
+  pageFrecencyThreshold: () => {
+    return lazy.PlacesUtils.history.pageFrecencyThreshold(90, 0, true);
+  },
+  historyEnabled: { pref: "places.history.enabled", default: true },
+  frecencyDecayRate: {
+    pref: "places.frecency.decayRate",
+    default: "0.975",
+    onUpdate: () => (gUrlUseCountThreshold = null),
+    /** @param {number|string} val */
+    transform: val => {
+      let rate = typeof val == "string" ? parseFloat(val) : val;
+      return rate > 0 && rate < 1 ? rate : 0.975;
+    },
+  },
+  urlMinPicks: {
+    pref: "browser.urlbar.autoFill.adaptiveHistory.urlMinPicks",
+    default: 3,
+    onUpdate: () => (gUrlUseCountThreshold = null),
+  },
+  urlPicksAgeDays: {
+    pref: "browser.urlbar.autoFill.adaptiveHistory.urlPicksAgeDays",
+    default: 14,
+    onUpdate: () => (gUrlUseCountThreshold = null),
+  },
 });
 
-ChromeUtils.defineLazyGetter(lazy, "pageFrecencyThreshold", () => {
-  return lazy.PlacesUtils.history.pageFrecencyThreshold(90, 0, true);
-});
+/**
+ * Converts a number of picks into the `moz_inputhistory.use_count` a row would
+ * hold if it were picked that many times in one sitting and then left untouched
+ * for `ageDays`.
+ *
+ * @param {number} picks
+ *   The number of times the (url, input) pairing was picked.
+ * @param {number} ageDays
+ *   Days of idle decay assumed to have elapsed since the last pick.
+ * @returns {number}
+ *   The resulting use_count.
+ */
+export function inputHistoryPicksToUseCount(picks, ageDays) {
+  let useCount = 0;
+  for (let i = 0; i < picks; i++) {
+    useCount = useCount * INPUT_HISTORY_USE_DECAY + 1;
+  }
+  return useCount * lazy.frecencyDecayRate ** ageDays;
+}
 
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "historyEnabled",
-  "places.history.enabled",
-  true
-);
+// Memoized use_count threshold. Each of the three prefs it derives from resets
+// this from its own pref observer, since a lazy pref getter can only watch one.
+// Do not read this directly since it is null until computed.
+// Call `urlUseCountThreshold()` instead.
+let gUrlUseCountThreshold = null;
+
+function urlUseCountThreshold() {
+  gUrlUseCountThreshold ??= inputHistoryPicksToUseCount(
+    lazy.urlMinPicks,
+    lazy.urlPicksAgeDays
+  );
+  return gUrlUseCountThreshold;
+}
 
 // Returns which result sources are eligible for autofill. When
 // places.history.enabled is false the user has opted out of recording
@@ -826,6 +873,7 @@ export class UrlbarProviderAutofill extends UrlbarProvider {
       useCountThreshold: lazy.UrlbarPrefs.get(
         "autoFillAdaptiveHistoryUseCountThreshold"
       ),
+      urlUseCountThreshold: urlUseCountThreshold(),
       nowMs: Date.now(),
       adaptiveAutofillEnabled: lazy.UrlbarPrefs.get(
         "autoFill.adaptiveHistory.enabled"
@@ -851,6 +899,10 @@ export class UrlbarProviderAutofill extends UrlbarProvider {
           AND :fullSearchString BETWEEN i.input AND i.input || X'FFFF'
           AND ${sourceCondition}
           AND i.use_count >= :useCountThreshold
+          AND (
+            fixup_url(h.url) = fixup_url(o.host) || '/'
+            OR i.use_count >= :urlUseCountThreshold
+          )
           AND (:strippedPrefix = '' OR get_prefix(h.url) = :strippedPrefix)
           AND (
             starts_with OR
@@ -921,6 +973,7 @@ export class UrlbarProviderAutofill extends UrlbarProvider {
     // `finalCompleteValue` will include it to properly reflect the real URL.
     let finalCompleteValue;
 
+    /** @type {UrlbarAutofillData["type"]} */
     let autofilledType;
     let adaptiveHistoryInput;
 

@@ -27,6 +27,7 @@ add_task(async function () {
   await performRequest(monitor, tab, "GET");
   newTab = await openLastRequestInTab();
   await checkTabResponse(newTab, "GET");
+  checkNewTabIndex(tab, newTab);
   gBrowser.removeCurrentTab();
 
   // Open POST request in new tab
@@ -44,6 +45,7 @@ add_task(async function () {
     "application/x-www-form-urlencoded",
     "foo=bar&amp;baz=42"
   );
+  checkNewTabIndex(tab, newTab);
   gBrowser.removeCurrentTab();
 
   // Open POST application/json request in new tab
@@ -56,6 +58,7 @@ add_task(async function () {
   );
   newTab = await openLastRequestInTab();
   await checkTabResponse(newTab, "POST", "application/json", '{"foo":"bar"}');
+  checkNewTabIndex(tab, newTab);
   gBrowser.removeCurrentTab();
 
   await teardown(monitor);
@@ -64,7 +67,7 @@ add_task(async function () {
   async function openLastRequestInTab() {
     const requestItems = document.querySelectorAll(".request-list-item");
     const lastRequest = requestItems[requestItems.length - 1];
-    EventUtils.sendMouseEvent({ type: "mousedown" }, lastRequest);
+    clickOnRequestRow(lastRequest);
     EventUtils.sendMouseEvent({ type: "contextmenu" }, lastRequest);
 
     const onTabOpen = once(gBrowser.tabContainer, "TabOpen", false);
@@ -104,6 +107,7 @@ add_task(async function () {
   await performRequest(monitor, tab, "GET");
   newTab = await openLastRequestInTab();
   await checkTabResponse(newTab, "GET");
+  checkNewTabIndex(tab, newTab);
   gBrowser.removeCurrentTab();
 
   // Open POST request in new tab
@@ -121,6 +125,7 @@ add_task(async function () {
     "application/x-www-form-urlencoded",
     "foo=bar&amp;baz=42"
   );
+  checkNewTabIndex(tab, newTab);
   gBrowser.removeCurrentTab();
 
   // Open POST application/json request in new tab
@@ -133,6 +138,7 @@ add_task(async function () {
   );
   newTab = await openLastRequestInTab();
   await checkTabResponse(newTab, "POST", "application/json", '{"foo":"bar"}');
+  checkNewTabIndex(tab, newTab);
   gBrowser.removeCurrentTab();
 
   await teardown(monitor);
@@ -180,6 +186,7 @@ add_task(async function () {
   await performRequest(monitor, tab, "GET");
   newTab = await openLastRequestInTab();
   await checkTabResponse(newTab, "GET");
+  checkNewTabIndex(tab, newTab);
   gBrowser.removeCurrentTab();
 
   // Open POST request in new tab
@@ -197,6 +204,7 @@ add_task(async function () {
     "application/x-www-form-urlencoded",
     "foo=bar&amp;baz=42"
   );
+  checkNewTabIndex(tab, newTab);
   gBrowser.removeCurrentTab();
 
   // Open POST application/json request in new tab
@@ -209,6 +217,7 @@ add_task(async function () {
   );
   newTab = await openLastRequestInTab();
   await checkTabResponse(newTab, "POST", "application/json", '{"foo":"bar"}');
+  checkNewTabIndex(tab, newTab);
   gBrowser.removeCurrentTab();
 
   await teardown(monitor);
@@ -219,10 +228,7 @@ add_task(async function () {
     const lastRequest = requestItems[requestItems.length - 1];
 
     const onTabOpen = once(gBrowser.tabContainer, "TabOpen", false);
-    EventUtils.sendMouseEvent(
-      { type: "mousedown", button: MIDDLE_MOUSE_BUTTON },
-      lastRequest
-    );
+    clickOnRequestRow(lastRequest, { button: MIDDLE_MOUSE_BUTTON });
     await onTabOpen;
     info("A new tab has been opened");
 
@@ -260,5 +266,13 @@ async function checkTabResponse(checkedTab, method, contentType, payload) {
         "Tab method and data match original request"
       );
     }
+  );
+}
+
+async function checkNewTabIndex(currentTab, newTab) {
+  Assert.strictEqual(
+    newTab.index,
+    currentTab.index + 1,
+    "The new tab opens next to the current one"
   );
 }

@@ -13,6 +13,8 @@ import {
   CreditCardsBase,
   FormAutofillStorageBase,
 } from "resource://autofill/FormAutofillStorageBase.sys.mjs";
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
+import { FormAutofill } from "resource://autofill/FormAutofill.sys.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
@@ -20,12 +22,17 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AutofillDataTypes: "resource://gre/modules/shared/AutofillDataTypes.sys.mjs",
   CreditCard: "resource://gre/modules/CreditCard.sys.mjs",
-  AddressStorageMigrator: "resource://autofill/AddressStorageMigrator.sys.mjs",
+  AddressStorageMigrator: "resource://autofill/AutofillStorageMigrator.sys.mjs",
+  CreditCardStorageMigrator:
+    "resource://autofill/AutofillStorageMigrator.sys.mjs",
   JSONFile: "resource://gre/modules/JSONFile.sys.mjs",
+  LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
   OSKeyStore: "resource://gre/modules/OSKeyStore.sys.mjs",
   Passports: "resource://autofill/PassportStorage.sys.mjs",
   RustAutofillAddressesAdapter:
     "resource://autofill/RustAutofillAddressStorage.sys.mjs",
+  RustAutofillCreditCardsAdapter:
+    "resource://autofill/RustAutofillCreditCardStorage.sys.mjs",
   RustAutofillStore: "resource://autofill/RustAutofillStore.sys.mjs",
 });
 
@@ -56,6 +63,40 @@ const ADDRESS_RUST_ACTIVE_PREF =
 const ADDRESS_RUST_MIGRATION_TEST_PREF =
   "extensions.formautofill.addresses.storage.rust.runMigrationTest";
 
+// The credit card counterparts of the three above. Kept separate rather than
+// derived from a collection name so that each can be flipped on its own: the
+// two migrations are independent and a profile can have moved one and not the
+// other.
+const CREDIT_CARD_RUST_ENABLED_PREF =
+  "extensions.formautofill.creditCards.storage.rust.enabled";
+
+const CREDIT_CARD_RUST_ACTIVE_PREF =
+  FormAutofill.CREDITCARDS_RUST_STORAGE_ACTIVE_PREF;
+
+const CREDIT_CARD_RUST_MIGRATION_TEST_PREF =
+  "extensions.formautofill.creditCards.storage.rust.runMigrationTest";
+
+// What #maybeRunMigration needs of each collection it moves, by data type. The
+// migrator is looked up rather than held so that its module still loads only
+// once a copy is wanted; its config names the collection's Rust adapter.
+ChromeUtils.defineLazyGetter(lazy, "RUST_MIGRATIONS", () => ({
+  [lazy.AutofillDataTypes.ADDRESS]: {
+    enabledPref: ADDRESS_RUST_ENABLED_PREF,
+    activePref: ADDRESS_RUST_ACTIVE_PREF,
+    testPref: ADDRESS_RUST_MIGRATION_TEST_PREF,
+    migrator: () => lazy.AddressStorageMigrator,
+    hasEncryption: false,
+  },
+  [lazy.AutofillDataTypes.CREDIT_CARD]: {
+    enabledPref: CREDIT_CARD_RUST_ENABLED_PREF,
+    activePref: CREDIT_CARD_RUST_ACTIVE_PREF,
+    testPref: CREDIT_CARD_RUST_MIGRATION_TEST_PREF,
+    migrator: () => lazy.CreditCardStorageMigrator,
+    // The card number: a copy needs a key at each end.
+    hasEncryption: true,
+  },
+}));
+
 // Observed rather than read once: the migration sets this mid-session, and a
 // snapshot taken before that would keep handing back the JSON collection until
 // the next restart.
@@ -66,97 +107,14 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
-class Addresses extends AddressesBase {
-  /**
-   * The write half of the migration contract. Each of these writes `_data`
-   * directly, so a record keeps the guid, timestamps and sync metadata it was
-   * handed, and none of them notifies or announces anything.
-   *
-   * The derived fields are stripped and recomputed, as _saveRecord() does,
-   * since a record read out of a store that computes them on read arrives with
-   * them already set and this store persists what it is given.
-   */
-  /**
-   * @param {Array<object>} records
-   * @returns {Promise<Array<{guid: string}|{error: string}>>} One entry per
-   *   record, in order.
-   */
-  async addManyWithMeta(records) {
-    const results = [];
-    for (const record of records) {
-      const index = this._findIndexByGUID(record.guid, {
-        includeDeleted: true,
-      });
-      if (index != -1) {
-        if (!this._data[index].deleted) {
-          results.push({ error: `a record with guid ${record.guid} exists` });
-          continue;
-        }
-        // A tombstone here and a live record in the source means the source
-        // has it back, from sync or from the store it was copied to. Unlike a
-        // store with a column per field, this one can drop the tombstone and
-        // take the record.
-        this._data.splice(index, 1);
-      }
-      this._data.push(await this.#recordForMigration(record));
-      results.push({ guid: record.guid });
-    }
-    this._store.saveSoon();
-    return results;
-  }
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "creditCardRustActive",
+  CREDIT_CARD_RUST_ACTIVE_PREF,
+  false
+);
 
-  /**
-   * @param {Array<object>} records
-   * @returns {Promise<Array<{guid: string}|{error: string}>>}
-   */
-  async updateManyWithMeta(records) {
-    const results = [];
-    for (const record of records) {
-      const index = this._findIndexByGUID(record.guid);
-      if (index == -1) {
-        results.push({ error: `no record with guid ${record.guid}` });
-        continue;
-      }
-      this._data[index] = await this.#recordForMigration(record);
-      results.push({ guid: record.guid });
-    }
-    this._store.saveSoon();
-    return results;
-  }
-
-  /**
-   * Delete by guid, through remove() so that the rule about which deletions
-   * leave a tombstone stays in one place. The one write here that announces
-   * itself, once per record.
-   *
-   * @param {Array<string>} guids
-   * @returns {Promise<Array<{guid: string}|{error: string}>>}
-   */
-  async removeMany(guids) {
-    const results = [];
-    for (const guid of guids) {
-      if (!this._findByGUID(guid)) {
-        results.push({ error: `no record with guid ${guid}` });
-        continue;
-      }
-      this.remove(guid);
-      results.push({ guid });
-    }
-    return results;
-  }
-
-  async #recordForMigration(record) {
-    // Whatever the record arrives with, including no `_sync` at all: a store
-    // that cannot export its sync metadata leaves the record looking unsynced,
-    // which costs one upload. Keeping the entry this store already had would
-    // cost more -- a counter of 0 from before the other store took over would
-    // suppress the upload of everything done since.
-    const stored = { ...record, version: this.version };
-    await this._stripComputedFields(stored);
-    await this.computeFields(stored);
-    return stored;
-  }
-}
+class Addresses extends AddressesBase {}
 
 class CreditCards extends CreditCardsBase {
   constructor(store) {
@@ -190,6 +148,10 @@ export class FormAutofillStorage extends FormAutofillStorageBase {
   // The switch in progress, if any. Kept so the next one queues behind it
   // rather than copying over the same pair of stores at the same time.
   #addressSwitch = null;
+  #creditCardSwitch = null;
+  // Whether the OS key store's unlock is observed, which it is while a credit
+  // card copy waits on it; see #maybeRunMigration.
+  #observingUnlock = false;
 
   /**
    * Settles which store serves addresses at startup, once the JSON store has
@@ -203,20 +165,41 @@ export class FormAutofillStorage extends FormAutofillStorageBase {
   initialize() {
     this.#initPromise ??= super
       .initialize()
-      .then(() => this.#setUpAddressRustStorage())
-      .then(() => Services.prefs.addObserver(ADDRESS_RUST_ENABLED_PREF, this));
+      .then(() => this.#maybeRunMigration(lazy.AutofillDataTypes.ADDRESS))
+      .then(() => this.#maybeRunMigration(lazy.AutofillDataTypes.CREDIT_CARD))
+      .then(() => {
+        Services.prefs.addObserver(ADDRESS_RUST_ENABLED_PREF, this);
+        Services.prefs.addObserver(CREDIT_CARD_RUST_ENABLED_PREF, this);
+      });
     return this.#initPromise;
   }
 
   observe(subject, topic, data) {
-    if (topic == "nsPref:changed" && data == ADDRESS_RUST_ENABLED_PREF) {
-      this.#switchAddressStorage();
+    if (topic == lazy.OSKeyStore.UNLOCKED_TOPIC) {
+      // Observed only while a copy waits on it, and one unlock is enough.
+      Services.obs.removeObserver(this, topic);
+      this.#observingUnlock = false;
+      this.#queueCreditCardMigration();
+      return;
+    }
+    if (topic != "nsPref:changed") {
+      return;
+    }
+    if (data == ADDRESS_RUST_ENABLED_PREF) {
+      this.#queueAddressMigration();
+    } else if (data == CREDIT_CARD_RUST_ENABLED_PREF) {
+      this.#queueCreditCardMigration();
     }
   }
 
   _finalize() {
     if (this.#initPromise) {
       Services.prefs.removeObserver(ADDRESS_RUST_ENABLED_PREF, this);
+      Services.prefs.removeObserver(CREDIT_CARD_RUST_ENABLED_PREF, this);
+    }
+    if (this.#observingUnlock) {
+      this.#observingUnlock = false;
+      Services.obs.removeObserver(this, lazy.OSKeyStore.UNLOCKED_TOPIC);
     }
     return super._finalize();
   }
@@ -233,9 +216,9 @@ export class FormAutofillStorage extends FormAutofillStorageBase {
    * still serving, so it is in the source after the source has been read and
    * never reaches the target. The window is the length of one bulk copy.
    */
-  #switchAddressStorage() {
+  #queueAddressMigration() {
     this.#addressSwitch = (this.#addressSwitch ?? this.initialize())
-      .then(() => this.#migrateToEnabledAddressStorage())
+      .then(() => this.#maybeRunMigration(lazy.AutofillDataTypes.ADDRESS))
       // Caught rather than left to reject: the next flip chains onto this
       // promise, and a rejected one would swallow every switch after it.
       .catch(e => lazy.logger.error("Could not switch the address store", e));
@@ -249,136 +232,216 @@ export class FormAutofillStorage extends FormAutofillStorageBase {
   }
 
   /**
-   * Copy the addresses into the store the pref now names and hand the profile
-   * over, or leave everything where it is if the copy does not complete.
+   * Bring a collection to the store its prefs ask for. Run at startup, on a
+   * flip of the collection's enabled pref, and for credit cards when the OS
+   * key store unlocks after a deferred copy:
    *
-   * The source is whichever store is serving and the target is the one the pref
-   * asks for, so the copy carries the addresses the user can actually see. The
-   * profile is handed over only once that copy has completed, which is what
-   * keeps a failed switch on the store that still holds everything.
+   *  - rust.enabled set, Rust not serving: copy JSON into Rust and switch.
+   *  - rust.enabled cleared, Rust serving: copy Rust back to JSON and switch.
+   *  - Neither, with runMigrationTest set and a dry run pending: copy JSON into
+   *    Rust to measure it, then empty Rust again.
    *
-   * The source is authoritative: the target ends up holding what the source
-   * holds, which means losing whatever it had that the source does not, or the
-   * user would find records they deleted in the other store back again.
+   * The serving store is the source, and the target ends up matching it.
+   * rust.active changes only after a complete copy, so a failed one leaves the
+   * profile on the store that still holds everything.
    *
-   * Copying out of the Rust store carries its records but not its pending
-   * deletions, which it has no read for. The records deleted there are still
-   * gone from the target afterwards; what is lost is the tombstone that would
-   * have told the server, so a deletion not yet uploaded can come back on the
-   * next sync.
+   * A copy into Rust empties Rust first, as a leftover tombstone would block
+   * its guid from being inserted again. A copy back keeps what JSON holds and
+   * does not carry Rust's pending deletions, so one not yet uploaded can come
+   * back on the next sync.
+   *
+   * Nothing here catches: a throw at startup would reject initialize() and
+   * leave autofill offering nothing. The migrator reports its own failures
+   * and returns false instead.
+   *
+   * @param {string} dataType AutofillDataTypes.ADDRESS or
+   *   AutofillDataTypes.CREDIT_CARD.
    */
-  async #migrateToEnabledAddressStorage() {
-    const enabled = Services.prefs.getBoolPref(
-      ADDRESS_RUST_ENABLED_PREF,
-      false
-    );
-    if (enabled == lazy.addressRustActive) {
+  async #maybeRunMigration(dataType) {
+    const { enabledPref, activePref, testPref, migrator, hasEncryption } =
+      lazy.RUST_MIGRATIONS[dataType];
+    const { collectionName } = lazy.AutofillDataTypes.get(dataType);
+    const Migrator = migrator();
+    const enabled = Services.prefs.getBoolPref(enabledPref, false);
+    const active = Services.prefs.getBoolPref(activePref, false);
+    const dryRun =
+      !enabled &&
+      !active &&
+      Services.prefs.getBoolPref(testPref, false) &&
+      Migrator.dryRunPending;
+    if (enabled == active && !dryRun) {
       return;
     }
 
-    const json = this.#jsonAddresses();
-    const rust = lazy.RustAutofillAddressesAdapter.getInstance();
-    const [source, target] = enabled ? [json, rust] : [rust, json];
+    // The JSON store is the source of every copy but the one back, so for a
+    // copy into Rust, the Rust store -- building its adapter starts opening
+    // autofill.db -- is reached only once this profile is known to want a copy
+    // and able to make it.
+    const intoRust = !active;
+    const json =
+      dataType == lazy.AutofillDataTypes.CREDIT_CARD
+        ? this.#jsonCreditCards()
+        : this.#jsonAddresses();
+    const source = intoRust ? json : Migrator.config.rustAdapter.getInstance();
 
-    const migrator = new lazy.AddressStorageMigrator(source, target);
-    if (
-      await migrator.maybeRun({
-        // Emptying the target first would mean a copy that fails partway leaves
-        // the user with less than they started with: the target's addresses
-        // gone and the source's not yet arrived. Without it the worst a failed
-        // switch costs is staying where it was.
-        wipe: false,
-      })
-    ) {
-      Services.prefs.setBoolPref(ADDRESS_RUST_ACTIVE_PREF, enabled);
+    // A copy of encrypted records needs a key at each end, and must not ask
+    // the user for either. The Rust store's key is NSS's, so with a primary
+    // password set nothing is copied into Rust, whether or not the token is
+    // unlocked. A copy back is still allowed, so turning the enabled pref off
+    // can return such a profile to JSON, but only while the token is unlocked:
+    // a locked one would read every record back without its values.
+    if (hasEncryption && lazy.LoginHelper.isPrimaryPasswordSet()) {
+      if (intoRust) {
+        lazy.logger.log(
+          `Not migrating ${collectionName}: a primary password is set.`
+        );
+        if (json._data.some(record => !record.deleted)) {
+          this.#reportBlocked(Migrator, "primary_password", dryRun);
+        }
+        return;
+      }
+      if (lazy.RustAutofillStore.primaryPasswordLocked) {
+        lazy.logger.log(
+          `Deferring the ${collectionName} copy back: the token is locked.`
+        );
+        return;
+      }
+    }
 
-      // The copy is silent, but the store answering a read has changed, and
-      // what observers hold was computed from the other one -- the field names
-      // FormAutofillStatus shares with the content processes, and the saved
-      // profile count. The two stores hold the same records at this point, so
-      // this is a recompute rather than news.
-      Services.obs.notifyObservers(
-        {
-          wrappedJSObject: {
-            sourceSync: false,
-            guid: null,
-            collectionName: lazy.AutofillDataTypes.get(
-              lazy.AutofillDataTypes.ADDRESS
-            ).collectionName,
-          },
+    // Only an encrypted collection needs to know whether there is anything to
+    // copy. The Rust store decrypts every record it reads, so for a copy back
+    // this read fails when its key cannot decrypt them -- the token was reset,
+    // or key4.db replaced. That leaves the profile where it is rather than
+    // throwing, which at startup would take autofill down with it.
+    let anyRecord;
+    if (hasEncryption) {
+      try {
+        [anyRecord] = await source.getAll({ prompt: false });
+      } catch (e) {
+        lazy.logger.error(
+          `Not migrating ${collectionName}: its records could not be read.`,
+          e
+        );
+        return;
+      }
+    }
+    // A profile with no records has nothing to decrypt and goes ahead.
+    if (anyRecord) {
+      // Wait until something else has unlocked the OS key store, so a copy
+      // into Rust never surfaces a keyring prompt of its own;
+      // OSKeyStore.UNLOCKED_TOPIC retries it. Windows does not wait: its key
+      // store reads the key through CredReadA, which shows no UI. A copy back
+      // does not wait either: while Rust serves, reads use NSS's key and
+      // nothing may unlock the OS key store, so the copy back would never run.
+      if (
+        intoRust &&
+        AppConstants.platform != "win" &&
+        !lazy.OSKeyStore.isLoggedIn
+      ) {
+        lazy.logger.log(
+          `Deferring the ${collectionName} migration to an unlock.`
+        );
+        this.#reportBlocked(Migrator, "keystore_locked", dryRun);
+        if (!this.#observingUnlock) {
+          Services.obs.addObserver(this, lazy.OSKeyStore.UNLOCKED_TOPIC);
+          this.#observingUnlock = true;
+        }
+        return;
+      }
+      // Another key store operation is in flight, possibly a dialog of the
+      // user's that the copy would otherwise share. Asking now hands back that
+      // operation rather than starting one, so retry once it settles.
+      if (lazy.OSKeyStore.isUIBusy) {
+        lazy.logger.log(
+          `Deferring the ${collectionName} migration behind the key store.`
+        );
+        if (intoRust) {
+          this.#reportBlocked(Migrator, "keystore_busy", dryRun);
+        }
+        lazy.OSKeyStore.ensureLoggedIn(false).then(() =>
+          this.#queueCreditCardMigration()
+        );
+        return;
+      }
+    }
+
+    const copy = new Migrator(
+      source,
+      intoRust ? Migrator.config.rustAdapter.getInstance() : json
+    );
+    // A dry run always reports false, so only a completed real copy hands the
+    // profile over.
+    if (!(await copy.maybeRun({ dryRun, wipe: intoRust }))) {
+      return;
+    }
+    Services.prefs.setBoolPref(activePref, enabled);
+
+    // The copy is silent, but the store answering a read has changed, and
+    // what observers hold was computed from the other one -- the field names
+    // FormAutofillStatus shares with the content processes, and the saved
+    // profile count. The two stores hold the same records at this point, so
+    // this is a recompute rather than news.
+    Services.obs.notifyObservers(
+      {
+        wrappedJSObject: {
+          sourceSync: false,
+          guid: null,
+          collectionName,
         },
-        "formautofill-storage-changed",
-        "migrate"
-      );
+      },
+      "formautofill-storage-changed",
+      "migrate"
+    );
+  }
+
+  /**
+   * Record that a copy into Rust this profile owes was held back.
+   *
+   * @param {Function} Migrator The collection's migrator class.
+   * @param {string} reason Which check held the copy back.
+   * @param {boolean} dryRun Whether the copy owed is a dry run.
+   */
+  #reportBlocked(Migrator, reason, dryRun) {
+    try {
+      Migrator.config.metrics.migrateToRustBlocked.record({
+        reason,
+        dry_run: dryRun,
+      });
+    } catch (e) {
+      lazy.logger.error("Could not report the blocked migration", e);
     }
   }
 
   /**
-   * Settle which store serves addresses at startup.
-   *
-   * rust.active says where the addresses are and rust.enabled where they should
-   * be, so all four combinations are settled here -- the pref decides at startup
-   * as much as it does when it changes, or one turned off while the browser was
-   * closed would go unnoticed until it was turned off again.
+   * The credit card counterpart of #queueAddressMigration. Kept on its own
+   * promise so a flip of one pref does not queue behind a copy of the other
+   * collection.
    */
-  async #setUpAddressRustStorage() {
-    const enabled = Services.prefs.getBoolPref(
-      ADDRESS_RUST_ENABLED_PREF,
-      false
-    );
+  #queueCreditCardMigration() {
+    this.#creditCardSwitch = (this.#creditCardSwitch ?? this.initialize())
+      .then(() => this.#maybeRunMigration(lazy.AutofillDataTypes.CREDIT_CARD))
+      // Caught rather than left to reject: the next flip chains onto this
+      // promise, and a rejected one would swallow every switch after it.
+      .catch(e =>
+        lazy.logger.error("Could not switch the credit card store", e)
+      );
+    return this.#creditCardSwitch;
+  }
 
-    if (lazy.addressRustActive) {
-      if (!enabled) {
-        // Copy back, the same way a flip mid-session would.
-        await this.#migrateToEnabledAddressStorage();
-      }
-      // Otherwise nothing to do: getAddresses() already answers with the
-      // adapter, and super.initialize() has already initialized it.
-      return;
+  // For test only: the switch the last pref flip started, so a test can wait
+  // for one that is not going to change anything observable.
+  get _creditCardSwitch() {
+    return this.#creditCardSwitch;
+  }
+
+  // The JSON collection, built on first use. Not the same question as
+  // getCreditCards(), which answers with whichever store is serving.
+  #jsonCreditCards() {
+    if (!this._creditCards) {
+      this._store.ensureDataReady();
+      this._creditCards = new CreditCards(this._store);
     }
-
-    // Only when Rust is off: the real migration keeps what it copied, and the
-    // dry run would wipe the store out from under it.
-    const runMigrationDryRun =
-      !enabled &&
-      Services.prefs.getBoolPref(ADDRESS_RUST_MIGRATION_TEST_PREF, false) &&
-      lazy.AddressStorageMigrator.dryRunPending;
-    if (!enabled && !runMigrationDryRun) {
-      return;
-    }
-
-    // Building the adapter starts opening autofill.db, so it is asked for only
-    // once this profile is known to want it.
-    //
-    // The source is the JSON collection by name rather than getAddresses(),
-    // which answers with whichever store is serving.
-    //
-    // Nothing here catches: this runs inside initialize(), which
-    // FormAutofillParent starts and lets reject, so a throw would leave the
-    // saved field names unset and autofill offering nothing at all. The
-    // migrator reports its own failures and returns false instead.
-    const migrator = new lazy.AddressStorageMigrator(
-      this.#jsonAddresses(),
-      lazy.RustAutofillAddressesAdapter.getInstance()
-    );
-    const migrated = await migrator.maybeRun({ dryRun: runMigrationDryRun });
-
-    if (runMigrationDryRun) {
-      // Measured, not read: put the store back the way it was found. Safe to
-      // empty because nothing is serving from it -- the dry run only runs while
-      // rust.enabled is off -- and the dry run recorded itself on its own pref,
-      // so a later real migration still does its own copy.
-      await migrator.wipe();
-      return;
-    }
-
-    if (!migrated) {
-      // An incomplete copy would show fewer addresses than the user has, so the
-      // profile stays on JSON and the next launch retries.
-      return;
-    }
-
-    Services.prefs.setBoolPref(ADDRESS_RUST_ACTIVE_PREF, true);
+    return this._creditCards;
   }
 
   // The JSON collection, built on first use. Not the same question as
@@ -398,11 +461,9 @@ export class FormAutofillStorage extends FormAutofillStorageBase {
   }
 
   getCreditCards() {
-    if (!this._creditCards) {
-      this._store.ensureDataReady();
-      this._creditCards = new CreditCards(this._store);
-    }
-    return this._creditCards;
+    return lazy.creditCardRustActive
+      ? lazy.RustAutofillCreditCardsAdapter.getInstance()
+      : this.#jsonCreditCards();
   }
 
   getPassports() {

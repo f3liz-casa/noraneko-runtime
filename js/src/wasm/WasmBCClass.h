@@ -938,6 +938,11 @@ struct BaseCompiler final {
   //
   // Stack maps
 
+  // Fails compilation if the frame has grown past MaxFrameSize.  This must be
+  // checked before creating each stackmap, since a larger frame would overflow
+  // StackMapHeader::numMappedWords.
+  [[nodiscard]] bool checkStackHeight();
+
   // Various methods for creating a stackmap.  Stackmaps are indexed by the
   // lowest address of the instruction immediately *after* the instruction of
   // interest.  In practice that means either: the return point of a call, the
@@ -1064,7 +1069,7 @@ struct BaseCompiler final {
   bool callRef(const Stk& calleeRef, const FunctionCall& call,
                mozilla::Maybe<size_t> callRefIndex, CodeOffset* fastCallOffset,
                CodeOffset* slowCallOffset);
-  void returnCallRef(const Stk& calleeRef, const FunctionCall& call,
+  bool returnCallRef(const Stk& calleeRef, const FunctionCall& call,
                      const FuncType& funcType);
   CodeOffset builtinCall(SymbolicAddress builtin, const FunctionCall& call);
   void builtinInstanceMethodCall(const SymbolicAddressSignature& builtin,
@@ -1147,10 +1152,6 @@ struct BaseCompiler final {
   // Emit a table switch, `theTable` is the jump table.
   void tableSwitch(Label* theTable, RegI32 switchValue, Label* dispatchCode);
 
-  // Compare i64 and set an i32 boolean result according to the condition.
-  inline void cmp64Set(Assembler::Condition cond, RegI64 lhs, RegI64 rhs,
-                       RegI32 dest);
-
   // Round floating to integer.
   [[nodiscard]] inline bool supportsRoundInstruction(RoundingMode mode);
   inline void roundF32(RoundingMode roundingMode, RegF32 f0);
@@ -1229,7 +1230,20 @@ struct BaseCompiler final {
   //
   // Global variable access.
 
-  Address addressOfGlobalVar(const GlobalDesc& global, RegPtr tmp);
+  // The address of a global variable, together with the scratch register it is
+  // based on when it needs one. Construct it as a temporary or local that
+  // outlives the access.
+  class GlobalVarAddress {
+    Maybe<ScratchPtr> tmp_;
+    Address address_;
+
+    Address init(BaseCompiler& bc, const GlobalDesc& global);
+
+   public:
+    GlobalVarAddress(BaseCompiler& bc, const GlobalDesc& global)
+        : address_(init(bc, global)) {}
+    operator Address() const { return address_; }
+  };
 
   //////////////////////////////////////////////////////////////////////
   //
@@ -1382,10 +1396,11 @@ struct BaseCompiler final {
   inline TrapSiteDesc trapSiteDesc() const;
 
   // Generate a trap instruction for the current bytecodeOffset.
-  inline void trap(Trap t);
+  inline FaultingCodeRange trap(Trap t);
 
   // Generate a trap instruction for given location and stack map.
-  inline void trap(Trap t, const TrapSiteDesc& trapSite, StackMap* stackMap);
+  inline FaultingCodeRange trap(Trap t, const TrapSiteDesc& trapSite,
+                                StackMap* stackMap);
 
   // Abstracted helper for throwing, used for throw, rethrow, and rethrowing
   // at the end of a series of catch blocks (if none matched the exception).
@@ -1808,12 +1823,20 @@ struct BaseCompiler final {
   struct NoNullCheck {
     static void emitNullCheck(BaseCompiler* bc, RegRef rp) {}
     static void emitTrapSite(BaseCompiler* bc, FaultingCodeRange fcr,
-                             TrapMachineInsn tmi) {}
+                             TrapMachineInsn tmi, StackMap* debugOnlyStackMap) {
+      MOZ_ASSERT(!debugOnlyStackMap);
+    }
+    static StackMap* createDebugOnlyStackMapForNonResumingTrap(BaseCompiler* bc,
+                                                               Trap kind) {
+      return nullptr;
+    }
   };
   struct SignalNullCheck {
     static void emitNullCheck(BaseCompiler* bc, RegRef rp);
     static void emitTrapSite(BaseCompiler* bc, FaultingCodeRange fcr,
-                             TrapMachineInsn tmi);
+                             TrapMachineInsn tmi, StackMap* debugOnlyStackMap);
+    static StackMap* createDebugOnlyStackMapForNonResumingTrap(BaseCompiler* bc,
+                                                               Trap kind);
   };
 
   // Load a pointer to the AllocSite for current bytecode offset

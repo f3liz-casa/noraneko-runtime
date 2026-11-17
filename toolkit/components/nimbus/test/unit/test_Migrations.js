@@ -13,6 +13,10 @@ const { FirstStartup } = ChromeUtils.importESModule(
   "resource://gre/modules/FirstStartup.sys.mjs"
 );
 
+const { IndexedDB } = ChromeUtils.importESModule(
+  "resource://gre/modules/IndexedDB.sys.mjs"
+);
+
 const { NimbusTelemetry } = ChromeUtils.importESModule(
   "resource://nimbus/lib/Telemetry.sys.mjs"
 );
@@ -1689,6 +1693,11 @@ add_task(async function testGraduateFirefoxLabsAutoPip() {
       is_first_startup: "false",
     },
     {
+      migration_id: "remove-normandy-databases",
+      success: "true",
+      is_first_startup: "false",
+    },
+    {
       migration_id: "graduate-firefox-labs-auto-pip",
       success: "true",
       is_first_startup: "false",
@@ -1702,6 +1711,11 @@ add_task(async function testGraduateFirefoxLabsAutoPip() {
       migration_id: "bug-2054546-mitigation",
       is_first_startup: "false",
       success: "true",
+    },
+    {
+      migration_id: "graduate-firefox-labs-jpeg-xl-all-channels",
+      success: "true",
+      is_first_startup: "false",
     },
   ]);
 
@@ -1756,6 +1770,11 @@ add_task(async function testSeparateRolloutOptOut() {
           is_first_startup: "false",
         },
         {
+          migration_id: "remove-normandy-databases",
+          success: "true",
+          is_first_startup: "false",
+        },
+        {
           migration_id: "graduate-firefox-labs-jpeg-xl",
           success: "true",
           is_first_startup: "false",
@@ -1764,6 +1783,11 @@ add_task(async function testSeparateRolloutOptOut() {
           migration_id: "bug-2054546-mitigation",
           is_first_startup: "false",
           success: "true",
+        },
+        {
+          migration_id: "graduate-firefox-labs-jpeg-xl-all-channels",
+          success: "true",
+          is_first_startup: "false",
         },
       ]);
 
@@ -1882,6 +1906,11 @@ add_task(async function testGraduateFirefoxLabsJPEGXL() {
 
   Assert.deepEqual(getMigrationEvents(), [
     {
+      migration_id: "remove-normandy-databases",
+      success: "true",
+      is_first_startup: "false",
+    },
+    {
       migration_id: "graduate-firefox-labs-jpeg-xl",
       success: "true",
       is_first_startup: "false",
@@ -1890,6 +1919,11 @@ add_task(async function testGraduateFirefoxLabsJPEGXL() {
       migration_id: "bug-2054546-mitigation",
       is_first_startup: "false",
       success: "true",
+    },
+    {
+      migration_id: "graduate-firefox-labs-jpeg-xl-all-channels",
+      success: "true",
+      is_first_startup: "false",
     },
   ]);
   Assert.deepEqual(
@@ -1906,8 +1940,116 @@ add_task(async function testGraduateFirefoxLabsJPEGXL() {
     ]
   );
 
-  Services.prefs.setBoolPref(ENABLED_PREF, false);
   await cleanup();
+
+  Services.prefs.clearUserPref(ENABLED_PREF);
+});
+
+add_task(async function testGraduateFirefoxLabsAllChannelsJPEGXL() {
+  const slugs = [
+    "firefox-labs-jpeg-xl-beta",
+    "firefox-labs-jpeg-xl-deved",
+    "firefox-labs-jpeg-xl-release",
+  ];
+
+  const ENABLED_PREF = getEnabledPrefForFeature("jpeg-xl");
+  Services.prefs.setBoolPref(ENABLED_PREF, true);
+
+  for (const slug of slugs) {
+    const recipe = NimbusTestUtils.factories.recipe.withFeatureConfig(
+      slug,
+      {
+        featureId: "jpeg-xl",
+        value: { enabled: true },
+      },
+      {
+        isFirefoxLabsOptIn: true,
+        isRollout: true,
+      }
+    );
+    const { cleanup, manager } = await NimbusTestUtils.setupTest({
+      clearTelemetry: true,
+      init: false,
+      storePath: await NimbusTestUtils.createStoreWith(store => {
+        NimbusTestUtils.addEnrollmentForRecipe(recipe, {
+          store,
+          extra: {
+            prefs: [
+              {
+                name: ENABLED_PREF,
+                featureId: "jpeg-xl",
+                variable: "enabled",
+                branch: "user",
+                originalValue: false,
+              },
+            ],
+          },
+        });
+      }),
+      migrationState: NimbusTestUtils.migrationState.PREFFLIPS_RESTORED,
+    });
+
+    await GleanPings.nimbusTargetingContext.testSubmission(
+      () => {
+        Assert.deepEqual(
+          Glean.nimbusEvents.enrollmentStatus
+            .testGetValue("nimbus-targeting-context")
+            .map(event => event.extra),
+          [
+            {
+              slug,
+              branch: "control",
+              status: "WasEnrolled",
+              reason: "Migration",
+              migration: "graduate-firefox-labs-jpeg-xl-all-channels",
+            },
+          ]
+        );
+      },
+      () => ExperimentAPI.init()
+    );
+    const enrollment = manager.store.get(slug);
+
+    Assert.ok(!enrollment.active, "Enrollment is not active");
+    Assert.deepEqual(enrollment.featureIds, ["jpeg-xl"]);
+    Assert.equal(enrollment.unenrollReason, "migration");
+
+    Assert.equal(
+      Services.prefs.getBoolPref(ENABLED_PREF),
+      true,
+      "Pref is still set"
+    );
+
+    Assert.deepEqual(getMigrationEvents(), [
+      {
+        migration_id: "remove-normandy-databases",
+        success: "true",
+        is_first_startup: "false",
+      },
+      {
+        migration_id: "graduate-firefox-labs-jpeg-xl-all-channels",
+        success: "true",
+        is_first_startup: "false",
+      },
+    ]);
+    Assert.deepEqual(
+      Glean.nimbusEvents.unenrollment
+        .testGetValue("events")
+        .map(event => event.extra),
+      [
+        {
+          experiment: slug,
+          branch: "control",
+          reason: "migration",
+          migration: "graduate-firefox-labs-jpeg-xl-all-channels",
+        },
+      ]
+    );
+
+    await cleanup();
+  }
+
+  Services.prefs.clearUserPref(ENABLED_PREF);
 });
 
 add_task(async function testFirstStartup() {
@@ -1950,4 +2092,146 @@ add_task(async function testFirstStartup() {
   await cleanup();
 
   FirstStartup.resetForTesting();
+});
+
+const NORMANDY_DATABASES = [
+  "shield",
+  "normandy-addon-rollout",
+  "normandy-preference-rollout",
+];
+const NORMANDY_STARTUP_PREF =
+  "app.normandy.startupRolloutPrefs.test.rollout-pref";
+const NORMANDY_EXPERIMENT_STARTUP_PREF =
+  "app.normandy.startupExperimentPrefs.test.experiment-pref";
+const NORMANDY_FILES = [
+  "shield-preference-experiments.json",
+  "shield-recipe-client.json",
+];
+
+async function normandyDatabaseNames() {
+  const names = (await indexedDB.databases()).map(db => db.name);
+  return NORMANDY_DATABASES.filter(name => names.includes(name));
+}
+
+add_task(async function testRemoveNormandyDatabases() {
+  for (const name of NORMANDY_DATABASES) {
+    const db = await IndexedDB.open(name, 1, database =>
+      database.createObjectStore("test-store", { keyPath: "slug" })
+    );
+    await db
+      .objectStore("test-store", "readwrite")
+      .add({ slug: "test-rollout" });
+    db.close();
+  }
+
+  for (const name of NORMANDY_FILES) {
+    await IOUtils.writeJSON(PathUtils.join(PathUtils.profileDir, name), {});
+  }
+
+  Services.prefs.setBoolPref(NORMANDY_STARTUP_PREF, true);
+  Services.prefs.setBoolPref(NORMANDY_EXPERIMENT_STARTUP_PREF, true);
+
+  Assert.deepEqual(
+    await normandyDatabaseNames(),
+    NORMANDY_DATABASES,
+    "The Normandy databases exist before the migration runs"
+  );
+
+  const { cleanup } = await NimbusTestUtils.setupTest({
+    clearTelemetry: true,
+    migrationState:
+      NimbusTestUtils.migrationState
+        .GRADUATED_FIREFOX_LABS_JPEG_XL_ALL_CHANNELS,
+  });
+
+  Assert.deepEqual(getMigrationEvents(), [
+    {
+      migration_id: "remove-normandy-databases",
+      success: "true",
+      is_first_startup: "false",
+    },
+  ]);
+
+  Assert.deepEqual(
+    await normandyDatabaseNames(),
+    [],
+    "The migration deleted the Normandy databases"
+  );
+  Assert.ok(
+    !Services.prefs.prefHasUserValue(NORMANDY_STARTUP_PREF),
+    "The migration cleared the preference rollout startup prefs"
+  );
+  Assert.ok(
+    !Services.prefs.prefHasUserValue(NORMANDY_EXPERIMENT_STARTUP_PREF),
+    "The migration cleared the preference experiment startup prefs"
+  );
+  for (const name of NORMANDY_FILES) {
+    Assert.ok(
+      !(await IOUtils.exists(PathUtils.join(PathUtils.profileDir, name))),
+      `The migration deleted ${name}`
+    );
+  }
+
+  await cleanup();
+});
+
+add_task(async function testRemoveNormandyDatabasesNoDatabases() {
+  Assert.deepEqual(
+    await normandyDatabaseNames(),
+    [],
+    "The Normandy databases do not exist"
+  );
+
+  const { cleanup } = await NimbusTestUtils.setupTest({
+    clearTelemetry: true,
+    migrationState:
+      NimbusTestUtils.migrationState
+        .GRADUATED_FIREFOX_LABS_JPEG_XL_ALL_CHANNELS,
+  });
+
+  Assert.deepEqual(getMigrationEvents(), [
+    {
+      migration_id: "remove-normandy-databases",
+      success: "true",
+      is_first_startup: "false",
+    },
+  ]);
+
+  await cleanup();
+});
+
+add_task(async function testRemoveNormandyDatabasesBlocked() {
+  for (const name of NORMANDY_DATABASES) {
+    const db = await IndexedDB.open(name, 1, database =>
+      database.createObjectStore("test-store")
+    );
+    db.close();
+  }
+
+  const shield = await IndexedDB.open("shield", 1);
+
+  const { cleanup } = await NimbusTestUtils.setupTest({
+    clearTelemetry: true,
+    migrationState:
+      NimbusTestUtils.migrationState
+        .GRADUATED_FIREFOX_LABS_JPEG_XL_ALL_CHANNELS,
+  });
+
+  Assert.deepEqual(getMigrationEvents(), [
+    {
+      migration_id: "remove-normandy-databases",
+      success: "true",
+      is_first_startup: "false",
+    },
+  ]);
+
+  Assert.deepEqual(
+    await normandyDatabaseNames(),
+    ["shield"],
+    "The migration deleted the Normandy databases that were not blocked"
+  );
+
+  shield.close();
+
+  await cleanup();
 });

@@ -23,7 +23,6 @@ EXPORTS += [
     "AndroidSurfaceTexture.h",
     "AutoMappable.h",
     "Colorspaces.h",
-    "ForceDiscreteGPUHelperCGL.h",
     "GfxTexturesReporter.h",
     "GLBlitHelper.h",
     "GLConsts.h",
@@ -67,7 +66,6 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
     EXPORTS += [
-        "AndroidNativeWindow.h",
         "SharedSurfaceAndroidHardwareBuffer.h",
     ]
     UNIFIED_SOURCES += [
@@ -109,6 +107,9 @@ elif gl_provider == "Linux":
     SOURCES += [
         "GLContextProviderLinux.cpp",
         "SharedSurfaceDMABUF.cpp",
+    ]
+    SOURCE_HEADERS += [
+        "SharedSurfaceDMABUF.h",
     ]
     EXPORTS += ["GLContextGLX.h", "GLXLibrary.h"]
     if CONFIG["MOZ_X11"]:
@@ -159,4 +160,8 @@ if CONFIG["MOZ_WAYLAND"]:
 LOCAL_INCLUDES += CONFIG["SKIA_INCLUDES"]
 LOCAL_INCLUDES += [
     "/gfx/cairo/cairo/src",
+]
+
+SOURCE_HEADERS += [
+    "GLDebugUtils.h",
 ]

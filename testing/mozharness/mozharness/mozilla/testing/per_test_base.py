@@ -12,6 +12,8 @@ import sys
 
 import mozinfo
 
+TEST_SUMMARY_FILENAME = "summary.jsonl"
+
 
 class SingleTestMixin:
     """Utility functions for per-test testing like test verification and per-test coverage."""
@@ -27,8 +29,7 @@ class SingleTestMixin:
         # Use self._map_test_path_to_source(test_machine_path, source_path) to add a mapping.
         self.test_src_path = {}
         self.per_test_log_index = 1
-        # Path of the testsummary log for the harness run currently being set up.
-        self.test_summary_file = None
+        self.test_summary_started = False
 
     def _map_test_path_to_source(self, test_machine_path, source_path):
         test_machine_path = test_machine_path.replace(os.sep, posixpath.sep)
@@ -465,26 +466,35 @@ class SingleTestMixin:
             self.tests_downloaded = True
             return
 
-        files_per_chunk = total_tests / float(self.config.get("total_chunks", 1))
-        files_per_chunk = int(math.ceil(files_per_chunk))
+        self.suites = self._chunk_suites(
+            int(self.config.get("total_chunks", 1)),
+            int(self.config.get("this_chunk", 1)),
+        )
+        self.tests_downloaded = True
 
-        chunk_number = int(self.config.get("this_chunk", 1))
+    def _chunk_suites(self, total_chunks, this_chunk):
+        """Return the share of self.suites that this chunk should run.
+
+        The suites are sorted because they are built by iterating a set of
+        paths, whose order varies between processes: every chunk has to slice
+        the same list for the chunks to together cover each test once.
+        """
+        total_tests = sum(len(tests) for tests in self.suites.values())
+        files_per_chunk = int(math.ceil(total_tests / float(total_chunks)))
+
         suites = {}
-        start = (chunk_number - 1) * files_per_chunk
-        end = chunk_number * files_per_chunk
+        start = (this_chunk - 1) * files_per_chunk
+        end = this_chunk * files_per_chunk
         current = -1
-        for suite in self.suites:
-            for test in self.suites[suite]:
+        for suite in sorted(self.suites):
+            for test in sorted(self.suites[suite]):
                 current += 1
                 if current >= start and current < end:
-                    if suite not in suites:
-                        suites[suite] = []
-                    suites[suite].append(test)
+                    suites.setdefault(suite, []).append(test)
             if current >= end:
                 break
 
-        self.suites = suites
-        self.tests_downloaded = True
+        return suites
 
     def query_args(self, suite):
         """
@@ -586,8 +596,8 @@ class SingleTestMixin:
 
     def get_indexed_logs(self, dir, test_suite):
         """
-        Per-test tasks need distinct file names for the raw, errorsummary and
-        testsummary logs on each run.
+        Per-test tasks need distinct file names for the raw and errorsummary
+        logs on each run.
         """
         index = ""
         if self.verify_enabled or self.per_test_coverage:
@@ -597,30 +607,20 @@ class SingleTestMixin:
         error_summary_file = os.path.join(
             dir, "%s%s_errorsummary.log" % (test_suite, index)
         )
-        test_summary_file = os.path.join(
-            dir, "%s%s_testsummary.jsonl" % (test_suite, index)
-        )
-        self.test_summary_file = test_summary_file
-        return raw_log_file, error_summary_file, test_summary_file
+        return raw_log_file, error_summary_file
 
-    def append_test_summary(self, dir):
+    def query_test_summary_file(self, dir, suite_definition):
         """
-        Append the last harness run's testsummary log to the task's summary.jsonl.
+        Path of the task's summary.jsonl if the suite definition opts in with
+        `test_summary`, else None.
 
-        Each harness invocation truncates the file it was given, so the per-run
-        logs are concatenated into a single fixed-name artifact. Suites that do
-        not pass --log-testsummary produce no file, in which case this is a no-op.
+        Every harness run of the task appends to the same file, so the first
+        call starts it over.
         """
-        part = self.test_summary_file
-        self.test_summary_file = None
-        if not part or not os.path.exists(part):
-            return
-        with open(part, encoding="utf-8") as fh:
-            contents = fh.read()
-        os.remove(part)
-        if not contents:
-            return
-        if not contents.endswith("\n"):
-            contents += "\n"
-        with open(os.path.join(dir, "summary.jsonl"), "a", encoding="utf-8") as fh:
-            fh.write(contents)
+        if not suite_definition.get("test_summary"):
+            return None
+        path = os.path.join(dir, TEST_SUMMARY_FILENAME)
+        if not self.test_summary_started:
+            self.test_summary_started = True
+            open(path, "w", encoding="utf-8").close()
+        return path

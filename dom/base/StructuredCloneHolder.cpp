@@ -254,6 +254,7 @@ void AssertTagValues() {
                     SCTAG_DOM_DOMMATRIX == 0xffff8013 &&
                     SCTAG_DOM_URLSEARCHPARAMS == 0xffff8014 &&
                     SCTAG_DOM_DOMMATRIXREADONLY == 0xffff8015 &&
+                    SCTAG_DOM_QUOTAEXCEEDEDERROR == 0xffff8017 &&
                     SCTAG_DOM_STRUCTUREDCLONETESTER == 0xffff8018 &&
                     SCTAG_DOM_FILESYSTEMHANDLE == 0xffff8019 &&
                     SCTAG_DOM_FILESYSTEMFILEHANDLE == 0xffff801a &&
@@ -1884,12 +1885,9 @@ void StructuredCloneHolder::CustomFreeTransferHandler(
 
   if (aTag == SCTAG_DOM_MAP_MESSAGEPORT) {
     MOZ_ASSERT(!aContent);
-#ifdef FUZZING
     if (aExtraData >= mPortIdentifiers.Length()) {
       return;
     }
-#endif
-    MOZ_ASSERT(aExtraData < mPortIdentifiers.Length());
     MessagePort::ForceClose(mPortIdentifiers[aExtraData]);
     return;
   }
@@ -1913,24 +1911,18 @@ void StructuredCloneHolder::CustomFreeTransferHandler(
 
   if (aTag == SCTAG_DOM_READABLESTREAM || aTag == SCTAG_DOM_WRITABLESTREAM) {
     MOZ_ASSERT(!aContent);
-#ifdef FUZZING
     if (aExtraData >= mPortIdentifiers.Length()) {
       return;
     }
-#endif
-    MOZ_ASSERT(aExtraData < mPortIdentifiers.Length());
     MessagePort::ForceClose(mPortIdentifiers[aExtraData]);
     return;
   }
 
   if (aTag == SCTAG_DOM_TRANSFORMSTREAM) {
     MOZ_ASSERT(!aContent);
-#ifdef FUZZING
     if (aExtraData + 1 >= mPortIdentifiers.Length()) {
       return;
     }
-#endif
-    MOZ_ASSERT(aExtraData + 1 < mPortIdentifiers.Length());
     MessagePort::ForceClose(mPortIdentifiers[aExtraData]);
     MessagePort::ForceClose(mPortIdentifiers[aExtraData + 1]);
     return;

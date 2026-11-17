@@ -3,11 +3,17 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ---
 
+loader: taskgraph.loader.transform:loader
+
 transforms:
   - taskgraph.transforms.from_deps
   - nss_taskgraph.transforms.from_deps_task_name
   - nss_taskgraph.transforms.platforms
   - nss_taskgraph.transforms.treeherder
+  - taskgraph.transforms.run
+  # Has to see the env that taskgraph.transforms.run sets.
+  - nss_taskgraph.transforms.hg_store
+  - taskgraph.transforms.task
 
 kind-dependencies:
   - build
@@ -21,10 +27,6 @@ task-defaults:
         env:
             NSS_MAX_MP_PBE_ITERATION_COUNT: "100"
         max-run-time: 3600
-        taskcluster-proxy:
-            by-platform:
-                win.*: true
-                default: false
         docker-image: {in-tree: base}
     run:
         using: run-task
@@ -37,10 +39,6 @@ task-defaults:
                 default: "${VCS_PATH}/nss/automation/taskcluster/scripts/run_tests.sh"
     attributes:
         retrigger: true
-    scopes:
-        by-platform:
-            win.*: ["project:releng:services/tooltool/api/download/internal"]
-            default: []
     worker-type:
         by-platform:
             linux-aarch64.*: t-linux-aarch64
@@ -48,7 +46,8 @@ task-defaults:
             # linux-aarch64 (keyed-by forbids a platform matching two arms).
             linux(?!-aarch64).*: t-linux
             mac.*: b-osx
-            win.*: b-win2022
+            win-aarch64.*: t-win-aarch64
+            win(?!-aarch64).*: b-win2022
 
 tasks-from:
     - cipher.yml
@@ -93,6 +92,7 @@ tasks:
                 modular: [false]
                 make-fips: [false]
                 fuzz: [false]
+                tsan: [false]
         worker:
             docker-image: {in-tree: builds}
             env:
@@ -121,6 +121,7 @@ tasks:
                 cc: [false]
                 modular: [false]
                 fuzz: [false]
+                tsan: [false]
         worker:
             env:
                 TC_PARENT_TASK_ID: {task-reference: "<build>"}
@@ -148,6 +149,7 @@ tasks:
                 cc: [false]
                 modular: [false]
                 fuzz: [false]
+                tsan: [false]
         worker:
             docker-image: {in-tree: tlsinterop}
             env:
@@ -176,6 +178,7 @@ tasks:
                 cc: [false]
                 modular: [false]
                 fuzz: [false]
+                tsan: [false]
         worker:
             docker-image: {in-tree: tlsinterop}
             env:
@@ -202,20 +205,23 @@ tasks:
                 cc: [false]
                 modular: [false]
                 fuzz: [false]
+                tsan: [false]
 
-    # Schedule tests that need certificates.
+    # chains.sh builds its own PKI from scratch and reads nothing from cert.sh.
     chains:
         description: Chains tests
         from-deps:
-            kinds: [certs]
+            kinds: [build]
             with-attributes:
                 dbm: [false]
+                cc: [false]
+                modular: [false]
                 make-fips: [false]
                 # Only old make builds have -Ddisable_libpkix=0 and can run chain tests.
                 make: [true]
         worker:
             env:
-                TC_PARENT_TASK_ID: {task-reference: "<certs>"}
+                TC_PARENT_TASK_ID: {task-reference: "<build>"}
                 NSS_TESTS: chains
             max-run-time:
                 by-platform:
@@ -224,62 +230,85 @@ tasks:
         treeherder:
             symbol: Chains
 
+    # ec.sh, lowhash.sh, sdr.sh and policy.sh use no cert.sh output either;
+    # sdr.sh creates its own profile DB.
     ec:
         description: EC tests
         from-deps:
-            kinds: [certs]
+            kinds: [build]
             with-attributes:
+                nspr: [false]
                 dbm: [false]
+                cc: [false]
+                modular: [false]
                 make-fips: [false]
+                fuzz: [false]
+                tsan: [false]
         treeherder:
             symbol: EC
         worker:
             env:
-                TC_PARENT_TASK_ID: {task-reference: "<certs>"}
+                TC_PARENT_TASK_ID: {task-reference: "<build>"}
                 NSS_TESTS: ec
 
     lowhash:
         description: Lowhash tests
         from-deps:
-            kinds: [certs]
+            kinds: [build]
             with-attributes:
+                nspr: [false]
                 dbm: [false]
+                cc: [false]
+                modular: [false]
                 make-fips: [false]
+                fuzz: [false]
+                tsan: [false]
         treeherder:
             symbol: Lowhash
         worker:
             env:
-                TC_PARENT_TASK_ID: {task-reference: "<certs>"}
+                TC_PARENT_TASK_ID: {task-reference: "<build>"}
                 NSS_TESTS: lowhash
 
     sdr:
         description: SDR tests
         from-deps:
-            kinds: [certs]
+            kinds: [build]
             with-attributes:
+                nspr: [false]
                 dbm: [false]
+                cc: [false]
+                modular: [false]
                 make-fips: [false]
+                fuzz: [false]
+                tsan: [false]
         treeherder:
             symbol: SDR
         worker:
             env:
-                TC_PARENT_TASK_ID: {task-reference: "<certs>"}
+                TC_PARENT_TASK_ID: {task-reference: "<build>"}
                 NSS_TESTS: sdr
 
     policy:
         description: Policy tests
         from-deps:
-            kinds: [certs]
+            kinds: [build]
             with-attributes:
+                nspr: [false]
                 dbm: [false]
+                cc: [false]
+                modular: [false]
                 make-fips: [false]
+                fuzz: [false]
+                tsan: [false]
         treeherder:
             symbol: Policy
         worker:
             env:
-                TC_PARENT_TASK_ID: {task-reference: "<certs>"}
+                TC_PARENT_TASK_ID: {task-reference: "<build>"}
                 NSS_TESTS: policy
 
+    # Tests that do need cert.sh output.
     db:
         description: DB tests
         from-deps:
@@ -287,6 +316,7 @@ tasks:
             with-attributes:
                 dbm: [false]
                 make-fips: [false]
+                tsan: [false]
         treeherder:
             symbol: DB
         worker:
@@ -301,6 +331,7 @@ tasks:
             with-attributes:
                 dbm: [false]
                 make-fips: [false]
+                tsan: [false]
         treeherder:
             symbol: Merge
         worker:
@@ -315,6 +346,7 @@ tasks:
             with-attributes:
                 dbm: [false]
                 make-fips: [false]
+                tsan: [false]
         treeherder:
             symbol: SMIME
         worker:
@@ -329,12 +361,30 @@ tasks:
             with-attributes:
                 dbm: [false]
                 make-fips: [false]
+                tsan: [false]
         treeherder:
             symbol: Tools
         worker:
             env:
                 TC_PARENT_TASK_ID: {task-reference: "<certs>"}
                 NSS_TESTS: tools
+
+    # all.sh only runs fips.sh on builds with neither NSS_FIPS_DISABLED nor
+    # NSS_NO_INIT_SUPPORT. Of the builds with certs, that's the gyp
+    # --enable-fips build.
+    fips:
+        description: FIPS tests
+        from-deps:
+            kinds: [certs]
+            with-attributes:
+                build_type: [opt-fips]
+                dbm: [false]
+        treeherder:
+            symbol: FIPS
+        worker:
+            env:
+                TC_PARENT_TASK_ID: {task-reference: "<certs>"}
+                NSS_TESTS: fips
 
     # SSL tests, need certificates too.
     ssl-standard:
@@ -344,6 +394,7 @@ tasks:
             with-attributes:
                 dbm: [false]
                 make-fips: [false]
+                tsan: [false]
         treeherder:
             symbol: SSL(standard)
         worker:
@@ -360,6 +411,7 @@ tasks:
             with-attributes:
                 dbm: [false]
                 make-fips: [false]
+                tsan: [false]
         treeherder:
             symbol: SSL(pkix)
         worker:
@@ -369,6 +421,24 @@ tasks:
                 NSS_CYCLES: pkix
                 NSS_SSL_TESTS: crl iopr policy normal_normal
 
+    # The SSL tests with one side's token in FIPS mode. Other builds either
+    # define NSS_FIPS_DISABLED or have no certs.
+    ssl-fips:
+        description: SSL tests (FIPS)
+        from-deps:
+            kinds: [certs]
+            with-attributes:
+                build_type: [opt-fips]
+                dbm: [false]
+        treeherder:
+            symbol: SSL(fips)
+        worker:
+            env:
+                TC_PARENT_TASK_ID: {task-reference: "<certs>"}
+                NSS_TESTS: ssl
+                NSS_CYCLES: standard
+                NSS_SSL_TESTS: fips_normal normal_fips
+
     ssl-stress:
         description: SSL tests (stress)
         from-deps:
@@ -376,6 +446,7 @@ tasks:
             with-attributes:
                 dbm: [false]
                 make-fips: [false]
+                tsan: [true]
         treeherder:
             symbol: SSL(stress)
         worker:
@@ -385,3 +456,4 @@ tasks:
                 NSS_CYCLES: sharedb
                 NSS_SSL_RUN: stress
                 NSS_SSL_TESTS: normal_normal
+            max-run-time: 7200

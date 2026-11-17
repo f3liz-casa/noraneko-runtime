@@ -1,12 +1,11 @@
 [DEFAULT]
 subsuite = "media-bc"
 tags = "media-engine-compatible"
-skip-if = [
-  "!wmfme",
+run-if = [
+  "wmfme",
 ]
 
 ["browser_windowsMediaFoundationCDMOriginsListService.js"]
 skip-if = [
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64' && opt && verify-standalone",
   "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && opt && verify-standalone",
 ]

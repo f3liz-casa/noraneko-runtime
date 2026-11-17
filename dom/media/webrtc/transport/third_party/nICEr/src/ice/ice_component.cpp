@@ -236,14 +236,14 @@ static int nr_ice_component_initialize_udp(struct nr_ice_ctx_ *ctx,nr_ice_compon
       if(r=nr_ice_socket_create(ctx,component,sock,NR_ICE_SOCKET_TYPE_DGRAM,&isock))
         ABORT(r);
 
-      /* Create a STUN server context for this socket */
-      if ((r=nr_ice_component_create_stun_server_ctx(component,isock,&addrs[i].addr,lufrag,pwd)))
-        ABORT(r);
-
       /* Make sure we don't leak this. Failures might result in it being
        * unused, but we hand off references to this in enough places below
        * that unwinding it all becomes impractical. */
       STAILQ_INSERT_TAIL(&component->sockets,isock,entry);
+
+      /* Create a STUN server context for this socket */
+      if ((r=nr_ice_component_create_stun_server_ctx(component,isock,&addrs[i].addr,lufrag,pwd)))
+        ABORT(r);
 
       if (!(component->stream->flags & NR_ICE_CTX_FLAGS_RELAY_ONLY)) {
         /* Create one host candidate */
@@ -602,15 +602,14 @@ static int nr_ice_component_initialize_tcp(struct nr_ice_ctx_ *ctx,nr_ice_compon
         if((r=nr_ice_socket_create(ctx, component, buffered_sock, NR_ICE_SOCKET_TYPE_STREAM_TURN, &turn_isock)))
           ABORT(r);
 
-
-        /* Create a STUN server context for this socket */
-        if ((r=nr_ice_component_create_stun_server_ctx(component,turn_isock,&addr,lufrag,pwd)))
-          ABORT(r);
-
         /* Make sure we don't leak this. Failures might result in it being
          * unused, but we hand off references to this in enough places below
          * that unwinding it all becomes impractical. */
         STAILQ_INSERT_TAIL(&component->sockets,turn_isock,entry);
+
+        /* Create a STUN server context for this socket */
+        if ((r=nr_ice_component_create_stun_server_ctx(component,turn_isock,&addr,lufrag,pwd)))
+          ABORT(r);
 
         /* Attach ourselves to it */
         if(r=nr_ice_candidate_create(ctx,component,
@@ -1124,8 +1123,10 @@ int nr_ice_component_pair_candidate(nr_ice_peer_ctx *pctx, nr_ice_component *pco
       if(!nr_ice_component_can_candidate_tcptype_pair(lcand->tcp_type, pcand->tcp_type))
         continue;
 
-      /* https://tools.ietf.org/html/draft-ietf-rtcweb-mdns-ice-candidates-03#section-3.3.2 */
-      if(lcand->type == RELAYED && pcand->mdns_addr && strlen(pcand->mdns_addr)) {
+      /* https://datatracker.ietf.org/doc/html/draft-ietf-mmusic-mdns-ice-candidates#section-3.3.2-3 */
+      // Note: This probably should not hold for FQDN (as opposed to mDNS), but
+      // we don't really support that anyway for remote candidates.
+      if(lcand->type == RELAYED && strlen(pcand->addr.fqdn)) {
         continue;
       }
 

@@ -26,7 +26,6 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/LoadInfo.h"
-#include "mozilla/Maybe.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
@@ -122,7 +121,7 @@ static bool IsResourceDocumentLoadingTrustedURI(ModuleLoadRequest* aRequest) {
 nsresult ModuleLoader::StartFetch(ModuleLoadRequest* aRequest) {
   if (aRequest->IsRetrievedFromMemoryCache()) {
     DisallowImportMapsForModuleFetch(aRequest);
-    GetScriptLoader()->EmulateNetworkEvents(aRequest, Nothing());
+    GetScriptLoader()->EmulateNetworkEvents(aRequest);
     SetModuleFetchStarted(aRequest);
     aRequest->OnFetchComplete(NS_OK);
     return NS_OK;
@@ -147,12 +146,7 @@ nsresult ModuleLoader::StartFetch(ModuleLoadRequest* aRequest) {
   securityFlags |= nsILoadInfo::SEC_ALLOW_CHROME;
 
   // Delegate Shared Behavior to base ScriptLoader
-  //
-  // aCharsetForPreload is passed as Nothing() because this is not a preload
-  // and `StartLoadInternal` is able to find the charset by using `aRequest`
-  // for this case.
-  nsresult rv = GetScriptLoader()->StartLoadInternal(
-      aRequest, securityFlags, Nothing() /* aCharsetForPreload */);
+  nsresult rv = GetScriptLoader()->StartLoadInternal(aRequest, securityFlags);
   NS_ENSURE_SUCCESS(rv, rv);
 
   DisallowImportMapsForModuleFetch(aRequest);
@@ -592,7 +586,7 @@ nsresult ModuleLoader::CreateTextModule(
                                           aRequest->mLoadContext.get());
   NS_ENSURE_SUCCESS(rv, rv);
 
-  auto compile = [&](auto& source) {
+  auto compile = [&](auto& source) -> JSObject* {
     using T = decltype(source);
     static_assert(std::is_same_v<T, JS::SourceText<char16_t>&> ||
                   std::is_same_v<T, JS::SourceText<Utf8Unit>&>);
@@ -603,6 +597,9 @@ nsresult ModuleLoader::CreateTextModule(
                                   JS::UTF8Chars(source.get(), source.length()));
     } else {
       str = JS_NewUCStringCopyN(aCx, source.get(), source.length());
+    }
+    if (!str) {
+      return nullptr;
     }
 
     JS::Rooted<JS::Value> defaultExport(aCx, JS::StringValue(str));

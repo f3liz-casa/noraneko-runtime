@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
+
 const TOPIC_WILL_IMPORT_BOOKMARKS =
   "initial-migration-will-import-default-bookmarks";
 const TOPIC_DID_IMPORT_BOOKMARKS =
@@ -13,8 +15,10 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   BookmarkHTMLUtils: "resource://gre/modules/BookmarkHTMLUtils.sys.mjs",
   BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
-  FirefoxProfileMigrator: "resource:///modules/FirefoxProfileMigrator.sys.mjs",
-  MigrationUtils: "resource:///modules/MigrationUtils.sys.mjs",
+  FirefoxProfileMigrator:
+    "moz-src:///browser/components/migration/FirefoxProfileMigrator.sys.mjs",
+  MigrationUtils:
+    "moz-src:///browser/components/migration/MigrationUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
 });
 
@@ -66,6 +70,20 @@ export class MigratorBase {
    */
   static get displayNameL10nID() {
     throw new Error("MigratorBase.displayNameL10nID must be overridden.");
+  }
+
+  /**
+   * Returns true if the data of other browsers is only read after the user
+   * has selected its folder in getPermissions. On macOS 27, reading it
+   * without that can show a "Data Access Blocked" notification. macOS 26
+   * reports kernel version 25, and macOS 27 reports kernel version 27.
+   *
+   * This is a static method so that tests can stub it.
+   *
+   * @returns {boolean}
+   */
+  static needsFolderSelectionToReadData() {
+    return AppConstants.isPlatformAndVersionAtLeast("macosx", "26.0.0");
   }
 
   /**

@@ -26,6 +26,7 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_webgl.h"
 #include "mozilla/dom/BufferSourceBinding.h"
+#include "mozilla/dom/CanvasRenderingContextHelper.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/GeneratePlaceholderCanvasData.h"
 #include "mozilla/dom/ToJSValue.h"
@@ -394,6 +395,7 @@ void ClientWebGLContext::Event_webglcontextrestored() const {
       this);  // TODO: Make context loss non-mutable.
   if (!mutThis->CreateHostContext(requestSize)) {
     mLossStatus = webgl::LossStatus::LostForever;
+    mutThis->MaybeThrowContextCreationError();
     return;
   }
 
@@ -428,6 +430,15 @@ void ClientWebGLContext::ThrowEvent_WebGLContextCreationError(
   event->SetTrusted(true);
 
   target->DispatchEvent(*event);
+}
+
+NS_IMETHODIMP
+ClientWebGLContext::MaybeThrowContextCreationError() {
+  if (!mDeferContextCreationError.empty()) {
+    std::string error = std::move(mDeferContextCreationError);
+    ThrowEvent_WebGLContextCreationError(error);
+  }
+  return NS_OK;
 }
 
 // -------------------------------------------------------------------------
@@ -812,6 +823,7 @@ ClientWebGLContext::SetDimensions(const int32_t signedWidth,
                                   const int32_t signedHeight) {
   const FuncScope funcScope(*this, "<SetDimensions>");
   MOZ_ASSERT(mInitialOptions);
+  MOZ_ASSERT(mDeferContextCreationError.empty());
 
   if (mLossStatus != webgl::LossStatus::Ready) {
     // Attempted resize of a lost context.
@@ -864,6 +876,8 @@ void ClientWebGLContext::ResetBitmap() {
 }
 
 bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
+  MOZ_ASSERT(mDeferContextCreationError.empty());
+
   const auto pNotLost = MakeRefPtr<webgl::NotLostData>(*this);
   auto& notLost = *pNotLost;
 
@@ -942,7 +956,7 @@ bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
     notLost.info.error = str;
   }
   if (!notLost.info.error->empty()) {
-    ThrowEvent_WebGLContextCreationError(notLost.info.error);
+    mDeferContextCreationError = notLost.info.error;
     return false;
   }
   mNotLost = pNotLost;
@@ -1051,16 +1065,12 @@ void ClientWebGLContext::OnMemoryPressure() {
 }
 
 NS_IMETHODIMP
-ClientWebGLContext::SetContextOptions(JSContext* cx,
-                                      JS::Handle<JS::Value> options,
-                                      ErrorResult& aRvForDictionaryInit) {
-  if (mInitialOptions && options.isNullOrUndefined()) return NS_OK;
-
-  dom::WebGLContextAttributes attributes;
-  if (!attributes.Init(cx, options)) {
-    aRvForDictionaryInit.Throw(NS_ERROR_UNEXPECTED);
+ClientWebGLContext::SetContextOptions(
+    const dom::CanvasRenderingContextOptions& aOptions) {
+  if (!aOptions.is<dom::WebGLContextAttributes>()) {
     return NS_ERROR_UNEXPECTED;
   }
+  const auto& attributes = aOptions.as<dom::WebGLContextAttributes>();
 
   WebGLContextOptions newOpts;
 
@@ -3184,6 +3194,10 @@ void ClientWebGLContext::ClearDepth(GLclampf v) { Run<RPROC(ClearDepth)>(v); }
 
 void ClientWebGLContext::ClearStencil(GLint v) { Run<RPROC(ClearStencil)>(v); }
 
+void ClientWebGLContext::ClipControlEXT(GLenum origin, GLenum depth) {
+  Run<RPROC(ClipControlEXT)>(origin, depth);
+}
+
 void ClientWebGLContext::ColorMaskI(Maybe<GLuint> i, bool r, bool g, bool b,
                                     bool a) const {
   const FuncScope funcScope(*this, "colorMask");
@@ -3347,6 +3361,11 @@ void ClientWebGLContext::PolygonOffset(GLfloat factor, GLfloat units) {
   Run<RPROC(PolygonOffset)>(factor, units);
 }
 
+void ClientWebGLContext::PolygonOffsetClampEXT(GLfloat factor, GLfloat units,
+                                               GLfloat clamp) {
+  Run<RPROC(PolygonOffsetClampEXT)>(factor, units, clamp);
+}
+
 void ClientWebGLContext::SampleCoverage(GLclampf value, WebGLboolean invert) {
   Run<RPROC(SampleCoverage)>(value, invert);
 }
@@ -3489,6 +3508,21 @@ Maybe<webgl::ErrorInfo> CheckBindBufferRange(
       const auto info =
           nsPrintfCString("Unrecognized `target`: 0x%04x", target);
       return fnSome(LOCAL_GL_INVALID_ENUM, info);
+    }
+  }
+
+  // The driver rejects a range that does not fit GLintptr/GLsizeiptr and keeps
+  // its previous binding, so we must not record such a range as bound.
+  if (isBuffer) {
+    if (!CheckedInt<GLintptr>(offset).isValid()) {
+      const auto info = nsPrintfCString(
+          "`offset` (%" PRIu64 ") must fit in GLintptr.", offset);
+      return fnSome(LOCAL_GL_INVALID_VALUE, info);
+    }
+    if (!CheckedInt<GLsizeiptr>(size).isValid()) {
+      const auto info =
+          nsPrintfCString("`size` (%" PRIu64 ") must fit in GLsizeiptr.", size);
+      return fnSome(LOCAL_GL_INVALID_VALUE, info);
     }
   }
 
@@ -4407,10 +4441,10 @@ static inline uvec3 CastUvec3(const ivec3& val) {
 }
 
 template <typename T>
-Range<T> SubRange(const Range<T>& full, const size_t offset,
-                  const size_t length) {
+mozilla::Range<T> SubRange(const mozilla::Range<T>& full, const size_t offset,
+                           const size_t length) {
   const auto newBegin = full.begin() + offset;
-  return Range<T>{newBegin, newBegin + length};
+  return mozilla::Range<T>{newBegin, newBegin + length};
 }
 
 Maybe<Span<const uint8_t>> GetRangeFromData(const Span<uint8_t>& data,
@@ -5113,7 +5147,7 @@ void ClientWebGLContext::GetVertexAttrib(JSContext* cx, GLuint index,
 void ClientWebGLContext::UniformData(const GLenum funcElemType,
                                      const WebGLUniformLocationJS* const loc,
                                      bool transpose,
-                                     const Range<const uint8_t>& bytes,
+                                     const mozilla::Range<const uint8_t>& bytes,
                                      JS::AutoCheckCannotGC&& nogc,
                                      GLuint elemOffset,
                                      GLuint elemCountOverride) const {
@@ -5262,8 +5296,9 @@ WebGLsizeiptr ClientWebGLContext::GetVertexAttribOffset(GLuint index,
   return *maybe;
 }
 
-void ClientWebGLContext::VertexAttrib4Tv(GLuint index, webgl::AttribBaseType t,
-                                         const Range<const uint8_t>& src) {
+void ClientWebGLContext::VertexAttrib4Tv(
+    GLuint index, webgl::AttribBaseType t,
+    const mozilla::Range<const uint8_t>& src) {
   const FuncScope funcScope(*this, "vertexAttrib[1234]u?[fi]{v}");
   RefPtr<webgl::NotLostData> notLost(mNotLost);
   if (!notLost) {

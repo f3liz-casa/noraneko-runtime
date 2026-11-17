@@ -177,13 +177,6 @@ void OffscreenCanvas::GetContext(
     JSContext* aCx, const OffscreenRenderingContextId& aContextId,
     JS::Handle<JS::Value> aContextOptions,
     Nullable<OwningOffscreenRenderingContext>& aResult, ErrorResult& aRv) {
-  if (mNeutered) {
-    aResult.SetNull();
-    aRv.ThrowInvalidStateError(
-        "Cannot create context for detached OffscreenCanvas.");
-    return;
-  }
-
   CanvasContextType contextType;
   switch (aContextId) {
     case OffscreenRenderingContextId::_2d:
@@ -208,12 +201,36 @@ void OffscreenCanvas::GetContext(
       return;
   }
 
+  CanvasRenderingContextOptions options;
+  if (!options.Init(aCx, contextType, aContextOptions, aRv)) {
+    aResult.SetNull();
+    return;
+  }
+
+  if (mNeutered) {
+    aResult.SetNull();
+    aRv.ThrowInvalidStateError(
+        "Cannot create context for detached OffscreenCanvas.");
+    return;
+  }
+
+  if (mCurrentContext && mCurrentContextType != contextType) {
+    // Avoid creating a worker ref if the context type doesn't match.
+    aResult.SetNull();
+    return;
+  }
+
   // If we are on a worker, we need to give our OffscreenCanvasDisplayHelper
   // object access to a worker ref so we can dispatch properly during painting
   // if we need to flush our contents to its ImageContainer for display.
   RefPtr<ThreadSafeWorkerRef> workerRef;
   if (mDisplay) {
-    if (WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate()) {
+    WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
+    if (!mDisplay->MayUpdateContext(workerPrivate, aRv)) {
+      aResult.SetNull();
+      return;
+    }
+    if (workerPrivate) {
       RefPtr<StrongWorkerRef> strongRef = StrongWorkerRef::Create(
           workerPrivate, "OffscreenCanvas::GetContext",
           [display = mDisplay]() { display->DestroyCanvas(); });
@@ -229,14 +246,9 @@ void OffscreenCanvas::GetContext(
     }
   }
 
-  RefPtr<nsISupports> result = CanvasRenderingContextHelper::GetOrCreateContext(
-      aCx, contextType, aContextOptions, aRv);
-  if (!result) {
+  if (!CanvasRenderingContextHelper::GetOrCreateContext(contextType, options,
+                                                        aRv)) {
     aResult.SetNull();
-    if (mDisplay) {
-      mDisplay->UpdateContext(this, nullptr, CanvasContextType::NoContext,
-                              Nothing());
-    }
     return;
   }
 

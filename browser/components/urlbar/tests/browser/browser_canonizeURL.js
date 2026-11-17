@@ -28,30 +28,28 @@ add_task(async function checkCanonizeWorks() {
 
   let defaultEngine = await SearchService.getDefault();
   let testcases = [
-    ["example", "https://www.example.com/", CANONIZE_MODIFIERS, true],
+    ["example", "https://www.example.com/", CANONIZE_MODIFIERS],
     // Check that a direct load is not overwritten by a previous canonization.
-    ["http://example.com/test/", "http://example.com/test/", {}, false],
-    ["ex-ample", "https://www.ex-ample.com/", CANONIZE_MODIFIERS, true],
-    ["  example ", "https://www.example.com/", CANONIZE_MODIFIERS, true],
-    [" example/foo ", "https://www.example.com/foo", CANONIZE_MODIFIERS, true],
+    ["http://example.com/test/", "http://example.com/test/", {}],
+    ["ex-ample", "https://www.ex-ample.com/", CANONIZE_MODIFIERS],
+    ["  example ", "https://www.example.com/", CANONIZE_MODIFIERS],
+    [" example/foo ", "https://www.example.com/foo", CANONIZE_MODIFIERS],
     [
       " example/foo bar ",
       "https://www.example.com/foo%20bar",
       CANONIZE_MODIFIERS,
-      true,
     ],
-    ["example.net", "http://example.net/", CANONIZE_MODIFIERS, false],
-    ["http://example", "http://example/", CANONIZE_MODIFIERS, false],
-    ["example:8080", "http://example:8080/", CANONIZE_MODIFIERS, false],
-    ["ex-ample.foo", "http://ex-ample.foo/", CANONIZE_MODIFIERS, false],
-    ["example.foo/bar ", "http://example.foo/bar", CANONIZE_MODIFIERS, false],
-    ["1.1.1.1", "http://1.1.1.1/", CANONIZE_MODIFIERS, false],
-    ["ftp.example.bar", "http://ftp.example.bar/", CANONIZE_MODIFIERS, false],
+    ["example.net", "http://example.net/", CANONIZE_MODIFIERS],
+    ["http://example", "http://example/", CANONIZE_MODIFIERS],
+    ["example:8080", "http://example:8080/", CANONIZE_MODIFIERS],
+    ["ex-ample.foo", "http://ex-ample.foo/", CANONIZE_MODIFIERS],
+    ["example.foo/bar ", "http://example.foo/bar", CANONIZE_MODIFIERS],
+    ["1.1.1.1", "http://1.1.1.1/", CANONIZE_MODIFIERS],
+    ["ftp.example.bar", "http://ftp.example.bar/", CANONIZE_MODIFIERS],
     [
       "ex ample",
       defaultEngine.getSubmission("ex ample", null).uri.spec,
       CANONIZE_MODIFIERS,
-      false,
     ],
   ];
 
@@ -65,9 +63,8 @@ add_task(async function checkCanonizeWorks() {
 
   const win = await BrowserTestUtils.openNewBrowserWindow();
 
-  for (let [inputValue, expectedURL, options, suffixAdded] of testcases) {
+  for (let [inputValue, expectedURL, options] of testcases) {
     info(`Testing input string: "${inputValue}" - expected: "${expectedURL}"`);
-    Services.fog.testResetFOG();
     let promiseLoad = BrowserTestUtils.waitForDocLoadAndStopIt(
       expectedURL,
       win.gBrowser.selectedBrowser
@@ -81,10 +78,6 @@ add_task(async function checkCanonizeWorks() {
     await UrlbarTestUtils.inputIntoURLBar(win, inputValue);
     EventUtils.synthesizeKey("KEY_Enter", options, win);
     await Promise.all([promiseLoad, promiseStopped]);
-    Assert.strictEqual(
-      suffixAdded ? 1 : null,
-      Glean.urlfixup.suffix.get("urlbar", ".com").testGetValue()
-    );
   }
 
   await BrowserTestUtils.closeWindow(win);
@@ -264,6 +257,93 @@ add_task(async function () {
   info("The loaded url is canonized");
 
   await BrowserTestUtils.closeWindow(win);
+});
+
+add_task(async function countCanonized() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.urlbar.autoFill", false],
+      ["browser.urlbar.canonizedURLCount", 0],
+      ["browser.urlbar.ctrlCanonizesURLs", true],
+      ["dom.security.https_first_schemeless", false],
+    ],
+  });
+
+  const newWindow = await BrowserTestUtils.openNewBrowserWindow();
+  const privateWindow = await BrowserTestUtils.openNewBrowserWindow({
+    private: true,
+  });
+
+  const testcases = [
+    {
+      description: "Should record for canonization",
+      win: newWindow,
+      input: "example",
+      modifiers: CANONIZE_MODIFIERS,
+      expectedURL: "https://www.example.com/",
+      expectedCount: 1,
+    },
+    {
+      description: "Should count up the pref for canonization",
+      win: newWindow,
+      input: "example",
+      modifiers: CANONIZE_MODIFIERS,
+      expectedURL: "https://www.example.com/",
+      expectedCount: 2,
+    },
+    {
+      description: "Should not record for non-canonization",
+      win: newWindow,
+      input: "example.com",
+      modifiers: {},
+      expectedURL: "http://example.com/",
+      expectedCount: 2,
+    },
+    {
+      description: "Should not record for the private window",
+      win: privateWindow,
+      input: "example",
+      modifiers: CANONIZE_MODIFIERS,
+      expectedURL: "https://www.example.com/",
+      expectedCount: 2,
+    },
+    {
+      description: "Should keep counting after loads that were not counted",
+      win: newWindow,
+      input: "example",
+      modifiers: CANONIZE_MODIFIERS,
+      expectedURL: "https://www.example.com/",
+      expectedCount: 3,
+    },
+  ];
+
+  for (let {
+    description,
+    win,
+    input,
+    modifiers,
+    expectedURL,
+    expectedCount,
+  } of testcases) {
+    win.focus();
+    const onLoad = BrowserTestUtils.waitForDocLoadAndStopIt(
+      expectedURL,
+      win.gBrowser.selectedBrowser
+    );
+    await UrlbarTestUtils.inputIntoURLBar(win, input);
+    EventUtils.synthesizeKey("KEY_Enter", modifiers, win);
+    await onLoad;
+
+    Assert.equal(
+      Services.prefs.getIntPref("browser.urlbar.canonizedURLCount"),
+      expectedCount,
+      description
+    );
+  }
+
+  await BrowserTestUtils.closeWindow(newWindow);
+  await BrowserTestUtils.closeWindow(privateWindow);
+  await SpecialPowers.popPrefEnv();
 });
 
 function simulatePastingToUrlbar(text, win) {

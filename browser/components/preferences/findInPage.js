@@ -9,7 +9,7 @@
 // inside the button, which allows the text to be highlighted when the user
 // is searching.
 
-/** @import MozInputSearch from "chrome://global/content/elements/moz-input-search.mjs" */
+/** @import { MozInputSearch } from "chrome://global/content/elements/moz-input-search.mjs" */
 
 const MozButtonClass = customElements.get("button");
 class HighlightableButton extends MozButtonClass {
@@ -593,8 +593,7 @@ var gSearchResultsPane = {
           Array.prototype.every.call(nodeObject.children, this._isAnchor)) ||
         forceSearch ||
         this.searchableNodes.has(nodeObject.localName) ||
-        (nodeObject.localName?.startsWith("moz-") &&
-          nodeObject.localName !== "moz-input-box"))
+        nodeObject.localName?.startsWith("moz-"))
     ) {
       let simpleTextNodes = this.textNodeDescendants(nodeObject);
       for (let node of simpleTextNodes) {

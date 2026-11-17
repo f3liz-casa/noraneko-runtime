@@ -34,6 +34,9 @@ class LogModule {
  public:
   ~LogModule() { ::free(mName); }
 
+  LogModule(LogModule&) = delete;
+  LogModule& operator=(const LogModule&) = delete;
+
   /**
    * Retrieves the module with the given name. If it does not already exist
    * it will be created.
@@ -54,7 +57,8 @@ class LogModule {
   static void Init(int argc, char* argv[]);
 
   /**
-   * Sets the log file to the given filename.
+   * Sets the log file to the given filename, or goes back to logging to
+   * stderr if aFilename is null.
    */
   static void SetLogFile(const char* aFilename);
 
@@ -130,9 +134,6 @@ class LogModule {
 
   explicit LogModule(const char* aName, LogLevel aLevel)
       : mName(strdup(aName)), mLevel(aLevel) {}
-
-  LogModule(LogModule&) = delete;
-  LogModule& operator=(const LogModule&) = delete;
 
   char* mName;
 

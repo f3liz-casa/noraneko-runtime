@@ -2,6 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import os
+import tempfile
+import zipfile
 from unittest import TestCase, mock
 
 import buildconfig
@@ -11,10 +14,12 @@ import mozunit
 from mozbuild.artifacts import (
     AndroidArtifactJob,
     ArtifactJob,
+    Artifacts,
     GeckoJobConfiguration,
     LinuxArtifactJob,
     MacArtifactJob,
     ThunderbirdJobConfiguration,
+    UnfilteredProjectPackageArtifactJob,
     WinArtifactJob,
 )
 
@@ -79,6 +84,28 @@ class TestArtifactJob(TestCase):
         # `MOZ_APP_VERSION_DISPLAY` won't have any impact.
         buildconfig.substs["MOZ_APP_VERSION_DISPLAY"] = ""
         self.assertEqual(job.candidate_trees, expected_trees)
+
+
+class TestLicensesArtifact(TestCase):
+    def test_only_filtered_jobs_download_licenses_json(self):
+        artifacts = [{"name": "public/build/licenses.json"}]
+        linux = LinuxArtifactJob(download_tests=False)
+        self.assertEqual(
+            list(linux.find_candidate_artifacts(artifacts)),
+            ["public/build/licenses.json"],
+        )
+        unfiltered = UnfilteredProjectPackageArtifactJob(download_tests=False)
+        self.assertEqual(list(unfiltered.find_candidate_artifacts(artifacts)), [])
+
+    def test_licenses_json_is_installed_for_gen_license_html(self):
+        job = FakeArtifactJob(download_tests=False)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            downloaded = os.path.join(tmpdir, "0123456789abcdef-licenses.json")
+            with open(downloaded, "w") as fh:
+                fh.write("{}")
+            job.process_artifact(downloaded, downloaded + ".jar")
+            with zipfile.ZipFile(downloaded + ".jar") as zf:
+                self.assertEqual(zf.namelist(), ["licenses.artifact.json"])
 
 
 class TestTestArtifactPatterns(TestCase):
@@ -185,6 +212,167 @@ class TestThunderbirdMixin(TestCase):
         # `MOZ_APP_VERSION_DISPLAY` won't have any impact.
         buildconfig.substs["MOZ_APP_VERSION_DISPLAY"] = ""
         self.assertEqual(job.candidate_trees, expected_trees)
+
+
+class FakePushheadCache:
+    """A pushlog where each tree maps revisions to the (id, head) of the push
+    containing them, and push ids to their head, recording the requests."""
+
+    def __init__(self, pushes):
+        self.pushes = pushes
+        self.requests = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def parent_push(self, tree, revision):
+        self.requests.append((tree, revision))
+        for pushid, (head, revs) in self.pushes[tree].items():
+            if revision in revs:
+                return pushid, head
+        raise ValueError
+
+    def parent_pushhead_id(self, tree, revision):
+        return self.parent_push(tree, revision)[0]
+
+    def pushid_range(self, tree, start, end):
+        self.requests.append((tree, start, end))
+        return [
+            head
+            for pushid, (head, _) in sorted(self.pushes[tree].items())
+            if start < pushid <= end
+        ]
+
+
+class TestFindPushheads(TestCase):
+    TREES = ["mozilla-central", "integration/autoland"]
+
+    def find_pushheads(self, pushes, revs):
+        artifacts = Artifacts.__new__(Artifacts)
+        artifacts._log = None
+        artifacts._git = None
+        artifacts._jj = None
+        artifacts._artifact_job = mock.Mock(candidate_trees=self.TREES)
+        artifacts._pushhead_cache = FakePushheadCache(pushes)
+        artifacts._get_recent_public_revisions = lambda: revs
+        return artifacts._find_pushheads(), artifacts._pushhead_cache
+
+    def test_first_revision_is_pushhead(self):
+        pushes = {
+            "mozilla-central": {
+                100: ("c", {"a", "b", "c"}),
+                101: ("f", {"d", "e", "f"}),
+            },
+            "integration/autoland": {
+                500: ("d", {"d"}),
+                501: ("e", {"e"}),
+                502: ("f", {"f"}),
+            },
+        }
+        pushheads, cache = self.find_pushheads(pushes, ["f", "e", "d", "c"])
+
+        self.assertEqual(next(pushheads), (["mozilla-central"], "f"))
+        self.assertEqual(cache.requests, [("mozilla-central", "f")])
+
+        self.assertEqual(
+            list(pushheads),
+            [
+                (["integration/autoland"], "f"),
+                (["integration/autoland"], "e"),
+                (["integration/autoland"], "d"),
+                (["mozilla-central"], "c"),
+            ],
+        )
+
+    def test_first_revision_is_not_pushhead(self):
+        pushes = {
+            "mozilla-central": {
+                100: ("c", {"a", "b", "c"}),
+                101: ("f", {"d", "e", "f"}),
+            },
+            "integration/autoland": {500: ("d", {"d"}), 501: ("f", {"e", "f"})},
+        }
+        pushheads, cache = self.find_pushheads(pushes, ["e", "d", "c"])
+
+        self.assertEqual(
+            list(pushheads),
+            [
+                (["integration/autoland"], "d"),
+                (["mozilla-central"], "c"),
+            ],
+        )
+
+
+class TestShallowCloneRevisions(TestCase):
+    REPO = "https://github.com/mozilla-releng/git-backing"
+
+    def get_revisions(self, shallow, env):
+        artifacts = Artifacts.__new__(Artifacts)
+        artifacts._log = None
+        artifacts._git = "git"
+        artifacts._jj = None
+        artifacts._topsrcdir = "/src"
+        outputs = {"rev-parse": "head\n", "fetch": "", "rev-list": "a\nb\n"}
+        artifacts.check_git_output = mock.Mock(
+            side_effect=lambda args, **kwargs: outputs[args[0]]
+        )
+
+        vcs = mock.Mock(is_shallow=shallow)
+
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch(
+                "mozbuild.artifacts.get_repository_object", return_value=vcs
+            ):
+                with mock.patch.object(
+                    Artifacts, "_is_git_cinnabar", new_callable=mock.PropertyMock
+                ) as cinnabar:
+                    with mock.patch.object(
+                        Artifacts, "_git_repo_kind", new_callable=mock.PropertyMock
+                    ) as kind:
+                        cinnabar.return_value = False
+                        kind.return_value = "firefox"
+                        revs = artifacts._get_revisions_from_git()
+        fetches = [
+            tuple(c.args[0])
+            for c in artifacts.check_git_output.call_args_list
+            if c.args[0][0] == "fetch"
+        ]
+        return revs, fetches
+
+    def test_shallow_automation_clone_is_deepened(self):
+        env = {"MOZ_AUTOMATION": "1", "MOZ_SOURCE_GIT_REPO": self.REPO}
+        revs, fetches = self.get_revisions(True, env)
+
+        self.assertEqual(revs, ["a", "b"])
+        self.assertEqual(
+            fetches,
+            [
+                (
+                    "fetch",
+                    "--no-tags",
+                    "--deepen=500",
+                    "--filter=tree:0",
+                    self.REPO,
+                    "head",
+                )
+            ],
+        )
+
+    def test_full_clone_is_not_deepened(self):
+        env = {"MOZ_AUTOMATION": "1", "MOZ_SOURCE_GIT_REPO": self.REPO}
+        revs, fetches = self.get_revisions(False, env)
+
+        self.assertEqual(revs, ["a", "b"])
+        self.assertEqual(fetches, [])
+
+    def test_shallow_local_clone_is_not_deepened(self):
+        revs, fetches = self.get_revisions(True, {})
+
+        self.assertEqual(revs, ["a", "b"])
+        self.assertEqual(fetches, [])
 
 
 if __name__ == "__main__":

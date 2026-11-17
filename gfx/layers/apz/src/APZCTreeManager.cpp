@@ -275,6 +275,7 @@ class MOZ_RAII AutoFocusSequenceNumberSetter {
 };
 
 APZCTreeManager::APZCTreeManager(LayersId aRootLayersId,
+                                 CSSToLayoutDeviceScale aWidgetScale,
                                  UniquePtr<IAPZHitTester> aHitTester)
     : mTestSampleTime(Nothing(), "APZCTreeManager::mTestSampleTime"),
       mInputQueue(new InputQueue()),
@@ -290,6 +291,7 @@ APZCTreeManager::APZCTreeManager(LayersId aRootLayersId,
       mApzcTreeLog("apzctree"),
       mTestDataLock("APZTestDataLock"),
       mDPI(160.0),
+      mWidgetScale(aWidgetScale),
       mHitTester(std::move(aHitTester)),
       mScrollGenerationLock("APZScrollGenerationLock"),
       mInteractiveWidget(
@@ -315,9 +317,10 @@ void APZCTreeManager::Init() {
 }
 
 already_AddRefed<APZCTreeManager> APZCTreeManager::Create(
-    LayersId aRootLayersId, UniquePtr<IAPZHitTester> aHitTester) {
+    LayersId aRootLayersId, CSSToLayoutDeviceScale aWidgetScale,
+    UniquePtr<IAPZHitTester> aHitTester) {
   RefPtr<APZCTreeManager> manager =
-      new APZCTreeManager(aRootLayersId, std::move(aHitTester));
+      new APZCTreeManager(aRootLayersId, aWidgetScale, std::move(aHitTester));
   manager->Init();
   return manager.forget();
 }
@@ -1558,7 +1561,7 @@ static bool WillHandleInput(const PanGestureOrScrollWheelInput& aPanInput) {
   }
 
   WidgetWheelEvent wheelEvent = aPanInput.ToWidgetEvent(nullptr);
-  return APZInputBridge::ActionForWheelEvent(&wheelEvent).isSome();
+  return APZBridge::ActionForWheelEvent(&wheelEvent).isSome();
 }
 
 /*static*/
@@ -1807,7 +1810,7 @@ APZEventResult APZCTreeManager::ReceiveInputEvent(
 
       // If/when we enable support for pan inputs off-main-thread, we'll need
       // to duplicate this EventStateManager code or something. See the call to
-      // GetUserPrefsForWheelEvent in APZInputBridge.cpp for why these fields
+      // GetUserPrefsForWheelEvent in APZBridge.cpp for why these fields
       // are stored separately.
       MOZ_ASSERT(NS_IsMainThread());
       WidgetWheelEvent wheelEvent = panInput.ToWidgetEvent(nullptr);
@@ -3001,6 +3004,13 @@ ParentLayerPoint APZCTreeManager::DispatchFling(
   ParentLayerPoint finalResidualVelocity = aHandoffState.mVelocity;
 
   ParentLayerPoint currentVelocity = aHandoffState.mVelocity;
+
+  // The velocity which the APZCs this handoff has already passed through
+  // refused. It stays part of |currentVelocity|, and therefore of
+  // |availableVelocity| and |residualVelocity| below, but it is never offered
+  // to the rest of the chain again.
+  ParentLayerPoint refusedVelocity;
+
   for (; startIndex < overscrollHandoffChainLength; startIndex++) {
     current = chain->GetApzcAtIndex(startIndex);
 
@@ -3023,18 +3033,20 @@ ParentLayerPoint APZCTreeManager::DispatchFling(
     }
 
     ParentLayerPoint availableVelocity = (endPoint - startPoint);
-    ParentLayerPoint residualVelocity;
 
     FlingHandoffState transformedHandoffState = aHandoffState;
-    transformedHandoffState.mVelocity = availableVelocity;
+    // Don't offer |refusedVelocity|.
+    transformedHandoffState.mVelocity = availableVelocity - refusedVelocity;
 
-    // Obey overscroll-behavior.
     if (prevApzc) {
-      residualVelocity += prevApzc->AdjustHandoffVelocityForOverscrollBehavior(
+      refusedVelocity += prevApzc->AdjustHandoffVelocityForOverscrollBehavior(
           transformedHandoffState.mVelocity);
     }
 
-    residualVelocity += current->AttemptFling(transformedHandoffState);
+    ParentLayerPoint velocityToHandOff =
+        current->AttemptFling(transformedHandoffState);
+
+    ParentLayerPoint residualVelocity = refusedVelocity + velocityToHandOff;
 
     // If there's no residual velocity, there's nothing more to hand off.
     if (current->IsZero(residualVelocity)) {
@@ -3053,6 +3065,12 @@ ParentLayerPoint APZCTreeManager::DispatchFling(
       finalResidualVelocity.y *= (residualVelocity.y / availableVelocity.y);
     }
 
+    // Nothing was left over from |current|, so there is nothing the rest of
+    // the chain could consume. Whatever overscroll-behavior refused along the
+    // way is already part of |finalResidualVelocity| and goes back to |aPrev|.
+    if (current->IsZero(velocityToHandOff)) {
+      break;
+    }
     currentVelocity = residualVelocity;
   }
 
@@ -3988,12 +4006,11 @@ void APZCTreeManager::SetFixedLayerMarginsOnRootContentApzcs(
 ScreenPoint APZCTreeManager::ComputeFixedMarginsOffset(
     const MutexAutoLock& aProofOfMapLock, SideBits aFixedSides,
     const ScreenMargin& aGeckoFixedLayerMargins) const {
-  // If the software keyboard is visible and the interactive-widget is not
-  // resizes-content, we don't need to move the position:fixed or sticky
-  // elements at all.
-  if (IsSoftwareKeyboardVisible(aProofOfMapLock) &&
-      InteractiveWidgetMode(aProofOfMapLock) !=
-          dom::InteractiveWidget::ResizesContent) {
+  // In `overlays-content` mode with the software keyboard visible, the main
+  // thread ignores dynamic toolbar movement (see
+  // nsPresContext::UpdateDynamicToolbarOffset) so the compositor needs to
+  // ignore it too.
+  if (IsKeyboardVisibleOnOverlaysContent(aProofOfMapLock)) {
     return ScreenPoint(0, 0);
   }
 
@@ -4077,6 +4094,10 @@ void APZCTreeManager::SetDPI(float aDpiValue) {
 float APZCTreeManager::GetDPI() const {
   APZThreadUtils::AssertOnControllerThread();
   return mDPI;
+}
+
+CSSToLayoutDeviceScale APZCTreeManager::GetWidgetScale() const {
+  return mWidgetScale;
 }
 
 void APZCTreeManager::EndWheelTransaction(

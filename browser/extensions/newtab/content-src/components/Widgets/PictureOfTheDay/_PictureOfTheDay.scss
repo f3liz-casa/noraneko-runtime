@@ -29,7 +29,7 @@
 }
 
 // Once a picture loads, the image replaces the fallback gradient.
-.picture-of-the-day.has-picture::before {
+.picture-of-the-day:has(.picture-of-the-day-image.loaded)::before {
   content: none;
 }
 
@@ -65,7 +65,6 @@
 // light mode and the widget doesn't adapt to the photo. moz-button colors the icon
 // via --button-text-color-ghost, so override the token (a host `color` won't win).
 .picture-of-the-day-context-menu-button {
-  // stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens
   --button-text-color-ghost: var(--color-white);
 }
 
@@ -204,6 +203,11 @@
   block-size: 100%;
   object-fit: cover;
   z-index: 0;
+  opacity: 0;
+
+  &.loaded {
+    opacity: 1;
+  }
 }
 
 // The "New" badge sits inline before the title so the title makes room for it
@@ -321,15 +325,12 @@
 
 .picture-of-the-day-source {
   // The title; sits at the top-left of the card.
-  margin: 0;
   padding-block-start: var(--space-small);
   min-inline-size: 0;
   overflow: hidden;
   // The caption always sits on the dark transparent overlay on the photo. It stays white in both light and dark mode.
   // stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens
   color: var(--color-white);
-  font-size: var(--font-size-root);
-  font-weight: var(--font-weight);
   white-space: nowrap;
   text-overflow: ellipsis;
   // Legible over any image; a long localized string ellipsizes on one line.
@@ -344,6 +345,16 @@
   color: var(--color-white);
   font-size: var(--font-size-small);
   text-shadow: 0 1px 2px color-mix(in srgb, var(--color-black) 60%, transparent);
+}
+
+// Only the author ellipsizes, so the links after it always stay visible.
+.picture-of-the-day-attribution-author {
+  display: inline-block;
+  max-inline-size: 100%;
+  overflow: hidden;
+  vertical-align: bottom;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 // The source and license parts are links; underline to distinguish them from
@@ -433,12 +444,12 @@
 
     &::before {
       // Masked icon: background-color is the icon fill, so it takes a foreground token.
-      // stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens
       background-color: var(--button-text-color-ghost);
     }
 
     &:hover {
       background-color: var(--button-background-color-hover);
+      color: var(--button-text-color-hover);
 
       &::before {
         // stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens

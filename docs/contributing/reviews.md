@@ -73,20 +73,20 @@ request:
 ```
 
 ```
-Herald reviewers (automatically added):
-  #media-playback-reviewers (blocking)
-
 Module reviewer groups (from mots.yaml):
   #media-playback-reviewers (Core: Media Playback)
+
+Herald reviewers (automatically added):
+  #media-playback-reviewers (blocking)
 ```
 
 It reports up to three kinds of suggestion:
 
+- **Module reviewer groups** are the groups of the [modules](/mots/index.md) owning the
+  files, taken from the in-tree `mots.yaml`.
 - **Herald reviewers** are the groups and individuals that Phabricator's Herald rules add
   by themselves once you submit the patch. Those marked `(blocking)` have to accept the
   patch before it can land, so requesting them up front saves a round trip.
-- **Module reviewer groups** are the groups of the [modules](/mots/index.md) owning the
-  files, taken from the in-tree `mots.yaml`.
 - **Recent reviewers** are the reviewers of recent patches touching the files, read from
   the `r=` lines in the version control history. These are only shown when the two sources
   above have nothing to say, since they are a weaker signal: a file may have last been
@@ -138,7 +138,7 @@ Remember that reviewers are human too, and may have complex reasons that prevent
 
 For simple documentation changes, reviews are not required.
 
-For more information about the review process, see the {ref}`Code Review FAQ`.
+For more information about the review process, see the {doc}`Code_Review_FAQ`.
 
 ## Review groups
 
@@ -171,7 +171,7 @@ For more information about the review process, see the {ref}`Code Review FAQ`.
      - `Firefox DevTools </mots/index.html#devtools>`__
      - `Member list <https://phabricator.services.mozilla.com/project/members/153/>`__
    * - #dom-core
-     - `Core: DOM <https://firefox-source-docs.mozilla.org/mots/index.html#core-document-object-model>`__
+     - `Core: DOM </mots/index.html#core-document-object-model>`__
      - `Member list <https://phabricator.services.mozilla.com/project/members/178/>`__
    * - #dom-worker-reviewers
      - DOM Workers
@@ -213,7 +213,7 @@ For more information about the review process, see the {ref}`Code Review FAQ`.
      - Test manifest changes
      - `Member list <https://phabricator.services.mozilla.com/project/members/110/>`__
    * - #ipc-reviewers
-     - `Core: IPC <https://firefox-source-docs.mozilla.org/mots/index.html#core-ipc>`__
+     - `Core: IPC </mots/index.html#core-ipc>`__
      - `Member list <https://phabricator.services.mozilla.com/project/members/145/>`__
    * - #layout-reviewers
      - Layout
@@ -230,6 +230,9 @@ For more information about the review process, see the {ref}`Code Review FAQ`.
    * - #media-playback-reviewers
      - `Media playback <https://wiki.mozilla.org/Modules/All#Media_Playback>`__
      - `Member list <https://phabricator.services.mozilla.com/project/profile/159/>`__
+   * - #mobiletest-reviewers
+     - Android UI test/framework and UI test infra code
+     - `Member list <https://phabricator.services.mozilla.com/project/members/201/>`__
    * - #mozbase
      - Mozbase
      - `Member list <https://phabricator.services.mozilla.com/project/members/113/>`__
@@ -294,7 +297,7 @@ For more information about the review process, see the {ref}`Code Review FAQ`.
      - `Toolkit :: Telemetry </mots/index.html#telemetry>`__
      - `Member list <https://phabricator.services.mozilla.com/project/members/229/>`__
    * - #translations-reviewers
-     - `Firefox: Translation <https://firefox-source-docs.mozilla.org/mots/index.html#translation>`__
+     - `Firefox: Translation </mots/index.html#translation>`__
      - `Member list <https://phabricator.services.mozilla.com/project/members/192/>`__
    * - #urlbar-reviewers
      - `Urlbar (Address Bar) </mots/index.html#address-bar>`__

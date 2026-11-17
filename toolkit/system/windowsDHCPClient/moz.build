@@ -4,6 +4,7 @@
 
 with Files("**"):
     BUG_COMPONENT = ("Core", "Networking: HTTP")
+    SCHEDULES.exclusive = ["windows"]
 
 TEST_DIRS += ["tests/gtest"]
 
@@ -18,3 +19,9 @@ XPCOM_MANIFESTS += [
 ]
 
 FINAL_LIBRARY = "xul"
+
+SOURCE_HEADERS += [
+    "DHCPUtils.h",
+    "nsWindowsDHCPClient.h",
+    "WindowsNetworkFunctionsWrapper.h",
+]

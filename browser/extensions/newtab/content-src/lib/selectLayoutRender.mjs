@@ -4,8 +4,44 @@
 
 import {
   isSpaceOverridden,
+  resolveFirstSlotWidgetsBySection,
+  selectWidgetsRowAd,
   SPACE_IDS,
 } from "resource://newtab/common/PageLayoutVariants.mjs";
+
+/**
+ * A copy of the layout rows holding only the named sections. Components with no
+ * sections left, and rows left with no components, are dropped so the caller can
+ * tell an empty feed from a full one by the row count alone.
+ *
+ * @param {Array} layoutRender - rows from selectLayoutRender
+ * @param {string[]} sectionKeys - sectionKeys to keep
+ * @returns {Array}
+ */
+export function keepOnlySections(layoutRender, sectionKeys) {
+  const keep = new Set(sectionKeys);
+  return layoutRender.reduce((rows, row) => {
+    const components = (row.components ?? []).reduce((kept, component) => {
+      const sections = component?.data?.sections;
+      if (!sections) {
+        kept.push(component);
+        return kept;
+      }
+      const filtered = sections.filter(section => keep.has(section.sectionKey));
+      if (filtered.length) {
+        kept.push({
+          ...component,
+          data: { ...component.data, sections: filtered },
+        });
+      }
+      return kept;
+    }, []);
+    if (components.length) {
+      rows.push({ ...row, components });
+    }
+    return rows;
+  }, []);
+}
 
 export const selectLayoutRender = ({ state = {}, prefs = {} }) => {
   const { layout, feeds, spocs } = state;
@@ -162,8 +198,13 @@ export const selectLayoutRender = ({ state = {}, prefs = {} }) => {
         // Since banner-type ads are placed by row and don't use the normal spoc position,
         // dont combine with content
         const excludedSpocs = ["billboard", "leaderboard"];
+        // @experiment(remove) { bug 2069496 }
+        // The widgets row takes one ad off the top, so every story ad shifts
+        // up a position. It is the same object the row renders, so drop that
+        // one item and leave any other ad sharing its url in place.
+        const rowAd = selectWidgetsRowAd(prefs, spocs);
         const filteredSpocs = spocsData?.items?.filter(
-          item => !excludedSpocs.includes(item.format)
+          item => !excludedSpocs.includes(item.format) && item !== rowAd
         );
         result = fillSpocPositionsForPlacement(
           result,
@@ -259,50 +300,65 @@ export const selectLayoutRender = ({ state = {}, prefs = {} }) => {
     const spocsPlacement = component?.placement;
 
     const sectionsEnabled = prefs["discoverystream.sections.enabled"];
+    const sections = sectionsEnabled
+      ? handleSections(data.sections, data.recommendations)
+      : [];
+    // @experiment(remove-conditional) { bug 2078816 }
+    // Keep for spaces-thematic-v1.
+    const firstSlotWidgets = resolveFirstSlotWidgetsBySection(
+      prefs,
+      sections.map(section => section.sectionKey)
+    );
     data = {
       ...data,
       ...(sectionsEnabled
         ? {
-            sections: handleSections(data.sections, data.recommendations).map(
-              section => {
-                const sectionsSpocsPositions = [];
-                const smallestBreakpointLayout =
-                  section.layout.responsiveLayouts
-                    // Initial position for spocs is going to be for the smallest breakpoint.
-                    // We can then move it from there via breakpoints.
-                    .find(item => item.columnCount === 1);
+            sections: sections.map(section => {
+              // Before the ads, so their indexes count the widget and they
+              // still land on their tiles.
+              const firstSlotWidget = firstSlotWidgets[section.sectionKey];
+              const sectionData = firstSlotWidget
+                ? [
+                    { type: "widget", widgetId: firstSlotWidget },
+                    ...section.data,
+                  ]
+                : section.data;
+              const sectionsSpocsPositions = [];
+              const smallestBreakpointLayout = section.layout.responsiveLayouts
+                // Initial position for spocs is going to be for the smallest breakpoint.
+                // We can then move it from there via breakpoints.
+                .find(item => item.columnCount === 1);
 
-                // A carousel fills one tile with several recommendations, so each
-                // tile after it reads from an index offset by the number of slides.
-                const carouselTile = smallestBreakpointLayout.tiles.find(
-                  tile => tile.carousel
-                );
-                const carouselSlideCount =
-                  prefs.trainhopConfig?.carousel?.slideCount ??
-                  prefs["discoverystream.carousel.slideCount"];
-                // The carousel's own tile accounts for one of those slides.
-                const carouselExtra = carouselTile ? carouselSlideCount - 1 : 0;
+              // A carousel fills one tile with several recommendations, so each
+              // tile after it reads from an index offset by the number of slides.
+              const carouselTile = smallestBreakpointLayout.tiles.find(
+                tile => tile.carousel
+              );
+              const carouselSlideCount =
+                prefs.trainhopConfig?.carousel?.slideCount ??
+                prefs["discoverystream.carousel.slideCount"];
+              // The carousel's own tile accounts for one of those slides.
+              const carouselExtra = carouselTile ? carouselSlideCount - 1 : 0;
 
-                smallestBreakpointLayout.tiles.forEach(tile => {
-                  if (tile.hasAd && section.allowAds !== false) {
-                    const isAfterCarousel =
-                      carouselTile && tile.position > carouselTile.position;
-                    sectionsSpocsPositions.push({
-                      index:
-                        tile.position + (isAfterCarousel ? carouselExtra : 0),
-                    });
-                  }
-                });
-                return {
-                  ...section,
-                  data: handleSpocs(
-                    section.data,
-                    sectionsSpocsPositions,
-                    spocsPlacement
-                  ),
-                };
-              }
-            ),
+              smallestBreakpointLayout.tiles.forEach(tile => {
+                if (tile.hasAd && section.allowAds !== false) {
+                  const isAfterCarousel =
+                    carouselTile && tile.position > carouselTile.position;
+                  sectionsSpocsPositions.push({
+                    index:
+                      tile.position + (isAfterCarousel ? carouselExtra : 0),
+                  });
+                }
+              });
+              return {
+                ...section,
+                data: handleSpocs(
+                  sectionData,
+                  sectionsSpocsPositions,
+                  spocsPlacement
+                ),
+              };
+            }),
             // We don't fill spocs in recs if sections are enabled,
             // because recs are not going to be seen.
             recommendations: data.recommendations,

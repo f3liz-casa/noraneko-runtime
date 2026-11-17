@@ -9,7 +9,11 @@ const { FormHistory } = ChromeUtils.importESModule(
 const PREF = "browser.autocomplete.removeRecords.enabled";
 const URL = `data:text/html,<input type="text" name="field1">`;
 
-async function withFormHistoryPopup(task) {
+async function withFormHistoryPopup(
+  task,
+  values = ["value1", "value2"],
+  searchString = ""
+) {
   await BrowserTestUtils.withNewTab({ gBrowser, url: URL }, async browser => {
     const {
       autoCompletePopup,
@@ -18,14 +22,19 @@ async function withFormHistoryPopup(task) {
 
     await FormHistory.update([
       { op: "remove" },
-      { op: "add", fieldname: "field1", value: "value1" },
-      { op: "add", fieldname: "field1", value: "value2" },
+      ...values.map(value => ({ op: "add", fieldname: "field1", value })),
     ]);
     await SpecialPowers.spawn(browser, [], async () => {
       content.document.querySelector("input").focus();
     });
 
-    await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
+    if (searchString) {
+      for (const char of searchString) {
+        await BrowserTestUtils.sendChar(char, browser);
+      }
+    } else {
+      await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
+    }
     await TestUtils.waitForCondition(() => autoCompletePopup.popupOpen);
 
     await task(browser, autoCompletePopup, itemsBox);
@@ -40,6 +49,30 @@ function getRowItem(itemsBox, index) {
   return itemsBox
     .querySelectorAll(".autocomplete-row-item")
     [index].querySelector("autocomplete-row-item");
+}
+
+function countEntries(value) {
+  return FormHistory.count({ fieldname: "field1", value });
+}
+
+// The row's selected attribute is applied by an async Lit render, so the trash
+// button can still be hidden when the row already reports itself as selected.
+async function selectRowAndGetTrashButton(browser, itemsBox, index) {
+  const rowItem = getRowItem(itemsBox, index);
+  await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
+  await TestUtils.waitForCondition(
+    () => rowItem.selected,
+    `row ${index} is selected`
+  );
+
+  const button = rowItem.shadowRoot.querySelector(
+    "moz-button.secondary-action"
+  );
+  await TestUtils.waitForCondition(
+    () => button.checkVisibility({ checkVisibilityCSS: true }),
+    "the trash button is visible"
+  );
+  return button;
 }
 
 add_task(async function test_no_secondary_action_when_pref_disabled() {
@@ -61,7 +94,20 @@ add_task(async function test_no_secondary_action_when_pref_disabled() {
 
 add_task(async function test_trash_button_when_pref_enabled() {
   await SpecialPowers.pushPrefEnv({ set: [[PREF, true]] });
+  Services.fog.testResetFOG();
   await withFormHistoryPopup(async (browser, autoCompletePopup, itemsBox) => {
+    const shownEvents = Glean.autocomplete.dropdownShown.testGetValue();
+    Assert.equal(
+      shownEvents?.length,
+      1,
+      "One dropdown shown event is recorded"
+    );
+    Assert.equal(
+      shownEvents[0].extra.record_type,
+      "formhistory",
+      "The event names the formhistory record type"
+    );
+
     const rowItem = getRowItem(itemsBox, 0);
     Assert.equal(
       rowItem.actions.secondary.type,
@@ -126,5 +172,288 @@ add_task(async function test_trash_button_shows_no_confirmation() {
   });
 
   Services.obs.removeObserver(observer, "common-dialog-loaded");
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_escape_leaves_secondary_action_before_closing() {
+  await SpecialPowers.pushPrefEnv({ set: [[PREF, true]] });
+  Services.fog.testResetFOG();
+  await withFormHistoryPopup(async (browser, autoCompletePopup, itemsBox) => {
+    const rowItem = getRowItem(itemsBox, 0);
+
+    await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
+    await TestUtils.waitForCondition(() => rowItem.selected);
+
+    await BrowserTestUtils.synthesizeKey("VK_TAB", {}, browser);
+    await TestUtils.waitForCondition(
+      () => rowItem.subfocused,
+      "Tab moves the sub-selection onto the secondary action"
+    );
+
+    await BrowserTestUtils.synthesizeKey("VK_ESCAPE", {}, browser);
+    await TestUtils.waitForCondition(
+      () => !rowItem.subfocused,
+      "Escape drops the sub-selection back to the row"
+    );
+    Assert.ok(
+      autoCompletePopup.popupOpen,
+      "The popup stays open when Escape leaves the secondary action"
+    );
+
+    await BrowserTestUtils.synthesizeKey("VK_ESCAPE", {}, browser);
+    await TestUtils.waitForCondition(
+      () => !autoCompletePopup.popupOpen,
+      "A second Escape closes the popup"
+    );
+
+    const shownEvents = Glean.autocomplete.dropdownShown.testGetValue();
+    const closedEvents = Glean.autocomplete.dropdownClosed.testGetValue();
+    Assert.equal(
+      shownEvents?.length,
+      1,
+      "One dropdown shown event is recorded"
+    );
+    Assert.equal(
+      closedEvents?.length,
+      1,
+      "One dropdown closed event is recorded"
+    );
+    Assert.equal(
+      closedEvents[0].extra.record_type,
+      "formhistory",
+      "The event names the formhistory record type"
+    );
+    Assert.equal(
+      closedEvents[0].extra.close_reason,
+      "dismissed",
+      "Escape records a dismissed close"
+    );
+    Assert.ok(closedEvents[0].extra.flow_id, "The event carries a flow id");
+    Assert.equal(
+      closedEvents[0].extra.flow_id,
+      shownEvents[0].extra.flow_id,
+      "The closed event's flow id matches the shown event for the same dropdown"
+    );
+  });
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_selecting_an_entry_records_dropdown_closed() {
+  await withFormHistoryPopup(async (browser, autoCompletePopup, itemsBox) => {
+    const rowItem = getRowItem(itemsBox, 0);
+    await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
+    await TestUtils.waitForCondition(() => rowItem.selected);
+
+    Services.fog.testResetFOG();
+    await BrowserTestUtils.synthesizeKey("VK_RETURN", {}, browser);
+    await TestUtils.waitForCondition(
+      () => !autoCompletePopup.popupOpen,
+      "Selecting an entry closes the popup"
+    );
+
+    const closedEvents = Glean.autocomplete.dropdownClosed.testGetValue();
+    Assert.equal(
+      closedEvents?.length,
+      1,
+      "One dropdown closed event is recorded"
+    );
+    Assert.equal(
+      closedEvents[0].extra.record_type,
+      "formhistory",
+      "The event names the formhistory record type"
+    );
+    Assert.equal(
+      closedEvents[0].extra.close_reason,
+      "selected",
+      "Picking an entry records a selected close"
+    );
+  });
+});
+
+add_task(async function test_trash_button_removes_the_entry() {
+  await SpecialPowers.pushPrefEnv({ set: [[PREF, true]] });
+  await withFormHistoryPopup(async (browser, autoCompletePopup, itemsBox) => {
+    const button = await selectRowAndGetTrashButton(browser, itemsBox, 0);
+
+    Services.fog.testResetFOG();
+    EventUtils.synthesizeMouseAtCenter(button, {});
+
+    await TestUtils.waitForCondition(
+      async () => !(await countEntries("value1")),
+      "the entry is removed from form history"
+    );
+    await TestUtils.waitForCondition(
+      () => autoCompletePopup.matchCount == 1,
+      "the deleted row leaves the popup"
+    );
+    Assert.equal(
+      await countEntries("value1"),
+      0,
+      "The clicked entry is removed from form history"
+    );
+    const events = Glean.autocomplete.recordInteraction.testGetValue();
+    Assert.equal(events?.length, 1, "One interaction event is recorded");
+    Assert.equal(
+      events[0].extra.interaction_type,
+      "delete",
+      "The trash button records a delete interaction"
+    );
+    Assert.equal(
+      events[0].extra.record_type,
+      "formhistory",
+      "The event names the formhistory record type"
+    );
+    Assert.equal(
+      await countEntries("value2"),
+      1,
+      "The entry that was not clicked is still saved"
+    );
+    Assert.ok(
+      autoCompletePopup.popupOpen,
+      "The popup stays open while an entry remains"
+    );
+  });
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_deleting_the_last_entry_closes_the_popup() {
+  await SpecialPowers.pushPrefEnv({ set: [[PREF, true]] });
+  await withFormHistoryPopup(
+    async (browser, autoCompletePopup, itemsBox) => {
+      const button = await selectRowAndGetTrashButton(browser, itemsBox, 0);
+
+      EventUtils.synthesizeMouseAtCenter(button, {});
+
+      await TestUtils.waitForCondition(
+        async () => !(await countEntries("value1")),
+        "the entry is removed from form history"
+      );
+      await TestUtils.waitForCondition(
+        () => !autoCompletePopup.popupOpen,
+        "the popup closes once nothing is left to show"
+      );
+      Assert.equal(
+        await countEntries("value1"),
+        0,
+        "The only entry is removed from form history"
+      );
+    },
+    ["value1"]
+  );
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_keyboard_activation_removes_the_entry() {
+  await SpecialPowers.pushPrefEnv({ set: [[PREF, true]] });
+  await withFormHistoryPopup(async (browser, autoCompletePopup, itemsBox) => {
+    await selectRowAndGetTrashButton(browser, itemsBox, 0);
+
+    await BrowserTestUtils.synthesizeKey("VK_TAB", {}, browser);
+    await BrowserTestUtils.synthesizeKey("VK_RETURN", {}, browser);
+
+    await TestUtils.waitForCondition(
+      async () => !(await countEntries("value1")),
+      "the entry is removed from form history"
+    );
+    await TestUtils.waitForCondition(
+      () => autoCompletePopup.matchCount == 1,
+      "the deleted row leaves the popup"
+    );
+    Assert.equal(
+      await countEntries("value1"),
+      0,
+      "Activating the trash button from the keyboard removes the entry"
+    );
+    Assert.equal(
+      await countEntries("value2"),
+      1,
+      "The entry that was not selected is still saved"
+    );
+  });
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_delete_key_still_removes_with_pref_disabled() {
+  await SpecialPowers.pushPrefEnv({ set: [[PREF, false]] });
+  await withFormHistoryPopup(async (browser, autoCompletePopup, itemsBox) => {
+    const rowItem = getRowItem(itemsBox, 0);
+    await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
+    await TestUtils.waitForCondition(
+      () => rowItem.selected,
+      "the first row is selected"
+    );
+
+    Services.fog.testResetFOG();
+    // nsFormFillController routes Delete to the controller everywhere except
+    // macOS, where the shortcut is Shift+Backspace instead.
+    if (AppConstants.platform == "macosx") {
+      await BrowserTestUtils.synthesizeKey(
+        "VK_BACK_SPACE",
+        { shiftKey: true },
+        browser
+      );
+    } else {
+      await BrowserTestUtils.synthesizeKey("VK_DELETE", {}, browser);
+    }
+
+    await TestUtils.waitForCondition(
+      async () => !(await countEntries("value1")),
+      "the entry is removed from form history"
+    );
+    await TestUtils.waitForCondition(
+      () => autoCompletePopup.matchCount == 1,
+      "the deleted row leaves the popup"
+    );
+    Assert.equal(
+      await countEntries("value1"),
+      0,
+      "The keyboard shortcut still removes the entry without the pref"
+    );
+    Assert.equal(
+      Glean.autocomplete.recordInteraction.testGetValue(),
+      null,
+      "The keyboard shortcut does not record a secondary action interaction"
+    );
+  });
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_removal_is_not_served_from_the_search_cache() {
+  await SpecialPowers.pushPrefEnv({ set: [[PREF, true]] });
+  await withFormHistoryPopup(
+    async (browser, autoCompletePopup, itemsBox) => {
+      await TestUtils.waitForCondition(
+        () => autoCompletePopup.matchCount == 2,
+        "both entries match the typed prefix"
+      );
+
+      const removed = getRowItem(itemsBox, 0).value;
+      const kept = getRowItem(itemsBox, 1).value;
+
+      await selectRowAndGetTrashButton(browser, itemsBox, 0);
+      await BrowserTestUtils.synthesizeKey("VK_TAB", {}, browser);
+      await BrowserTestUtils.synthesizeKey("VK_RETURN", {}, browser);
+
+      await TestUtils.waitForCondition(
+        async () => !(await countEntries(removed)),
+        "the entry is removed from form history"
+      );
+      await TestUtils.waitForCondition(
+        () => autoCompletePopup.matchCount == 1,
+        "the deleted row leaves a popup opened by a typed prefix"
+      );
+      await TestUtils.waitForCondition(
+        () => getRowItem(itemsBox, 0).value == kept,
+        "the remaining row is the entry that was not removed"
+      );
+      Assert.equal(
+        await countEntries(kept),
+        1,
+        "The entry that was not activated is still saved"
+      );
+    },
+    ["abcdefg", "abcdxyz"],
+    "abcd"
+  );
   await SpecialPowers.popPrefEnv();
 });

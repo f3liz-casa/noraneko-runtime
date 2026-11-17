@@ -5,6 +5,7 @@
 //! Generic implementations of some DOM APIs so they can be shared between Servo
 //! and Gecko.
 
+use crate::bloom::AtomExt as _;
 use crate::context::QuirksMode;
 use crate::dom::{TDocument, TElement, TNode, TShadowRoot};
 use crate::invalidation::element::invalidation_map::Dependency;
@@ -21,6 +22,7 @@ use selectors::matching::{
     SelectorCaches,
 };
 use selectors::parser::{Combinator, Component, LocalName};
+use selectors::subtree_filter::hash_for_subtree_filter;
 use selectors::{Element, OpaqueElement, SelectorList};
 use smallvec::SmallVec;
 
@@ -461,28 +463,28 @@ where
         Component::Class(ref class) => {
             // Bloom filter can only be used when case sensitive.
             let bloom_hash = if class_and_id_case_sensitivity == CaseSensitivity::CaseSensitive {
-                Some(E::hash_for_bloom_filter(class.0.get_hash()))
+                Some(hash_for_subtree_filter(class.0.get_hash32()))
             } else {
                 None
             };
 
             collect_all_elements::<E, Q, _>(root, results, |element| {
-                if bloom_hash.is_some_and(|hash| !element.bloom_may_have_hash(hash)) {
+                if bloom_hash.is_some_and(|hash| !element.subtree_may_have_hashes(hash)) {
                     return Operation::RejectSkippingChildren;
                 }
                 Operation::from(element.has_class(class, class_and_id_case_sensitivity))
             });
         },
         Component::LocalName(ref local_name) => {
-            let hash = E::hash_for_bloom_filter(local_name.name.0.get_hash());
+            let hash = hash_for_subtree_filter(local_name.name.0.get_hash32());
             let hash_lower = if local_name.name == local_name.lower_name {
                 hash
             } else {
-                E::hash_for_bloom_filter(local_name.lower_name.0.get_hash())
+                hash_for_subtree_filter(local_name.lower_name.0.get_hash32())
             };
             collect_all_elements::<E, Q, _>(root, results, |element| {
-                if !element.bloom_may_have_hash(hash)
-                    && (hash == hash_lower || !element.bloom_may_have_hash(hash_lower))
+                if !element.subtree_may_have_hashes(hash)
+                    && (hash == hash_lower || !element.subtree_may_have_hashes(hash_lower))
                 {
                     return Operation::RejectSkippingChildren;
                 }
@@ -502,11 +504,11 @@ where
         } => {
             // For HTML elements: C++ hashes lowercase
             // For XUL/SVG/MathML elements: C++ hashes original case
-            let hash_original = E::hash_for_bloom_filter(local_name.0.get_hash());
+            let hash_original = hash_for_subtree_filter(local_name.0.get_hash32());
             let hash_lower = if local_name.0 == local_name_lower.0 {
                 hash_original
             } else {
-                E::hash_for_bloom_filter(local_name_lower.0.get_hash())
+                hash_for_subtree_filter(local_name_lower.0.get_hash32())
             };
 
             collect_all_elements::<E, Q, _>(root, results, |element| {
@@ -514,15 +516,15 @@ where
                 let bloom_found_hash = if hash_original == hash_lower
                     || !element.as_node().owner_doc().is_html_document()
                 {
-                    element.bloom_may_have_hash(hash_original)
+                    element.subtree_may_have_hashes(hash_original)
                 } else if element.is_html_element_in_html_document() {
                     // HTML elements store lowercase hashes
-                    element.bloom_may_have_hash(hash_lower)
+                    element.subtree_may_have_hashes(hash_lower)
                 } else {
                     // Non-HTML elements in HTML documents might have HTML descendants
                     // with lowercase-only hashes, so check both
-                    element.bloom_may_have_hash(hash_original)
-                        || element.bloom_may_have_hash(hash_lower)
+                    element.subtree_may_have_hashes(hash_original)
+                        || element.subtree_may_have_hashes(hash_lower)
                 };
 
                 if !bloom_found_hash {
@@ -546,10 +548,10 @@ where
             let namespace_constraint = NamespaceConstraint::Specific(&empty_namespace);
 
             // Only use bloom filter to check for attribute name existence.
-            let bloom_hash = E::hash_for_bloom_filter(local_name.0.get_hash());
+            let bloom_hash = hash_for_subtree_filter(local_name.0.get_hash32());
 
             collect_all_elements::<E, Q, _>(root, results, |element| {
-                if !element.bloom_may_have_hash(bloom_hash) {
+                if !element.subtree_may_have_hashes(bloom_hash) {
                     return Operation::RejectSkippingChildren;
                 }
                 Operation::from(element.attr_matches(
@@ -768,12 +770,12 @@ where
         SimpleFilter::Class(class) => {
             // Bloom filter can only be used when case sensitive.
             let bloom_hash = if class_and_id_case_sensitivity == CaseSensitivity::CaseSensitive {
-                Some(E::hash_for_bloom_filter(class.0.get_hash()))
+                Some(hash_for_subtree_filter(class.0.get_hash32()))
             } else {
                 None
             };
             collect_all_elements::<E, Q, _>(root, results, |element| {
-                if bloom_hash.is_some_and(|hash| !element.bloom_may_have_hash(hash)) {
+                if bloom_hash.is_some_and(|hash| !element.subtree_may_have_hashes(hash)) {
                     return Operation::RejectSkippingChildren;
                 }
                 Operation::from(
@@ -787,15 +789,15 @@ where
             });
         },
         SimpleFilter::LocalName(local_name) => {
-            let hash = E::hash_for_bloom_filter(local_name.name.0.get_hash());
+            let hash = hash_for_subtree_filter(local_name.name.0.get_hash32());
             let hash_lower = if local_name.name == local_name.lower_name {
                 hash
             } else {
-                E::hash_for_bloom_filter(local_name.lower_name.0.get_hash())
+                hash_for_subtree_filter(local_name.lower_name.0.get_hash32())
             };
             collect_all_elements::<E, Q, _>(root, results, |element| {
-                if !element.bloom_may_have_hash(hash)
-                    && (hash == hash_lower || !element.bloom_may_have_hash(hash_lower))
+                if !element.subtree_may_have_hashes(hash)
+                    && (hash == hash_lower || !element.subtree_may_have_hashes(hash_lower))
                 {
                     return Operation::RejectSkippingChildren;
                 }
@@ -812,9 +814,9 @@ where
             });
         },
         SimpleFilter::Attr(local_name) => {
-            let hash = E::hash_for_bloom_filter(local_name.0.get_hash());
+            let hash = hash_for_subtree_filter(local_name.0.get_hash32());
             collect_all_elements::<E, Q, _>(root, results, |element| {
-                if !element.bloom_may_have_hash(hash) {
+                if !element.subtree_may_have_hashes(hash) {
                     return Operation::RejectSkippingChildren;
                 }
                 if !element.has_attr_in_no_namespace(local_name) {

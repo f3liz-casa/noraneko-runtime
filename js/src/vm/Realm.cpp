@@ -305,7 +305,7 @@ void Realm::traceRoots(JSTracer* trc,
   }
 
   objects_.trace(trc);
-  baselineCompileQueue_.trace(trc);
+  jitRealm_.trace(trc);
 }
 
 void ObjectRealm::finishRoots() {
@@ -381,10 +381,6 @@ void Realm::purge() {
   plainObjectAssignCache.purge();
   plainObjectSpreadCache.purge();
   objects_.iteratorCache.clearAndCompact();
-}
-
-void Realm::removeFromCompileQueue(JSScript* script) {
-  baselineCompileQueue_.remove(script);
 }
 
 // Check to see if this individual realm is recording allocations. Debuggers or
@@ -644,7 +640,8 @@ void Realm::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                    size_t* innerViewsArg,
                                    size_t* objectMetadataTablesArg,
                                    size_t* savedStacksSet,
-                                   size_t* nonSyntacticLexicalEnvironmentsArg) {
+                                   size_t* nonSyntacticLexicalEnvironmentsArg,
+                                   size_t* cacheIRStubs) {
   *realmObject += mallocSizeOf(this);
   wasm.addSizeOfExcludingThis(mallocSizeOf, realmTables);
 
@@ -653,6 +650,8 @@ void Realm::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                   nonSyntacticLexicalEnvironmentsArg);
 
   *savedStacksSet += savedStacks_.sizeOfExcludingThis(mallocSizeOf);
+
+  jitRealm_.addSizeOfExcludingThis(mallocSizeOf, cacheIRStubs);
 }
 
 bool Realm::shouldCaptureStackForThrow() {
@@ -826,6 +825,16 @@ JS_PUBLIC_API JSObject* JS::GetRealmErrorPrototype(JSContext* cx) {
 JS_PUBLIC_API JSObject* JS::GetRealmIteratorPrototype(JSContext* cx) {
   CHECK_THREAD(cx);
   return GlobalObject::getOrCreateIteratorPrototype(cx, cx->global());
+}
+
+JS_PUBLIC_API JSObject* JS::GetRealmMapIteratorPrototype(JSContext* cx) {
+  CHECK_THREAD(cx);
+  return GlobalObject::getOrCreateMapIteratorPrototype(cx, cx->global());
+}
+
+JS_PUBLIC_API JSObject* JS::GetRealmSetIteratorPrototype(JSContext* cx) {
+  CHECK_THREAD(cx);
+  return GlobalObject::getOrCreateSetIteratorPrototype(cx, cx->global());
 }
 
 JS_PUBLIC_API JSObject* JS::GetRealmAsyncIteratorPrototype(JSContext* cx) {

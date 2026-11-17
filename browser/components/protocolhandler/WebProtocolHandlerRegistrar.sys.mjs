@@ -4,8 +4,6 @@
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-const STRING_BUNDLE_URI = "chrome://browser/locale/feeds/subscribe.properties";
-
 export function WebProtocolHandlerRegistrar() {}
 
 const lazy = {};
@@ -20,7 +18,10 @@ XPCOMUtils.defineLazyServiceGetters(lazy, {
 ChromeUtils.defineESModuleGetters(lazy, {
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  SitePermissions: "resource:///modules/SitePermissions.sys.mjs",
 });
+
+const REGISTER_PERMISSION = "register-protocol-handler";
 
 ChromeUtils.defineLazyGetter(lazy, "log", () => {
   let { ConsoleAPI } = ChromeUtils.importESModule(
@@ -38,20 +39,6 @@ ChromeUtils.defineLazyGetter(lazy, "log", () => {
 });
 
 WebProtocolHandlerRegistrar.prototype = {
-  get stringBundle() {
-    let sb = Services.strings.createBundle(STRING_BUNDLE_URI);
-    delete WebProtocolHandlerRegistrar.prototype.stringBundle;
-    return (WebProtocolHandlerRegistrar.prototype.stringBundle = sb);
-  },
-
-  _getFormattedString(key, params) {
-    return this.stringBundle.formatStringFromName(key, params);
-  },
-
-  _getString(key) {
-    return this.stringBundle.GetStringFromName(key);
-  },
-
   /* Because we want to iterate over the known webmailers in the observe method
    * and with each site visited, we want to check as fast as possible if the
    * current site is already registered as a mailto handler. Using the sites
@@ -204,6 +191,47 @@ WebProtocolHandlerRegistrar.prototype = {
         /* it wasn't a web handler */
       }
     }
+  },
+
+  /**
+   * Whether the user blocked the site from asking to register a protocol
+   * handler, either persistently ("Never allow") or temporarily for the
+   * browser ("x" button).
+   *
+   * The permission is keyed on the top-level site, so requests from its
+   * iframes, including third-party ones, are treated as requests from the
+   * top-level site. This mirrors permissions delegated via Permissions Policy.
+   *
+   * @param {nsIPrincipal} principal The top-level content principal.
+   * @param {MozBrowser} browser
+   * @returns {boolean}
+   */
+  _isRegistrationPromptBlocked(principal, browser) {
+    return (
+      lazy.SitePermissions.getForPrincipal(
+        principal,
+        REGISTER_PERMISSION,
+        browser
+      ).state === lazy.SitePermissions.BLOCK
+    );
+  },
+
+  /**
+   * Blocks the site from asking to register a protocol handler.
+   *
+   * @param {nsIPrincipal} principal The top-level content principal.
+   * @param {number} scope SitePermissions.SCOPE_PERSISTENT or
+   *   SitePermissions.SCOPE_TEMPORARY.
+   * @param {MozBrowser} browser Required for SCOPE_TEMPORARY.
+   */
+  _blockRegistrationPrompt(principal, scope, browser) {
+    lazy.SitePermissions.setForPrincipal(
+      principal,
+      REGISTER_PERMISSION,
+      lazy.SitePermissions.BLOCK,
+      scope,
+      browser
+    );
   },
 
   /**
@@ -462,17 +490,16 @@ WebProtocolHandlerRegistrar.prototype = {
       return;
     }
 
-    // Now Ask the user and provide the proper callback
-    let message = this._getFormattedString("addProtocolHandlerMessage", [
-      aURI.host,
-      aProtocol,
-    ]);
+    let principal = browser.contentPrincipal;
+    if (this._isRegistrationPromptBlocked(principal, browser)) {
+      return;
+    }
 
+    // Now Ask the user and provide the proper callback
     let notificationIcon = aURI.prePath + "/favicon.ico";
     let notificationValue = "Protocol Registration: " + aProtocol;
     let addButton = {
-      label: this._getString("addProtocolHandlerAddButton"),
-      accessKey: this._getString("addProtocolHandlerAddButtonAccesskey"),
+      "l10n-id": "protocolhandler-add-handler-button",
       protocolInfo: { protocol: aProtocol, uri: aURI.spec, name: aTitle },
       primary: true,
 
@@ -503,6 +530,16 @@ WebProtocolHandlerRegistrar.prototype = {
       },
     };
 
+    let neverAllowButton = {
+      "l10n-id": "protocolhandler-never-allow-button",
+      callback: () => {
+        this._blockRegistrationPrompt(
+          principal,
+          lazy.SitePermissions.SCOPE_PERSISTENT
+        );
+      },
+    };
+
     let notificationBox = browser.getTabBrowser().getNotificationBox(browser);
 
     // check if the notification box is already shown
@@ -510,14 +547,31 @@ WebProtocolHandlerRegistrar.prototype = {
       return;
     }
 
+    browserWindow.MozXULElement.insertFTLIfNeeded(
+      "browser/webProtocolHandler.ftl"
+    );
+
     notificationBox.appendNotification(
       notificationValue,
       {
-        label: message,
+        label: {
+          "l10n-id": "protocolhandler-add-handler-message",
+          "l10n-args": { host: aURI.host, protocol: aProtocol },
+        },
         image: notificationIcon,
         priority: notificationBox.PRIORITY_INFO_LOW,
+        // "dismissed" only fires for the "x" button, not the action buttons.
+        eventCallback: eventType => {
+          if (eventType === "dismissed") {
+            this._blockRegistrationPrompt(
+              principal,
+              lazy.SitePermissions.SCOPE_TEMPORARY,
+              browser
+            );
+          }
+        },
       },
-      [addButton]
+      [addButton, neverAllowButton]
     );
   },
 
@@ -553,7 +607,7 @@ WebProtocolHandlerRegistrar.prototype = {
 
     // guard: bail out if this site has been dismissed before (either by
     // clicking the 'x' button or the 'not now' button.
-    let principal = browser.getTabBrowser().contentPrincipal;
+    let principal = browser.contentPrincipal;
     if (
       Ci.nsIPermissionManager.DENY_ACTION ==
       Services.perms.testExactPermissionFromPrincipal(
@@ -572,6 +626,14 @@ WebProtocolHandlerRegistrar.prototype = {
         `prompt not shown, because it is still dismissed for` +
           ` ${principal.host} and will be shown in` +
           ` ${(expiry / 1000).toFixed()} seconds again.`
+      );
+      return;
+    }
+
+    if (this._isRegistrationPromptBlocked(principal, browser)) {
+      lazy.log.debug(
+        `prompt not shown, because ${principal.host} is blocked from` +
+          ` registering protocol handlers.`
       );
       return;
     }
@@ -609,7 +671,6 @@ WebProtocolHandlerRegistrar.prototype = {
                   1000 +
                   Date.now()
               );
-              Glean.protocolhandlerMailto.promptClicked.dismiss_os_default.add();
             }
           },
         },
@@ -624,11 +685,9 @@ WebProtocolHandlerRegistrar.prototype = {
                 aURI.spec
               );
               this._setProtocolHandlerDefault(aProtocol, currentHandler);
-              Glean.protocolhandlerMailto.promptClicked.set_local_default.add();
 
               if (this._canSetOSDefault(aProtocol)) {
                 if (this._setOSDefault(aProtocol)) {
-                  Glean.protocolhandlerMailto.promptClicked.set_os_default.add();
                   newitem.messageL10nId =
                     "protocolhandler-mailto-handler-confirm";
                   newitem.removeChild(newitem.buttonContainer);
@@ -637,16 +696,12 @@ WebProtocolHandlerRegistrar.prototype = {
                   return true; // `true` does not hide the bar
                 }
 
-                // if anything goes wrong with setting the OS default, we want
-                // to be informed so that we can fix it.
-                Glean.protocolhandlerMailto.promptClicked.set_os_default_error.add();
                 return false;
               }
 
               // if the installation does not have an install hash, we cannot
               // set the OS default, but mailto links from within the browser
               // should still work.
-              Glean.protocolhandlerMailto.promptClicked.set_os_default_impossible.add();
               return false;
             },
           },
@@ -667,14 +722,22 @@ WebProtocolHandlerRegistrar.prototype = {
                   1000 +
                   Date.now()
               );
-              Glean.protocolhandlerMailto.promptClicked.dismiss_os_default.add();
+              return false;
+            },
+          },
+          {
+            "l10n-id": "protocolhandler-never-allow-button",
+            callback: () => {
+              this._blockRegistrationPrompt(
+                principal,
+                lazy.SitePermissions.SCOPE_PERSISTENT
+              );
               return false;
             },
           },
         ]
       );
 
-      Glean.protocolhandlerMailto.handlerPromptShown.os_default.add();
       // remove the icon from the infobar, which is automatically assigned
       // after its priority, because the priority is also an indicator which
       // type of bar it is, e.g. a warning or error:

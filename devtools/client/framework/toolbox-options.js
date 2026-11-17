@@ -348,7 +348,7 @@ class OptionsPanel extends EventEmitter {
 
     // Populating the default tools lists
     const toggleableTools = gDevTools.getDefaultTools().filter(tool => {
-      return tool.visibilityswitch && !tool.hiddenInOptions;
+      return tool.visibilityswitch;
     });
 
     const fragment = this.panelDoc.createDocumentFragment();
@@ -531,6 +531,9 @@ class OptionsPanel extends EventEmitter {
     for (const prefCheckbox of prefCheckboxes) {
       if (GetPref(prefCheckbox.getAttribute("data-pref"))) {
         prefCheckbox.setAttribute("checked", true);
+      }
+      if (Services.prefs.prefIsLocked(prefCheckbox.getAttribute("data-pref"))) {
+        prefCheckbox.disabled = true;
       }
       prefCheckbox.addEventListener("change", e => {
         const checkbox = e.target;

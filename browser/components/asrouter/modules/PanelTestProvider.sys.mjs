@@ -20,6 +20,173 @@ const isMSIX =
 
 const MESSAGES = () => [
   {
+    id: "WELCOME_BACK_SPOTLIGHT",
+    skip_in_tests: "it's not tested in automation",
+    template: "spotlight",
+    content: {
+      id: "WELCOME_BACK_SPOTLIGHT",
+      template: "multistage",
+      backdrop: "transparent",
+      transitions: false,
+      screens: [
+        {
+          id: "CAROUSEL",
+          content: {
+            corner_image: {
+              position: "bottom-right",
+              imageURL:
+                "https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20261021204417--kit-sit-look-up--5559ae6b-6311-4bd4-87d8-96dbd0a78e48.svg",
+              height: "206px",
+            },
+            zap_border: true,
+            zap_shadow: true,
+            screen_style: {
+              width: "800px",
+            },
+            dismiss_button: {
+              action: {
+                dismiss: true,
+              },
+            },
+            title: {
+              string_id: "welcome-back-onboarding-title",
+              marginBlockStart: "20px",
+            },
+            tiles: {
+              type: "single-select",
+              layout: "carousel",
+              selected: "vertical-tabs",
+              pill_nav_label: {
+                raw: "Feature highlights",
+              },
+              data: [
+                {
+                  id: "split-view",
+                  inert: true,
+                  targeting: "firefoxVersion >= 150",
+                  type: "carousel-card",
+                  pill: {
+                    label: {
+                      raw: "Split View",
+                    },
+                    icon: "chrome://browser/skin/split-view-left-16.svg",
+                  },
+                  icon: {
+                    background:
+                      "url('https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20261021144626--onboarding-welcome-back-vpn--34e79f8a-3a56-421b-9162-82afe2ee12dd.svg') center / cover no-repeat light-dark(rgb(240, 240, 244), rgb(43, 42, 51))",
+                  },
+                  label: {
+                    raw: "Split View",
+                  },
+                  body: {
+                    raw: "Two tabs side by side, right where you need them. Finally.",
+                  },
+                  tilebutton: {
+                    label: {
+                      string_id:
+                        "welcome-back-onboarding-card-tilebutton-label",
+                    },
+                    style: "secondary",
+                    action: {
+                      type: "OPEN_URL",
+                      data: {
+                        args: "https://support.mozilla.org/kb/split-view-firefox",
+                        where: "tabshifted",
+                      },
+                    },
+                  },
+                },
+                {
+                  id: "vertical-tabs",
+                  inert: true,
+                  type: "carousel-card",
+                  targeting: "firefoxVersion <= 140",
+                  pill: {
+                    label: {
+                      raw: "Vertical Tabs",
+                    },
+                    icon: "chrome://browser/skin/tabs.svg",
+                  },
+                  icon: {
+                    background:
+                      "url('https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20261021144724--onboarding-welcome-back-tidy-tabs--e3059850-5427-4967-9829-958c04c15396.svg') center / cover no-repeat light-dark(rgb(240, 240, 244), rgb(43, 42, 51))",
+                  },
+                  label: {
+                    raw: "Vertical Tabs",
+                  },
+                  body: {
+                    raw: "Stack your tabs down the side for calmer browsing.",
+                  },
+                },
+                {
+                  id: "tab-groups",
+                  inert: true,
+                  type: "carousel-card",
+                  pill: {
+                    label: {
+                      raw: "Tab Groups",
+                    },
+                    icon: "chrome://browser/skin/tabbrowser/tab-groups.svg",
+                  },
+                  icon: {
+                    background:
+                      "url('https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20261021144652--onboarding-welcome-back-pdf-tools--63356684-de7a-4dec-899e-630e218e4c9e.svg') center / cover no-repeat light-dark(rgb(240, 240, 244), rgb(43, 42, 51))",
+                  },
+                  label: {
+                    raw: "Tab Groups",
+                  },
+                  body: {
+                    raw: "Keep related tabs together in named groups.",
+                  },
+                  tilebutton: {
+                    label: {
+                      string_id:
+                        "welcome-back-onboarding-card-tilebutton-label",
+                    },
+                    style: "secondary",
+                    action: {
+                      type: "OPEN_URL",
+                      data: {
+                        args: "https://support.mozilla.org/kb/split-view-firefox",
+                        where: "tabshifted",
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+            primary_button: {
+              label: {
+                string_id: "welcome-back-onboarding-primary-button-label",
+                paddingInline: "16px",
+                paddingBlock: "7px",
+              },
+              action: {
+                dismiss: true,
+              },
+            },
+            additional_button: {
+              label: {
+                string_id: "welcome-back-onboarding-secondary-button-label",
+                fontSize: "0.75em",
+                paddingBlock: "4px",
+                paddingInline: "12px",
+                border: "none",
+              },
+              style: "secondary",
+              action: {
+                dismiss: true,
+              },
+            },
+          },
+        },
+      ],
+    },
+    provider: "panel_local_testing",
+    targeting: 'providerCohorts.panel_local_testing == "SHOW_TEST"',
+    groups: [],
+  },
+  {
     weight: 100,
     id: "FEATURE_CALLOUT_REFERRAL_TEST",
     template: "feature_callout",
@@ -744,67 +911,6 @@ const MESSAGES = () => [
     trigger: { id: "momentsUpdate" },
   },
   {
-    id: "PERSONALIZED_CFR_MESSAGE",
-    template: "cfr_doorhanger",
-    groups: ["cfr"],
-    content: {
-      layout: "icon_and_message",
-      category: "cfrFeatures",
-      bucket_id: "PERSONALIZED_CFR_MESSAGE",
-      notification_text: "Personalized CFR Recommendation",
-      heading_text: { string_id: "cfr-doorhanger-bookmark-fxa-header" },
-      info_icon: {
-        label: {
-          attributes: {
-            tooltiptext: { string_id: "cfr-doorhanger-fxa-close-btn-tooltip" },
-          },
-        },
-        sumo_path: "https://example.com",
-      },
-      text: { string_id: "cfr-doorhanger-bookmark-fxa-body-2" },
-      icon: "chrome://branding/content/icon64.png",
-      icon_class: "cfr-doorhanger-large-icon",
-      persistent_doorhanger: true,
-      buttons: {
-        primary: {
-          label: { string_id: "cfr-doorhanger-milestone-ok-button" },
-          action: {
-            type: "OPEN_URL",
-            data: {
-              args: "https://send.firefox.com/login/?utm_source=activity-stream&entrypoint=activity-stream-cfr-pdf",
-              where: "tabshifted",
-            },
-          },
-        },
-        secondary: [
-          {
-            label: { string_id: "cfr-doorhanger-extension-cancel-button" },
-            action: { type: "CANCEL" },
-          },
-          {
-            label: {
-              string_id: "cfr-doorhanger-extension-never-show-recommendation",
-            },
-          },
-          {
-            label: {
-              string_id: "cfr-doorhanger-extension-manage-settings-button",
-            },
-            action: {
-              type: "OPEN_PREFERENCES_PAGE",
-              data: { category: "general-cfrfeatures" },
-            },
-          },
-        ],
-      },
-    },
-    targeting: "scores.PERSONALIZED_CFR_MESSAGE.score > scoreThreshold",
-    trigger: {
-      id: "openURL",
-      patterns: ["*://*/*.pdf"],
-    },
-  },
-  {
     id: "TEST_BMB_BUTTON",
     groups: [],
     template: "bookmarks_bar_button",
@@ -1012,85 +1118,6 @@ const MESSAGES = () => [
       ],
     },
     frequency: { lifetime: 3 },
-    trigger: { id: "defaultBrowserCheck" },
-  },
-  {
-    id: "PB_FOCUS_PROMO",
-    groups: ["panel-test-provider"],
-    template: "spotlight",
-    content: {
-      template: "multistage",
-      backdrop: "transparent",
-      screens: [
-        {
-          id: "PBM_FIREFOX_FOCUS",
-          order: 0,
-          content: {
-            logo: {
-              imageURL: "chrome://browser/content/assets/focus-logo.svg",
-              height: "48px",
-            },
-            title: {
-              string_id: "spotlight-focus-promo-title",
-            },
-            subtitle: {
-              string_id: "spotlight-focus-promo-subtitle",
-            },
-            dismiss_button: {
-              action: {
-                dismiss: true,
-              },
-            },
-            ios: {
-              action: {
-                data: {
-                  args: "https://app.adjust.com/167k4ih?campaign=firefox-desktop&adgroup=pb&creative=focus-omc172&redirect=https%3A%2F%2Fapps.apple.com%2Fus%2Fapp%2Ffirefox-focus-privacy-browser%2Fid1055677337",
-                  where: "tabshifted",
-                },
-                type: "OPEN_URL",
-                navigate: true,
-              },
-            },
-            android: {
-              action: {
-                data: {
-                  args: "https://app.adjust.com/167k4ih?campaign=firefox-desktop&adgroup=pb&creative=focus-omc172&redirect=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dorg.mozilla.focus",
-                  where: "tabshifted",
-                },
-                type: "OPEN_URL",
-                navigate: true,
-              },
-            },
-            email_link: {
-              action: {
-                data: {
-                  args: "https://mozilla.org",
-                  where: "tabshifted",
-                },
-                type: "OPEN_URL",
-                navigate: true,
-              },
-            },
-            tiles: {
-              type: "mobile_downloads",
-              data: {
-                QR_code: {
-                  image_url:
-                    "chrome://browser/content/assets/focus-qr-code.svg",
-                  alt_text: {
-                    string_id: "spotlight-focus-promo-qr-code",
-                  },
-                },
-                email: {
-                  link_text: "Email yourself a link",
-                },
-                marketplace_buttons: ["ios", "android"],
-              },
-            },
-          },
-        },
-      ],
-    },
     trigger: { id: "defaultBrowserCheck" },
   },
   {
@@ -2855,6 +2882,125 @@ const MESSAGES = () => [
       id: "newtabMessageCheck",
     },
   },
+  // The base template for the new tab card stack component (bug 2069986).
+  {
+    id: "TEST_HNT_CARD_STACK",
+    template: "newtab_message",
+    groups: [],
+    content: {
+      messageType: "ASRouterMultistageMessage",
+      id: "TEST_HNT_CARD_STACK",
+      transitions: true,
+      backdrop: "transparent",
+      screens: [
+        {
+          id: "CARD_STACK_SCREEN_1",
+          targeting:
+            "('messaging-system-action.hnt-card-stack.screen'|preferenceValue(1)) <= 1",
+          force_hide_steps_indicator: true,
+          content: {
+            position: "card-stack",
+            background:
+              "url('chrome://activity-stream/content/data/content/assets/br-set-default-fox-heart.svg') center / contain no-repeat",
+            title: { raw: "This is a card-stack headline" },
+            subtitle: {
+              raw: "This is a card-stack subtitle, lower in the visual hierarchy.",
+            },
+            primary_button: {
+              label: { raw: "Primary action" },
+              action: {
+                type: "SET_PREF",
+                data: {
+                  pref: {
+                    name: "messaging-system-action.hnt-card-stack.screen",
+                    value: 2,
+                  },
+                },
+                navigate: true,
+              },
+            },
+            secondary_button: {
+              label: { raw: "Dismiss" },
+              action: {
+                type: "SET_PREF",
+                data: {
+                  pref: {
+                    name: "messaging-system-action.hnt-card-stack.screen",
+                    value: 2,
+                  },
+                },
+                navigate: true,
+              },
+            },
+          },
+        },
+        {
+          id: "CARD_STACK_SCREEN_2",
+          targeting:
+            "('messaging-system-action.hnt-card-stack.screen'|preferenceValue(1)) <= 2",
+          force_hide_steps_indicator: true,
+          content: {
+            position: "card-stack",
+            background:
+              "url('chrome://activity-stream/content/data/content/assets/br-import-fox-house.svg') center / contain no-repeat",
+            title: {
+              raw: "This is a card-stack headline, on the second screen",
+            },
+            subtitle: {
+              raw: "This is a card-stack subtitle, lower in the visual hierarchy, on the second screen.",
+            },
+            primary_button: {
+              label: { raw: "Primary action" },
+              action: {
+                type: "SET_PREF",
+                data: {
+                  pref: {
+                    name: "messaging-system-action.hnt-card-stack.screen",
+                    value: 3,
+                  },
+                },
+                navigate: true,
+              },
+            },
+            secondary_button: {
+              label: { raw: "Dismiss" },
+              action: {
+                type: "SET_PREF",
+                data: {
+                  pref: {
+                    name: "messaging-system-action.hnt-card-stack.screen",
+                    value: 3,
+                  },
+                },
+                navigate: true,
+              },
+            },
+          },
+        },
+        // The unique "last card" layout (bug 2069997).
+        {
+          id: "CARD_STACK_SCREEN_3",
+          targeting:
+            "('messaging-system-action.hnt-card-stack.screen'|preferenceValue(1)) <= 3",
+          force_hide_steps_indicator: true,
+          auto_dismiss: { after: 6000 },
+          content: {
+            position: "card-stack",
+            layout: "last-card",
+            title: { raw: "Tracking protection is on." },
+            subtitle: { raw: "Say hello to a better web." },
+            center_image: {
+              imageURL:
+                "https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20260923193621--fox-peeking--a7cb53ba-228f-4b81-a92f-6ad34474872b.svg",
+              alt: "",
+              marginBlock: "40px 0",
+            },
+          },
+        },
+      ],
+    },
+    trigger: { id: "newtabMessageCheck" },
+  },
   {
     id: "UNIVERSAL_INFOBAR_WITH_EMBEDDED_LINKS",
     content: {
@@ -3315,6 +3461,115 @@ const MESSAGES = () => [
             },
             primary_button: {
               label: { raw: "Done" },
+              disabled: "hasPinnedSite",
+              action: { dismiss: true },
+            },
+            dismiss_button: {
+              action: {
+                dismiss: true,
+              },
+            },
+          },
+        },
+      ],
+    },
+    frequency: {
+      lifetime: 100,
+    },
+    targeting: "true",
+  },
+  {
+    id: "PERSONALIZED_TASKBAR_TABS_SPOTLIGHT",
+    groups: ["panel-test-provider"],
+    template: "spotlight",
+    content: {
+      id: "PERSONALIZED_TASKBAR_TABS_SPOTLIGHT",
+      template: "multistage",
+      modal: "tab",
+      transitions: false,
+      screens: [
+        {
+          id: "SCREEN_1",
+          force_hide_steps_indicator: true,
+          content: {
+            position: "split",
+            main_content_style: {
+              paddingBlockStart: "40px",
+            },
+            main_content_style_narrow: {
+              paddingInline: "40px",
+            },
+            background:
+              "center 80% / 70% no-repeat url('chrome://activity-stream/content/data/content/assets/br-set-default-fox-heart.svg'), var(--pinnable-sites-gradient)",
+            hero_text: {
+              title: {
+                raw: "Open your favorite sites like an app",
+                fontWeight: "600",
+                marginBlockEnd: "10px",
+              },
+              subtitle: {
+                raw: "One click launches your most used sites in a streamlined window with all of Firefox’s protections.",
+                textAlign: "initial",
+                marginInline: "40px",
+                fontSize: "13px",
+              },
+            },
+            tiles: {
+              type: "pinnable_sites",
+              source: "topFrecentSites",
+              slots: 5,
+              backfill: true,
+              title: {
+                raw: "Select to add to your taskbar",
+                fontSize: "15px",
+              },
+              pinButtonLabel: { raw: "Add" },
+              alwaysShowPinButton: true,
+              data: [
+                {
+                  id: "gmail",
+                  name: "Gmail",
+                  description: "mail.google.com",
+                  iconUrl:
+                    "https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20260619150452--gmail-icon--cf899b8b-e43a-4ace-a096-498c05399267.png",
+                  url: "https://mail.google.com",
+                },
+                {
+                  id: "youtube",
+                  name: "YouTube",
+                  description: "youtube.com",
+                  iconUrl:
+                    "https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20260619150358--youtube-icon--229fd481-16ab-40d7-8508-cd8f66999687.png",
+                  url: "https://www.youtube.com/",
+                },
+                {
+                  id: "whatsapp",
+                  name: "WhatsApp Web",
+                  description: "web.whatsapp.com",
+                  iconUrl:
+                    "https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20260619150420--whatsapp-icon--9269d113-1124-4168-b08a-540cf36c2778.png",
+                  url: "https://web.whatsapp.com/",
+                },
+                {
+                  id: "google-calendar",
+                  name: "Google Calendar",
+                  description: "calendar.google.com",
+                  iconUrl:
+                    "https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20260619150331--calendar-icon--356c3951-23d0-4a45-8f2a-03cb55b33972.png",
+                  url: "https://calendar.google.com",
+                },
+                {
+                  id: "spotify",
+                  name: "Spotify",
+                  description: "spotify.com",
+                  iconUrl:
+                    "https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/ms-images/20260619150511--spotify-icon--70d1131d-26c6-463f-876b-85e476430e14.png",
+                  url: "https://open.spotify.com/",
+                },
+              ],
+            },
+            primary_button: {
+              label: { raw: "I'm done" },
               disabled: "hasPinnedSite",
               action: { dismiss: true },
             },

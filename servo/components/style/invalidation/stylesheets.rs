@@ -264,8 +264,11 @@ impl StylesheetInvalidationSet {
                 None => return false,
             };
 
-            if self.style_fully_invalid {
-                debug!("process_invalidations: fully_invalid({:?})", root);
+            if self.style_fully_invalid || self.cascade_data_difference.layer_order_changed {
+                debug!(
+                    "fully_invalid = {}, layer_order_changed = {}",
+                    self.style_fully_invalid, self.cascade_data_difference.layer_order_changed,
+                );
                 data.hint.insert(RestyleHint::restyle_subtree());
                 return true;
             }
@@ -636,9 +639,8 @@ impl StylesheetInvalidationSet {
                 // look like.
             },
             LayerStatement(..) => {
-                // Layer statement insertions might alter styling order, so we need to always
-                // invalidate fully.
-                self.invalidate_fully()
+                // Layer insertions might alter styling order, but are dealt via
+                // cascade_data_difference.
             },
             Document(..) | Import(..) | Media(..) | Supports(..) | Container(..)
             | LayerBlock(..) | StartingStyle(..) | AppearanceBase(..) => {
@@ -715,8 +717,8 @@ where
 
     let mut self_invalid = false;
     let style = data.styles.primary();
-    if style.clone_position().is_absolutely_positioned() {
-        let fallbacks = style.clone_position_try_fallbacks();
+    if style.get_box().get_position().is_absolutely_positioned() {
+        let fallbacks = style.get_position_try_fallbacks();
         let referenced = fallbacks.value.0.iter().any(|f| match f {
             PositionTryFallbacksItem::IdentAndOrTactic(ident_or_tactic) => {
                 changed_names.contains(&ident_or_tactic.ident.0)

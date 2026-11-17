@@ -7,10 +7,12 @@ ChromeUtils.defineESModuleGetters(this, {
   FileTestUtils: "resource://testing-common/FileTestUtils.sys.mjs",
   sinon: "resource://testing-common/Sinon.sys.mjs",
   ShellService: "moz-src:///browser/components/shell/ShellService.sys.mjs",
-  TaskbarTabsPin: "resource:///modules/taskbartabs/TaskbarTabsPin.sys.mjs",
+  TaskbarTabsPin:
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsPin.sys.mjs",
   TaskbarTabsRegistry:
-    "resource:///modules/taskbartabs/TaskbarTabsRegistry.sys.mjs",
-  TaskbarTabsUtils: "resource:///modules/taskbartabs/TaskbarTabsUtils.sys.mjs",
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsRegistry.sys.mjs",
+  TaskbarTabsUtils:
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsUtils.sys.mjs",
   XPCOMUtils: "resource://gre/modules/XPCOMUtils.sys.mjs",
 });
 
@@ -50,10 +52,12 @@ do_get_profile();
 
 async function attemptPin(aTaskbarTab, aDestFolder, aShortcutRelativePath) {
   Assert.equal(
-    await TaskbarTabsPin.pinTaskbarTab(
-      aTaskbarTab,
-      await TaskbarTabsUtils.getDefaultIcon()
-    ),
+    (
+      await TaskbarTabsPin.pinTaskbarTab(
+        aTaskbarTab,
+        await TaskbarTabsUtils.getDefaultIcon()
+      )
+    ).shortcut,
     aShortcutRelativePath,
     "pinTaskbarTab returned expected relative path."
   );
@@ -189,4 +193,28 @@ add_task(async function test_unpin() {
   await TaskbarTabsPin.unpinTaskbarTab(tt);
 
   shellUnpinCalled("somewhere else\\shortcut name.lnk");
+});
+
+add_task(async function test_pin_rejected() {
+  const parsedURI = Services.io.newURI("https://www.example.com");
+  const taskbarTab = createTaskbarTab(registry, parsedURI, 0);
+  const { pinShortcutToTaskbar } = kMockNativeShellService;
+
+  pinShortcutToTaskbar.resolves(Ci.nsIWindowsShellService.PINNED);
+  let result = await TaskbarTabsPin.pinTaskbarTab(
+    taskbarTab,
+    await TaskbarTabsUtils.getDefaultIcon()
+  );
+  Assert.equal(result.rejected, false, "An accepted pin is not rejected");
+
+  pinShortcutToTaskbar.resolves(Ci.nsIWindowsShellService.REJECTED);
+  result = await TaskbarTabsPin.pinTaskbarTab(
+    taskbarTab,
+    await TaskbarTabsUtils.getDefaultIcon()
+  );
+  Assert.equal(result.rejected, true, "A declined pin is reported");
+  Assert.ok(result.shortcut, "The shortcut path is still returned");
+
+  pinShortcutToTaskbar.resolves();
+  registry.removeTaskbarTab(taskbarTab.id);
 });

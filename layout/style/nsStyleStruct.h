@@ -146,6 +146,11 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont {
 
   nsAtom* GetFontPaletteAtom() const { return mFontPalette._0.AsAtom(); }
 
+  nsAtom* GetLangAtom() const {
+    auto* atom = mLanguage.AsAtom();
+    return atom == nsGkAtoms::empty ? nullptr : atom;
+  }
+
   nsFont mFont;
 
   // Our "computed size". Can be different from mFont.size which is our "actual
@@ -184,7 +189,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont {
   // The value mSize would have had if scriptminsize had never been applied
   mozilla::NonNegativeLength mScriptUnconstrainedSize;
   mozilla::Length mScriptMinSize;
-  RefPtr<nsAtom> mLanguage;
+  mozilla::StyleXLang mLanguage;
 };
 
 struct nsStyleImageLayers {
@@ -225,7 +230,7 @@ struct nsStyleImageLayers {
     mozilla::Position mPosition;
     StyleBackgroundSize mSize;
     StyleBackgroundClip mClip;
-    MOZ_INIT_OUTSIDE_CTOR StyleGeometryBox mOrigin;
+    MOZ_INIT_OUTSIDE_CTOR mozilla::StyleBackgroundOrigin mOrigin;
 
     // This property is used for background layer only.
     // For a mask layer, it should always be the initial value, which is
@@ -1041,7 +1046,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition {
   StyleImplicitGridTracks mGridAutoRows;
   mozilla::StyleAspectRatio mAspectRatio;
   mozilla::StyleGridAutoFlow mGridAutoFlow;
-  mozilla::StyleMasonryAutoFlow mMasonryAutoFlow;
 
   mozilla::StyleContentDistribution mAlignContent;
   mozilla::StyleItemPlacement mAlignItems;
@@ -1054,8 +1058,8 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition {
   mozilla::StyleObjectFit mObjectFit;
   mozilla::StyleBoxSizing mBoxSizing;
   int32_t mOrder;
-  float mFlexGrow;
-  float mFlexShrink;
+  mozilla::StyleNonNegativeNumber mFlexGrow;
+  mozilla::StyleNonNegativeNumber mFlexShrink;
   mozilla::StyleZIndex mZIndex;
 
   mozilla::StyleGridTemplateComponent mGridTemplateColumns;
@@ -1703,6 +1707,10 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
   // The margin around a shape-outside: <image>.
   mozilla::NonNegativeLengthPercentage mShapeMargin;
 
+  // TODO: This is a grid-lanes container property, so it belongs in
+  // nsStylePosition, but that struct is at its size limit.
+  mozilla::StyleFitTolerance mFitTolerance;
+
   mozilla::StyleShapeOutside mShapeOutside;
 
   // 'none', 'all', or a list of one or more `<dashed-ident>` identifiers that
@@ -2253,7 +2261,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleXUL {
   STYLE_STRUCT(nsStyleXUL)
   nsStyleXUL();
 
-  float mBoxFlex;
+  mozilla::StyleNonNegativeNumber mBoxFlex;
   int32_t mBoxOrdinal;
   mozilla::StyleBoxAlign mBoxAlign;
   mozilla::StyleBoxDirection mBoxDirection;
@@ -2308,7 +2316,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleSVG {
   mozilla::StyleSVGWidth mStrokeWidth;
 
   mozilla::StyleSVGOpacity mFillOpacity;
-  float mStrokeMiterlimit;
+  mozilla::StyleNonNegativeNumber mStrokeMiterlimit;
   mozilla::StyleSVGOpacity mStrokeOpacity;
 
   mozilla::StyleFillRule mClipRule;

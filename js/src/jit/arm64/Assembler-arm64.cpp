@@ -235,6 +235,13 @@ BufferOffset Assembler::fImmPool32(ARMFPRegister dest, float value) {
   return fImmPool(dest, (uint8_t*)&value, vixl::LDR_s_lit, LiteralDoc(value));
 }
 
+BufferOffset Assembler::fImmPool128(ARMFPRegister dest, const uint8_t* value) {
+  MOZ_ASSERT(dest.size() == 128);
+  uint8_t bytes[16];
+  memcpy(bytes, value, sizeof(bytes));
+  return fImmPool(dest, bytes, vixl::LDR_q_lit, LiteralDoc());
+}
+
 void Assembler::bind(Label* label, BufferOffset targetOffset) {
 #ifdef JS_DISASM_ARM64
   spew_.spewBind(label);
@@ -309,8 +316,7 @@ void Assembler::addPendingJump(BufferOffset src, ImmPtr target,
   // This jump is not patchable at runtime. Extended jump table entry
   // requirements cannot be known until finalization, so to be safe, give each
   // jump and entry. This also causes GC tracing of the target.
-  enoughMemory_ &=
-      pendingJumps_.append(RelativePatch(src, target.value, reloc));
+  enoughMemory_ &= pendingJumps_.emplaceBack(src, target.value, reloc);
 }
 
 void Assembler::PatchWrite_NearCall(CodeLocationLabel start,

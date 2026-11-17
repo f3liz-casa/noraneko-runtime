@@ -5,11 +5,13 @@
 #include "DataChannelDcSctp.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "DataChannelLog.h"
 #include "mozilla/Components.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/RandomNum.h"
+#include "mozilla/TimeStamp.h"
 #include "mozilla/dom/PMediaTransport.h"
 #include "mozilla/dom/RTCErrorBinding.h"
 #include "transport/runnable_utils.h"
@@ -199,7 +201,7 @@ SendPacketStatus DataChannelConnectionDcSctp::SendPacketWithStatus(
     std::span<const uint8_t> aData) {
   MOZ_ASSERT(mSTS->IsOnCurrentThread());
   DC_DEBUG(("%s: %p", __func__, this));
-  std::unique_ptr<MediaPacket> packet(new MediaPacket);
+  auto packet = std::make_unique<MediaPacket>();
   packet->SetType(MediaPacket::SCTP);
   packet->Copy(aData.data(), aData.size());
 
@@ -269,6 +271,11 @@ void DataChannelConnectionDcSctp::HandleTimeout(TimeoutID aId) {
   if (mDcSctp) {
     mDcSctp->HandleTimeout(aId);
   }
+}
+
+webrtc::Timestamp DataChannelConnectionDcSctp::Now() {
+  return webrtc::Timestamp::Micros(static_cast<int64_t>(
+      (TimeStamp::Now() - TimeStamp::ProcessCreation()).ToMicroseconds()));
 }
 
 uint32_t DataChannelConnectionDcSctp::GetRandomInt(uint32_t aLow,

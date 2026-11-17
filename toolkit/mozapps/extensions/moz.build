@@ -69,7 +69,6 @@ EXTRA_JS_MODULES += [
     "amManager.sys.mjs",
     "amWebAPI.sys.mjs",
     "Blocklist.sys.mjs",
-    "ColorwayThemeMigration.sys.mjs",
     "LightweightThemeManager.sys.mjs",
 ]
 
@@ -106,3 +105,7 @@ with Files("Blocklist.sys.mjs"):
 
 with Files("content/blocklist**"):
     BUG_COMPONENT = ("Toolkit", "Blocklist Implementation")
+
+SOURCE_HEADERS += [
+    "AddonManagerStartup-inlines.h",
+]

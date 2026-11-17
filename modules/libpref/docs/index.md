@@ -164,7 +164,7 @@ bool/int/float values, not strings or complex values.
 
 Each mirror variable is read-only, accessible via a getter function. The base
 name of the getter function is the same as the pref's name, but with '.' or '-'
-converted to '_'. Sometimes a suffix is added, e.g. _AtStartup for the mirror
+converted to '_'. Sometimes a suffix is added, e.g. `_AtStartup` for the mirror
 once kind.
 
 Mirror variables have two benefits. First, they allow C++ and Rust code to get
@@ -198,10 +198,23 @@ Pref Sanitization is used for two purposes:
     Spectre adversary.
  2. To reduce IPC use and thread wake-ups for commonly modified preferences.
 
-A pref is sanitized from entering the web content process if it matches a
+A pref is sanitized from entering content processes if it matches a
 denylist *or* it is a dynamically-named string preference (that is not
 exempted via an allowlist), See `ShouldSanitizePreference` in
 `Preferences.cpp`.
+
+Which content processes receive sanitized prefs depends on the remote type, and
+on whether the prefs are sent at startup or as a runtime update.
+`SerializeToSharedMemory` in `ProcessUtils_common.cpp` makes the startup
+decision. `Preferences::GetPreference` in `Preferences.cpp` makes the runtime
+decision.
+
+| Remote type | Startup | Runtime updates |
+| --- | --- | --- |
+| `WebContent`, `WebCoopCoep`, `WebServiceWorker`, `Prealloc` | Sanitized | Sanitized |
+| `PrivilegedMozilla` | Sanitized if taken from the preallocated pool | Sanitized |
+| `Inference` | Sanitized if taken from the preallocated pool | Unsanitized |
+| `PrivilegedAbout`, `File`, `Extension` | Unsanitized | Unsanitized |
 
 ### Loading and Saving
 
@@ -415,7 +428,7 @@ is subsequently used only to store changed pref values.
 
 When any child process is created, the parent process serializes all pref
 values present in the hash table (i.e. those that have changed since the
-snapshot was made) _except sanitized prefs__ and stores them in a second,
+snapshot was made) *except sanitized prefs* and stores them in a second,
 short-lived shared memory region. This represents the set of changes the child
 process needs to apply on top of the snapshot, and allows it to build a hash
 table which should exactly match the parent's, modulo the sanitized prefs.

@@ -76,7 +76,7 @@ It is possible to use live web pages for the page-load tests instead of using th
 
 It is possible to disable alerting for all our performance tests. Open the target test manifest such as the raptor-tp6\*.ini file ({searchfox}`Raptor tests folder <testing/raptor/raptor/tests>`), and make sure there are no `alert_on` specifications.
 
-When it's removed there will no longer be a `shouldAlert` field in the output Perfherder data (you can find the {searchfox}`schema here <testing/mozharness/external_tools/performance-artifact-schema.json#68,165>`). As long as `shouldAlert` is not in the data, no alerts will be generated. If you need to also disable code sheriffing for the test, then you need to change the tier of the task to 3.
+When it's removed there will no longer be a `shouldAlert` field in the output Perfherder data (you can find the {searchfox}`schema here <testing/performance/common/performance-artifact-schema.json#68,165>`). As long as `shouldAlert` is not in the data, no alerts will be generated. If you need to also disable code sheriffing for the test, then you need to change the tier of the task to 3.
 
 ### High value tests
 
@@ -323,13 +323,15 @@ Raptor test results will be found locally in \<your-repo>/testing/mozharness/bui
 To run Raptor locally on Google Chrome, make sure you already have a local version of Google Chrome installed, and then from within your mozilla-repo run:
 
 ```
-$ ./mach raptor --test <raptor-test-name> --app=chrome --binary="<path to google chrome binary>"
+$ ./mach raptor --test <raptor-test-name> --app=chrome
 ```
+
+Raptor uses Chrome from its default install location. If Chrome is installed elsewhere, pass its path with `--binary`.
 
 For example, to run the speedometer3 benchmark on Google Chrome use:
 
 ```
-$ ./mach raptor --test speedometer3 --app=chrome --binary="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+$ ./mach raptor --test speedometer3 --app=chrome
 ```
 
 Raptor test results will be found locally in \<your-repo>/testing/mozharness/build/raptor.json.

@@ -1335,13 +1335,12 @@ var gProtectionsHandler = {
       shimId: "DisqusEmbed",
       displayName: "Disqus",
     },
+    {
+      matchPatterns: ["https://*.sendtonews.com/*"],
+      shimId: "SendToNewsEmbed",
+      displayName: "STN Video",
+    },
   ],
-
-  /**
-   * Keeps track of if a smartblock toggle has been clicked since the panel was opened. Resets
-   * everytime the panel is closed. Used for telemetry purposes.
-   */
-  _hasClickedSmartBlockEmbedToggle: false,
 
   /**
    * Keeps track of what was responsible for opening the protections panel popup. Used for
@@ -1795,21 +1794,12 @@ var gProtectionsHandler = {
       window.removeEventListener("focus", this, true);
       this._protectionsPopupTPSwitch.removeEventListener("toggle", this);
 
-      // Record close telemetry, don't record for toasts
-      if (!event.target.hasAttribute("toast")) {
-        Glean.securityUiProtectionspopup.closeProtectionsPopup.record({
-          openingReason: this._protectionsPopupOpeningReason,
-          smartblockToggleClicked: this._hasClickedSmartBlockEmbedToggle,
-        });
-      }
-
       if (this._protectionsPopupToggleDelayTimer) {
         clearTimeout(this._protectionsPopupToggleDelayTimer);
         this._enablePopupToggles();
         delete this._protectionsPopupToggleDelayTimer;
       }
 
-      this._hasClickedSmartBlockEmbedToggle = false;
       this._protectionsPopupOpeningReason = null;
     }
   },
@@ -2454,13 +2444,6 @@ var gProtectionsHandler = {
         } else {
           this._sendReblockMessageToSmartblock(shimId);
         }
-
-        Glean.securityUiProtectionspopup.clickSmartblockembedsToggle.record({
-          isBlock: !newToggleState,
-          openingReason: this._protectionsPopupOpeningReason,
-        });
-
-        this._hasClickedSmartBlockEmbedToggle = true;
       });
 
       this._protectionsPopupSmartblockToggleContainer.insertAdjacentElement(

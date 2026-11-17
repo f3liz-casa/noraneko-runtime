@@ -116,6 +116,8 @@ nsAtom* Gecko_Element_ImportedPart(const nsAttrValue*, nsAtom*);
 nsAtom** Gecko_Element_ExportedParts(const nsAttrValue*, nsAtom*,
                                      size_t* aOutLength);
 uint64_t Gecko_Element_GetSubtreeBloomFilter(const mozilla::dom::Element*);
+uint64_t Gecko_Element_GetRandomSeed(const mozilla::dom::Element*);
+uint64_t Gecko_Document_GetRandomSeed(const mozilla::dom::Document*);
 
 NS_DECL_THREADSAFE_FFI_REFCOUNTING(mozilla::css::SheetLoadDataHolder,
                                    SheetLoadDataHolder);
@@ -458,11 +460,6 @@ bool Gecko_IsURIInList(const mozilla::URLExtraData* aData,
 void Gecko_FillAllImageLayers(nsStyleImageLayers* layers, uint32_t max_len);
 
 void Gecko_LoadData_Drop(mozilla::StyleLoadData*);
-
-void Gecko_nsStyleFont_SetLang(nsStyleFont* font, nsAtom* atom);
-
-void Gecko_nsStyleFont_CopyLangFrom(nsStyleFont* aFont,
-                                    const nsStyleFont* aSource);
 
 mozilla::Length Gecko_nsStyleFont_ComputeMinSize(const nsStyleFont*,
                                                  const mozilla::dom::Document*);

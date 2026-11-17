@@ -30,11 +30,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import mozilla.components.compose.base.theme.Theme
 import mozilla.components.compose.base.utils.LocalUnderTest
+import mozilla.components.compose.draggable.ItemInteractionHandler
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.fenix.tabstray.TabsTrayTestTag
-import org.mozilla.fenix.tabstray.controller.TabInteractionHandler
 import org.mozilla.fenix.tabstray.data.createTab
 import org.mozilla.fenix.tabstray.redux.state.TabsTrayState
 import org.mozilla.fenix.tabstray.ui.tabitems.TabGridColumnCountKey
@@ -399,7 +399,7 @@ class TabLayoutTest {
             selectedItemIndex = 0,
             selectionMode = TabsTrayState.Mode.Normal,
             focusEnabled = true,
-            tabInteractionHandler = fakeTabInteractionHandler(),
+            itemInteractionHandler = fakeItemInteractionHandler(),
             modifier = modifier,
             trackersBlockedCount = 0,
             onTabClose = { _ -> },
@@ -416,13 +416,13 @@ class TabLayoutTest {
         )
     }
 
-    private fun fakeTabInteractionHandler() =
-        object : TabInteractionHandler {
-            override fun onMove(sourceKey: String, targetKey: String?, placeAfter: Boolean) {
+    private fun fakeItemInteractionHandler() =
+        object : ItemInteractionHandler {
+            override fun onMove(sourceKey: Any, targetKey: Any?, placeAfter: Boolean) {
                 // no op
             }
 
-            override fun onDrop(sourceKey: String, targetKey: String) {
+            override fun onDrop(sourceKey: Any, targetKey: Any) {
                 // no op
             }
 
@@ -430,7 +430,7 @@ class TabLayoutTest {
                 // no op
             }
 
-            override fun onDragStart(sourceKey: String, preserveSelectMode: Boolean) {
+            override fun onDragStart(sourceKey: Any, preserveSelectMode: Boolean) {
                 // no op
             }
         }
@@ -454,7 +454,7 @@ class TabLayoutTest {
                         selectedItemIndex = 0,
                         selectionMode = TabsTrayState.Mode.Normal,
                         focusEnabled = true,
-                        tabInteractionHandler = fakeTabInteractionHandler(),
+                        itemInteractionHandler = fakeItemInteractionHandler(),
                         onTabClose = { _ -> },
                         onItemClick = { _ -> },
                         onItemLongClick = { _ -> },

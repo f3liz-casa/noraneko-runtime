@@ -111,13 +111,6 @@ struct SEC_PKCS12DecoderItemStr {
 
 SEC_BEGIN_PROTOS
 
-SEC_PKCS12SafeInfo *
-SEC_PKCS12CreatePubKeyEncryptedSafe(SEC_PKCS12ExportContext *p12ctxt,
-                                    CERTCertDBHandle *certDb,
-                                    CERTCertificate *signer,
-                                    CERTCertificate **recipients,
-                                    SECOidTag algorithm, int keysize);
-
 extern SEC_PKCS12SafeInfo *
 SEC_PKCS12CreatePasswordPrivSafe(SEC_PKCS12ExportContext *p12ctxt,
                                  SECItem *pwitem, SECOidTag privAlg);
@@ -128,10 +121,6 @@ SEC_PKCS12CreateUnencryptedSafe(SEC_PKCS12ExportContext *p12ctxt);
 extern SECStatus
 SEC_PKCS12AddPasswordIntegrity(SEC_PKCS12ExportContext *p12ctxt,
                                SECItem *pwitem, SECOidTag integAlg);
-extern SECStatus
-SEC_PKCS12AddPublicKeyIntegrity(SEC_PKCS12ExportContext *p12ctxt,
-                                CERTCertificate *cert, CERTCertDBHandle *certDb,
-                                SECOidTag algorithm, int keySize);
 
 extern SEC_PKCS12ExportContext *
 SEC_PKCS12CreateExportContext(SECKEYGetPasswordKey pwfn, void *pwfnarg,
@@ -165,10 +154,6 @@ SEC_PKCS12AddCertAndKey(SEC_PKCS12ExportContext *p12ctxt,
                         void *keySafe, void *keyNestedDest,
                         PRBool shroudKey, SECItem *pwitem, SECOidTag algorithm);
 
-extern void *
-SEC_PKCS12CreateNestedSafeContents(SEC_PKCS12ExportContext *p12ctxt,
-                                   void *baseSafe, void *nestedDest);
-
 extern SECStatus
 SEC_PKCS12Encode(SEC_PKCS12ExportContext *p12exp,
                  SEC_PKCS12EncoderOutputCallback output, void *outputarg);
@@ -189,8 +174,19 @@ extern SECStatus
 SEC_PKCS12DecoderUpdate(SEC_PKCS12DecoderContext *p12dcx, unsigned char *data,
                         unsigned long len);
 
+/* Sets the maximum size of any single element the decoder will allocate.
+ * The limit is also applied to the nested PKCS#7 and safeContents decoders
+ * used while decoding this PFX.
+ * Set to 0 to indicate there is no limit. */
 extern SECStatus SEC_PKCS12DecoderSetMaxElementLen(SEC_PKCS12DecoderContext *p12dcx,
                                                    unsigned long maxLen);
+
+/* Sets the maximum number of bytes that may be fed to the decoder.
+ * The limit is also applied to the nested PKCS#7 and safeContents decoders
+ * used while decoding this PFX.
+ * Set to 0 to indicate there is no limit. */
+extern SECStatus SEC_PKCS12DecoderSetMaxInputSize(SEC_PKCS12DecoderContext *p12dcx,
+                                                  unsigned long maxInputSize);
 
 extern void
 SEC_PKCS12DecoderFinish(SEC_PKCS12DecoderContext *p12dcx);

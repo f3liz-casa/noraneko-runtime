@@ -204,6 +204,9 @@ bool HTMLImageElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
       ParseFetchPriority(aValue, aResult);
       return true;
     }
+    if (aAttribute == nsGkAtoms::referrerpolicy) {
+      return ParseReferrerAttribute(aValue, aResult);
+    }
     if (ParseImageAttribute(aAttribute, aValue, aResult)) {
       return true;
     }
@@ -489,7 +492,12 @@ void HTMLImageElement::UnbindFromTree(UnbindContext& aContext) {
   nsImageLoadingContent::UnbindFromTree();
   nsGenericHTMLElement::UnbindFromTree(aContext);
 
-  UpdateAutoSizeObserver();
+  if (!aContext.IsMove()) {
+    // https://html.spec.whatwg.org/#the-img-element:html-element-removing-steps
+    // 2. Set removedNode's last auto-sizes width to null.
+    // (We also stop observing it for resizes at this point.)
+    UpdateAutoSizeObserver();
+  }
 
   if (wasInPicture != IsInPicture()) {
     MOZ_ASSERT(wasInPicture);

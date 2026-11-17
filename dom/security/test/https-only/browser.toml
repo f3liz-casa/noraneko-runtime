@@ -25,6 +25,7 @@ support-files = ["file_cors.sjs"]
 support-files = [
   "hsts_headers.sjs",
   "file_fragment_noscript.html",
+  "file_upgrade_insecure_wsh.py",
 ]
 
 ["browser_httpsonly_prefs.js"]
@@ -36,10 +37,6 @@ support-files = ["file_httpsonly_speculative_connect.html"]
 support-files = ["file_iframe_buttons.html"]
 
 ["browser_iframe_test.js"]
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # Bug 1735565
-  "os == 'win' && arch == 'x86_64'", # Bug 1735565
-]
 support-files = ["file_iframe_test.sjs"]
 
 ["browser_navigation.js"]

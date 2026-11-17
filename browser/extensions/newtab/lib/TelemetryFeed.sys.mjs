@@ -5,6 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/** @import {Store} from "resource://newtab/lib/Store.sys.mjs" */
+
 // We use importESModule here instead of static import so that the Karma test
 // environment won't choke on these module. This is because the Karma test
 // environment already stubs out XPCOMUtils and RemoteSettings, and overrides
@@ -21,22 +23,18 @@ import {
 } from "resource://newtab/common/Actions.mjs";
 import {
   WIDGET_REGISTRY,
+  getWidgets,
   isWidgetEnabled,
 } from "resource://newtab/common/WidgetsRegistry.mjs";
 import { resolvePageLayoutVariant } from "resource://newtab/common/PageLayoutVariants.mjs";
 import { Prefs } from "resource://newtab/lib/ActivityStreamPrefs.sys.mjs";
 import { classifySite } from "resource://newtab/lib/SiteClassifier.sys.mjs";
 
-// Runtime import (not static) — karma's webpack cannot resolve resource://gre.
-// eslint-disable-next-line mozilla/use-static-import
-const { AppConstants } = ChromeUtils.importESModule(
-  "resource://gre/modules/AppConstants.sys.mjs"
-);
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
+  AboutNewTabParent: "resource:///actors/AboutNewTabParent.sys.mjs",
   AdsClient: "resource://newtab/lib/AdsClient.sys.mjs",
   ClientEnvironmentBase:
     "resource://gre/modules/components-utils/ClientEnvironment.sys.mjs",
@@ -49,30 +47,13 @@ ChromeUtils.defineESModuleGetters(lazy, {
   ObliviousHTTP: "resource://gre/modules/ObliviousHTTP.sys.mjs",
   Region: "resource://gre/modules/Region.sys.mjs",
   NewTabContentPing: "resource://newtab/lib/NewTabContentPing.sys.mjs",
+  hasScoringFlag:
+    "resource://newtab/lib/SponsoredTopSitesScoreProvider/SponsoredTopSitesScoreProvider.mjs",
   NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   MozAdsReportReason:
     "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustAdsClient.sys.mjs",
 });
-
-// @backward-compat { version 157 } card_column was added as an extra_key to
-// the pocket impression/click events in 157. A train-hopped XPI can run on
-// older platform builds whose schema lacks it, which would throw a Glean
-// error. Remove this guard, and its call sites, once 157 reaches Release.
-function isCardColumnSupported() {
-  return Services.vc.compare(AppConstants.MOZ_APP_VERSION, "157.0a1") >= 0;
-}
-
-// @backward-compat { version 157 } is_ad_eligible_position was added as an
-// extra_key to the pocket and topsites impression events in 157. A train-hopped
-// XPI can run on older platform builds whose schema lacks it, and glean-core
-// drops the whole event when it sees an unknown extra key. Remove this guard,
-// and its call sites, once 157 reaches Release.
-export function isAdEligiblePositionSupported(
-  version = AppConstants.MOZ_APP_VERSION
-) {
-  return Services.vc.compare(version, "157.0a1") >= 0;
-}
 
 export const PREF_IMPRESSION_ID = "impressionId";
 export const TELEMETRY_PREF = "telemetry";
@@ -87,6 +68,10 @@ const PREF_MERINO_FEED_EXPERIMENT =
   "browser.newtabpage.activity-stream.discoverystream.merino-feed-experiment";
 const PREF_PRIVATE_PING_INFERRED_ENABLED =
   "telemetry.privatePing.inferredInterests.enabled";
+const PREF_PRIVATE_PING_DWELL_TIME_ENABLED =
+  "telemetry.privatePing.dwellTime.enabled";
+const PREF_PRIVATE_PING_DWELL_TIME_NOISE_SCALE =
+  "telemetry.privatePing.dwellTime.noiseScale";
 const PREF_NEWTAB_PING_ENABLED = "browser.newtabpage.ping.enabled";
 const PREF_USER_INFERRED_PERSONALIZATION =
   "discoverystream.sections.personalization.inferred.user.enabled";
@@ -106,6 +91,65 @@ const TOP_STORIES_SECTION_NAME = "top_stories_section";
 // resumes within a run can go unnoticed for up to one interval.
 const USER_INTERACTION_ACTIVE = "user-interaction-active-non-synthesized";
 const USER_INTERACTION_INACTIVE = "user-interaction-inactive-non-synthesized";
+
+// Labels newtab.opened_page_dwell_time accepts, mirroring metrics.yaml. The
+// label is chosen at the click site in content, so it is validated here rather
+// than trusted.
+const DWELL_LABELS = new Set([
+  "topsite_organic",
+  "topsite_sponsored",
+  "story_organic",
+  "story_sponsored",
+]);
+
+// Upper bound on the pages we track at once, so a session that opens many
+// links without going idle can't grow the map forever.
+const MAX_TRACKED_OPENED_PAGES = 100;
+
+// Fired by URILoadingHelper when Firefox opens a link from page content in a
+// new tab or window, e.g. from its context menu or on middle-click. Newtab
+// cannot otherwise see these opens.
+const CREATED_NAVIGATION_TARGET_TOPIC = "webNavigation-createdNavigationTarget";
+const BROWSER_CONTEXT_MENU_OR_MIDDLE_CLICK_SOURCE =
+  "BROWSER_CONTEXT_MENU_OR_MIDDLE_CLICK";
+
+// Upper bound on the dwell time reported to the newtab-content ping, matching
+// the longest submission delay the dwell time rollout uses. That delay already
+// bounds a story opened in the same tab. A story opened in a new tab leaves
+// the newtab page loaded, so nothing schedules the ping and only this bounds
+// it.
+const MAX_DWELL_TIME_MS = 60000;
+
+// Scale of the Laplace noise each reported dwell time is multiplied by, for
+// when the pref is missing or unusable.
+const DEFAULT_DWELL_TIME_NOISE_SCALE = 0.05;
+
+/**
+ * Draw a sample from a Laplace distribution centered at 0.
+ *
+ * @param  {number} scale the scale (b) of the distribution
+ * @returns {number} the sample
+ */
+export function laplaceNoise(scale) {
+  const randomValues = new Uint32Array(1);
+  crypto.getRandomValues(randomValues);
+  // Strictly between 0 and 1, so neither logarithm below can be of 0.
+  const u = (randomValues[0] + 0.5) / 2 ** 32;
+  return u < 0.5 ? scale * Math.log(2 * u) : -scale * Math.log(2 * (1 - u));
+}
+
+/**
+ * The key that pairs a dwell measurement with the click that started it.
+ * SafeAnchor's id only counts up within one newtab document, so the sending
+ * port has to be part of the key. Never recorded.
+ *
+ * @param  {string} portID the newtab that sent both actions
+ * @param  {number|string} [dwellId] the id SafeAnchor put on both of them
+ * @returns {string|null} the token, or null if the link did not send one
+ */
+function dwellTokenFor(portID, dwellId) {
+  return portID && dwellId ? `${portID}:${dwellId}` : null;
+}
 
 /**
  * Glean session types for OHTTP ping optimization.
@@ -208,11 +252,31 @@ const WALLPAPER_USER_EVENTS = new Set([
 ]);
 
 export class TelemetryFeed {
+  /** @type {Store} */
+  store = null;
+
+  /**
+   * Lazy getters for the sponsored stories and top sites prefs replace these in
+   * the constructor.
+   *
+   * @type {boolean}
+   */
+  SHOW_SPONSORED_STORIES_ENABLED;
+
+  /** @type {boolean} */
+  SHOW_SPONSORED_TOPSITES_ENABLED;
+
   /**
    * Queue for telemetry events when in NormalGleanSession mode.
    * Events are stored here and cleared at session end based on session type.
    */
   #eventBuffer = [];
+  // portID -> { url, userEvent } for the story Firefox may open next.
+  #pendingLinkOpens = new Map();
+
+  // Dwell ids for links Firefox opens itself. Prefixed, so they can never
+  // match an id the newtab document counted up for a link it opened.
+  #nextBrowserOpenDwellId = 0;
 
   /** Whether the user is currently interacting. Drives the dwell stopwatches. */
   #userActive = false;
@@ -222,6 +286,21 @@ export class TelemetryFeed {
    * know the user was interacting. Null before the first one.
    */
   #lastActiveAt = null;
+
+  /**
+   * Pages opened from a newtab, by the permanentKey of the browser showing
+   * them. Each entry runs the same dwell stopwatch as a newtab session and is
+   * finalized into newtab.opened_page_dwell_time when it stops being
+   * attributed.
+   */
+  #openedPages = new Map();
+
+  /**
+   * Dwell tokens of organic story clicks that arrived before the link open
+   * they belong to, oldest first. A link opened in a new window is only
+   * reported once the window has started, well after the click.
+   */
+  #clicksAwaitingDwell = new Set();
 
   constructor() {
     this.sessions = new Map();
@@ -260,6 +339,63 @@ export class TelemetryFeed {
 
   get privatePingEnabled() {
     return this._prefs.get(PREF_PRIVATE_PING_ENABLED);
+  }
+
+  get privatePingDwellTimeEnabled() {
+    return this._prefs.get(PREF_PRIVATE_PING_DWELL_TIME_ENABLED);
+  }
+
+  /**
+   * The scale of the Laplace noise dwell times are multiplied by. Falls back
+   * to the default for anything that is not a positive number, so no
+   * configuration can turn the noise off.
+   *
+   * @returns {number}
+   */
+  get privatePingDwellTimeNoiseScale() {
+    const value = this._prefs.get(
+      PREF_PRIVATE_PING_DWELL_TIME_NOISE_SCALE,
+      String(DEFAULT_DWELL_TIME_NOISE_SCALE)
+    );
+    const scale = parseFloat(value);
+    if (!(scale > 0) || !Number.isFinite(scale)) {
+      console.error(
+        `Invalid newtab-content dwell time noise scale "${value}", using` +
+          ` ${DEFAULT_DWELL_TIME_NOISE_SCALE}`
+      );
+      return DEFAULT_DWELL_TIME_NOISE_SCALE;
+    }
+    return scale;
+  }
+
+  /**
+   * One draw of the noise a reported dwell time is multiplied by, as
+   * 1 + dwellTimeNoise().
+   *
+   * @returns {number}
+   */
+  dwellTimeNoise() {
+    return laplaceNoise(this.privatePingDwellTimeNoiseScale);
+  }
+
+  /**
+   * The dwell time to report for a story. A story that was never in front of
+   * the user, opened in a background tab and closed or still waiting when the
+   * ping goes out, is not a bounce, so it reports nothing. A story still open
+   * reports the time accrued so far.
+   *
+   * @param  {boolean} seen whether the story's tab was ever the selected tab of
+   *  the frontmost window
+   * @param  {number} dwellMs active milliseconds accrued
+   * @returns {number|null} the noised dwell time in milliseconds, between 0 and
+   *  MAX_DWELL_TIME_MS, or null to send the click without a dwell time
+   */
+  #dwellTimeMsIfSeen(seen, dwellMs) {
+    if (!seen) {
+      return null;
+    }
+    const noisedMs = Math.round(dwellMs * (1 + this.dwellTimeNoise()));
+    return Math.min(MAX_DWELL_TIME_MS, Math.max(0, noisedMs));
   }
 
   get privatePingInferredInterestsEnabled() {
@@ -311,13 +447,6 @@ export class TelemetryFeed {
       ?.inferredTelemetrySettingsOverrides;
   }
 
-  get tileIdRedactedForSponsored() {
-    return (
-      this.store?.getState()?.Prefs.values?.trainhopConfig?.newtabPing
-        ?.redactTileIdForSponsored || false
-    );
-  }
-
   /**
    * Checks if the Coarse Interest Vector (CIV) has recorded any clicks.
    * Used for the optimizeInferred feature to determine if private ping
@@ -366,7 +495,7 @@ export class TelemetryFeed {
     if (
       !this.privatePingEnabled ||
       !this.trainhopClickOnlyEnabled ||
-      this.sovEnabled()
+      this.isPlacesInfluenced()
     ) {
       this.gleanSessionType = GleanSessionType.PrivateGleanSession;
       return;
@@ -471,17 +600,21 @@ export class TelemetryFeed {
    *  decide which events a given session drains; it is never recorded, and in
    *  particular is kept out of eventData, which is the newtab-content payload
    *  and deliberately carries no visit id.
-   * @param {Function} callback - Function to record to non-private newtab ping
+   * @param {Function} [callback] - Function to record to non-private newtab ping
    *  Called immediately if in PrivateGleanSession, otherwise its added to eventBuffer
    *  and called when the eventBuffer is cleared. The return value is ignored.
+   * @param {string} [dwellToken] - Identifies this row for a later dwell time
+   *  write. Never recorded, and deliberately kept out of eventData. Dropped for
+   *  a queued event: no click is queued, because the click handler leaves
+   *  NormalGleanSession first.
    */
-  recordOrQueueEvent(eventName, eventData, sessionId, callback) {
+  recordOrQueueEvent(eventName, eventData, sessionId, callback, dwellToken) {
     if (this.gleanSessionType === GleanSessionType.NormalGleanSession) {
       this.#eventBuffer.push({ eventName, eventData, callback, sessionId });
     } else {
       callback?.();
       if (this.privatePingEnabled) {
-        this.newtabContentPing.recordEvent(eventName, eventData);
+        this.newtabContentPing.recordEvent(eventName, eventData, dwellToken);
       }
     }
   }
@@ -551,6 +684,7 @@ export class TelemetryFeed {
       );
       Services.obs.addObserver(this, USER_INTERACTION_ACTIVE);
       Services.obs.addObserver(this, USER_INTERACTION_INACTIVE);
+      Services.obs.addObserver(this, CREATED_NAVIGATION_TARGET_TOPIC);
     }
 
     // Set two scalars for the "deletion-request" ping (See bug 1602064 and 1729474)
@@ -598,8 +732,8 @@ export class TelemetryFeed {
       );
       // sort from most recently followed to oldest. If followedAt is falsey, treat it as the oldest
       followed.sort((a, b) => {
-        const aDate = a[1].followedAt ? new Date(a[1].followedAt) : 0;
-        const bDate = b[1].followedAt ? new Date(b[1].followedAt) : 0;
+        const aDate = a[1].followedAt ? new Date(a[1].followedAt).getTime() : 0;
+        const bDate = b[1].followedAt ? new Date(b[1].followedAt).getTime() : 0;
         return bDate - aDate;
       });
 
@@ -664,7 +798,9 @@ export class TelemetryFeed {
    * Removes fields that link to any user content preference.
    *
    * @param {*} pingDict Input dictionary
-   * @param {boolean} isSponsored Is this in ad, in which case there is nothing we can redact currently
+   * @param {boolean} isSponsored Whether this is a sponsored (ad) item.
+   *   Sponsored items retain the corpus/recommendation identifiers that
+   *   organic items drop, but tile_id is redacted in both cases.
    * @returns {*} Redacted dictionary
    */
   redactNewTabPing(pingDict, isSponsored = false) {
@@ -678,10 +814,18 @@ export class TelemetryFeed {
         section,
         // eslint-disable-next-line no-unused-vars
         selected_topics,
+        // @backward-compat { version 159 }
+        // We can remove tile_id from this list once 159 hits release, since at that point,
+        // tile_id will have been removed from the newtab ping within metrics.yaml, and there
+        // will no longer be a chance of it accidentally slipping through extra_keys.
         // eslint-disable-next-line no-unused-vars
         tile_id,
         // eslint-disable-next-line no-unused-vars
         topic,
+        // eslint-disable-next-line no-unused-vars
+        variant_id,
+        // eslint-disable-next-line no-unused-vars
+        source_section_id,
         ...result
       } = pingDict;
       result.content_redacted = true;
@@ -693,16 +837,20 @@ export class TelemetryFeed {
       section,
       // eslint-disable-next-line no-unused-vars
       selected_topics,
+      // @backward-compat { version 159 }
+      // We can remove tile_id from this list once 159 hits release, since at that point,
+      // tile_id will have been removed from the newtab ping within metrics.yaml, and there
+      // will no longer be a chance of it accidentally slipping through extra_keys.
+      // eslint-disable-next-line no-unused-vars
+      tile_id,
       // eslint-disable-next-line no-unused-vars
       topic,
+      // eslint-disable-next-line no-unused-vars
+      variant_id,
+      // eslint-disable-next-line no-unused-vars
+      source_section_id,
       ...result
     } = pingDict;
-
-    // For spocs we need to retain the tile id, unless we're configured to
-    // redact it.
-    if (this.tileIdRedactedForSponsored) {
-      delete result.tile_id;
-    }
 
     result.content_redacted = true;
     return result;
@@ -712,8 +860,8 @@ export class TelemetryFeed {
    * addSession - Start tracking a new session
    *
    * @param  {string} id the portID of the open session
-   * @param  {string} the URL being loaded for this session (optional)
-   * @return {obj}    Session object
+   * @param  {string} url The URL being loaded for this session (optional)
+   * @return {object}    Session object
    */
   addSession(id, url) {
     // XXX refactor to use setLoadTriggerInfo or saveSessionPerfData
@@ -788,6 +936,7 @@ export class TelemetryFeed {
       // describes it. Anything it managed to queue goes with it.
       this.#discardEventBuffer(session.session_id);
       this.sessions.delete(portID);
+      this.#pendingLinkOpens.delete(portID);
       return;
     }
 
@@ -841,13 +990,14 @@ export class TelemetryFeed {
     );
 
     this.sessions.delete(portID);
+    this.#pendingLinkOpens.delete(portID);
   }
 
   /**
    * The frontmost window, or null if Firefox is not the active application.
-   * Separate from isSessionInForeground so tests can stub it.
+   * Separate from isDwellTargetInForeground so tests can stub it.
    *
-   * @returns {Window|null}
+   * @returns {mozIDOMWindowProxy|null}
    */
   getActiveChromeWindow() {
     return Services.focus.activeWindow;
@@ -863,18 +1013,22 @@ export class TelemetryFeed {
   }
 
   /**
-   * Whether this session's newtab is the selected tab of the frontmost window.
-   * A preloaded newtab never qualifies because its browser isn't in a tab yet.
+   * Whether a dwell target's <browser> is the selected tab of the frontmost
+   * window. A preloaded newtab doesn't qualify because its browser isn't in a
+   * tab yet.
    *
    * Known gap: dragging the tab to another window gives it a new <browser>, so
-   * the session stops qualifying, and accruing, for the rest of its life.
+   * a newtab session stops qualifying.
    *
-   * @param  {obj} session a session from this.sessions
-   * @param  {Window|null} [activeWindow] the frontmost window, read if omitted
+   * @param  {object} target a newtab session or an entry of this.#openedPages
+   * @param  {mozIDOMWindowProxy|null} [activeWindow] the frontmost window, read if omitted
    * @returns {boolean}
    */
-  isSessionInForeground(session, activeWindow = this.getActiveChromeWindow()) {
-    const browser = session.browserRef?.deref();
+  isDwellTargetInForeground(
+    target,
+    activeWindow = this.getActiveChromeWindow()
+  ) {
+    const browser = target.browserRef?.deref();
     const win = browser?.documentGlobal;
     return (
       !!win &&
@@ -885,8 +1039,19 @@ export class TelemetryFeed {
   }
 
   /**
-   * Interaction is under way. Start the stopwatch for the newtab in front of
-   * the user, and stop it for every other session.
+   * Everything running a dwell stopwatch: the newtab sessions and the pages
+   * they opened.
+   *
+   * @yields {object} a dwell target
+   */
+  *#dwellTargets() {
+    yield* this.sessions.values();
+    yield* this.#openedPages.values();
+  }
+
+  /**
+   * Start the stopwatch for whatever is in front of the user, and stop it for
+   * everything else.
    *
    * Foreground is rechecked on every notification, not just on
    * active/inactive changes. No foreground signal reaches this feed, so these
@@ -896,16 +1061,43 @@ export class TelemetryFeed {
     this.#userActive = true;
     const now = this.now();
     this.#lastActiveAt = now;
-    // Read once for the whole sweep, and only when a session might ask for it.
-    const activeWindow = this.sessions.size
-      ? this.getActiveChromeWindow()
-      : null;
 
-    for (const session of this.sessions.values()) {
-      if (this.isSessionInForeground(session, activeWindow)) {
-        session.dwellStartedAt ??= now;
+    // Before the stopwatches, so a destination that finished loading since the
+    // last notification starts accruing in this sweep rather than the next.
+    this.#syncOpenedPages(now);
+    this.#refreshDwellClocks(now);
+  }
+
+  /**
+   * Run the stopwatch for whatever is in front of the user, if the user is
+   * interacting, and stop it for everything else. Called on each activity
+   * notification, and whenever an opened page's tab changes what it shows,
+   * so a story replacing the newtab in its tab hands the time over at once.
+   *
+   * @param  {number} now a this.now() timestamp
+   */
+  #refreshDwellClocks(now) {
+    // Read once for the whole sweep, and only when a target might ask for it.
+    const activeWindow =
+      this.sessions.size || this.#openedPages.size
+        ? this.getActiveChromeWindow()
+        : null;
+
+    for (const target of this.#dwellTargets()) {
+      const inFront =
+        // Newtab sessions have no committed flag. Only opened pages wait.
+        (target.committed ?? true) &&
+        this.isDwellTargetInForeground(target, activeWindow);
+      // Only opened pages keep track of having been seen. Checked whether or
+      // not the user is interacting, so a story in front of an idle user still
+      // counts as looked at.
+      if (inFront && target.seen === false) {
+        target.seen = true;
+      }
+      if (this.#userActive && inFront) {
+        target.dwellStartedAt ??= now;
       } else {
-        this.#stopDwellClock(session, now);
+        this.#stopDwellClock(target, now);
       }
     }
   }
@@ -919,48 +1111,428 @@ export class TelemetryFeed {
   #onUserInteractionInactive() {
     this.#userActive = false;
     const cutoff = this.#lastActiveAt ?? this.now();
-    for (const session of this.sessions.values()) {
-      this.#stopDwellClock(session, cutoff);
+    for (const target of this.#dwellTargets()) {
+      this.#stopDwellClock(target, cutoff);
     }
+    this.#syncOpenedPages(cutoff);
   }
 
   /**
-   * Start a session's stopwatch if the user is already interacting when the
-   * newtab becomes visible. Without this, a visit shorter than one interval
-   * would see no notification and record nothing.
+   * Start a target's stopwatch if the user is already interacting when it
+   * comes into view. Without this, a visit shorter than one interval would see
+   * no notification and record nothing.
    *
-   * @param  {obj} session a session from this.sessions
+   * @param  {object} target a newtab session or an entry of this.#openedPages
    */
-  #startDwellClockIfActive(session) {
+  #startDwellClockIfActive(target) {
     if (
-      session.dwellStartedAt === null &&
+      target.dwellStartedAt === null &&
       this.#userActive &&
-      this.isSessionInForeground(session)
+      this.isDwellTargetInForeground(target)
     ) {
-      session.dwellStartedAt = this.now();
+      target.dwellStartedAt = this.now();
     }
   }
 
   /**
-   * Stop a session's stopwatch, crediting time up to `cutoff`. Clamped at zero,
-   * so a run that started after `cutoff` adds nothing instead of subtracting.
+   * Stop a target's stopwatch, crediting time up to `cutoff`.
    *
-   * @param  {obj} session a session from this.sessions
+   * @param  {object} target a newtab session or an entry of this.#openedPages
    * @param  {number} [cutoff] a this.now() timestamp, defaulting to now
    */
-  #stopDwellClock(session, cutoff = this.now()) {
-    if (session.dwellStartedAt === null) {
+  #stopDwellClock(target, cutoff = this.now()) {
+    if (target.dwellStartedAt === null) {
       return;
     }
-    session.dwellTimeMs += Math.max(0, cutoff - session.dwellStartedAt);
-    session.dwellStartedAt = null;
+    target.dwellTimeMs += Math.max(0, cutoff - target.dwellStartedAt);
+    target.dwellStartedAt = null;
+  }
+
+  /**
+   * Handle DWELL_LINK_OPENED, which PlacesFeed dispatches once it knows the
+   * <browser> that will receive a link opened from the newtab, and which
+   * #trackBrowserOpen sends for a link Firefox opens itself. Starts measuring
+   * the active time the user spends on that page.
+   *
+   * @param {object} action the Action object
+   * @param {object} action.data
+   * @param {MozBrowser} action.data.browser the <browser> the link loads into
+   * @param {string} action.data.dwell_label one of DWELL_LABELS
+   * @param {number|string} [action.data.dwell_id] pairs the page with its
+   *  click: SafeAnchor's counter, or "browser-N" for a link Firefox opened
+   * @param {string} [action.data.port_id] the newtab the link was opened from
+   */
+  handleDwellLinkOpened(action) {
+    const { browser, dwell_label, dwell_id, port_id } = action.data;
+    if (!browser || !DWELL_LABELS.has(dwell_label)) {
+      return;
+    }
+
+    // This <browser> may already be showing a page we are measuring, if the
+    // user came back to a newtab in it and clicked again. Finalize that one
+    // rather than lose what it accrued.
+    const key = browser.permanentKey;
+    const previous = this.#openedPages.get(key);
+    if (previous) {
+      this.#finalizeOpenedPage(previous);
+    }
+    if (this.#openedPages.size >= MAX_TRACKED_OPENED_PAGES) {
+      this.#finalizeOpenedPage(this.#openedPages.values().next().value);
+    }
+
+    const page = {
+      key,
+      label: dwell_label,
+      browserRef: new WeakRef(browser),
+      dwellTimeMs: 0,
+      dwellStartedAt: null,
+      // Set once the destination has loaded. Until then the newtab is still
+      // what the user is looking at, so nothing accrues.
+      committed: false,
+      // The document the page is showing, and its address without the
+      // fragment.
+      windowId: null,
+      address: null,
+      // Set once the destination has been the selected tab of the frontmost
+      // window. A story opened in a background tab and never switched to was
+      // not looked at, so it reports no dwell time at all.
+      seen: false,
+      // Matches the click event that follows, which is the only thing that
+      // knows which story this was. Null for a link that sent no token.
+      dwellToken: dwellTokenFor(port_id, dwell_id),
+      // Set once that click has been found, so the dwell time knows which
+      // buffered row to land on.
+      dwellPaired: false,
+      // Held here because the browser holds its progress listeners weakly.
+      progressListener: null,
+      // Weak, so a page still showing when its window closes cannot keep the
+      // window alive.
+      tabRef: null,
+      windowRef: null,
+      onClosed: null,
+    };
+    this.#openedPages.set(key, page);
+    if (this.#clicksAwaitingDwell.delete(page.dwellToken)) {
+      this.#pairPage(page);
+    }
+    this.#watchOpenedPage(page, browser);
+    // A link opened in a new window is only reported once the window has
+    // started, by which time the destination may already have loaded.
+    const now = this.now();
+    this.#syncOpenedPage(page, now);
+    if (page.committed) {
+      this.#refreshDwellClocks(now);
+    }
+  }
+
+  /**
+   * Mark an opened page as the source of the dwell time for its click, if it
+   * is an organic story and the feature is on.
+   *
+   * @param  {object} page an entry of this.#openedPages
+   * @returns {boolean} whether the page was paired
+   */
+  #pairPage(page) {
+    // A topsite or a spoc must never carry a dwell time even if something
+    // upstream starts sending a token for one.
+    if (
+      page.label !== "story_organic" ||
+      !this.privatePingEnabled ||
+      !this.privatePingDwellTimeEnabled
+    ) {
+      return false;
+    }
+    page.dwellPaired = true;
+    // Normally a no-op: the click arrives long before the destination loads.
+    // It is the other way round for a load that was already complete, such as
+    // a cached page.
+    this.#trackOpenDwell(page);
+    return true;
+  }
+
+  /**
+   * Pair a dwell measurement with the queued click that started it, so the
+   * dwell time can be written onto that row rather than onto a second one.
+   *
+   * Nothing about the story is copied anywhere. The dwell time lands on the
+   * click row, which has already disclosed the identity, and on no other row:
+   * the whole privacy argument for the dwell time is that it discloses no
+   * content identity the click has not.
+   *
+   * @param  {string} dwellToken the token both actions carried
+   * @param  {object} released the payload handed to the content ping
+   */
+  #pairDwellWithClick(dwellToken, released) {
+    // is_sponsored is what the click itself says was clicked, while the label
+    // below comes from the link open that started the measurement. Both are
+    // derived from the same prop today, but in two different expressions, so
+    // both have to say organic before a dwell time is written. A spoc is
+    // passed through randomizeOrganicContentEvent untouched, and so would
+    // arrive here carrying its true corpus_item_id.
+    if (
+      !dwellToken ||
+      !released?.corpus_item_id ||
+      released.is_sponsored ||
+      !this.privatePingEnabled ||
+      !this.privatePingDwellTimeEnabled
+    ) {
+      return;
+    }
+    for (const page of this.#openedPages.values()) {
+      if (page.dwellToken === dwellToken) {
+        this.#pairPage(page);
+        return;
+      }
+    }
+
+    this.#clicksAwaitingDwell.add(dwellToken);
+    if (this.#clicksAwaitingDwell.size > MAX_TRACKED_OPENED_PAGES) {
+      this.#clicksAwaitingDwell.delete(
+        this.#clicksAwaitingDwell.values().next().value
+      );
+    }
+  }
+
+  /**
+   * Let the queued click for a page that has loaded read the page's active
+   * time when the ping goes out, so a user who is still reading reports what
+   * they have read so far. #finalizeOpenedPage replaces it with the final
+   * measurement if the user leaves first.
+   *
+   * @param  {object} page an entry of this.#openedPages
+   */
+  #trackOpenDwell(page) {
+    if (
+      !page.committed ||
+      !page.dwellPaired ||
+      !this.privatePingEnabled ||
+      !this.privatePingDwellTimeEnabled
+    ) {
+      return;
+    }
+    this.newtabContentPing.trackDwellTime(page.dwellToken, () => {
+      // Re-checked here to support opt-outs made mid-read.
+      if (!this.privatePingEnabled || !this.privatePingDwellTimeEnabled) {
+        return null;
+      }
+      const running =
+        page.dwellStartedAt === null
+          ? 0
+          : Math.max(0, this.now() - page.dwellStartedAt);
+      return this.#dwellTimeMsIfSeen(
+        page.seen || this.isDwellTargetInForeground(page),
+        page.dwellTimeMs + running
+      );
+    });
+  }
+
+  /**
+   * Listen for the destination loading, the tab moving on and the tab closing,
+   * so each is noticed when it happens rather than at the next activity
+   * notification, which can be up to an interval later.
+   *
+   * @param  {object} page an entry of this.#openedPages
+   * @param  {MozBrowser} browser the <browser> showing it
+   */
+  #watchOpenedPage(page, browser) {
+    page.progressListener = {
+      QueryInterface: ChromeUtils.generateQI([
+        "nsIWebProgressListener",
+        "nsISupportsWeakReference",
+      ]),
+      onLocationChange: (webProgress, request, location, flags) => {
+        if (
+          !webProgress?.isTopLevel ||
+          this.#openedPages.get(page.key) !== page
+        ) {
+          return;
+        }
+        const now = this.now();
+        this.#syncOpenedPage(page, now, {
+          uri: location,
+          sameDocument: !!(
+            flags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT
+          ),
+          errorPage: !!(
+            flags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE
+          ),
+        });
+        this.#refreshDwellClocks(now);
+      },
+    };
+    try {
+      browser.addProgressListener(
+        page.progressListener,
+        Ci.nsIWebProgress.NOTIFY_LOCATION
+      );
+    } catch (e) {
+      // The activity notifications still keep the page up to date, only later.
+      page.progressListener = null;
+    }
+
+    page.onClosed = () => {
+      if (this.#openedPages.get(page.key) === page) {
+        this.#finalizeOpenedPage(page);
+      }
+    };
+    const win = browser.documentGlobal;
+    const tab = win?.gBrowser?.getTabForBrowser(browser);
+    if (tab) {
+      page.tabRef = new WeakRef(tab);
+      tab.addEventListener("TabClose", page.onClosed);
+    }
+    // Closing a window does not close its tabs one by one, so TabClose does
+    // not fire for them.
+    if (win) {
+      page.windowRef = new WeakRef(win);
+      win.addEventListener("unload", page.onClosed);
+    }
+  }
+
+  /**
+   * Undo #watchOpenedPage.
+   *
+   * @param  {object} page an entry of this.#openedPages
+   */
+  #unwatchOpenedPage(page) {
+    if (page.progressListener) {
+      try {
+        page.browserRef.deref()?.removeProgressListener(page.progressListener);
+      } catch (e) {
+        // The browser is already gone, and its listeners with it.
+      }
+      page.progressListener = null;
+    }
+    page.tabRef?.deref()?.removeEventListener("TabClose", page.onClosed);
+    page.windowRef?.deref()?.removeEventListener("unload", page.onClosed);
+    page.tabRef = null;
+    page.windowRef = null;
+  }
+
+  /**
+   * Bring the opened pages up to date with what their tabs are showing, on
+   * each activity notification. The progress and tab-close listeners
+   * normally get there first; this catches anything they missed.
+   *
+   * @param  {number} cutoff a this.now() timestamp
+   */
+  #syncOpenedPages(cutoff) {
+    for (const page of [...this.#openedPages.values()]) {
+      this.#syncOpenedPage(page, cutoff);
+    }
+  }
+
+  /**
+   * Bring one opened page up to date with what its tab is showing. Notice the
+   * destination once it has loaded, notice when the tab has moved on to
+   * another page, and notice when the tab is gone.
+   *
+   * A visit moves on when a new document arrives at a different address.
+   * Same-document navigation, a fragment link or a pushState as the user
+   * scrolls, keeps the visit going. So does a new document at the same
+   * address, a reload or a page that replaces itself as it starts up.
+   *
+   * @param  {object} page an entry of this.#openedPages
+   * @param  {number} cutoff a this.now() timestamp
+   * @param  {object} [change] what a location change reported, when called from
+   *  the progress listener: the new uri, and whether it is a same-document
+   *  change or an error page
+   */
+  #syncOpenedPage(page, cutoff, change = null) {
+    const browser = page.browserRef.deref();
+    if (!browser?.isConnected) {
+      // The tab was closed, or dragged to another window, which swaps in a
+      // new <browser>.
+      this.#finalizeOpenedPage(page, cutoff);
+      return;
+    }
+
+    const windowGlobal = browser.browsingContext?.currentWindowGlobal;
+    const uri = change ? change.uri : windowGlobal?.documentURI;
+    // Only a real web page can be the page the newtab sent the user to. Rules
+    // out the about:blank a new tab starts on, an error page if the load
+    // fails, and about:newtab if the user goes back. An error page keeps the
+    // address that failed, so a location change has to say it is one.
+    const isWebPage =
+      !change?.errorPage && (uri?.scheme === "http" || uri?.scheme === "https");
+    const address = isWebPage ? uri.specIgnoringRef : null;
+    const windowId = windowGlobal?.innerWindowId;
+    const sameDocument = change
+      ? change.sameDocument
+      : windowId === page.windowId;
+
+    if (!page.committed) {
+      if (isWebPage) {
+        page.committed = true;
+        page.windowId = windowId;
+        page.address = address;
+        this.#trackOpenDwell(page);
+      }
+    } else if (!isWebPage || (!sameDocument && address !== page.address)) {
+      this.#finalizeOpenedPage(page, cutoff);
+    } else {
+      page.windowId = windowId;
+      page.address = address;
+    }
+  }
+
+  /**
+   * Stop measuring an opened page and record what it accrued.
+   *
+   * The sample accumulates on the client until the next metrics ping, so it
+   * belongs to no newtab visit.
+   *
+   * @param  {object} page an entry of this.#openedPages
+   * @param  {number} [cutoff] a this.now() timestamp, defaulting to now
+   */
+  #finalizeOpenedPage(page, cutoff = this.now()) {
+    // A tab switched to and closed between two activity notifications was
+    // never seen by a sweep, but it is in front of the user as it closes.
+    page.seen ||= page.committed && this.isDwellTargetInForeground(page);
+    this.#stopDwellClock(page, cutoff);
+    this.#openedPages.delete(page.key);
+    this.#unwatchOpenedPage(page);
+
+    const dwellMs = Math.round(page.dwellTimeMs);
+    if (dwellMs > 0 && this.telemetryEnabled) {
+      // Optional chaining: metrics.yaml lives outside this add-on, so a
+      // train-hopped build can be running on a Firefox that predates the
+      // metric.
+      Glean.newtab.openedPageDwellTime?.[page.label]?.accumulateSingleSample(
+        dwellMs
+      );
+    }
+
+    if (!page.dwellPaired) {
+      return;
+    }
+    page.dwellPaired = false;
+    // Unlike the distribution above, a story the user bounced off in under one
+    // sampling interval still reports, as a dwell time of 0. A fast bounce is
+    // the strongest signal that a recommendation was not worth the click. A
+    // story that was never in front of the user reports nothing.
+    // Re-checking both prefs here to support opt-outs made mid-read.
+    if (
+      page.committed &&
+      this.privatePingEnabled &&
+      this.privatePingDwellTimeEnabled
+    ) {
+      this.newtabContentPing.recordDwellTime(
+        page.dwellToken,
+        this.#dwellTimeMsIfSeen(page.seen, dwellMs)
+      );
+    } else {
+      // The destination never loaded, or the user opted out while reading.
+      // Either way the click must not report a dwell time.
+      this.newtabContentPing.recordDwellTime(page.dwellToken, null);
+    }
   }
 
   /**
    * handleNewTabInit - Handle NEW_TAB_INIT, which creates a new session and sets the a flag
    *                    for session.perf based on whether or not this new tab is preloaded
    *
-   * @param  {obj} action the Action object
+   * @param  {object} action the Action object
    */
   handleNewTabInit(action) {
     const session = this.addSession(
@@ -973,13 +1545,22 @@ export class TelemetryFeed {
     // alive past its tab. The preloaded-browser swap reuses this element, so
     // the reference survives it.
     session.browserRef = new WeakRef(action.data.browser);
+
+    // A newtab showing here means whatever page this <browser> was opened to
+    // is over. The location change usually gets there first. This covers any
+    // route to a newtab that does not, so the two metrics can never both be
+    // counting the same tab.
+    const opened = this.#openedPages.get(action.data.browser.permanentKey);
+    if (opened) {
+      this.#finalizeOpenedPage(opened);
+    }
   }
 
   /**
    * Handle NEW_TAB_SCROLL, which records the deepest scroll threshold passed
    * so far in a session. The scroll metrics are set from it in endSession.
    *
-   * @param  {obj} action the Action object
+   * @param  {object} action the Action object
    */
   handleNewTabScroll(action) {
     const session = this.sessions.get(au.getPortIdOfSender(action));
@@ -992,10 +1573,12 @@ export class TelemetryFeed {
     );
   }
 
-  sovEnabled() {
+  isPlacesInfluenced() {
     const { values } = this.store?.getState()?.Prefs || {};
-    const trainhopSovEnabled = values?.trainhopConfig?.sov?.enabled;
-    return trainhopSovEnabled;
+    return (
+      !!values?.trainhopConfig?.sov?.enabled ||
+      lazy.hasScoringFlag(values?.adsBackendConfig)
+    );
   }
 
   frecencyBoostedHasExposure() {
@@ -1009,8 +1592,7 @@ export class TelemetryFeed {
       type,
       position,
       source,
-      advertiser: advertiser_name,
-      tile_id,
+      advertiser_name,
       visible_topsites,
       frecency_boosted = false,
       is_ad_eligible_position,
@@ -1025,16 +1607,15 @@ export class TelemetryFeed {
         `${source}_${legacyTelemetryPosition}`
       ].add(1);
       if (session) {
-        if (this.sovEnabled()) {
+        if (this.isPlacesInfluenced()) {
           const eventData = {
             advertiser_name,
-            tile_id,
             is_sponsored: true,
             position,
             visible_topsites,
             frecency_boosted,
             frecency_boosted_has_exposure: this.frecencyBoostedHasExposure(),
-            ...(is_ad_eligible_position && isAdEligiblePositionSupported()
+            ...(is_ad_eligible_position
               ? { is_ad_eligible_position: true }
               : {}),
           };
@@ -1044,17 +1625,17 @@ export class TelemetryFeed {
             session.session_id
           );
         } else {
-          Glean.topsites.impression.record({
+          const gleanData = {
             advertiser_name,
-            tile_id,
             newtab_visit_id: session.session_id,
             is_sponsored: true,
             position,
             visible_topsites,
-            ...(is_ad_eligible_position && isAdEligiblePositionSupported()
+            ...(is_ad_eligible_position
               ? { is_ad_eligible_position: true }
               : {}),
-          });
+          };
+          Glean.topsites.impression.record(gleanData);
         }
       }
     } else if (type === "click") {
@@ -1062,10 +1643,9 @@ export class TelemetryFeed {
         `${source}_${legacyTelemetryPosition}`
       ].add(1);
       if (session) {
-        if (this.sovEnabled()) {
+        if (this.isPlacesInfluenced()) {
           const eventData = {
             advertiser_name,
-            tile_id,
             is_sponsored: true,
             position,
             visible_topsites,
@@ -1078,14 +1658,17 @@ export class TelemetryFeed {
             session.session_id
           );
         } else {
-          Glean.topsites.click.record({
+          const gleanData = {
             advertiser_name,
-            tile_id,
             newtab_visit_id: session.session_id,
             is_sponsored: true,
             position,
             visible_topsites,
-          });
+            ...(data.event_source
+              ? { event_source: data.event_source, background: data.background }
+              : {}),
+          };
+          Glean.topsites.click.record(gleanData);
         }
       }
     } else {
@@ -1121,10 +1704,9 @@ export class TelemetryFeed {
           position: action.data.position,
           is_pinned: !!action.data.isPinned,
           visible_topsites,
-          smart_scores: JSON.stringify(action.data.smartScores),
-          smart_weights: JSON.stringify(action.data.smartWeights),
-          ...(action.data.is_ad_eligible_position &&
-          isAdEligiblePositionSupported()
+          smart_scores: JSON.stringify(action.data.smart_scores),
+          smart_weights: JSON.stringify(action.data.smart_weights),
+          ...(action.data.is_ad_eligible_position
             ? { is_ad_eligible_position: true }
             : {}),
         });
@@ -1137,8 +1719,14 @@ export class TelemetryFeed {
           position: action.data.position,
           is_pinned: !!action.data.isPinned,
           visible_topsites,
-          smart_scores: JSON.stringify(action.data.smartScores),
-          smart_weights: JSON.stringify(action.data.smartWeights),
+          smart_scores: JSON.stringify(action.data.smart_scores),
+          smart_weights: JSON.stringify(action.data.smart_weights),
+          ...(action.data.event_source
+            ? {
+                event_source: action.data.event_source,
+                background: action.data.background,
+              }
+            : {}),
         });
         break;
 
@@ -1152,6 +1740,8 @@ export class TelemetryFeed {
    * This tracks how long placeholder content is shown before being replaced
    * with actual sponsored content when using onDemand mode.
    *
+   * @param {object} action
+   * @param {object} action.data
    * @param {number} action.data.duration - Duration in milliseconds
    */
   handleSpocPlaceholderDuration(action) {
@@ -1193,8 +1783,8 @@ export class TelemetryFeed {
         Glean.topsites.edit.record({
           newtab_visit_id: session.session_id,
           position: action.data.action_position,
-          has_title_changed: action.data.hasTitleChanged,
-          has_url_changed: action.data.hasURLChanged,
+          has_title_changed: action.data.has_title_changed,
+          has_url_changed: action.data.has_url_changed,
         });
         break;
       }
@@ -1220,6 +1810,34 @@ export class TelemetryFeed {
       case "EXPLORE_MORE_THEMES_CLICK": {
         Glean.newtab.appearanceExploreMoreThemesClick.record({
           newtab_visit_id: session.session_id,
+        });
+        break;
+      }
+      case "OPEN_NEW_WINDOW":
+      case "OPEN_PRIVATE_WINDOW": {
+        const { action_position, source, value } = action.data;
+        if (source !== "TOP_SITES" || value?.card_type === "search") {
+          break;
+        }
+        const row = this.store?.getState()?.TopSites?.rows?.[action_position];
+        if (value?.card_type === "spoc") {
+          this.recordSponsoredTopSiteClick(row, {
+            position: action_position,
+            event_source: "CONTEXT_MENU",
+            meta: action.meta,
+          });
+          break;
+        }
+        this.handleTopSitesOrganicImpressionStats({
+          data: {
+            type: "click",
+            position: action_position,
+            isPinned: row?.isPinned,
+            smart_scores: row?.scores,
+            smart_weights: row?.weights,
+            event_source: "CONTEXT_MENU",
+          },
+          meta: action.meta,
         });
         break;
       }
@@ -1261,10 +1879,12 @@ export class TelemetryFeed {
    * Occasionally replaces a content item with another that is in the feed.
    *
    * @param {*} item
+   * @param {object} session The session the event belongs to. When it has
+   *   sectionPositions, only items from rendered sections can be swapped in.
    * @returns Same item, but another item occasionally based on probablility setting.
    * Sponsored items are unchanged
    */
-  randomizeOrganicContentEvent(item) {
+  randomizeOrganicContentEvent(item, session) {
     if (item.is_sponsored) {
       return item; // Don't alter spocs
     }
@@ -1297,7 +1917,11 @@ export class TelemetryFeed {
     if (lazy.NewTabContentPing.decideWithProbability(p)) {
       return item;
     }
-    const allRecs = this.getAllRecommendations(); // Number of recommendations has changed
+    const sectionPositions = session?.sectionPositions;
+    let allRecs = this.getAllRecommendations(); // Number of recommendations has changed
+    if (sectionPositions) {
+      allRecs = allRecs.filter(rec => sectionPositions.has(rec.section));
+    }
     if (!allRecs.length) {
       return item;
     }
@@ -1313,6 +1937,7 @@ export class TelemetryFeed {
       ...item,
       topic: randomItem.topic,
       corpus_item_id: randomItem.corpus_item_id,
+      source_section_id: randomItem.source_section_id ?? randomItem.section,
     };
     // If we're replacing a non top stories item, then assign the appropriate
     // section and layout to the item
@@ -1322,10 +1947,12 @@ export class TelemetryFeed {
       randomItem.section
     ) {
       resultItem.section = randomItem.section;
-      resultItem.section_position = randomItem.section_position;
+      resultItem.section_position = sectionPositions?.get(randomItem.section);
       resultItem.layout_name = this.getAllSections().find(
         section => section.sectionKey === randomItem.section
       )?.layout?.name;
+      // variant_id is section-level, so only adopt the swapped item's when we adopt its section.
+      resultItem.variant_id = randomItem.variant_id;
     }
     return resultItem;
   }
@@ -1343,11 +1970,11 @@ export class TelemetryFeed {
     const session = this.sessions.get(au.getPortIdOfSender(action));
 
     switch (action.data?.event) {
-      // TODO: Determine if private window should be tracked?
-      // case "OPEN_PRIVATE_WINDOW":
+      case "OPEN_PRIVATE_WINDOW":
       case "OPEN_NEW_WINDOW":
       case "CLICK": {
         const {
+          background,
           card_column,
           card_type,
           corpus_item_id,
@@ -1364,8 +1991,9 @@ export class TelemetryFeed {
           section,
           selected_topics,
           shim,
-          tile_id,
+          source_section_id,
           topic,
+          variant_id,
         } = action.data.value ?? {};
 
         if (
@@ -1387,7 +2015,7 @@ export class TelemetryFeed {
             newtab_visit_id: session.session_id,
             is_sponsored,
             ...(format ? { format } : {}),
-            ...(card_column && isCardColumnSupported() ? { card_column } : {}),
+            ...(card_column ? { card_column } : {}),
             ...(section
               ? {
                   section,
@@ -1401,8 +2029,9 @@ export class TelemetryFeed {
             matches_selected_topic,
             selected_topics,
             topic,
+            variant_id,
+            source_section_id: source_section_id ?? section,
             position: action.data.action_position,
-            tile_id,
             event_source,
             // We conditionally add in a few props.
             ...(corpus_item_id ? { corpus_item_id } : {}),
@@ -1417,17 +2046,28 @@ export class TelemetryFeed {
           if (this.trainhopClickOnlyEnabled) {
             this.transitionToPrivateSession();
           }
+          const releasedContentData = this.randomizeOrganicContentEvent(
+            gleanData,
+            session
+          );
+          const dwellToken = dwellTokenFor(
+            au.getPortIdOfSender(action),
+            action.data.value?.dwell_id
+          );
           this.recordOrQueueEvent(
             "click",
-            this.randomizeOrganicContentEvent(gleanData),
+            releasedContentData,
             session.session_id,
             () => {
               Glean.pocket.click.record({
                 ...this.redactNewTabPing(gleanData, is_sponsored),
                 newtab_visit_id: session.session_id,
+                ...(background !== undefined ? { background } : {}),
               });
-            }
+            },
+            dwellToken
           );
+          this.#pairDwellWithClick(dwellToken, releasedContentData);
           if (shim) {
             if (this.canSendUnifiedAdsSpocCallbacks) {
               if (this._adsClient) {
@@ -1738,7 +2378,9 @@ export class TelemetryFeed {
       privateMetrics.followedSections = followed;
     }
     const surfaceId = this._prefs.get(PREF_SURFACE_ID);
-    privateMetrics.surfaceId = surfaceId;
+    if (surfaceId) {
+      privateMetrics.surfaceId = surfaceId;
+    }
 
     const curCountry = lazy.Region.home;
     if (PRIVATE_PING_SURFACE_COUNTRY_MAP[surfaceId]) {
@@ -1752,7 +2394,10 @@ export class TelemetryFeed {
         : PRIVATE_PING_SURFACE_COUNTRY_MAP[surfaceId][0];
     }
 
-    if (prefs?.inferredPersonalizationConfig?.normalized_time_zone_offset) {
+    if (
+      prefs?.inferredPersonalizationConfig?.normalized_time_zone_offset &&
+      surfaceId
+    ) {
       privateMetrics.utcOffset = lazy.NewTabUtils.getUtcOffset(surfaceId);
     }
     // To prevent fingerprinting we only send one current experiment / branch
@@ -1792,6 +2437,9 @@ export class TelemetryFeed {
       case at.NEW_TAB_SCROLL:
         this.handleNewTabScroll(action);
         break;
+      case at.DWELL_LINK_OPENED:
+        this.handleDwellLinkOpened(action);
+        break;
       case at.SAVE_SESSION_PERF_DATA:
         this.saveSessionPerfData(au.getPortIdOfSender(action), action.data);
         break;
@@ -1806,6 +2454,9 @@ export class TelemetryFeed {
         break;
       case at.DISCOVERY_STREAM_USER_EVENT:
         this.handleDiscoveryStreamUserEvent(action);
+        break;
+      case at.BROWSER_LINK_OPEN_INTENT:
+        this.handleBrowserLinkOpenIntent(action);
         break;
       case at.TELEMETRY_USER_EVENT:
         this.handleUserEvent(action);
@@ -1840,6 +2491,15 @@ export class TelemetryFeed {
       case at.TOPIC_SELECTION_USER_SAVE:
         this.handleTopicSelectionUserEvent(action);
         break;
+      case at.CARD_SECTIONS_ORDER: {
+        const session = this.sessions.get(au.getPortIdOfSender(action));
+        if (session) {
+          session.sectionPositions = new Map(
+            action.data.sections.map((sectionKey, i) => [sectionKey, i])
+          );
+        }
+        break;
+      }
       case at.BLOCK_SECTION:
       // Intentional fall-through
       case at.CARD_SECTION_IMPRESSION:
@@ -1914,12 +2574,16 @@ export class TelemetryFeed {
         this.recordPageLayoutVariant();
         break;
       case at.PREF_CHANGED:
-        // Turning history off hides history-dependent widgets, so the enabled
-        // list has to be re-read: unlike a widget's own pref, this flips
-        // enablement without any widget toggle to hang the update off.
-        if (action.data?.name === "recordsHistory") {
+        // Turning history off hides history-dependent widgets, and resolving
+        // the region reveals trainhop-enabled ones, so the enabled list has to
+        // be re-read: unlike a widget's own pref, these flip enablement without
+        // any widget toggle to hang the update off.
+        if (["recordsHistory", "region"].includes(action.data?.name)) {
           this.recordEnabledWidgets();
         }
+        break;
+      case at.WIDGETS_EXTENSIONS_UPDATE:
+        this.recordEnabledWidgets();
         break;
     }
   }
@@ -2066,15 +2730,16 @@ export class TelemetryFeed {
   }
 
   recordEnabledWidgets() {
-    const prefs = this.store?.getState()?.Prefs.values;
+    const state = this.store?.getState();
+    const prefs = state?.Prefs.values;
     if (!prefs) {
       return;
     }
     const widgetsEnabled = prefs["widgets.enabled"];
     Glean.newtab.widgetsEnabledList.set(
-      WIDGET_REGISTRY.filter(w =>
-        isWidgetEnabled(w, prefs, widgetsEnabled)
-      ).map(w => w.telemetryName)
+      getWidgets(WIDGET_REGISTRY, state.ExtensionWidgets)
+        .filter(w => isWidgetEnabled(w, prefs, widgetsEnabled))
+        .map(w => w.telemetryName)
     );
   }
 
@@ -2385,13 +3050,13 @@ export class TelemetryFeed {
     if (session) {
       switch (action.type) {
         case "INLINE_SELECTION_CLICK": {
-          const { topic, section_position, position, is_followed } =
+          const { topic, section_position, topic_position, is_followed } =
             action.data;
           Glean.newtab.inlineSelectionClick.record({
             newtab_visit_id: session.session_id,
             topic,
             section_position,
-            position,
+            topic_position,
             is_followed,
           });
           break;
@@ -2618,7 +3283,6 @@ export class TelemetryFeed {
           is_sponsored: datum.card_type === "spoc",
           ...(datum.format ? { format: datum.format } : {}),
           position: datum.position,
-          tile_id: datum.id || datum.tile_id,
           ...(datum.section
             ? {
                 section: datum.section,
@@ -2657,27 +3321,25 @@ export class TelemetryFeed {
       }
       // Only log a topsites.dismiss telemetry event if the action came from TopSites section
       if (action.source === "TOP_SITES") {
-        const { position, advertiser_name, tile_id, isSponsoredTopSite } =
-          datum;
-        if (this.sovEnabled() && isSponsoredTopSite) {
+        const { position, advertiser_name, isSponsoredTopSite } = datum;
+        if (this.isPlacesInfluenced() && isSponsoredTopSite) {
           this.recordOrQueueEvent(
             "topSitesDismiss",
             {
               advertiser_name,
-              tile_id,
               is_sponsored: !!isSponsoredTopSite,
               position,
             },
             session.session_id
           );
         } else {
-          Glean.topsites.dismiss.record({
+          const gleanData = {
             advertiser_name,
-            tile_id,
             newtab_visit_id: session.session_id,
             is_sponsored: !!isSponsoredTopSite,
             position,
-          });
+          };
+          Glean.topsites.dismiss.record(gleanData);
         }
       }
     }
@@ -2686,24 +3348,23 @@ export class TelemetryFeed {
   handleAboutSponsoredTopSites(action) {
     const session = this.sessions.get(au.getPortIdOfSender(action));
     const { data } = action;
-    const { position, advertiser_name, tile_id } = data;
+    const { position, advertiser_name } = data;
 
     if (session) {
-      if (this.sovEnabled()) {
+      if (this.isPlacesInfluenced()) {
         if (this.privatePingEnabled) {
           this.newtabContentPing.recordEvent("topSitesShowPrivacyClick", {
             advertiser_name,
-            tile_id,
             position,
           });
         }
       } else {
-        Glean.topsites.showPrivacyClick.record({
+        const gleanData = {
           advertiser_name,
-          tile_id,
           newtab_visit_id: session.session_id,
           position,
-        });
+        };
+        Glean.topsites.showPrivacyClick.record(gleanData);
       }
     }
   }
@@ -2729,10 +3390,8 @@ export class TelemetryFeed {
       const gleanData = {
         is_sponsored,
         ...(tile.format ? { format: tile.format } : {}),
-        ...(tile.card_column && isCardColumnSupported()
-          ? { card_column: tile.card_column }
-          : {}),
-        ...(tile.is_ad_eligible_position && isAdEligiblePositionSupported()
+        ...(tile.card_column ? { card_column: tile.card_column } : {}),
+        ...(tile.is_ad_eligible_position
           ? { is_ad_eligible_position: true }
           : {}),
         ...(tile.section
@@ -2746,8 +3405,9 @@ export class TelemetryFeed {
             }
           : {}),
         position: tile.pos,
-        tile_id: tile.id,
         topic: tile.topic,
+        variant_id: tile.variant_id,
+        source_section_id: tile.source_section_id ?? tile.section,
         selected_topics: tile.selectedTopics,
         is_list_card: tile.is_list_card,
         // We conditionally add in a few props.
@@ -2850,6 +3510,172 @@ export class TelemetryFeed {
     }
   }
 
+  /**
+   * Records a click for a tile that Firefox opened itself in a new tab or
+   * window, e.g. from its context menu. The tile is resolved from state by its
+   * url and routed through the ordinary click handlers.
+   *
+   * @param {object} subject Subject of the navigation target notification.
+   * @param {MozBrowser} subject.sourceTabBrowser Browser the link was opened from.
+   * @param {MozBrowser} subject.createdTabBrowser Browser the link opened in.
+   * @param {string} subject.url Url of the opened link.
+   */
+  handleCreatedNavigationTarget({ sourceTabBrowser, createdTabBrowser, url }) {
+    const { loadedTabs } = lazy.AboutNewTabParent;
+    const gBrowser = createdTabBrowser?.documentGlobal?.gBrowser;
+    // For a tab opened in the foreground, sourceTabBrowser is read after the
+    // new tab is selected, so it is the new tab rather than newtab.
+    const source = loadedTabs.has(sourceTabBrowser)
+      ? sourceTabBrowser
+      : gBrowser?.getTabForBrowser(createdTabBrowser)?.openerTab?.linkedBrowser;
+    const portID = source && loadedTabs.get(source)?.portID;
+    if (!portID || !this.sessions.has(portID)) {
+      return;
+    }
+    const meta = { fromTarget: portID };
+    const background = gBrowser?.selectedBrowser !== createdTabBrowser;
+
+    const state = this.store.getState();
+    const rows = state?.TopSites?.rows ?? [];
+    const position = rows.findIndex(row => row?.url === url);
+    if (position !== -1) {
+      const row = rows[position];
+      const sponsored = !!(
+        row.sponsored_position ||
+        row.sponsored_tile_id ||
+        row.type === "SPOC"
+      );
+      this.#trackBrowserOpen(
+        createdTabBrowser,
+        sponsored ? "topsite_sponsored" : "topsite_organic",
+        portID
+      );
+      if (sponsored) {
+        this.recordSponsoredTopSiteClick(row, {
+          position,
+          event_source: BROWSER_CONTEXT_MENU_OR_MIDDLE_CLICK_SOURCE,
+          background,
+          meta,
+        });
+        return;
+      }
+      this.handleTopSitesOrganicImpressionStats({
+        data: {
+          type: "click",
+          position,
+          isPinned: row.isPinned,
+          smart_scores: row.scores,
+          smart_weights: row.weights,
+          event_source: BROWSER_CONTEXT_MENU_OR_MIDDLE_CLICK_SOURCE,
+          background,
+        },
+        meta,
+      });
+      return;
+    }
+
+    const intent = this.#pendingLinkOpens.get(portID);
+    if (intent?.url !== url) {
+      return;
+    }
+    this.#pendingLinkOpens.delete(portID);
+
+    // The shim is dropped so that no ad callback is sent for sponsored stories.
+    // eslint-disable-next-line no-unused-vars
+    const { shim, ...value } = intent.userEvent.value ?? {};
+    const dwellId = this.#trackBrowserOpen(
+      createdTabBrowser,
+      value.card_type === "spoc" ? "story_sponsored" : "story_organic",
+      portID
+    );
+    this.handleDiscoveryStreamUserEvent({
+      data: {
+        ...intent.userEvent,
+        value: {
+          ...value,
+          event_source: BROWSER_CONTEXT_MENU_OR_MIDDLE_CLICK_SOURCE,
+          background,
+          ...(dwellId ? { dwell_id: dwellId } : {}),
+        },
+      },
+      meta,
+    });
+  }
+
+  /**
+   * Start measuring the active time on a page Firefox opened from the newtab
+   * itself, the way PlacesFeed does for the links newtab opens.
+   *
+   * @param {MozBrowser} browser Browser the link opened in.
+   * @param {string} dwellLabel One of DWELL_LABELS.
+   * @param {string} portID The newtab the link was opened from.
+   * @returns {string|undefined} The dwell id that pairs the page with its click
+   *   event, or undefined if the page is not measured.
+   */
+  #trackBrowserOpen(browser, dwellLabel, portID) {
+    if (!browser || browser.browsingContext?.usePrivateBrowsing) {
+      return undefined;
+    }
+    const dwellId = dwellLabel.startsWith("story_")
+      ? `browser-${++this.#nextBrowserOpenDwellId}`
+      : undefined;
+    this.handleDwellLinkOpened({
+      data: {
+        browser,
+        dwell_label: dwellLabel,
+        dwell_id: dwellId,
+        port_id: portID,
+      },
+    });
+    return dwellId;
+  }
+
+  /**
+   * Holds the click payload a story sends when it is right-clicked or
+   * middle-clicked, so that it can be recorded if Firefox then opens the link.
+   *
+   * @param {object} action BROWSER_LINK_OPEN_INTENT action from newtab.
+   */
+  handleBrowserLinkOpenIntent(action) {
+    const portID = au.getPortIdOfSender(action);
+    const { url, userEvent } = action.data ?? {};
+    if (!portID || !url || !userEvent) {
+      return;
+    }
+    this.#pendingLinkOpens.set(portID, { url, userEvent });
+  }
+
+  /**
+   * Records a click on a sponsored top site on newtab whose link was opened by
+   * Firefox's right-click menu or a middle-click, or newtab's private window
+   * option.
+   * No reporting url is passed, so no ad callback is sent.
+   *
+   * @param {object} row Top site row from state.
+   * @param {object} options Position, event_source, background and action meta.
+   */
+  recordSponsoredTopSiteClick(
+    row,
+    { position, event_source, background, meta }
+  ) {
+    this.handleTopSitesSponsoredImpressionStats({
+      data: {
+        type: "click",
+        position,
+        source: "newtab",
+        advertiser_name: (
+          row?.label ||
+          row?.hostname ||
+          ""
+        ).toLocaleLowerCase(),
+        frecency_boosted: row?.type === "frecency-boost",
+        event_source,
+        background,
+      },
+      meta,
+    });
+  }
+
   _beginObservingNewtabPingPrefs() {
     Services.prefs.addObserver(ACTIVITY_STREAM_PREF_BRANCH, this);
 
@@ -2880,6 +3706,9 @@ export class TelemetryFeed {
         return;
       case USER_INTERACTION_INACTIVE:
         this.#onUserInteractionInactive();
+        return;
+      case CREATED_NAVIGATION_TARGET_TOPIC:
+        this.handleCreatedNavigationTarget(subject.wrappedJSObject ?? {});
         return;
     }
 
@@ -2950,6 +3779,11 @@ export class TelemetryFeed {
 
   uninit() {
     this._stopObservingNewtabPingPrefs();
+    // Record what the user is reading at shutdown. The sample waits,
+    // ping-lifetime, for the next metrics ping.
+    for (const page of [...this.#openedPages.values()]) {
+      this.#finalizeOpenedPage(page);
+    }
     // Must run before newtabContentPing.uninit(), which discards its own buffer.
     this.#flushBufferedEventsOnUninit();
     this.newtabContentPing.uninit();
@@ -2960,6 +3794,7 @@ export class TelemetryFeed {
       );
       Services.obs.removeObserver(this, USER_INTERACTION_ACTIVE);
       Services.obs.removeObserver(this, USER_INTERACTION_INACTIVE);
+      Services.obs.removeObserver(this, CREATED_NAVIGATION_TARGET_TOPIC);
       this.#userActive = false;
       this.#lastActiveAt = null;
       this._initialized = false;

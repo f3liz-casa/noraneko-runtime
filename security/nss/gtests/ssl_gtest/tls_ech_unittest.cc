@@ -13,6 +13,7 @@
 #include "tls_connect.h"
 #include "util.h"
 #include "tls13ech.h"
+#include "pk11_import.h"
 
 namespace nss_test {
 
@@ -33,6 +34,13 @@ class TlsAgentEchTest : public TlsAgentStreamTestClient13 {
 #include "cpputil.h"  // Unused function error if included without HPKE.
 
 static std::string kPublicName("public.name");
+
+// With HRR, the ECH server restores its HPKE context from the cookie using
+// PK11_HPKE_ImportContext without a wrapping key, which a FIPS token refuses.
+#define SKIP_ECH_HRR_IN_FIPS()                                  \
+  if (PK11_IsFIPS()) {                                          \
+    GTEST_SKIP() << "ECH server HRR doesn't work in FIPS mode"; \
+  }
 
 static const std::vector<HpkeSymmetricSuite> kDefaultSuites = {
     {HpkeKdfHkdfSha256, HpkeAeadChaCha20Poly1305},
@@ -152,7 +160,7 @@ class TlsConnectStreamTls13Ech : public TlsConnectTestBase {
                             static_cast<unsigned int>(pkcs8_r.size())};
 
     SECKEYPrivateKey* tmp_priv = nullptr;
-    ASSERT_EQ(SECSuccess, PK11_ImportDERPrivateKeyInfoAndReturnKey(
+    ASSERT_EQ(SECSuccess, nss_test::ImportDERPrivateKeyInfoAndReturnKey(
                               slot.get(), &pkcs8_r_item, nullptr, nullptr,
                               false, false, KU_ALL, &tmp_priv, nullptr));
     priv.reset(tmp_priv);
@@ -162,17 +170,41 @@ class TlsConnectStreamTls13Ech : public TlsConnectTestBase {
   }
 
   void SetMutualEchConfigs(ScopedSECKEYPublicKey& pub,
-                           ScopedSECKEYPrivateKey& priv) {
+                           ScopedSECKEYPrivateKey& priv,
+                           HpkeKemId kem = HpkeDhKemX25519Sha256) {
     DataBuffer echconfig;
-    TlsConnectTestBase::GenerateEchConfig(HpkeDhKemX25519Sha256, kDefaultSuites,
-                                          kPublicName, 100, echconfig, pub,
-                                          priv);
+    TlsConnectTestBase::GenerateEchConfig(kem, kDefaultSuites, kPublicName, 100,
+                                          echconfig, pub, priv);
     ASSERT_EQ(SECSuccess,
               SSL_SetServerEchConfigs(server_->ssl_fd(), pub.get(), priv.get(),
                                       echconfig.data(), echconfig.len()));
     ASSERT_EQ(SECSuccess,
               SSL_SetClientEchConfigs(client_->ssl_fd(), echconfig.data(),
                                       echconfig.len()));
+  }
+
+  void UseKem(HpkeKemId kem, SECOidTag oid) {
+    SECOidData* oidData = SECOID_FindOIDByTag(oid);
+    ASSERT_TRUE(!!oidData);
+
+    ASSERT_LT(oidData->oid.len, 128U);  // one-byte DER length limit
+    std::vector<uint8_t> buf(2 + oidData->oid.len);
+    SECItem ecp = {siDEROID, buf.data(), static_cast<unsigned int>(buf.size())};
+    buf[0] = SEC_ASN1_OBJECT_ID;
+    buf[1] = static_cast<uint8_t>(oidData->oid.len);
+    PORT_Memcpy(&buf[2], oidData->oid.data, oidData->oid.len);
+
+    ScopedPK11SlotInfo slot(PK11_GetInternalSlot());
+    ASSERT_TRUE(!!slot);
+
+    SECKEYPublicKey* pk_ptr = NULL;
+    SECKEYPrivateKey* sk_ptr =
+        PK11_GenerateKeyPair(slot.get(), CKM_EC_KEY_PAIR_GEN, &ecp, &pk_ptr,
+                             PR_FALSE, PR_TRUE, NULL);
+    ScopedSECKEYPublicKey pub(pk_ptr);
+    ScopedSECKEYPrivateKey priv(sk_ptr);
+
+    SetMutualEchConfigs(pub, priv, kem);
   }
 
   //   struct {
@@ -673,6 +705,26 @@ TEST_F(TlsConnectTest, RenegotiateClientECHGrease) {
   server_->StartRenegotiate();
   Handshake();
   CheckConnected();
+}
+
+TEST_F(TlsConnectStreamTls13Ech, EchP256) {
+  EnsureTlsSetup();
+
+  UseKem(HpkeDhKemP256Sha256, SEC_OID_ANSIX962_EC_PRIME256V1);
+
+  client_->ExpectEch();
+  server_->ExpectEch();
+  Connect();
+}
+
+TEST_F(TlsConnectStreamTls13Ech, EchP384) {
+  EnsureTlsSetup();
+
+  UseKem(HpkeDhKemP384Sha384, SEC_OID_SECG_EC_SECP384R1);
+
+  client_->ExpectEch();
+  server_->ExpectEch();
+  Connect();
 }
 
 // The next set of tests all use a fixed server key and a pre-built ClientHello.
@@ -1257,6 +1309,7 @@ SSLHelloRetryRequestAction RetryEchHello(PRBool firstHello,
 
 // Generate HRR on CH1 Inner
 TEST_F(TlsConnectStreamTls13, EchAcceptWithHrr) {
+  SKIP_ECH_HRR_IN_FIPS();
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   DataBuffer echconfig;
@@ -1519,6 +1572,7 @@ TEST_F(TlsConnectStreamTls13Ech, EchRejectMisizedEchXtn) {
 }
 
 TEST_F(TlsConnectStreamTls13Ech, EchRejectDroppedEchXtn) {
+  SKIP_ECH_HRR_IN_FIPS();
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   DataBuffer echconfig;
@@ -1558,6 +1612,7 @@ TEST_F(TlsConnectStreamTls13Ech, EchRejectDroppedEchXtn) {
 // Generate an HRR on CHInner. Mangle the Hrr Xtn causing client to reject ECH
 // which then causes a MAC mismatch.
 TEST_F(TlsConnectStreamTls13Ech, EchRejectMangledHrrXtn) {
+  SKIP_ECH_HRR_IN_FIPS();
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   DataBuffer echconfig;
@@ -1652,6 +1707,7 @@ TEST_F(TlsConnectStreamTls13Ech, EchClientRejectSpuriousHrrXtn) {
 
 // Fail to decrypt CH2. Unlike CH1, this generates an alert.
 TEST_F(TlsConnectStreamTls13, EchFailDecryptCH2) {
+  SKIP_ECH_HRR_IN_FIPS();
   EnsureTlsSetup();
   SetupEch(client_, server_);
   size_t cb_called = 0;
@@ -1726,6 +1782,7 @@ TEST_F(TlsConnectStreamTls13, EchHrrChangeCh2OfferingNY) {
 
 // Change the ECHCipherSuite between CH1 and CH2. Expect alert.
 TEST_F(TlsConnectStreamTls13, EchHrrChangeCipherSuite) {
+  SKIP_ECH_HRR_IN_FIPS();
   ConfigureSelfEncrypt();
   EnsureTlsSetup();
   SetupEch(client_, server_);
@@ -1754,6 +1811,7 @@ TEST_F(TlsConnectStreamTls13, EchHrrChangeCipherSuite) {
 // Configure an external PSK. Generate an HRR off CH1Inner (which contains
 // the PSK extension). Use the same PSK in CH2 and connect.
 TEST_F(TlsConnectStreamTls13, EchAcceptWithHrrAndPsk) {
+  SKIP_ECH_HRR_IN_FIPS();
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   DataBuffer echconfig;
@@ -1781,9 +1839,9 @@ TEST_F(TlsConnectStreamTls13, EchAcceptWithHrrAndPsk) {
   const char* label = "foo";
   ScopedPK11SlotInfo slot(PK11_GetInternalSlot());
   ASSERT_TRUE(!!slot);
-  ScopedPK11SymKey key(PK11_ImportSymKey(slot.get(), CKM_HKDF_KEY_GEN,
-                                         PK11_OriginUnwrap, CKA_DERIVE,
-                                         &key_item, nullptr));
+  ScopedPK11SymKey key(nss_test::ImportSymKey(slot.get(), CKM_HKDF_KEY_GEN,
+                                              PK11_OriginUnwrap, CKA_DERIVE,
+                                              &key_item, nullptr));
   ASSERT_TRUE(!!key);
   AddPsk(key, std::string(label), ssl_hash_sha256);
 
@@ -1845,6 +1903,7 @@ TEST_F(TlsConnectStreamTls13Ech, EchRejectWithHrr) {
 // Server can't change its mind on ECH after HRR. We change the confirmation
 // value and the server panics accordingly.
 TEST_F(TlsConnectStreamTls13Ech, EchHrrServerYN) {
+  SKIP_ECH_HRR_IN_FIPS();
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   DataBuffer echconfig;
@@ -1963,9 +2022,9 @@ TEST_F(TlsConnectStreamTls13, EchRejectWithHrrAndPsk) {
   const char* label = "foo";
   ScopedPK11SlotInfo slot(PK11_GetInternalSlot());
   ASSERT_TRUE(!!slot);
-  ScopedPK11SymKey key(PK11_ImportSymKey(slot.get(), CKM_HKDF_KEY_GEN,
-                                         PK11_OriginUnwrap, CKA_DERIVE,
-                                         &key_item, nullptr));
+  ScopedPK11SymKey key(nss_test::ImportSymKey(slot.get(), CKM_HKDF_KEY_GEN,
+                                              PK11_OriginUnwrap, CKA_DERIVE,
+                                              &key_item, nullptr));
   ASSERT_TRUE(!!key);
   AddPsk(key, std::string(label), ssl_hash_sha256);
   client_->ExpectPsk(ssl_psk_none);
@@ -3135,6 +3194,7 @@ TEST_F(TlsConnectDatagram13, EchNoSupportDTLS) {
 // exercises the server's cleanup of per-ClientHello ECH state between the two
 // ClientHellos.
 TEST_F(TlsConnectStreamTls13, EchAcceptWithHrrSameServer) {
+  SKIP_ECH_HRR_IN_FIPS();
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   DataBuffer echconfig;
@@ -3171,6 +3231,7 @@ TEST_F(TlsConnectStreamTls13, EchAcceptWithHrrSameServer) {
 }
 
 TEST_F(TlsConnectStreamTls13, EchAcceptWithHrrSameServerUncompressed) {
+  SKIP_ECH_HRR_IN_FIPS();
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   DataBuffer echconfig;

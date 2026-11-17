@@ -124,6 +124,14 @@ run-if = [
 
 ["test_ext_browsingData_cookies_cookieStoreId.js"]
 
+["test_ext_builtin_widget.js"]
+run-if = [
+  "appname != 'thunderbird'",
+]
+skip-if = [
+  "os == 'android'", # Widgets are not exposed to android.
+]
+
 ["test_ext_cache_api.js"]
 
 ["test_ext_captivePortal.js"]
@@ -147,9 +155,6 @@ skip-if = [
 run-sequentially = ["true"] # node server exceptions dont replay well
 
 ["test_ext_content_security_policy.js"]
-skip-if = [
-  "os == 'win'", # Bug 1762638
-]
 
 ["test_ext_contentscript_adoptedStyleSheets.js"]
 
@@ -164,14 +169,8 @@ skip-if = [
 ]
 
 ["test_ext_contentscript_context.js"]
-skip-if = [
-  "tsan", # Bug 1683730
-]
 
 ["test_ext_contentscript_context_isolation.js"]
-skip-if = [
-  "tsan", # Bug 1683730
-]
 
 ["test_ext_contentscript_create_document.js"]
 
@@ -207,10 +206,9 @@ skip-if = [
 
 ["test_ext_contentscript_structured_clone.js"]
 
+["test_ext_contentscript_sync_xhr.js"]
+
 ["test_ext_contentscript_teardown.js"]
-skip-if = [
-  "tsan", # Bug 1683730
-]
 
 ["test_ext_contentscript_trustedtypes.js"]
 
@@ -240,9 +238,6 @@ skip-if = [
 run-if = [
   "appname != 'thunderbird'",
 ]
-skip-if = [
-  "tsan", # Bug 1683730
-]
 
 ["test_ext_cookies_errors.js"]
 
@@ -251,9 +246,6 @@ skip-if = [
 ["test_ext_cookies_firstParty.js"]
 run-if = [
   "appname != 'thunderbird'",
-]
-skip-if = [
-  "tsan", # Bug 1683730
 ]
 
 ["test_ext_cookies_onChanged.js"]
@@ -364,7 +356,6 @@ run-if = [
 ]
 skip-if = [
   "os == 'android'",
-  "tsan", # Bug 1683730
 ]
 
 ["test_ext_downloads_eventpage.js"]
@@ -375,7 +366,6 @@ skip-if = [
 ["test_ext_downloads_misc.js"]
 skip-if = [
   "os == 'android'",
-  "tsan", # Bug 1683730
 ]
 
 ["test_ext_downloads_partitionKey.js"]
@@ -396,7 +386,6 @@ skip-if = [
 ["test_ext_downloads_search.js"]
 skip-if = [
   "os == 'android'",
-  "tsan", # tsan: bug 1612707
 ]
 
 ["test_ext_downloads_urlencoded.js"]
@@ -443,7 +432,6 @@ skip-if = [
 requesttimeoutfactor = 9  # Slow on Windows (replaces manifest 2x)
 skip-if = [
   "os == 'android'", # Not shipped on Android.
-  "tsan", # tsan: bug 1612707
 ]
 
 ["test_ext_geturl.js"]
@@ -458,16 +446,10 @@ run-if = [
 ]
 
 ["test_ext_l10n.js"]
-skip-if = [
-  "isolated_process", # Bug 1709961
-]
 
 ["test_ext_localStorage.js"]
 
 ["test_ext_management.js"]
-skip-if = [
-  "os == 'win' && opt", # Bug 1419183 disable on Windows
-]
 
 ["test_ext_management_policy.js"]
 skip-if = [
@@ -610,6 +592,8 @@ skip-if = [
 
 ["test_ext_runtime_getPlatformInfo.js"]
 
+["test_ext_runtime_getVersion.js"]
+
 ["test_ext_runtime_id.js"]
 
 ["test_ext_runtime_messaging_self.js"]
@@ -631,6 +615,8 @@ skip-if = [
 ["test_ext_runtime_sendMessage_multiple.js"]
 
 ["test_ext_runtime_sendMessage_no_receiver.js"]
+
+["test_ext_runtime_sendMessage_response_warning.js"]
 
 ["test_ext_same_site_cookies.js"]
 
@@ -746,7 +732,6 @@ skip-if = [
 ["test_ext_storage_session_on_crash.js"]
 skip-if = [
   "isolated_process", # Bug 1709961
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 2023967
 ]
 
 ["test_ext_storage_sync.js"]
@@ -868,9 +853,6 @@ skip-if = [
 ]
 
 ["test_ext_webRequest_mergecsp.js"]
-skip-if = [
-  "tsan", # Bug 1683730
-]
 
 ["test_ext_webRequest_permission.js"]
 skip-if = [
@@ -883,6 +865,8 @@ skip-if = [
 ]
 
 ["test_ext_webRequest_redirect_mozextension.js"]
+
+["test_ext_webRequest_redirect_resource_timing.js"]
 
 ["test_ext_webRequest_requestSize.js"]
 
@@ -937,9 +921,6 @@ skip-if = [
 ]
 
 ["test_proxy_info_results.js"]
-skip-if = [
-  "os == 'win'", # bug 1802704
-]
 
 ["test_proxy_listener.js"]
 run-if = [

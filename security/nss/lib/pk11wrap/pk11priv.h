@@ -30,13 +30,10 @@ SEC_BEGIN_PROTOS
  * Generic Slot Lists Management
  ************************************************************/
 PK11SlotList *PK11_NewSlotList(void);
-PK11SlotList *PK11_GetPrivateKeyTokens(CK_MECHANISM_TYPE type,
-                                       PRBool needRW, void *wincx);
 SECStatus PK11_AddSlotToList(PK11SlotList *list, PK11SlotInfo *slot, PRBool sorted);
 SECStatus PK11_DeleteSlotFromList(PK11SlotList *list, PK11SlotListElement *le);
 PK11SlotListElement *PK11_FindSlotElement(PK11SlotList *list,
                                           PK11SlotInfo *slot);
-PK11SlotInfo *PK11_FindSlotBySerial(char *serial);
 
 /************************************************************
  * Generic Slot Management
@@ -67,10 +64,7 @@ void PK11_CleanKeyList(PK11SlotInfo *slot);
 SECStatus PK11_DoPassword(PK11SlotInfo *slot, CK_SESSION_HANDLE session,
                           PRBool loadCerts, void *wincx, PRBool alreadyLocked,
                           PRBool contextSpecific);
-SECStatus PK11_VerifyPW(PK11SlotInfo *slot, char *pw);
 void PK11_HandlePasswordCheck(PK11SlotInfo *slot, void *wincx);
-void PK11_SetVerifyPasswordFunc(PK11VerifyPasswordFunc func);
-void PK11_SetIsLoggedInFunc(PK11IsLoggedInFunc func);
 
 /************************************************************
  * Manage the built-In Slot Lists
@@ -91,13 +85,11 @@ SECStatus PK11_ReadSlotCerts(PK11SlotInfo *slot);
 void pk11_SetInternalKeySlot(PK11SlotInfo *slot);
 PK11SlotInfo *pk11_SwapInternalKeySlot(PK11SlotInfo *slot);
 void pk11_SetInternalKeySlotIfFirst(PK11SlotInfo *slot);
+void pk11_SetLastLoginCheck(PK11SlotInfo *slot, PRIntervalTime val);
 
 /*********************************************************************
  *       Mechanism Mapping functions
  *********************************************************************/
-void PK11_AddMechanismEntry(CK_MECHANISM_TYPE type, CK_KEY_TYPE key,
-                            CK_MECHANISM_TYPE keygen, CK_MECHANISM_TYPE pad,
-                            int ivLen, int blocksize);
 CK_MECHANISM_TYPE PK11_GetKeyMechanism(CK_KEY_TYPE type);
 CK_MECHANISM_TYPE PK11_GetKeyGenWithSize(CK_MECHANISM_TYPE type, int size);
 PRBool PK11_DoesMechanismFlag(PK11SlotInfo *, CK_MECHANISM_TYPE type, CK_FLAGS flags);
@@ -120,9 +112,6 @@ CK_OBJECT_HANDLE PK11_DerivePubKeyFromPrivKey(SECKEYPrivateKey *privKey);
 SECStatus PK11_TraversePrivateKeysInSlot(PK11SlotInfo *slot,
                                          SECStatus (*callback)(SECKEYPrivateKey *, void *), void *arg);
 SECKEYPrivateKey *PK11_FindPrivateKeyFromNickname(char *nickname, void *wincx);
-CK_OBJECT_HANDLE *PK11_FindObjectsFromNickname(char *nickname,
-                                               PK11SlotInfo **slotptr, CK_OBJECT_CLASS objclass, int *returnCount,
-                                               void *wincx);
 CK_OBJECT_HANDLE PK11_MatchItem(PK11SlotInfo *slot, CK_OBJECT_HANDLE peer,
                                 CK_OBJECT_CLASS o_class);
 CK_BBOOL pk11_HasAttributeSet_Lock(PK11SlotInfo *slot,
@@ -131,11 +120,6 @@ CK_BBOOL pk11_HasAttributeSet_Lock(PK11SlotInfo *slot,
                                    PRBool haslock);
 CK_RV PK11_GetAttributes(PLArenaPool *arena, PK11SlotInfo *slot,
                          CK_OBJECT_HANDLE obj, CK_ATTRIBUTE *attr, int count);
-int PK11_NumberCertsForCertSubject(CERTCertificate *cert);
-SECStatus PK11_TraverseCertsForSubject(CERTCertificate *cert,
-                                       SECStatus (*callback)(CERTCertificate *, void *), void *arg);
-SECStatus PK11_GetKEAMatchedCerts(PK11SlotInfo *slot1,
-                                  PK11SlotInfo *slot2, CERTCertificate **cert1, CERTCertificate **cert2);
 SECStatus PK11_TraverseCertsInSlot(PK11SlotInfo *slot,
                                    SECStatus (*callback)(CERTCertificate *, void *), void *arg);
 SECStatus PK11_LookupCrls(CERTCrlHeadNode *nodes, int type, void *wincx);
@@ -146,7 +130,6 @@ SECStatus PK11_LookupCrls(CERTCrlHeadNode *nodes, int type, void *wincx);
 PK11Context *PK11_CreateContextByRawKey(PK11SlotInfo *slot,
                                         CK_MECHANISM_TYPE type, PK11Origin origin, CK_ATTRIBUTE_TYPE operation,
                                         SECItem *key, SECItem *param, void *wincx);
-PRBool PK11_HashOK(SECOidTag hashAlg);
 /*
  * Testing interfaces, not for general use. If your code isn't in
  * gtests or cmd, stay away from these. This function forces
@@ -155,6 +138,9 @@ PRBool PK11_HashOK(SECOidTag hashAlg);
  */
 SECStatus _PK11_ContextSetAEADSimulation(PK11Context *context);
 PRBool _PK11_ContextGetAEADSimulation(PK11Context *context);
+
+/* private for testing only */
+SECKEYPrivateKeyInfo *_PK11_DERPrivateKeyToPrivateKeyInfo(SECItem *derPKI);
 
 /**********************************************************************
  * Functions which are  deprecated....

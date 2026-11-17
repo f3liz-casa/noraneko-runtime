@@ -2,6 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files("**"):
+    SCHEDULES.exclusive = ["windows"]
+
 EXPORTS += [
     "DXVA2Manager.h",
     "MFTDecoder.h",
@@ -33,6 +36,10 @@ if CONFIG["MOZ_WMF_MEDIA_ENGINE"]:
         "MFMediaEngineStream.cpp",
         "MFMediaEngineVideoStream.cpp",
         "MFMediaSource.cpp",
+    ]
+    SOURCE_HEADERS += [
+        "MFMediaEngineExtension.h",
+        "MFMediaEngineNotify.h",
     ]
 
 if CONFIG["MOZ_WMF_CDM"]:
@@ -85,3 +92,7 @@ FINAL_LIBRARY = "xul"
 
 # Add libFuzzer configuration directives
 include("/tools/fuzzing/libfuzzer-config.mozbuild")
+
+SOURCE_HEADERS += [
+    "MFTEncoder.h",
+]

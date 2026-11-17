@@ -130,7 +130,7 @@ You could instead make this a shell alias/function, if preferred.
 . Follow the
 instructions here:
 
-<https://firefox-source-docs.mozilla.org/code-quality/lint/usage.html#jujutsu-integration>
+[Jujutsu integration](/code-quality/lint/usage.md#jujutsu-integration)
 
 (adding the config to `jj config edit --repo`)
 
@@ -162,7 +162,7 @@ onto autoland or beta or other bookmarks if you want.
 ### Dropping/pruning/removing obsolete commits
 
 (Note: you may want to look at the [previous
-tip](<#rebasing-work-in-progress-(and-automatically-drop-changes-that-have-landed)>)!)
+tip](#rebasing-work-in-progress-and-automatically-drop-changes-that-have-landed)!)
 
 You can use any of:
 

@@ -203,8 +203,6 @@ bool ProcessTTF(ots::FontFile *header,
                 ots::Font *font,
                 ots::OTSStream *output, const uint8_t *data, size_t length,
                 uint32_t offset = 0) {
-  ots::Buffer file(data + offset, length - offset);
-
   if (offset > length) {
     return OTS_FAILURE_MSG_HDR("offset beyond end of file");
   }
@@ -213,6 +211,8 @@ bool ProcessTTF(ots::FontFile *header,
   if (length > 1024 * 1024 * 1024) {
     return OTS_FAILURE_MSG_HDR("file exceeds 1GB");
   }
+
+  ots::Buffer file(data + offset, length - offset);
 
   if (!file.ReadU32(&font->version)) {
     return OTS_FAILURE_MSG_HDR("error reading sfntVersion");
@@ -772,8 +772,10 @@ bool ProcessGeneric(ots::FontFile *header,
       OTS_WARNING_MSG_HDR("fixing incorrect maxp version for CFF font");
       maxp->version_1 = false;
     }
-  } else if (font->GetTable(OTS_TAG('C','B','D','T')) &&
-             font->GetTable(OTS_TAG('C','B','L','C'))) {
+  } else if ((font->GetTable(OTS_TAG('C','B','D','T')) &&
+              font->GetTable(OTS_TAG('C','B','L','C'))) ||
+             (font->GetTable(OTS_TAG('E','B','D','T')) &&
+              font->GetTable(OTS_TAG('E','B','L','C')))) {
       // We don't sanitize bitmap tables, but don’t reject bitmap-only fonts if
       // we are asked to pass them thru.
   } else {

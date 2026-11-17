@@ -366,3 +366,52 @@ addAccessibleTask(
   },
   { chrome: true, topLevel: true }
 );
+
+/**
+ * Test that list bullets are updated correctly.
+ */
+addAccessibleTask(
+  `
+<ol start="9"><li id="i1">i1</li><li id="i2">i2</li></ol>
+<ol start="9"><li id="i3"></li><li id="i4"></li></ol>
+  `,
+  async function testBulletUpdate(browser, docAcc) {
+    const i2 = findAccessibleChildByID(docAcc, "i2");
+    // characterCount relies on HyperText offsets, so this will populate the
+    // HyperText offsets cache.
+    testCharacterCount(i2, 6);
+    testText(i2, 0, 6, "10. i2");
+    info("Removing i1");
+    // Removing a node from an earlier list reflows the bullets of items in later
+    // lists, but their text doesn't change, so there should be no events for
+    // them.
+    const i4 = findAccessibleChildByID(docAcc, "i4");
+    await contentSpawnMutation(
+      browser,
+      {
+        expected: [[EVENT_TEXT_INSERTED, i2]],
+        unexpected: [[EVENT_TEXT_INSERTED, i4]],
+      },
+      () => {
+        content.document.getElementById("i1").remove();
+      }
+    );
+    // This ensures the offsets cache is updated correctly.
+    testCharacterCount(i2, 5);
+    testText(i2, 0, 5, "9. i2");
+
+    // This is the same except that the items have no text content, just the
+    // item numbering.
+    testCharacterCount(i4, 4);
+    testText(i4, 0, 4, "10. ");
+    info("Removing i3");
+    const changed = waitForEvent(EVENT_TEXT_INSERTED, i4);
+    await invokeContentTask(browser, [], () => {
+      content.document.getElementById("i3").remove();
+    });
+    await changed;
+    testCharacterCount(i4, 3);
+    testText(i4, 0, 3, "9. ");
+  },
+  { chrome: true, topLevel: true }
+);

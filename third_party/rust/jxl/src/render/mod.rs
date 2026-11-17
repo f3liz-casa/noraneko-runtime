@@ -3,15 +3,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use internal::{RenderPipelineShared, RunInOutStage, RunInPlaceStage};
 use std::any::Any;
 
-use crate::{
-    api::JxlOutputBuffer,
-    error::Result,
-    image::{Image, ImageDataType},
-    render::buffer_splitter::BufferSplitter,
-};
+use internal::{RenderPipelineShared, RunInOutStage, RunInPlaceStage};
+
+use crate::api::JxlOutputBuffer;
+use crate::error::Result;
+use crate::image::{Image, ImageDataType};
+use crate::render::buffer_splitter::BufferSplitter;
 
 pub mod buffer_splitter;
 mod builder;
@@ -19,7 +18,6 @@ mod channels;
 mod internal;
 pub mod low_memory_pipeline;
 pub mod save;
-mod simd_utils;
 #[cfg(test)]
 mod simple_pipeline;
 pub mod stages;
@@ -36,18 +34,15 @@ mod test;
 // 9.div_ceil(2)+1 = 6 pixels of border, below the 9 for luma.
 const MAX_BORDER: usize = 9;
 
-pub(crate) use builder::RenderPipelineBuilder;
-pub(crate) use channels::{Channels, ChannelsMut};
-pub(crate) use low_memory_pipeline::LowMemoryRenderPipeline;
+pub use builder::RenderPipelineBuilder;
+pub use channels::{
+    Channels, ChannelsMut, ChannelsView, StoreInterleaved, VecLoad, for_each_chunk,
+};
+pub use low_memory_pipeline::LowMemoryRenderPipeline;
 #[cfg(test)]
 pub(crate) use simple_pipeline::SimpleRenderPipeline;
 
-pub(crate) type ErasedLocalState = dyn Any + Send + Sync;
-
-pub enum StageSpecialCase {
-    F32ToU8 { channel: usize, bit_depth: u8 },
-    ModularToF32 { channel: usize, bit_depth: u8 },
-}
+pub type ErasedLocalState = dyn Any + Send + Sync;
 
 /// Modifies channels in-place.
 pub trait RenderPipelineInPlaceStage: Any + std::fmt::Display + Send + Sync {
@@ -60,6 +55,7 @@ pub trait RenderPipelineInPlaceStage: Any + std::fmt::Display + Send + Sync {
         // one for each channel
         row: &mut [&mut [Self::Type]],
         state: Option<&mut ErasedLocalState>,
+        previous_call_was_previous_row: bool,
     );
 
     fn init_local_state(&self) -> Result<Option<Box<ErasedLocalState>>> {
@@ -67,10 +63,6 @@ pub trait RenderPipelineInPlaceStage: Any + std::fmt::Display + Send + Sync {
     }
 
     fn uses_channel(&self, c: usize) -> bool;
-
-    fn is_special_case(&self) -> Option<StageSpecialCase> {
-        None
-    }
 }
 
 /// Modifies data and writes it to a new buffer, of possibly different type.
@@ -92,6 +84,10 @@ pub trait RenderPipelineInOutStage: Any + std::fmt::Display + Send + Sync {
     const BORDER: (u8, u8);
     const SHIFT: (u8, u8);
 
+    // Note: If previous_call_was_previous_row is true, it is guaranteed
+    // that the previous call on this specific implementor covered the same
+    // range of pixels, but in the row above the current one.
+    // If it is false, it is *NOT* guaranteed that it wasn't.
     fn process_row_chunk(
         &self,
         position: (usize, usize),
@@ -101,6 +97,7 @@ pub trait RenderPipelineInOutStage: Any + std::fmt::Display + Send + Sync {
         // channel, row, column
         output_rows: &mut ChannelsMut<Self::OutputT>,
         state: Option<&mut ErasedLocalState>,
+        previous_call_was_previous_row: bool,
     );
 
     fn init_local_state(&self) -> Result<Option<Box<ErasedLocalState>>> {
@@ -108,13 +105,9 @@ pub trait RenderPipelineInOutStage: Any + std::fmt::Display + Send + Sync {
     }
 
     fn uses_channel(&self, c: usize) -> bool;
-
-    fn is_special_case(&self) -> Option<StageSpecialCase> {
-        None
-    }
 }
 
-pub(crate) trait RenderPipeline: Sized {
+pub trait RenderPipeline: Sized {
     type Buffer: 'static;
 
     fn new_from_shared(shared: RenderPipelineShared<Self::Buffer>) -> Result<Self>;

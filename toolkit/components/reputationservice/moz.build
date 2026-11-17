@@ -35,3 +35,11 @@ DEFINES["GOOGLE_PROTOBUF_NO_STATIC_INITIALIZER"] = True
 include("/ipc/chromium/chromium-config.mozbuild")
 
 TEST_DIRS += ["test/gtest"]
+
+LICENSED_UNDER += [
+    "chromium",
+]
+
+SOURCE_HEADERS += [
+    "ApplicationReputationTelemetryUtils.h",
+]

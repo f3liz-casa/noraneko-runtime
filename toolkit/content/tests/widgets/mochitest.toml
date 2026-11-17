@@ -45,8 +45,6 @@ tags = "os_integration"
 
 ["test_image_recognition_unsupported.html"]
 skip-if = [
-  "os == 'mac' && os_version == '10.15' && arch == 'x86_64'", # Bug 1929419
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64'", # Bug 1929419
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 2019466
 ]
 
@@ -56,7 +54,6 @@ run-if = [
 ]
 tags = "os_integration"
 skip-if = [
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64' && xorigin", # Bug 1929419
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 2034604
 ]
 
@@ -64,15 +61,6 @@ skip-if = [
 tags = "os_integration"
 
 ["test_nac_mutations.html"]
-
-["test_panel_list_shadow_node_anchor.html"]
-support-files = [
-  "../../widgets/panel-list/panel-item.tokens.css",
-  "../../widgets/panel-list/panel-item.css",
-  "../../widgets/panel-list/panel-list.tokens.css",
-  "../../widgets/panel-list/panel-list.mjs",
-  "../../widgets/panel-list/panel-list.css",
-]
 
 ["test_ua_widget_elementFromPoint.html"]
 
@@ -114,7 +102,6 @@ skip-if = [
 ["test_videocontrols_keyhandler.html"]
 skip-if = [
   "os == 'android'", # Bug 1366957
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && debug", # Bug 1948193
 ]
 
 ["test_videocontrols_l10n_trusted_types.html"]
@@ -132,7 +119,6 @@ skip-if = [
 ["test_videocontrols_standalone.html"]
 skip-if = [
   "os == 'android'", # bug 1075573
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # Bug 1804621
 ]
 
 ["test_videocontrols_touch_events_on_controlBar_and_playButton.html"]

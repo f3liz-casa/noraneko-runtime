@@ -4,7 +4,6 @@
 
 // Import globals from the files imported by the .xul files.
 /* import-globals-from main.js */
-/* import-globals-from home.js */
 /* import-globals-from search.js */
 /* import-globals-from privacy.js */
 /* import-globals-from sync.js */
@@ -13,7 +12,7 @@
 /* import-globals-from /browser/base/content/utilityOverlay.js */
 /* import-globals-from /toolkit/content/preferencesBindings.js */
 
-/** @import MozButton from "chrome://global/content/elements/moz-button.mjs" */
+/** @import { MozButton } from "chrome://global/content/elements/moz-button.mjs" */
 /** @import {SettingConfig, SettingEmitChange} from "chrome://global/content/preferences/Setting.mjs" */
 /** @import {SettingControlConfig, SettingOptionConfig} from "chrome://browser/content/preferences/widgets/setting-control.mjs" */
 /** @import {SettingGroup} from "chrome://browser/content/preferences/widgets/setting-group.mjs" */
@@ -184,6 +183,20 @@ function srdSectionEnabled(section) {
   return srdSectionPrefs.all || srdSectionPrefs[section];
 }
 
+/**
+ * Gate for the in-progress Notifications sub-page. Deliberately not part of
+ * srdSectionPrefs, whose sections are all on once the redesign is enabled.
+ *
+ * @type {Record<string, boolean>}
+ */
+const notificationsSection = {};
+XPCOMUtils.defineLazyPreferenceGetter(
+  notificationsSection,
+  "enabled",
+  "browser.preferences.notifications-section.enabled",
+  false
+);
+
 var { SettingPaneManager, friendlyPrefCategoryNameToInternalName } =
   ChromeUtils.importESModule(
     "chrome://browser/content/preferences/config/SettingPaneManager.mjs",
@@ -342,7 +355,6 @@ const CONFIG_PANES = Object.freeze({
     iconSrc: "chrome://browser/skin/home.svg",
     groupIds: ["defaultBrowserHome", "startupHome", "homepage", "home"],
     module: "chrome://browser/content/preferences/config/home-startup.mjs",
-    replaces: "home",
   },
   languages: {
     l10nId: "preferences-languages-header3",
@@ -395,9 +407,23 @@ const CONFIG_PANES = Object.freeze({
   permissionsData: {
     l10nId: "permissions-data-section",
     iconSrc: "chrome://browser/skin/permissions.svg",
-    groupIds: ["permissions", "dataCollection"],
+    groupIds: ["notificationsEntry", "permissions", "dataCollection"],
     module: "chrome://browser/content/preferences/config/permissions-data.mjs",
     visible: () => srdSectionEnabled("permissionsData"),
+  },
+  notifications: {
+    parent: "permissionsData",
+    l10nId: "notifications-section-header",
+    // The gate has to be the group list rather than `visible`, which
+    // SettingPane.handleVisibility only honors for top-level panes. With no
+    // groups, registerPane creates neither the pane nor its category button,
+    // so about:preferences#notifications falls back to the default pane. The
+    // parent is checked too, or the pane would render orphaned without it.
+    groupIds:
+      notificationsSection.enabled && srdSectionEnabled("permissionsData")
+        ? ["websiteNotifications"]
+        : [],
+    module: "chrome://browser/content/preferences/config/notifications.mjs",
   },
   personalizeSmartWindow: {
     parent: "ai",
@@ -439,6 +465,7 @@ const CONFIG_PANES = Object.freeze({
       "searchShortcuts",
       "searchSuggestions",
       "firefoxSuggest",
+      "addressBarNavigation",
     ],
     iconSrc: "chrome://browser/skin/preferences/category-search.svg",
     module: "chrome://browser/content/preferences/config/search.mjs",
@@ -496,7 +523,7 @@ const CONFIG_PANES = Object.freeze({
   },
   vpnSiteRules: {
     parent: "privacy",
-    l10nId: "ip-protection-site-rules-header",
+    l10nId: "ip-protection-site-rules-header-1",
     groupIds: ["vpnSiteRules"],
     replaces: "privacy",
   },
@@ -565,7 +592,6 @@ function init_all() {
     document.getElementById("category-general").hidden = false;
     document.getElementById("nav-separator").hidden = true;
   }
-  register_module("paneHome", gHomePane);
   register_module("paneSearch", gSearchPane);
   register_module("panePrivacy", gPrivacyPane);
 
@@ -605,16 +631,14 @@ function init_all() {
     SettingPaneManager.registerPane(id, config);
   }
 
-  // customHomepage is registered separately because its groups are set up by
-  // AboutPreferences.observe(), which only fires in the redesign path.
-  if (redesignEnabled) {
-    SettingPaneManager.registerPane("customHomepage", {
-      parent: "home",
-      l10nId: "home-custom-homepage-subpage",
-      groupIds: ["customHomepage"],
-      module: "chrome://browser/content/preferences/config/home-startup.mjs",
-    });
+  SettingPaneManager.registerPane("customHomepage", {
+    parent: "home",
+    l10nId: "home-custom-homepage-subpage",
+    groupIds: ["customHomepage"],
+    module: "chrome://browser/content/preferences/config/home-startup.mjs",
+  });
 
+  if (redesignEnabled) {
     if (
       AppConstants.platform == "win" &&
       Services.prefs.getBoolPref("browser.shell.customIcon.enabled", false) &&

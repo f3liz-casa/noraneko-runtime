@@ -4,7 +4,9 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/StaticPtr.h"
 #include "nsArrayEnumerator.h"
 #include "nsCOMPtr.h"
 #include "nsCocoaUtils.h"
@@ -113,6 +115,71 @@ static void InvokeFilePickerCallbackDeferred(
       "nsFilePicker::InvokeCallback",
       [callback, aResult]() { callback->Done(aResult); }));
 }
+
+namespace {
+
+class FilePickerCallback final : public nsIFilePickerShownCallback {
+ public:
+  NS_DECL_ISUPPORTS
+
+  FilePickerCallback(nsIWidget* aParentWidget,
+                     nsIFilePickerShownCallback* aCallback)
+      : mParentWidget(aParentWidget), mCallback(aCallback) {}
+
+  NS_IMETHOD Done(nsIFilePicker::ResultCode aResult) override;
+
+ private:
+  ~FilePickerCallback() = default;
+
+  nsIWidget* mParentWidget;
+  nsCOMPtr<nsIFilePickerShownCallback> mCallback;
+};
+
+struct PendingFilePicker {
+  nsIWidget* mParentWidget;
+  nsCOMPtr<nsIRunnable> mRunnable;
+  RefPtr<FilePickerCallback> mCallback;
+};
+
+// Concurrent save sheets on one window can leave later requests without a
+// completion callback. Present one picker at a time for each parent window.
+StaticAutoPtr<nsTArray<PendingFilePicker>> sPendingFilePickers;
+
+void ShowNextFilePicker(nsIWidget* aParentWidget) {
+  if (!sPendingFilePickers) {
+    return;
+  }
+  for (auto& request : *sPendingFilePickers) {
+    if (request.mParentWidget != aParentWidget) {
+      continue;
+    }
+    if (request.mRunnable) {
+      RefPtr<FilePickerCallback> callback = request.mCallback;
+      nsresult rv = NS_DispatchToMainThread(request.mRunnable.forget());
+      if (NS_FAILED(rv)) {
+        callback->Done(nsIFilePicker::returnCancel);
+      }
+    }
+    return;
+  }
+}
+
+NS_IMPL_ISUPPORTS(FilePickerCallback, nsIFilePickerShownCallback)
+
+NS_IMETHODIMP FilePickerCallback::Done(nsIFilePicker::ResultCode aResult) {
+  if (mCallback) {
+    nsCOMPtr<nsIFilePickerShownCallback> callback = mCallback.forget();
+    callback->Done(aResult);
+  }
+  if (sPendingFilePickers) {
+    sPendingFilePickers->RemoveElementsBy(
+        [&](const auto& aRequest) { return aRequest.mCallback == this; });
+    ShowNextFilePicker(mParentWidget);
+  }
+  return NS_OK;
+}
+
+}  // namespace
 
 nsFilePicker::nsFilePicker() = default;
 
@@ -232,10 +299,23 @@ nsFilePicker::Open(nsIFilePickerShownCallback* aCallback) {
     return NS_OK;
   }
 
+  if (!sPendingFilePickers) {
+    sPendingFilePickers = new nsTArray<PendingFilePicker>;
+    ClearOnShutdown(&sPendingFilePickers);
+  }
+
   RefPtr<nsFilePicker> self = this;
-  nsCOMPtr<nsIFilePickerShownCallback> callback = aCallback;
-  return NS_DispatchToMainThread(
-      NS_NewRunnableFunction("nsFilePicker::Open", [self, callback]() mutable {
+  RefPtr<FilePickerCallback> callback =
+      MakeRefPtr<FilePickerCallback>(mParentWidget, aCallback);
+  nsCOMPtr<nsIRunnable> runnable = NS_NewRunnableFunction(
+      "nsFilePicker::Open", [self, callback]() MOZ_CAN_RUN_SCRIPT_BOUNDARY {
+        if (self->mParentWidget && self->mParentWidget->Destroyed()) {
+          callback->Done(nsIFilePicker::returnCancel);
+          return;
+        }
+        if (self->MaybeBlockFilePicker(callback)) {
+          return;
+        }
         switch (self->mMode) {
           case modeOpen:
             self->PresentOpenPanel(false, callback);
@@ -251,12 +331,14 @@ nsFilePicker::Open(nsIFilePickerShownCallback* aCallback) {
             break;
           default:
             NS_ERROR("Unknown file picker mode");
-            if (callback) {
-              callback->Done(nsIFilePicker::returnCancel);
-            }
+            callback->Done(nsIFilePicker::returnCancel);
             break;
         }
-      }));
+      });
+  sPendingFilePickers->AppendElement(
+      PendingFilePicker{mParentWidget, runnable, callback});
+  ShowNextFilePicker(mParentWidget);
+  return NS_OK;
 }
 
 void nsFilePicker::BeginPanelAsync(NSSavePanel* aPanel,
@@ -453,7 +535,7 @@ void nsFilePicker::PresentOpenPanel(bool aAllowMultiple,
         retVal = returnOK;
       }
     }
-    InvokeFilePickerCallbackDeferred(callback, retVal);
+    self->FinishOpenOrFolderPanel(callback, retVal);
     NS_OBJC_END_TRY_IGNORE_BLOCK;
   });
 
@@ -510,11 +592,47 @@ void nsFilePicker::PresentFolderPanel(nsIFilePickerShownCallback* aCallback) {
         }
       }
     }
-    InvokeFilePickerCallbackDeferred(callback, retVal);
+    self->FinishOpenOrFolderPanel(callback, retVal);
     NS_OBJC_END_TRY_IGNORE_BLOCK;
   });
 
   NS_OBJC_END_TRY_IGNORE_BLOCK;
+}
+
+void nsFilePicker::FinishOpenOrFolderPanel(
+    nsIFilePickerShownCallback* aCallback, ResultCode aResult) {
+  if (aResult == returnCancel || !ShouldRunContentAnalysis()) {
+    InvokeFilePickerCallbackDeferred(aCallback, aResult);
+    return;
+  }
+
+  // Content Analysis may show its own dialog, so as with
+  // InvokeFilePickerCallbackDeferred, wait for the panel's modal session to
+  // finish unwinding before starting the check.
+  RefPtr<nsFilePicker> self = this;
+  nsCOMPtr<nsIFilePickerShownCallback> callback = aCallback;
+  NS_DispatchToMainThread(NS_NewRunnableFunction(
+      "nsFilePicker::CheckContentAnalysis", [self, callback, aResult]() {
+        nsCOMArray<nsIFile> files;
+        files.AppendElements(self->mFiles);
+        self->CheckContentAnalysis(std::move(files))
+            ->Then(
+                GetMainThreadSerialEventTarget(), __func__,
+                [self, callback, aResult](nsCOMArray<nsIFile> aAllowedFiles) {
+                  self->mFiles.Clear();
+                  aAllowedFiles.SwapElements(self->mFiles);
+                  if (callback) {
+                    callback->Done(self->mFiles.IsEmpty() ? returnCancel
+                                                          : aResult);
+                  }
+                },
+                [self, callback](nsresult aError) {
+                  self->mFiles.Clear();
+                  if (callback) {
+                    callback->Done(returnCancel);
+                  }
+                });
+      }));
 }
 
 void nsFilePicker::PresentSavePanel(nsIFilePickerShownCallback* aCallback) {

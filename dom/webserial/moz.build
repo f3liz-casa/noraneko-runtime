@@ -19,12 +19,18 @@ EXPORTS.mozilla.dom += [
 
 if CONFIG["OS_TARGET"] == "WINNT":
     SOURCES += [
+        "Win32SerialOverlappedIO.cpp",
         "Win32SerialParityCheckStream.cpp",
         "Win32SerialPlatformService.cpp",
     ]
     OS_LIBS += [
         "cfgmgr32",
         "setupapi",
+    ]
+    SOURCE_HEADERS += [
+        "Win32SerialOverlappedIO.h",
+        "Win32SerialParityCheckStream.h",
+        "Win32SerialPlatformService.h",
     ]
 elif (
     (CONFIG["OS_TARGET"] == "Darwin" and CONFIG["TARGET_OS"] != "iOS")
@@ -34,10 +40,16 @@ elif (
     UNIFIED_SOURCES += [
         "PosixSerialPlatformService.cpp",
     ]
+    SOURCE_HEADERS += [
+        "PosixSerialPlatformService.h",
+    ]
 
     if CONFIG["OS_TARGET"] == "Darwin":
         SOURCES += [
             "MacBluetoothServiceClassId.mm",
+        ]
+        SOURCE_HEADERS += [
+            "MacBluetoothServiceClassId.h",
         ]
         # toolkit/xre is needed for MacAutoreleasePool.h, which is not in
         # EXPORTS.mozilla.
@@ -95,3 +107,12 @@ BROWSER_CHROME_MANIFESTS += [
 ]
 
 include("/ipc/chromium/chromium-config.mozbuild")
+
+SOURCE_HEADERS += [
+    "PosixSerialParityDecodeStream.h",
+    "SerialLogging.h",
+    "SerialPermissionRequest.h",
+    "SerialPortPumps.h",
+    "SerialPortStreamAlgorithms.h",
+    "TestSerialPlatformService.h",
+]

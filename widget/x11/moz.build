@@ -4,6 +4,7 @@
 
 with Files("**"):
     BUG_COMPONENT = ("Core", "Widget: Gtk")
+    SCHEDULES.exclusive = ["linux"]
 
 SOURCES += [
     "keysym2ucs.c",
@@ -12,3 +13,7 @@ SOURCES += [
 FINAL_LIBRARY = "xul"
 
 CFLAGS += CONFIG["MOZ_X11_CFLAGS"]
+
+SOURCE_HEADERS += [
+    "keysym2ucs.h",
+]

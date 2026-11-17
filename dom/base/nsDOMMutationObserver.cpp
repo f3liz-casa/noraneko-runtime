@@ -145,7 +145,8 @@ void nsMutationReceiver::Disconnect(bool aRemoveFromObserver) {
 
 void nsMutationReceiver::AttributeWillChange(Element* aElement,
                                              int32_t aNameSpaceID,
-                                             nsAtom* aAttribute, AttrModType) {
+                                             nsAtom* aAttribute,
+                                             AttrModType aModType) {
   if (nsAutoMutationBatch::IsBatching() ||
       !ObservesAttr(RegisterTarget(), aElement, aNameSpaceID, aAttribute)) {
     return;
@@ -166,7 +167,10 @@ void nsMutationReceiver::AttributeWillChange(Element* aElement,
     }
   }
 
-  if (AttributeOldValue() && m->mPrevValue.IsVoid()) {
+  MOZ_ASSERT_IF(aModType == AttrModType::Addition,
+                !aElement->HasAttr(aNameSpaceID, aAttribute));
+  if (AttributeOldValue() && m->mPrevValue.IsVoid() &&
+      aModType != AttrModType::Addition) {
     if (!aElement->GetAttr(aNameSpaceID, aAttribute, m->mPrevValue)) {
       m->mPrevValue.SetIsVoid(true);
     }
@@ -608,7 +612,6 @@ void nsDOMMutationObserver::RescheduleForRun() {
 
 void nsDOMMutationObserver::Observe(nsINode& aTarget,
                                     const MutationObserverInit& aOptions,
-                                    nsIPrincipal& aSubjectPrincipal,
                                     ErrorResult& aRv) {
   bool childList = aOptions.mChildList;
   bool attributes =
@@ -661,7 +664,7 @@ void nsDOMMutationObserver::Observe(nsINode& aTarget,
     return;
   }
 
-  nsTArray<RefPtr<nsAtom>> filters;
+  AutoTArray<RefPtr<nsAtom>, 2> filters;
   bool allAttrs = true;
   if (aOptions.mAttributeFilter.WasPassed()) {
     allAttrs = false;
@@ -671,7 +674,7 @@ void nsDOMMutationObserver::Observe(nsINode& aTarget,
     filters.SetCapacity(len);
 
     for (uint32_t i = 0; i < len; ++i) {
-      filters.AppendElement(NS_Atomize(filtersAsString[i]));
+      filters.AppendElement(NS_AtomizeMainThread(filtersAsString[i]));
     }
   }
 
@@ -687,13 +690,6 @@ void nsDOMMutationObserver::Observe(nsINode& aTarget,
   r->SetAnimations(animations);
   r->SetChromeOnlyNodes(chromeOnlyNodes);
   r->RemoveClones();
-
-  if (!aSubjectPrincipal.IsSystemPrincipal() &&
-      !aSubjectPrincipal.GetIsAddonOrExpandedAddonPrincipal()) {
-    if (nsPIDOMWindowInner* window = aTarget.OwnerDoc()->GetInnerWindow()) {
-      window->SetMutationObserverHasObservedNodeForTelemetry();
-    }
-  }
 
 #ifdef DEBUG
   for (int32_t i = 0; i < mReceivers.Count(); ++i) {

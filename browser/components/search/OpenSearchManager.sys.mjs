@@ -106,11 +106,13 @@ class _OpenSearchManager {
         ? this.#hiddenEngines.get(browser)
         : this.#offeredEngines.get(browser)) || [];
 
+    // Caching open search data in sys modules must not keep the browser alive.
+    let browserRef = new WeakRef(browser);
     engines.push({
       uri: engine.href,
       title: engine.title,
       get icon() {
-        return browser.mIconURL;
+        return browserRef.deref()?.mIconURL;
       },
     });
 
@@ -147,9 +149,7 @@ class _OpenSearchManager {
         win.gBrowser.selectedBrowser,
         engines || []
       );
-      if (urlbar.sapName == "searchbar") {
-        urlbar.searchModeSwitcher.toggleAddEnginesBadge(!!engines?.length);
-      }
+      urlbar.searchModeSwitcher.toggleAddEnginesBadge(!!engines?.length);
     }
 
     let searchBar = win.document.getElementById("searchbar");

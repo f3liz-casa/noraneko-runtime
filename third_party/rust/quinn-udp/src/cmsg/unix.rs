@@ -14,7 +14,7 @@ impl MsgHdr for libc::msghdr {
         unsafe { libc::CMSG_FIRSTHDR(self) }
     }
 
-    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
+    unsafe fn cmsg_nxt_hdr(&self, cmsg: *const Self::ControlMessage) -> *mut Self::ControlMessage {
         unsafe { libc::CMSG_NXTHDR(self, cmsg) }
     }
 
@@ -32,29 +32,6 @@ impl MsgHdr for libc::msghdr {
     }
 }
 
-#[cfg(apple_fast)]
-impl MsgHdr for crate::imp::msghdr_x {
-    type ControlMessage = libc::cmsghdr;
-
-    fn cmsg_first_hdr(&self) -> *mut Self::ControlMessage {
-        let selfp = self as *const _ as *mut libc::msghdr;
-        unsafe { libc::CMSG_FIRSTHDR(selfp) }
-    }
-
-    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
-        let selfp = self as *const _ as *mut libc::msghdr;
-        unsafe { libc::CMSG_NXTHDR(selfp, cmsg) }
-    }
-
-    fn set_control_len(&mut self, len: usize) {
-        self.msg_controllen = len as _;
-    }
-
-    fn control_len(&self) -> usize {
-        self.msg_controllen as _
-    }
-}
-
 /// Helpers for [`libc::cmsghdr`]
 impl CMsgHdr for libc::cmsghdr {
     fn cmsg_len(length: usize) -> usize {
@@ -65,8 +42,8 @@ impl CMsgHdr for libc::cmsghdr {
         unsafe { libc::CMSG_SPACE(length as _) as usize }
     }
 
-    fn cmsg_data(&self) -> *mut c_uchar {
-        unsafe { libc::CMSG_DATA(self) }
+    unsafe fn cmsg_data(this: *const Self) -> *mut c_uchar {
+        unsafe { libc::CMSG_DATA(this) }
     }
 
     fn set(&mut self, level: c_int, ty: c_int, len: usize) {

@@ -58,6 +58,19 @@ bool StackScriptEntriesCollapser(const char* aStackEntry,
           !strcmp(aStackEntry, "(content script)"));
 }
 
+namespace geckoprofiler::markers {
+
+struct HangMarker : public mozilla::BaseMarkerType<HangMarker> {
+  static constexpr const char* Name = "BHR-detected hang";
+  using MS = mozilla::MarkerSchema;
+  static constexpr MS::Location Locations[] = {
+      MS::Location::MarkerChart,
+      MS::Location::MarkerTable,
+  };
+};
+
+}  // namespace geckoprofiler::markers
+
 namespace mozilla {
 
 /**
@@ -420,49 +433,35 @@ void BackgroundHangThread::ReportHang(TimeDuration aHangTime,
       dom::RemoteType::NotRemote().Stringify(), mThreadName, mRunnableName,
       std::move(mHangStack), std::move(mAnnotations));
 
-  PersistedToDisk persistedToDisk = aPersistedToDisk;
-  if (aPersistedToDisk == PersistedToDisk::Yes && XRE_IsParentProcess() &&
-      mManager->mPermahangFile) {
-    auto res = WriteHangDetailsToFile(hangDetails, mManager->mPermahangFile);
-    persistedToDisk = res.isOk() ? PersistedToDisk::Yes : PersistedToDisk::No;
-  }
-
   // If the hang processing thread exists, we can process the native stack
   // on it. Otherwise, we are unable to report a native stack, so we just
-  // report without one.
+  // report without one. Permahangs are also written to disk on that thread,
+  // so that the file I/O doesn't happen while we hold mManager->mLock.
   if (mManager->mHangProcessingThread) {
+    nsCOMPtr<nsIFile> permahangFile =
+        aPersistedToDisk == PersistedToDisk::Yes && XRE_IsParentProcess()
+            ? mManager->mPermahangFile
+            : nullptr;
     nsCOMPtr<nsIRunnable> processHangStackRunnable =
-        new ProcessHangStackRunnable(std::move(hangDetails), persistedToDisk);
+        new ProcessHangStackRunnable(std::move(hangDetails),
+                                     std::move(permahangFile));
     mManager->mHangProcessingThread->Dispatch(
         processHangStackRunnable.forget());
   } else {
     NS_WARNING("Unable to report native stack without a BHR processing thread");
     RefPtr<nsHangDetails> hd =
-        new nsHangDetails(std::move(hangDetails), persistedToDisk);
+        new nsHangDetails(std::move(hangDetails), PersistedToDisk::No);
     hd->Submit();
   }
 
   if (profiler_thread_is_being_profiled_for_markers(
           mStackHelper.GetThreadId())) {
-    struct HangMarker {
-      static constexpr Span<const char> MarkerTypeName() {
-        return MakeStringSpan("BHR-detected hang");
-      }
-      static void StreamJSONMarkerData(
-          baseprofiler::SpliceableJSONWriter& aWriter) {}
-      static MarkerSchema MarkerTypeDisplay() {
-        using MS = MarkerSchema;
-        MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
-        return schema;
-      }
-    };
-
     const TimeStamp endTime = TimeStamp::Now();
     const TimeStamp startTime = endTime - aHangTime;
     profiler_add_marker("BHR-detected hang", geckoprofiler::category::OTHER,
                         {MarkerThreadId(mStackHelper.GetThreadId()),
                          MarkerTiming::Interval(startTime, endTime)},
-                        HangMarker{});
+                        geckoprofiler::markers::HangMarker{});
   }
 }
 

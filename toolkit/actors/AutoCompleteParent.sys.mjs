@@ -83,6 +83,20 @@ Services.ppmm.addMessageListener(
   }
 );
 
+Services.ppmm.addMessageListener(
+  "AutoComplete:MaybeLeaveSecondaryAction",
+  message => {
+    if (compareContext(message)) {
+      let actor = currentActor;
+      if (actor && actor.openedPopup) {
+        return actor.openedPopup.maybeLeaveSecondaryAction();
+      }
+    }
+
+    return false;
+  }
+);
+
 // AutoCompleteResultView is an abstraction around a list of results.
 // It implements enough of nsIAutoCompleteController and
 // nsIAutoCompleteInput to make the richlistbox popup work. Since only
@@ -166,9 +180,74 @@ var AutoCompleteResultView = {
   },
 };
 
+/**
+ * The type of saved record an autocomplete result represents, as reported in
+ * telemetry, or null when the result isn't a saved record.
+ *
+ * @param {string} style The result's style
+ * @param {object} comment The result's parsed comment
+ * @returns {?string} "formhistory", "address", "payment" or "password"
+ */
+function getSavedRecordType(style, comment) {
+  switch (style) {
+    case "fromhistory":
+      return "formhistory";
+    case "loginWithOrigin":
+      return "password";
+    case "autofill":
+      return ["address", "payment"].includes(comment.type)
+        ? comment.type
+        : null;
+  }
+  return null;
+}
+
 export class AutoCompleteParent extends JSWindowActorParent {
+  #reportedTelemetryInputs = new Set();
+
+  /**
+   * Identifies the current dropdown open, so that its close can be correlated
+   * with it in telemetry.
+   *
+   * @type {?string}
+   */
+  #dropdownFlowId = null;
+
+  /**
+   * The saved record type shown in the current dropdown, if any.
+   *
+   * @type {?string}
+   */
+  #dropdownRecordType = null;
+
+  /**
+   * Why the current dropdown is closing; null means it was dismissed.
+   *
+   * @type {?string}
+   */
+  #dropdownCloseReason = null;
+
+  /**
+   * The entry whose provider was last asked for a preview, so that the
+   * provider can be told to drop it once the preview moves elsewhere.
+   *
+   * @type {{
+   *   actor: JSWindowActorParent,
+   *   fillMessageName: string,
+   *   fillMessageData: object
+   * } | null}
+   */
+  #previewedEntry = null;
+
   didDestroy() {
     if (this.openedPopup) {
+      // Only reached on platforms (GeckoView) where the actor is torn down
+      // while the popup is still open. On desktop, nsFormFillController's
+      // own pagehide handling closes the popup via the generic path first,
+      // so this never marks a desktop tab-close/navigation close as
+      // "left_page" -- see the dropdown_closed close_reason doc in
+      // metrics.yaml.
+      this.#dropdownCloseReason = "left_page";
       this.openedPopup.closePopup();
     }
   }
@@ -222,6 +301,18 @@ export class AutoCompleteParent extends JSWindowActorParent {
         // we don't have a big shrink effect if we closed with a
         // large list, and then open on a small one.
         this.openedPopup.adjustHeight();
+
+        if (this.#dropdownRecordType) {
+          Glean.autocomplete.dropdownClosed.record({
+            record_type: this.#dropdownRecordType,
+            close_reason: this.#dropdownCloseReason ?? "dismissed",
+            flow_id: this.#dropdownFlowId ?? "",
+          });
+        }
+        this.#dropdownRecordType = null;
+        this.#dropdownCloseReason = null;
+        this.#dropdownFlowId = null;
+
         this.openedPopup = null;
         currentActor = null;
         evt.target.removeEventListener("popuphidden", this);
@@ -237,6 +328,7 @@ export class AutoCompleteParent extends JSWindowActorParent {
     isDarkBackground,
     results,
     selectedIndex,
+    inputElementIdentifier,
   }) {
     if (!results.length || this.openedPopup) {
       // We shouldn't ever be showing an empty popup, and if we
@@ -297,7 +389,8 @@ export class AutoCompleteParent extends JSWindowActorParent {
     );
     this.openedPopup.invalidate();
     this.openedPopup.selectedIndex = selectedIndex;
-    this._maybeRecordTelemetryEvents(results);
+    this._maybeRecordTelemetryEvents(results, inputElementIdentifier);
+    this.#recordDropdownShown(results);
 
     // This is a temporary solution. We should replace it with
     // proper meta information about the popup once such field
@@ -314,10 +407,53 @@ export class AutoCompleteParent extends JSWindowActorParent {
   /**
    * @param {object[]} results - Non-empty array of autocomplete results.
    */
-  _maybeRecordTelemetryEvents(results) {
+  #recordDropdownShown(results) {
+    this.#dropdownCloseReason = null;
+    this.#dropdownFlowId = Services.uuid.generateUUID().toString();
+
+    let recordType = null;
+    for (const result of results) {
+      try {
+        recordType = getSavedRecordType(
+          result.style,
+          JSON.parse(result.comment || "{}")
+        );
+      } catch (ex) {
+        // Non-saved-record results (e.g. plain history suggestions) can
+        // have a non-JSON comment; they're never a saved record type.
+        continue;
+      }
+      if (recordType) {
+        break;
+      }
+    }
+    this.#dropdownRecordType = recordType;
+    if (recordType) {
+      Glean.autocomplete.dropdownShown.record({
+        record_type: recordType,
+        flow_id: this.#dropdownFlowId,
+      });
+    }
+  }
+
+  /**
+   * @param {object[]} results - Non-empty array of autocomplete results.
+   */
+  _maybeRecordTelemetryEvents(results, inputElementIdentifier = null) {
     let actor =
       this.browsingContext.currentWindowGlobal.getActor("LoginManager");
     actor.maybeRecordPasswordGenerationShownTelemetryEvent(results);
+
+    if (!inputElementIdentifier) {
+      return;
+    }
+    const inputKey = `${inputElementIdentifier.browsingContextId}|${inputElementIdentifier.id}`;
+    // The event is recorded once per input element: reopening the popup on the
+    // same field tells us nothing new and would skew the duration data.
+    if (this.#reportedTelemetryInputs.has(inputKey)) {
+      return;
+    }
+    this.#reportedTelemetryInputs.add(inputKey);
 
     // Assume the result with the start time (loginsFooter) is last.
     let lastResult = results[results.length - 1];
@@ -332,11 +468,6 @@ export class AutoCompleteParent extends JSWindowActorParent {
     let rawExtraData = JSON.parse(lastResult.comment).telemetryEventData;
     if (!rawExtraData.searchStartTimeMS) {
       throw new Error("Invalid autocomplete search start time");
-    }
-
-    if (rawExtraData.stringLength > 1) {
-      // To reduce event volume, only record for lengths 0 and 1.
-      return;
     }
 
     let duration =
@@ -387,6 +518,12 @@ export class AutoCompleteParent extends JSWindowActorParent {
     }
 
     if (!results.length) {
+      // Only set the fallback reason if a secondary action (handled in
+      // selectAutoCompleteEntry) hasn't already explained this close, e.g.
+      // deleting the last entry empties the dropdown via this same path.
+      if (!this.#dropdownCloseReason) {
+        this.#dropdownCloseReason = "typed_through";
+      }
       this.closePopup();
     } else {
       AutoCompleteResultView.setResults(this, results);
@@ -478,6 +615,7 @@ export class AutoCompleteParent extends JSWindowActorParent {
             dir,
             isDarkBackground,
             selectedIndex,
+            inputElementIdentifier,
           });
           this.notifyListeners();
 
@@ -632,6 +770,7 @@ export class AutoCompleteParent extends JSWindowActorParent {
     const prefixToActor = [
       { prefix: "PasswordManager", actor: "LoginManager" },
       { prefix: "FormAutofill", actor: "FormAutofill" },
+      { prefix: "FormHistory", actor: "FormHistory" },
       { prefix: "SmartFormFill", actor: "SmartFormFill" },
     ];
 
@@ -688,21 +827,12 @@ export class AutoCompleteParent extends JSWindowActorParent {
    * Clear the autocomplete preview
    */
   clearAutoCompletePreview() {
-    const selectedIndex = this.openedPopup?.selectedIndex;
-    const result = AutoCompleteResultView.results[selectedIndex];
-    if (!result) {
-      return;
-    }
-
-    const { fillMessageName, fillMessageData } = JSON.parse(
-      result.comment || "{}"
+    const entry = this.#previewedEntry;
+    this.#previewedEntry = null;
+    entry?.actor?.onAutoCompleteEntryClearPreview?.(
+      entry.fillMessageName,
+      entry.fillMessageData
     );
-    if (!fillMessageName) {
-      return;
-    }
-
-    const actor = this.#getActorByMessagePrefix(fillMessageName);
-    actor?.onAutoCompleteEntryClearPreview?.(fillMessageName, fillMessageData);
   }
 
   /**
@@ -718,12 +848,23 @@ export class AutoCompleteParent extends JSWindowActorParent {
     const { fillMessageName, fillMessageData } = JSON.parse(
       result.comment || "{}"
     );
-    if (!fillMessageName) {
+    const actor = fillMessageName
+      ? this.#getActorByMessagePrefix(fillMessageName)
+      : null;
+
+    // A provider only drops its preview when another of its own entries is
+    // previewed, so an entry belonging to a different provider (such as the
+    // Smart Form Fill row) has to drop the previous preview here.
+    if (this.#previewedEntry?.actor != actor) {
+      this.clearAutoCompletePreview();
+    }
+
+    if (!actor) {
       return;
     }
 
-    const actor = this.#getActorByMessagePrefix(fillMessageName);
-    actor?.onAutoCompleteEntryHovered?.(fillMessageName, fillMessageData);
+    this.#previewedEntry = { actor, fillMessageName, fillMessageData };
+    actor.onAutoCompleteEntryHovered?.(fillMessageName, fillMessageData);
   }
 
   /**
@@ -735,6 +876,9 @@ export class AutoCompleteParent extends JSWindowActorParent {
    * selects which of its `actions` to dispatch. An action that declares no
    * `fillMessageName` dispatches nothing.
    *
+   * A secondary action on a saved record is recorded in telemetry, with the
+   * record type inferred from the result and the action's `type`.
+   *
    * @param {boolean} secondary Whether to dispatch the entry's secondary action.
    * @param {number} [actionIndex] Which secondary menu action to dispatch;
    *   omitted for a single (non-menu) secondary action.
@@ -744,6 +888,15 @@ export class AutoCompleteParent extends JSWindowActorParent {
     const result = AutoCompleteResultView.results[selectedIndex];
     if (!result) {
       return;
+    }
+    if (secondary) {
+      // A secondary action (e.g. deleting the last entry) can empty the
+      // dropdown and close it via invalidate(), which would otherwise
+      // default that close to "typed_through". Mark it dismissed instead,
+      // since the user didn't pick a suggestion or keep typing.
+      this.#dropdownCloseReason = "dismissed";
+    } else {
+      this.#dropdownCloseReason = "selected";
     }
 
     const parsedComment = JSON.parse(result.comment || "{}");
@@ -756,6 +909,14 @@ export class AutoCompleteParent extends JSWindowActorParent {
         entry = secondaryAction;
       } else {
         entry = secondaryAction.actions?.[actionIndex] ?? {};
+      }
+
+      const recordType = getSavedRecordType(result.style, parsedComment);
+      if (recordType && entry.type) {
+        Glean.autocomplete.recordInteraction.record({
+          record_type: recordType,
+          interaction_type: entry.type,
+        });
       }
     }
 

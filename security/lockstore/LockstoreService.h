@@ -7,6 +7,7 @@
 
 #include "mozilla/Mutex.h"
 #include "mozilla/Result.h"
+#include "mozilla/Span.h"
 #include "mozilla/security/lockstore/lockstore_ffi_generated.h"
 #include "nsCOMPtr.h"
 #include "nsILockstore.h"
@@ -50,6 +51,7 @@ class LockstoreService final : public nsILockstore, public nsIObserver {
   // for JS callers.
   // ---------------------------------------------------------------------
 
+  Result<bool, nsresult> DoKekExists(const nsACString& aKekRef);
   nsresult DoUnlockKek(const nsACString& aKekRef, const nsACString& aSecret,
                        uint64_t aTimeoutMs);
   nsresult DoLockKek(const nsACString& aKekRef);
@@ -59,26 +61,34 @@ class LockstoreService final : public nsILockstore, public nsIObserver {
   nsresult DoImportDek(const nsACString& aDekName, const nsACString& aKekRef,
                        const nsTArray<uint8_t>& aDekBytes, bool aExtractable);
   Result<bool, nsresult> DoIsDekExtractable(const nsACString& aDekName);
+  Result<bool, nsresult> DoDekExists(const nsACString& aDekName);
   nsresult DoDeleteDek(const nsACString& aDekName);
   nsresult DoAddKek(const nsACString& aDekName, const nsACString& aFromKekRef,
                     const nsACString& aToKekRef);
   nsresult DoRemoveKek(const nsACString& aDekName, const nsACString& aKekRef);
   nsresult DoSwitchKek(const nsACString& aDekName, const nsACString& aOldKekRef,
                        const nsACString& aNewKekRef);
+  nsresult DoMigrateDeks(const nsACString& aFromKekRef,
+                         const nsACString& aToKekRef);
   Result<nsTArray<nsCString>, nsresult> DoListDeks();
   Result<nsTArray<nsCString>, nsresult> DoListKeks(const nsACString& aDekName);
-  Result<nsTArray<uint8_t>, nsresult> DoEncrypt(
-      const nsACString& aDekName, const nsACString& aKekRef,
-      const nsTArray<uint8_t>& aPlaintext);
+  Result<nsTArray<uint8_t>, nsresult> DoEncrypt(const nsACString& aDekName,
+                                                const nsACString& aKekRef,
+                                                Span<const uint8_t> aPlaintext);
   Result<nsTArray<uint8_t>, nsresult> DoDecrypt(
       const nsACString& aDekName, const nsACString& aKekRef,
-      const nsTArray<uint8_t>& aCiphertext);
+      Span<const uint8_t> aCiphertext);
   Result<nsTArray<uint8_t>, nsresult> DoGetDek(const nsACString& aDekName,
                                                const nsACString& aKekRef);
+  Result<nsTArray<uint8_t>, nsresult> DoGetDekAutomatic(
+      const nsACString& aDekName);
   Result<nsCString, nsresult> DoCreateKek(const nsACString& aKekType,
                                           const nsACString& aIdentifier,
                                           const nsACString& aSecret,
                                           uint64_t aCacheTimeoutMs);
+  nsresult DoChangeKekPassword(const nsACString& aKekRef,
+                               const nsACString& aOldSecret,
+                               const nsACString& aNewSecret);
   nsresult DoDeleteKek(const nsACString& aKekRef);
 
  private:

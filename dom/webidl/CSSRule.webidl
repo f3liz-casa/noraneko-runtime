@@ -26,8 +26,10 @@ interface CSSRule {
   const unsigned short NAMESPACE_RULE = 10;
   [BinaryName="typeForBindings"] readonly attribute unsigned short type;
   attribute UTF8String cssText;
-  readonly attribute CSSRule? parentRule;
+  [BinaryName="parentRuleForBindings"] readonly attribute CSSRule? parentRule;
   readonly attribute CSSStyleSheet? parentStyleSheet;
+  [ChromeOnly]
+  boolean supportsDeclarations();
 };
 
 // https://drafts.csswg.org/css-animations/#interface-cssrule

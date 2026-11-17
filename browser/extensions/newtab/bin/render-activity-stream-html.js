@@ -7,7 +7,6 @@ const fs = require("fs");
 const { mkdir } = require("shelljs");
 const path = require("path");
 const { pathToFileURL } = require("url");
-const chalk = require("chalk");
 
 const DEFAULT_OPTIONS = {
   // Glob leading from CWD to the parent of the intended prerendered directory.
@@ -60,7 +59,7 @@ function templateHTML(options) {
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; object-src 'none'; script-src resource: chrome:; connect-src https:; img-src https: data: blob: chrome:; media-src chrome:; style-src 'unsafe-inline'; frame-src https://stage-games-particle.merino.nonprod.webservices.mozgcp.net https://prod-games-particle.merino.prod.webservices.mozgcp.net;"
+      content="default-src 'none'; object-src 'none'; script-src resource: chrome:; connect-src https:; img-src https: data: blob: chrome:; media-src chrome:; style-src 'unsafe-inline'; frame-src https://stage-games-particle.merino.nonprod.webservices.mozgcp.net https://prod-games-particle.merino.prod.webservices.mozgcp.net moz-extension:;"
     />
     <meta name="color-scheme" content="light dark" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -73,6 +72,7 @@ function templateHTML(options) {
     <link rel="localization" href="branding/brand.ftl" />
     <link rel="localization" href="toolkit/branding/brandings.ftl" />
     <link rel="localization" href="browser/newtab/newtab.ftl" />
+    <link rel="localization" href="preview/newtabPreview.ftl" />
     <link rel="localization" href="toolkit/global/mozMessageBar.ftl" />
     <link
       rel="stylesheet"
@@ -133,6 +133,11 @@ function templateHTML(options) {
     <script
       async
       type="module"
+      src="chrome://global/content/elements/moz-segmented-control.mjs"
+    ></script>
+    <script
+      async
+      type="module"
       src="chrome://global/content/elements/moz-select.mjs"
     ></script>
     <script
@@ -171,7 +176,7 @@ function templateHTML(options) {
 function writeFiles(destPath, filesMap, options) {
   for (const [file, templater] of filesMap) {
     fs.writeFileSync(path.join(destPath, file), templater({ options }));
-    console.log(chalk.green(`✓ ${file}`));
+    console.log(`✓ ${file}`);
   }
 }
 

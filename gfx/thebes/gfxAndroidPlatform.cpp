@@ -16,9 +16,11 @@
 #include "gfxImageSurface.h"
 #include "gfxTextRun.h"
 #include "mozilla/CountingAllocatorBase.h"
+#include "mozilla/EnumeratedArray.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_webgl.h"
+#include "mozilla/Tokenizer.h"
 #include "mozilla/Utf16.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/gfxVars.h"
@@ -135,23 +137,107 @@ void gfxAndroidPlatform::WaitForInitializeFontAPI() {
   }
 }
 
+static void AppendMimeType(nsCString& aList, const nsACString& aMimeType) {
+  if (!aList.IsEmpty()) {
+    aList.Append(',');
+  }
+  aList.Append(aMimeType);
+}
+
+using HwDecodeMaxSizes = EnumeratedArray<media::MediaCodec, gfx::IntSize,
+                                         size_t(media::MediaCodec::SENTINEL)>;
+
+// Codecs that map to a media::MediaCodec are returned in aSupported, and in
+// aSupported10Bit if they can also decode a 10-bit profile. The largest width
+// and height supported by any hardware decoder for each codec are returned in
+// aHwMaxSizes. Decoder MIME types which do not map are returned as comma
+// separated lists instead.
+static void QueryMediaCodecsSupported(
+    media::MediaCodecsSupported& aSupported,
+    media::MediaCodecsSupported& aSupported10Bit, HwDecodeMaxSizes& aHwMaxSizes,
+    nsCString& aUnmappedSwDecode, nsCString& aUnmappedHwDecode) {
+  jni::ObjectArray::LocalRef supportedTypes =
+      java::HardwareCodecCapabilityUtils::GetSupportedMimeTypesWithAccelInfo();
+  for (size_t i = 0; i < supportedTypes->Length(); i++) {
+    const nsCString s =
+        jni::String::LocalRef(supportedTypes->GetElement(i))->ToCString();
+    const int32_t sep = s.FindChar(' ');
+    if (sep <= 0 || static_cast<uint32_t>(sep) + 1 >= s.Length()) {
+      continue;
+    }
+
+    const auto caps = Substring(s, 0, sep);
+    const auto mimeType = Substring(s, sep + 1);
+    const media::MediaCodec codec =
+        media::MCSInfo::GetMediaCodecFromMimeType(mimeType);
+    if (codec == media::MediaCodec::SENTINEL) {
+      if (caps == "SW"_ns) {
+        AppendMimeType(aUnmappedSwDecode, mimeType);
+      } else if (caps == "HW"_ns) {
+        AppendMimeType(aUnmappedHwDecode, mimeType);
+      }
+      continue;
+    }
+
+    if (caps == "SW"_ns) {
+      aSupported += media::MCSInfo::GetMediaCodecsSupportEnum(
+          codec, media::DecodeSupport::SoftwareDecode);
+    } else if (caps == "HW"_ns) {
+      aSupported += media::MCSInfo::GetMediaCodecsSupportEnum(
+          codec, media::DecodeSupport::HardwareDecode);
+    } else if (caps == "SWE"_ns) {
+      aSupported += media::MCSInfo::GetMediaCodecsSupportEnum(
+          codec, media::EncodeSupport::SoftwareEncode);
+    } else if (caps == "HWE"_ns) {
+      aSupported += media::MCSInfo::GetMediaCodecsSupportEnum(
+          codec, media::EncodeSupport::HardwareEncode);
+    } else if (caps == "SW10B"_ns) {
+      aSupported10Bit += media::MCSInfo::GetMediaCodecsSupportEnum(
+          codec, media::DecodeSupport::SoftwareDecode);
+    } else if (caps == "HW10B"_ns) {
+      aSupported10Bit += media::MCSInfo::GetMediaCodecsSupportEnum(
+          codec, media::DecodeSupport::HardwareDecode);
+    } else if (StringBeginsWith(caps, "HWMAX"_ns)) {
+      Tokenizer t(Substring(caps, 5));
+      int32_t width, height;
+      if (t.ReadInteger(&width) && t.CheckChar(',') && t.ReadInteger(&height) &&
+          t.CheckEOF() && width > 0 && height > 0) {
+        gfx::IntSize& maxSize = aHwMaxSizes[codec];
+        maxSize.width = std::max(maxSize.width, width);
+        maxSize.height = std::max(maxSize.height, height);
+      }
+    }
+  }
+}
+
+void gfxAndroidPlatform::InitPlatformHardwareVideoConfig() {
+  media::MediaCodecsSupported supported;
+  media::MediaCodecsSupported supported10Bit;
+  HwDecodeMaxSizes hwMaxSizes;
+  nsCString unmappedSwDecode;
+  nsCString unmappedHwDecode;
+  QueryMediaCodecsSupported(supported, supported10Bit, hwMaxSizes,
+                            unmappedSwDecode, unmappedHwDecode);
+  gfxVars::SetPlatformMediaCodecsSupported(supported);
+  gfxVars::SetPlatformMediaCodecs10BitSupported(supported10Bit);
+  gfxVars::SetPlatformH264HwDecodeMaxSize(hwMaxSizes[media::MediaCodec::H264]);
+  gfxVars::SetPlatformHEVCHwDecodeMaxSize(hwMaxSizes[media::MediaCodec::HEVC]);
+  gfxVars::SetPlatformVP8HwDecodeMaxSize(hwMaxSizes[media::MediaCodec::VP8]);
+  gfxVars::SetPlatformVP9HwDecodeMaxSize(hwMaxSizes[media::MediaCodec::VP9]);
+  gfxVars::SetPlatformAV1HwDecodeMaxSize(hwMaxSizes[media::MediaCodec::AV1]);
+  gfxVars::SetPlatformUnmappedSwDecodeMimeTypes(unmappedSwDecode);
+  gfxVars::SetPlatformUnmappedHwDecodeMimeTypes(unmappedHwDecode);
+}
+
 // static
 bool gfxAndroidPlatform::IsHwCodecSupported(media::MediaCodec aCodec,
                                             bool aEncoder) {
-  switch (aCodec) {
-    case media::MediaCodec::H264:
-      return java::HardwareCodecCapabilityUtils::HasHWH264(aEncoder);
-    case media::MediaCodec::VP8:
-      return java::HardwareCodecCapabilityUtils::HasHWVP8(aEncoder);
-    case media::MediaCodec::VP9:
-      return java::HardwareCodecCapabilityUtils::HasHWVP9(aEncoder);
-    case media::MediaCodec::AV1:
-      return java::HardwareCodecCapabilityUtils::HasHWAV1(aEncoder);
-    case media::MediaCodec::HEVC:
-      return java::HardwareCodecCapabilityUtils::HasHWHEVC(aEncoder);
-    default:
-      return false;
+  if (aEncoder) {
+    return media::MCSInfo::SupportsHardwareEncode(
+        gfxVars::PlatformMediaCodecsSupported(), aCodec);
   }
+  return media::MCSInfo::SupportsHardwareDecode(
+      gfxVars::PlatformMediaCodecsSupported(), aCodec);
 }
 
 gfxAndroidPlatform::gfxAndroidPlatform() {

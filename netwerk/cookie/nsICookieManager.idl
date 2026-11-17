@@ -23,7 +23,10 @@ interface nsICookieValidation;
 
 /**
  * An optional interface for accessing or removing the cookies
- * that are in the cookie list
+ * that are in the cookie list.
+ *
+ * Expired cookies are never exposed by the getters of this interface, even if
+ * they have not been purged yet.
  */
 
 [scriptable, builtinclass, uuid(AAAB6710-0F2C-11d5-A53B-0010A401EB10)]
@@ -218,30 +221,9 @@ interface nsICookieManager : nsISupports
                            out nsICookie aCookie);
 
   /**
-   * Count how many cookies exist within the base domain of 'aHost'.
-   * Thus, for a host "weather.yahoo.com", the base domain would be "yahoo.com",
-   * and any host or domain cookies for "yahoo.com" and its subdomains would be
-   * counted.
-   *
-   * NOTE: this counts only cookies stored under the default OriginAttributes
-   * bucket (no userContextId, no partitionKey, etc.). Cookies set inside a
-   * container (non-zero userContextId) or under a partitionKey will NOT be
-   * counted. Callers asking "does this site have any cookies?" across all
-   * origin attributes should use hasCookiesForSite instead.
-   *
-   * @param aHost
-   *        the host string to search for, e.g. "google.com". this should consist
-   *        of only the host portion of a URI. see @add for a description of
-   *        acceptable host strings.
-   *
-   * @return the number of cookies found.
-   */
-  unsigned long countCookiesFromHost(in AUTF8String aHost);
-
-  /**
    * Greedily check whether any cookie exists for the site (base domain of
    * 'aHost') whose OriginAttributes match aPattern. Returns as soon as a
-   * matching cookie is found. Unlike countCookiesFromHost, this iterates
+   * matching cookie is found. Unlike getCookiesFromHost, this iterates
    * across all OriginAttributes buckets within the base domain, so it can
    * see cookies stored in containers (userContextId), under a partitionKey,
    * etc.
@@ -274,8 +256,6 @@ interface nsICookieManager : nsISupports
    *                time and path length as described in RFC 6265
    *
    * @return an array of nsICookie objects.
-   *
-   * @see countCookiesFromHost
    */
   [implicit_jscontext]
   Array<nsICookie> getCookiesFromHost(in AUTF8String aHost,

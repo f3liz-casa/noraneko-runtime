@@ -15,15 +15,13 @@
 #  include "Logging.h"
 #endif
 
-#include "mozilla/a11y/DocAccessibleChild.h"
-#ifdef MOZ_ENABLE_SKIA_PDF
-#  include "mozilla/a11y/PdfStructTreeBuilder.h"
-#endif
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Components.h"
 #include "mozilla/EventListenerManager.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_accessibility.h"
+#include "mozilla/a11y/DocAccessibleChild.h"
+#include "mozilla/a11y/PdfStructTreeBuilder.h"
 #include "mozilla/dom/Event.h"  // for Event
 #include "nsContentUtils.h"
 #include "nsCoreUtils.h"
@@ -198,7 +196,6 @@ bool DocManager::IsProcessingRefreshDriverNotification() const {
 }
 #endif
 
-#ifdef MOZ_ENABLE_SKIA_PDF
 /* static */
 void DocManager::NotifyOfPrintDocument(dom::Document* aDoc) {
   if (!StaticPrefs::accessibility_tagged_pdf_output_enabled()) {
@@ -234,7 +231,7 @@ void DocManager::NotifyOfPrintDocument(dom::Document* aDoc) {
   AutoTArray<RefPtr<dom::Document>, 8> descendants;
   aDoc->CollectDescendantDocuments(
       descendants, dom::Document::IncludeSubResources::No,
-      [](const dom::Document* aDescDoc) { return true; });
+      [](const dom::Document* /*aDescDoc*/) { return true; });
   for (dom::Document* descDoc : descendants) {
     if (DocAccessible* descDocAcc =
             serv->CreateDocOrRootAccessible(descDoc, /* aAllowStatic */ true)) {
@@ -254,7 +251,6 @@ void DocManager::NotifyOfPrintDocument(dom::Document* aDoc) {
     }
   }
 }
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // DocManager protected
@@ -382,38 +378,43 @@ DocManager::OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
 }
 
 NS_IMETHODIMP
-DocManager::OnProgressChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
-                             int32_t aCurSelfProgress, int32_t aMaxSelfProgress,
-                             int32_t aCurTotalProgress,
-                             int32_t aMaxTotalProgress) {
+DocManager::OnProgressChange(nsIWebProgress* /*aWebProgress*/,
+                             nsIRequest* /*aRequest*/,
+                             int32_t /*aCurSelfProgress*/,
+                             int32_t /*aMaxSelfProgress*/,
+                             int32_t /*aCurTotalProgress*/,
+                             int32_t /*aMaxTotalProgress*/) {
   MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
 NS_IMETHODIMP
-DocManager::OnLocationChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
-                             nsIURI* aLocation, uint32_t aFlags) {
+DocManager::OnLocationChange(nsIWebProgress* /*aWebProgress*/,
+                             nsIRequest* /*aRequest*/, nsIURI* /*aLocation*/,
+                             uint32_t /*aFlags*/) {
   MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
 NS_IMETHODIMP
-DocManager::OnStatusChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
-                           nsresult aStatus, const char16_t* aMessage) {
+DocManager::OnStatusChange(nsIWebProgress* /*aWebProgress*/,
+                           nsIRequest* /*aRequest*/, nsresult /*aStatus*/,
+                           const char16_t* /*aMessage*/) {
   MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
 NS_IMETHODIMP
-DocManager::OnSecurityChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
-                             uint32_t aState) {
+DocManager::OnSecurityChange(nsIWebProgress* /*aWebProgress*/,
+                             nsIRequest* /*aRequest*/, uint32_t /*aState*/) {
   MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
 NS_IMETHODIMP
-DocManager::OnContentBlockingEvent(nsIWebProgress* aWebProgress,
-                                   nsIRequest* aRequest, uint32_t aEvent) {
+DocManager::OnContentBlockingEvent(nsIWebProgress* /*aWebProgress*/,
+                                   nsIRequest* /*aRequest*/,
+                                   uint32_t /*aEvent*/) {
   MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
@@ -538,11 +539,13 @@ DocAccessible* DocManager::CreateDocOrRootAccessible(Document* aDocument,
   }
 
   // Ignore hidden documents, resource documents, static clone
-  // (printing) documents and documents without a docshell.
+  // (printing) documents, documents without a docshell, and documents that
+  // are no longer current for their WindowGlobal (e.g. the initial about:blank
+  // after its WindowGlobal has been reused for a new document).
   if (!nsCoreUtils::IsDocumentVisibleConsideringInProcessAncestors(aDocument) ||
       aDocument->IsResourceDoc() ||
       (!aAllowStatic && aDocument->IsStaticDocument()) ||
-      !aDocument->IsActive()) {
+      !aDocument->IsActive() || !aDocument->IsCurrentActiveDocument()) {
     return nullptr;
   }
 

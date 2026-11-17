@@ -3,6 +3,8 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 
 package org.mozilla.geckoview.test
 
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import androidx.core.net.toUri
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -46,6 +48,9 @@ class PromptDelegateTest :
                     }
             ),
     ) {
+    // Never completed; a field so the prompt is not GC-dismissed while the test drives it.
+    private val pendingResponse = GeckoResult<PromptResponse>(Handler(Looper.getMainLooper()))
+
     @Test
     fun popupTestAllow() {
         // Ensure popup blocking is enabled for this test.
@@ -226,7 +231,6 @@ class PromptDelegateTest :
         mainSession.loadTestPath(HELLO_HTML_PATH)
         sessionRule.waitForPageStop()
 
-        val result = GeckoResult<Void>()
         sessionRule.delegateDuringNextWait(
             object : PromptDelegate {
                 @AssertCalled(count = 1)
@@ -235,14 +239,13 @@ class PromptDelegateTest :
                     prompt: PromptDelegate.AlertPrompt,
                 ): GeckoResult<PromptDelegate.PromptResponse> {
                     assertThat("Message should match", "Alert!", equalTo(prompt.message))
-                    result.complete(null)
                     return GeckoResult.fromValue(prompt.dismiss())
                 }
             }
         )
 
         mainSession.evaluateJS("alert('Alert!');")
-        sessionRule.waitForResult(result)
+        mainSession.waitUntilCalled(PromptDelegate::class, "onAlertPrompt")
     }
 
     // This test checks that saved logins are returned to the app when calling onAuthPrompt
@@ -330,7 +333,7 @@ class PromptDelegateTest :
                     assertThat("auth matches", authInfo.password, equalTo("bar"))
                     promptInstanceDelegate.prompt = request
                     request.setDelegate(promptInstanceDelegate)
-                    return GeckoResult()
+                    return pendingResponse
                 }
             }
         )
@@ -537,11 +540,43 @@ class PromptDelegateTest :
 
     @Test
     @WithDisplay(width = 100, height = 100)
+    fun selectTestNested() {
+        mainSession.loadTestPath(SELECT_NESTED_HTML_PATH)
+        sessionRule.waitForPageStop()
+
+        sessionRule.delegateUntilTestEnd(
+            object : PromptDelegate {
+                @AssertCalled(count = 1)
+                override fun onChoicePrompt(
+                    session: GeckoSession,
+                    prompt: PromptDelegate.ChoicePrompt,
+                ): GeckoResult<PromptDelegate.PromptResponse>? {
+                    assertThat("Should not be multiple", prompt.type, equalTo(PromptDelegate.ChoicePrompt.Type.SINGLE))
+                    assertThat("There should be three choices", prompt.choices.size, equalTo(3))
+                    assertThat("First choice is correct", prompt.choices[0].label, equalTo("ABC"))
+                    assertThat("Second choice is correct", prompt.choices[1].label, equalTo("DEF"))
+                    assertThat("Third choice is a group", prompt.choices[2].label, equalTo("GROUP"))
+                    assertThat("Group has one child", prompt.choices[2].items!!.size, equalTo(1))
+                    assertThat(
+                        "Group child is correct",
+                        prompt.choices[2].items!![0].label,
+                        equalTo("GHI"),
+                    )
+                    return null
+                }
+            }
+        )
+
+        mainSession.synthesizeTap(20, 20)
+        mainSession.waitUntilCalled(PromptDelegate::class, "onChoicePrompt")
+    }
+
+    @Test
+    @WithDisplay(width = 100, height = 100)
     fun selectTestSize() {
         mainSession.loadTestPath(SELECT_LISTBOX_HTML_PATH)
         sessionRule.waitForPageStop()
 
-        val result = GeckoResult<Void>()
         sessionRule.delegateUntilTestEnd(
             object : PromptDelegate {
                 @AssertCalled(count = 1)
@@ -554,14 +589,13 @@ class PromptDelegateTest :
                     assertThat("First choice is correct", prompt.choices[0].label, equalTo("ABC"))
                     assertThat("Second choice is correct", prompt.choices[1].label, equalTo("DEF"))
                     assertThat("Third choice is correct", prompt.choices[2].label, equalTo("GHI"))
-                    result.complete(null)
                     return null
                 }
             }
         )
 
         mainSession.synthesizeTap(20, 20)
-        sessionRule.waitForResult(result)
+        mainSession.waitUntilCalled(PromptDelegate::class, "onChoicePrompt")
     }
 
     @Test
@@ -570,7 +604,6 @@ class PromptDelegateTest :
         mainSession.loadTestPath(SELECT_MULTIPLE_HTML_PATH)
         sessionRule.waitForPageStop()
 
-        val result = GeckoResult<Void>()
         sessionRule.delegateUntilTestEnd(
             object : PromptDelegate {
                 @AssertCalled(count = 1)
@@ -583,14 +616,13 @@ class PromptDelegateTest :
                     assertThat("First choice is correct", prompt.choices[0].label, equalTo("ABC"))
                     assertThat("Second choice is correct", prompt.choices[1].label, equalTo("DEF"))
                     assertThat("Third choice is correct", prompt.choices[2].label, equalTo("GHI"))
-                    result.complete(null)
                     return null
                 }
             }
         )
 
         mainSession.synthesizeTap(20, 20)
-        sessionRule.waitForResult(result)
+        mainSession.waitUntilCalled(PromptDelegate::class, "onChoicePrompt")
     }
 
     @Test
@@ -911,13 +943,7 @@ class PromptDelegateTest :
             }
         )
 
-        mainSession.evaluateJS(
-            """
-            document.documentElement.style.paddingTop = "50px";
-            this.c = document.getElementById('colorexample');
-            """
-                .trimIndent()
-        )
+        mainSession.evaluateJS("this.c = document.getElementById('colorexample')")
 
         val promise =
             mainSession.evaluatePromiseJS(
@@ -933,8 +959,7 @@ class PromptDelegateTest :
                     .trimIndent()
             )
 
-        mainSession.evaluateJS("document.addEventListener('click', () => this.c.click(), { once: true });")
-        mainSession.synthesizeTap(1, 1)
+        mainSession.showPicker("#colorexample")
 
         assertThat(
             "Value should match",
@@ -989,8 +1014,7 @@ class PromptDelegateTest :
                     .trimIndent()
             )
 
-        mainSession.notifyUserGestureActivation()
-        mainSession.evaluateJS("document.getElementById('colorexample').showPicker()")
+        mainSession.showPicker("#colorexample")
 
         assertThat(
             "Value should match",
@@ -1005,8 +1029,7 @@ class PromptDelegateTest :
         mainSession.loadTestPath(PROMPT_HTML_PATH)
         mainSession.waitForPageStop()
 
-        mainSession.notifyUserGestureActivation()
-        mainSession.evaluateJS("document.getElementById('dateexample').showPicker()")
+        mainSession.showPicker("#dateexample")
 
         sessionRule.waitUntilCalled(
             object : PromptDelegate {
@@ -1335,8 +1358,7 @@ class PromptDelegateTest :
         mainSession.loadTestPath(PROMPT_HTML_PATH)
         mainSession.waitForPageStop()
 
-        mainSession.notifyUserGestureActivation()
-        mainSession.evaluateJS("document.getElementById('fileexample').showPicker()")
+        mainSession.showPicker("#fileexample")
 
         sessionRule.waitUntilCalled(
             object : PromptDelegate {
@@ -1368,8 +1390,7 @@ class PromptDelegateTest :
         mainSession.loadTestPath(PROMPT_HTML_PATH)
         mainSession.waitForPageStop()
 
-        mainSession.notifyUserGestureActivation()
-        mainSession.evaluateJS("document.getElementById('filemultipleexample').showPicker()")
+        mainSession.showPicker("#filemultipleexample")
 
         sessionRule.waitUntilCalled(
             object : PromptDelegate {
@@ -1424,8 +1445,7 @@ class PromptDelegateTest :
             }
         )
 
-        mainSession.notifyUserGestureActivation()
-        mainSession.evaluateJS("document.getElementById('direxample').showPicker()")
+        mainSession.showPicker("#direxample")
 
         sessionRule.waitUntilCalled(
             object : PromptDelegate {

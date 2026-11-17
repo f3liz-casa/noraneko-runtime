@@ -8,6 +8,8 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/StaticMutex.h"
+#include "mozilla/gfx/Point.h"
+#include "mozilla/gfx/Types.h"
 #include "nsString.h"
 #include "nsTHashMap.h"
 #include "nsThreadUtils.h"
@@ -62,14 +64,36 @@ enum class MediaCodecsSupport : int {
 #undef X
       SENTINEL
 };
+
+// Enumset containing per-codec SW/HW support
+using MediaCodecsSupported = EnumSet<MediaCodecsSupport, uint64_t>;
+
+// Whether the platform supports a DRM scheme. Unknown until it is queried.
+enum class DrmSchemeSupport : uint8_t { Unknown, Unsupported, Supported };
+
+// All decode related entries, including the lack of HW extension entries.
+inline constexpr MediaCodecsSupported kMediaCodecsDecodeMask = {
+#define X(name)                                                             \
+  MediaCodecsSupport::SW_DECODE(name), MediaCodecsSupport::HW_DECODE(name), \
+      MediaCodecsSupport::LACK_HW_EXTENSION(name),
+    CODEC_LIST
+#undef X
+};
+
+// All encode related entries.
+inline constexpr MediaCodecsSupported kMediaCodecsEncodeMask = {
+#define X(name) \
+  MediaCodecsSupport::SW_ENCODE(name), MediaCodecsSupport::HW_ENCODE(name),
+    CODEC_LIST
+#undef X
+};
+
 #undef SW_DECODE
 #undef HW_DECODE
 #undef SW_ENCODE
 #undef HW_ENCODE
+#undef LACK_HW_EXTENSION
 #undef CODEC_LIST  // end of macros!
-
-// Enumset containing per-codec SW/HW support
-using MediaCodecsSupported = EnumSet<MediaCodecsSupport, uint64_t>;
 
 // Codec-agnostic SW/HW decode support information.
 enum class DecodeSupport : int {
@@ -207,6 +231,16 @@ class MCSInfo final {
   static MediaCodecsSupport GetMediaCodecsSupportEnum(
       const MediaCodec& aCodec, const EncodeSupport& aSupport);
 
+  // Returns only the decode or encode entries present in the args.
+  static MediaCodecsSupported GetDecodeSupported(
+      const MediaCodecsSupported& aSupportedCodecs) {
+    return aSupportedCodecs & kMediaCodecsDecodeMask;
+  }
+  static MediaCodecsSupported GetEncodeSupported(
+      const MediaCodecsSupported& aSupportedCodecs) {
+    return aSupportedCodecs & kMediaCodecsEncodeMask;
+  }
+
   // Returns true if SW/HW decode enum for a given codec is present in the args.
   static bool SupportsSoftwareDecode(
       const MediaCodecsSupported& aSupportedCodecs, const MediaCodec& aCodec);
@@ -218,6 +252,22 @@ class MCSInfo final {
       const MediaCodecsSupported& aSupportedCodecs, const MediaCodec& aCodec);
   static bool SupportsHardwareEncode(
       const MediaCodecsSupported& aSupportedCodecs, const MediaCodec& aCodec);
+
+#ifdef MOZ_WIDGET_ANDROID
+  // Returns the subset of aSupport, the support reported for aCodec with 8-bit
+  // content, which remains for aColorDepth. MediaCodec decoding is limited to
+  // what the platform advertises, while software decoding for codecs other than
+  // H264 and HEVC uses our own decoders and supports any color depth.
+  static DecodeSupportSet GetMediaCodecDecodeSupportForColorDepth(
+      const MediaCodec& aCodec, const DecodeSupportSet& aSupport,
+      gfx::ColorDepth aColorDepth);
+
+  // Returns aSupport, the support reported for aCodec, without hardware
+  // decoding if aSize is larger than any hardware decoder supports.
+  static DecodeSupportSet GetMediaCodecDecodeSupportForSize(
+      const MediaCodec& aCodec, const DecodeSupportSet& aSupport,
+      const gfx::IntSize& aSize);
+#endif
 
   MCSInfo(MCSInfo const&) = delete;
   void operator=(MCSInfo const&) = delete;

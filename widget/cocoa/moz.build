@@ -38,6 +38,7 @@ UNIFIED_SOURCES += [
     "MOZDynamicCursor.mm",
     "MOZIconHelper.mm",
     "MOZMenuOpeningCoordinator.mm",
+    "MOZShareURLPasteboardItem.mm",
     "NativeKeyBindings.mm",
     "NativeMenuMac.mm",
     "NativeMenuSupport.mm",
@@ -53,6 +54,7 @@ UNIFIED_SOURCES += [
     "nsMacDockSupport.mm",
     "nsMacFinderProgress.mm",
     "nsMacPermissionMonitor.mm",
+    "nsMacSharingCopyOverride.mm",
     "nsMacSharingService.mm",
     "nsMacUserActivityUpdater.mm",
     "nsMacWebAppUtils.mm",
@@ -98,6 +100,9 @@ if not CONFIG["RELEASE_OR_BETA"] or CONFIG["MOZ_DEBUG"]:
     SOURCES += [
         "nsSandboxViolationSink.mm",
     ]
+    SOURCE_HEADERS += [
+        "nsSandboxViolationSink.h",
+    ]
 
 XPCOM_MANIFESTS += [
     "components.conf",
@@ -118,10 +123,9 @@ LOCAL_INCLUDES += [
     "/widget/headless",
 ]
 
-if CONFIG["MOZ_ENABLE_SKIA_PDF"]:
-    # Skia includes because widget code includes PrintTargetSkPDF.h, and that
-    # includes skia headers.
-    LOCAL_INCLUDES += CONFIG["SKIA_INCLUDES"]
+# Skia includes because widget code includes PrintTargetSkPDF.h, and that
+# includes skia headers.
+LOCAL_INCLUDES += CONFIG["SKIA_INCLUDES"]
 
 RESOURCE_FILES.cursors += [
     "cursors/arrowN.png",
@@ -177,3 +181,68 @@ SPHINX_TREES["/widget/cocoa"] = "docs"
 
 if CONFIG["MOZ_BUILD_APP"] == "browser":
     DEFINES["MOZ_BUILD_APP_IS_BROWSER"] = True
+
+LICENSED_UNDER += [
+    "apple",
+]
+
+LICENSED_UNDER += ["chromium"]
+LICENSED_UNDER["chromium"].paths = [
+    "GfxInfo.mm",
+]
+
+SOURCE_HEADERS += [
+    "CustomCocoaEvents.h",
+    "GfxInfo.h",
+    "MacOSNotificationCenter.h",
+    "MacThemeGeometryType.h",
+    "MOZDynamicCursor.h",
+    "MOZIconHelper.h",
+    "MOZMenuOpeningCoordinator.h",
+    "MOZShareURLPasteboardItem.h",
+    "NativeKeyBindings.h",
+    "NativeMenuMac.h",
+    "nsAppShell.h",
+    "nsChildView.h",
+    "nsClipboard.h",
+    "nsCocoaWindow.h",
+    "nsColorPicker.h",
+    "nsDeviceContextSpecX.h",
+    "nsDragService.h",
+    "nsFilePicker.h",
+    "nsLookAndFeel.h",
+    "nsMacDockSupport.h",
+    "nsMacFinderProgress.h",
+    "nsMacPermissionMonitor.h",
+    "nsMacSharingCopyOverride.h",
+    "nsMacSharingService.h",
+    "nsMacUserActivityUpdater.h",
+    "nsMacWebAppUtils.h",
+    "nsMenuBarX.h",
+    "nsMenuGroupOwnerX.h",
+    "nsMenuItemIconX.h",
+    "nsMenuItemX.h",
+    "nsMenuParentX.h",
+    "nsMenuUtilsX.h",
+    "nsMenuX.h",
+    "nsNativeThemeCocoa.h",
+    "nsNativeThemeColors.h",
+    "nsPrintDialogX.h",
+    "nsPrintSettingsServiceX.h",
+    "nsPrintSettingsX.h",
+    "nsSound.h",
+    "nsStandaloneNativeMenu.h",
+    "nsSystemStatusBarCocoa.h",
+    "nsToolkit.h",
+    "nsTouchBar.h",
+    "nsTouchBarInput.h",
+    "nsTouchBarInputIcon.h",
+    "nsTouchBarUpdater.h",
+    "nsUserIdleServiceX.h",
+    "nsWidgetFactory.h",
+    "nsWindowMap.h",
+    "ScreenHelperCocoa.h",
+    "TextInputHandler.h",
+    "VibrancyManager.h",
+    "ViewRegion.h",
+]

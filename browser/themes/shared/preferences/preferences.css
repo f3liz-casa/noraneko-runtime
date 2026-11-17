@@ -447,74 +447,6 @@ richlistitem[selected] .actionsMenu:focus-visible {
   outline-offset: -3px;
 }
 
-/* Home Pane */
-
-#homepageGroup menulist,
-#homepageGroup html|input {
-  margin: var(--space-xsmall) 0;
-}
-
-#homepageGroup html|input {
-  text-align: match-parent;
-}
-
-#homepageGroup:-moz-locale-dir(rtl) html|input {
-  unicode-bidi: plaintext;
-}
-
-#homepageAndNewWindowsOption {
-  margin-top: 20px;
-}
-
-#homepageGroup:-moz-locale-dir(rtl) panel[type="autocomplete-richlistbox"] {
-  direction: rtl;
-}
-
-.homepage-buttons > .homepage-button {
-  flex: 1 auto;
-}
-
-.homepage-button:first-of-type {
-  margin-inline-start: 0;
-}
-
-.homepage-button:last-of-type {
-  margin-inline-end: 0;
-}
-
-#homeContentsGroup .checkbox-icon[src] {
-  -moz-context-properties: fill;
-  fill: currentColor;
-  margin-inline-end: var(--checkbox-margin-inline);
-  width: 16px;
-}
-
-#homeContentsGroup > [data-subcategory] {
-  margin-top: 14px;
-}
-
-#homeContentsGroup > [data-subcategory] .section-checkbox {
-  font-weight: var(--font-weight-semibold);
-}
-
-#homeContentsGroup > [data-subcategory] > vbox menulist {
-  margin-block: 0;
-}
-
-/* Align fix for prefs that have a text link in the headline */
-#homeContentsGroup > [data-subcategory] > hbox {
-  align-items: last baseline;
-}
-
-#homeContentsGroup .checkbox-label {
-  margin-inline-end: var(--space-small);
-}
-
-a[is="moz-support-link"] {
-  display: inline-block;
-  white-space: initial;
-}
-
 /* Search Pane */
 
 #engineList > treechildren::-moz-tree-image(engineShown, checked),
@@ -614,7 +546,7 @@ html|label[disabled] {
 }
 
 html|dialog {
-  padding: var(--space-xlarge);
+  padding: var(--dialog-padding);
 }
 
 html|dialog::backdrop,
@@ -624,13 +556,15 @@ html|dialog::backdrop,
 
 html|dialog,
 .dialogBox {
-  border: 1px solid transparent;
-  border-radius: var(--border-radius-medium);
-  box-shadow: var(--popup-box-shadow);
+  border: var(--border-width) solid var(--dialog-border-color);
+  border-radius: var(--dialog-border-radius);
+  box-shadow: var(--dialog-box-shadow);
+  background-color: var(--dialog-background-color);
 }
 
 .dialogBox {
-  background-color: var(--background-color-box);
+  --dialog-resizer-inset: calc(0.3 * var(--dialog-border-radius));
+
   background-clip: content-box;
   color: var(--text-color);
   /* `transparent` will use the dialogText color in high-contrast themes and
@@ -639,15 +573,8 @@ html|dialog,
   margin: 0;
   padding: 0;
   overflow-x: auto;
-}
-
-@media (prefers-color-scheme: dark) {
-  @media not (forced-colors) {
-    html|dialog,
-    .dialogBox {
-      --background-color-canvas: #42414d;
-    }
-  }
+  -moz-scrollbar-inset-inline: 0 var(--dialog-resizer-inset);
+  -moz-scrollbar-inset-block: 0 var(--dialog-resizer-inset);
 }
 
 .dialogBox[resizable="true"] {
@@ -655,6 +582,15 @@ html|dialog,
   overflow: hidden;
   min-height: 20em;
   min-width: 66ch;
+}
+
+.dialogBox.vpnSiteRuleDialogBox {
+  min-width: 24em;
+
+  .dialogFrame {
+    width: 24em;
+    min-width: 24em;
+  }
 }
 
 .dialogTitleBar {
@@ -1110,10 +1046,6 @@ menulist[indicator="true"] > menupopup menuitem[indicator="true"]:not([image]) >
   padding-inline-start: 13px;
 }
 
-#warning-message > .message-bar-description {
-  width: 32em;
-}
-
 #warning-message {
   margin-top: 8px;
 }
@@ -1426,6 +1358,9 @@ setting-group[groupid="aiFeatures"] {
 }
 
 #blockAiGroup {
+  /* aiBlockedMessage overlaps our border on purpose to avoid a corner seam; clip it so it doesn't paint over the border. */
+  overflow: hidden;
+
   @media not (prefers-contrast) {
     --block-ai-background-color: light-dark(color-mix(in srgb, currentColor 3%, transparent), color-mix(in srgb, currentColor 5%, transparent));
     background-color: var(--block-ai-background-color);
@@ -1433,11 +1368,12 @@ setting-group[groupid="aiFeatures"] {
 }
 
 #aiBlockedMessage {
-  margin: calc(-1 * var(--space-large));
+  /* Overshoot the border by a hair, at odd zoom levels an exact match can round short and leave a gap. */
+  margin: calc(-1 * var(--space-large) - var(--box-border-width) - 1px);
   margin-top: var(--space-medium);
-  --message-bar-border-radius: 0 0 var(--box-border-radius) var(--box-border-radius);
-  border-bottom-color: transparent;
-  border-inline-color: transparent;
+  border-radius: 0;
+  --message-bar-icon-container-border-radius-start-start: 0;
+  border-color: transparent;
 }
 
 #aiControlDefaultToggle {
@@ -1610,15 +1546,6 @@ setting-pane[onsearchpane] {
   margin-block-start: var(--space-large);
 }
 
-/* Styles for the "sponsors support our mission" message and link on the Home tab */
-.mission-message {
-  margin-block-start: var(--space-large);
-
-  > a {
-    font-size: var(--font-size-small);
-  }
-}
-
 #dohProviderSelect {
   --select-max-width: 235px;
 }
@@ -1667,6 +1594,12 @@ setting-pane[onsearchpane] {
 
 .box-header-bold {
   --box-label-font-weight: var(--font-weight-heading);
+}
+
+/* box-header-bold only reaches the item's own label, so the second column
+   heading, which is slotted, has to be weighted on its own. */
+#notification-sites-list moz-box-item[slot="header"] [slot="actions"] {
+  font-weight: var(--font-weight-heading);
 }
 
 #containers-list {

@@ -1,7 +1,7 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
-import concurrent.futures
+import contextlib
 import functools
 import glob
 import itertools
@@ -13,16 +13,18 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 
 import mozpack.path as mozpath
 from mach.decorators import Command, CommandArgument, SubCommand
 from mach.main import Mach
+from mozsystemmonitor.resourcemonitor import SystemResourceMonitor
 from mozversioncontrol import get_repository_object
 
 from mozbuild import build_commands
 from mozbuild.controller.clobber import Clobberer
-from mozbuild.util import cpu_count
+from mozbuild.util import construct_log_filename
 
 
 # FIXME: use itertools.batched when moving to python 3.12
@@ -302,14 +304,41 @@ def check(
     format,
     outgoing,
 ):
+    command_context._set_log_level(verbose)
+    command_context.activate_virtualenv()
+    command_context.log_manager.enable_unstructured()
+
+    with _recording_resource_usage(command_context):
+        return _check(
+            command_context,
+            patterns,
+            jobs,
+            verbose,
+            checks,
+            fix,
+            header_filter,
+            output,
+            format,
+            outgoing,
+        )
+
+
+def _check(
+    command_context,
+    patterns,
+    jobs,
+    verbose,
+    checks,
+    fix,
+    header_filter,
+    output,
+    format,
+    outgoing,
+):
     from mozbuild.controller.building import (
         StaticAnalysisFooter,
         StaticAnalysisOutputManager,
     )
-
-    command_context._set_log_level(verbose)
-    command_context.activate_virtualenv()
-    command_context.log_manager.enable_unstructured()
 
     rc, clang_paths = get_clang_tools(command_context, verbose=verbose)
     if rc != 0:
@@ -318,10 +347,15 @@ def check(
     if not _is_version_eligible(command_context, clang_paths):
         return 1
 
-    rc, _compile_db, compilation_commands_path = _build_compile_db(
-        command_context, verbose=verbose
-    )
-    rc = rc or _build_export(command_context, jobs=jobs, verbose=verbose)
+    with _timed_phase(command_context, "Preparing the compilation database"):
+        rc, _compile_db, compilation_commands_path = _build_compile_db(
+            command_context, verbose=verbose
+        )
+    if rc != 0:
+        return rc
+
+    with _timed_phase(command_context, "Running the export tiers"):
+        rc = _build_export(command_context, jobs=jobs, verbose=verbose)
     if rc != 0:
         return rc
 
@@ -340,36 +374,15 @@ def check(
 
     abs_files = get_abspath_files(command_context, files)
 
-    def to_source(filename):
-        basename, ext = os.path.splitext(filename)
-        if ext != ".h":
-            return filename
-        for src_ext in [".cpp", ".c", ".mm", ".cc", ".cxx"]:
-            if os.path.exists(basename + src_ext):
-                return basename + src_ext
-        return filename
-
     sources = {}
-    header_sources = {}
     compile_db_files = {f["file"] for f in compile_db}
     for candidate in abs_files:
-        associated_entry = to_source(candidate)
-        if associated_entry in compile_db_files:
-            if candidate != associated_entry:
-                header_sources[associated_entry] = candidate
+        if candidate in compile_db_files:
             # Check we're not erasing an existing entry
-            elif associated_entry not in sources:
-                sources[associated_entry] = None
+            if candidate not in sources:
+                sources[candidate] = None
 
-    # Filter source to remove excluded files
-    header_sources = _generate_path_list(
-        command_context, header_sources, verbose=verbose
-    )
     sources = _generate_path_list(command_context, sources, verbose=verbose)
-
-    # Do not process files already in header_sources again in sources
-    for header_src in header_sources:
-        sources.pop(header_src, None)
 
     cwd = command_context.topobjdir
 
@@ -377,7 +390,7 @@ def check(
         command_context.topsrcdir,
         command_context.topobjdir,
         get_clang_tidy_config(command_context).checks_with_data,
-        len(sources) + len(header_sources),
+        len(sources),
     )
 
     footer = StaticAnalysisFooter(monitor)
@@ -386,58 +399,29 @@ def check(
         command_context.log_manager, monitor, footer
     ) as output_manager:
         rc = 0
-        arg_max = 512  # The actual shell limit is way above
-        for batch in batched(list(sources.items()), arg_max):
-            args = _get_clang_tidy_command(
-                command_context,
-                clang_paths,
-                compilation_commands_path,
-                checks=checks,
-                header_filter=header_filter,
-                sources=dict(batch),
-                jobs=jobs,
-                fix=fix,
-                warnings_as_errors=True,
-                verbose=verbose,
-            )
-            rc |= command_context.run_process(
-                args=args,
-                ensure_exit_code=False,
-                line_handler=output_manager.on_line,
-                cwd=cwd,
-            )
-
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=jobs or cpu_count()
-        ) as executor:
-            futures = []
-            # process header independently, because we need per-instance
-            # header-filter for it to work
-            for header_src, header_hdr in header_sources.items():
+        with _timed_phase(
+            command_context, f"Running clang-tidy on {len(sources)} sources"
+        ):
+            arg_max = 512  # The actual shell limit is way above
+            for batch in batched(list(sources.items()), arg_max):
                 args = _get_clang_tidy_command(
                     command_context,
                     clang_paths,
                     compilation_commands_path,
                     checks=checks,
                     header_filter=header_filter,
-                    sources={header_src: header_hdr},
-                    jobs=1,
+                    sources=dict(batch),
+                    jobs=jobs,
                     fix=fix,
                     warnings_as_errors=True,
                     verbose=verbose,
                 )
-                futures.append(
-                    executor.submit(
-                        command_context.run_process,
-                        args=args,
-                        ensure_exit_code=False,
-                        line_handler=output_manager.on_line,
-                        cwd=cwd,
-                    )
+                rc |= command_context.run_process(
+                    args=args,
+                    ensure_exit_code=False,
+                    line_handler=output_manager.on_line,
+                    cwd=cwd,
                 )
-            for future in concurrent.futures.as_completed(futures):
-                # Wait for every task to finish
-                rc |= future.result()
 
         command_context.log(
             logging.WARNING,
@@ -450,13 +434,13 @@ def check(
         if output is not None:
             output_manager.write(output, format)
 
-    if not sources and not header_sources:
+    if not sources:
         command_context.log(
             logging.WARNING,
             "static-analysis",
             {},
-            "There are no files eligible for analysis. Please note that 'header' files "
-            "cannot be used for analysis since they do not consist compilation units.",
+            "There are no files eligible for analysis.\n"
+            "Note that only non-generated headers listed in SOURCE_HEADERS or EXPORT are analyzed.",
         )
         return 0
 
@@ -565,6 +549,47 @@ def _is_version_eligible(command_context, clang_paths, log_error=True):
         )
 
     return False
+
+
+@contextlib.contextmanager
+def _recording_resource_usage(command_context):
+    """Record a resource usage profile for the duration of the context, and
+    write it to the logs directory, or next to the other artifacts in CI."""
+    monitor = SystemResourceMonitor(poll_interval=0.1)
+    monitor.start()
+    try:
+        yield
+    finally:
+        monitor.stop()
+
+        if os.environ.get("MOZ_AUTOMATION") == "1":
+            profile_path = "/builds/worker/profile_resource-usage.json"
+        else:
+            log_subdir = os.path.join("logs", "static-analysis")
+            command_context._ensure_state_subdir_exists(log_subdir)
+            profile_path = command_context._get_state_filename(
+                construct_log_filename("profile"), subdir=log_subdir
+            )
+
+        with open(profile_path, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(monitor.as_profile(), f, separators=(",", ":"))
+
+
+@contextlib.contextmanager
+def _timed_phase(command_context, phase):
+    """Log how long `phase` took, and record it as a profiler marker."""
+    SystemResourceMonitor.begin_marker("StaticAnalysis", phase)
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        SystemResourceMonitor.end_marker("StaticAnalysis", phase)
+        command_context.log(
+            logging.INFO,
+            "timing",
+            {"phase": phase, "duration": time.monotonic() - start},
+            "{phase} took {duration:.1f}s",
+        )
 
 
 def _get_clang_tidy_command(
@@ -792,8 +817,13 @@ def _build_compile_db(command_context, verbose=False):
         command_context.topobjdir, "static-analysis"
     )
     compile_db = mozpath.join(compilation_commands_path, "compile_commands.json")
+    backend_file = mozpath.join(
+        command_context.topobjdir, "backend.StaticAnalysisBackend"
+    )
 
-    if os.path.exists(compile_db):
+    if os.path.exists(compile_db) and not command_context.backend_out_of_date(
+        backend_file
+    ):
         return 0, compile_db, compilation_commands_path
 
     rc, config, ran_configure = _get_config_environment(command_context)
@@ -807,10 +837,13 @@ def _build_compile_db(command_context, verbose=False):
         return _build_compile_db(command_context, verbose=verbose)
 
     if config:
-        print(
-            "Looks like a clang compilation database has not been "
-            "created yet, creating it now..."
-        )
+        if os.path.exists(compile_db):
+            print("The clang compilation database is out of date, regenerating it...")
+        else:
+            print(
+                "Looks like a clang compilation database has not been "
+                "created yet, creating it now..."
+            )
         rc = build_commands.build_backend(
             command_context, ["StaticAnalysis"], verbose=verbose
         )
@@ -821,25 +854,18 @@ def _build_compile_db(command_context, verbose=False):
 
 
 def _build_export(command_context, jobs, verbose=False):
-    def on_line(line):
-        command_context.log(logging.INFO, "build_output", {"line": line}, "{line}")
-
-    # First install what we can through install manifests.
-    # Then build the rest of the build dependencies by running the full
-    # export target, because we can't do anything better.
-    for target in ("pre-export", "export", "pre-compile"):
-        rc = command_context._run_make(
-            directory=command_context.topobjdir,
-            target=target,
-            line_handler=None,
-            print_directory=verbose,
-            log=verbose,
-            silent=not verbose,
-            num_jobs=jobs,
-        )
-        if rc != 0:
-            return rc
-    return 0
+    # Build the dependencies of every compile by running the tiers before
+    # compilation, because we can't do anything better.
+    return command_context._mach_context.commands.dispatch(
+        "build",
+        command_context._mach_context,
+        what=["analysis-prereqs"],
+        directory=".",
+        jobs=jobs,
+        verbose=verbose,
+        priority="normal",
+        no_completion_messages=True,
+    )
 
 
 def _set_clang_tools_paths(command_context):
@@ -993,6 +1019,10 @@ def _generate_path_list(command_context, paths, verbose=True):
         # Make sure that the file exists and it has a supported extension
         elif os.path.isfile(f) and f.endswith(extensions):
             path_entries[f] = h
+
+    if header_skiplist := get_clang_tidy_config(command_context).header_skiplist:
+        for header in header_skiplist:
+            path_entries.pop(header, None)
 
     return path_entries
 

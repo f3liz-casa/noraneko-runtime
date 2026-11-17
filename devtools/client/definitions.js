@@ -137,6 +137,8 @@ const CommandKeys = new Localization(
   true
 );
 
+const NEW_SETTINGS_PANEL_URL = "chrome://devtools/content/settings/index.html";
+
 var Tools = {};
 exports.Tools = Tools;
 
@@ -144,7 +146,14 @@ exports.Tools = Tools;
 Tools.options = {
   id: "options",
   ordinal: 0,
-  url: "chrome://devtools/content/framework/toolbox-options.html",
+  get url() {
+    if (
+      Services.prefs.getBoolPref("devtools.settings.redesign-enabled", false)
+    ) {
+      return NEW_SETTINGS_PANEL_URL;
+    }
+    return "chrome://devtools/content/framework/toolbox-options.html";
+  },
   icon: "chrome://devtools/skin/images/settings.svg",
   bgTheme: "theme-body",
   label: l10n("options.label"),
@@ -158,6 +167,12 @@ Tools.options = {
   },
 
   build(iframeWindow, toolbox, commands) {
+    if (this.url === NEW_SETTINGS_PANEL_URL) {
+      const {
+        SettingsPanel,
+      } = require("resource://devtools/client/settings/panel.mjs");
+      return new SettingsPanel(iframeWindow, toolbox);
+    }
     return new OptionsPanel(iframeWindow, toolbox, commands);
   },
 };
@@ -588,12 +603,7 @@ exports.ToolboxButtons = [
     id: "command-button-screenshot",
     description: l10n("toolbox.buttons.screenshot"),
     isToolSupported: toolbox => {
-      return (
-        // @backward-compat { version 87 } We need to check for the screenshot actor as well
-        // when connecting to older server that does not have the screenshotContentActor
-        toolbox.target.hasActor("screenshotContent") ||
-        toolbox.target.hasActor("screenshot")
-      );
+      return toolbox.target.hasActor("screenshotContent");
     },
     async onClick(event, toolbox) {
       // Special case for screenshot button to check for clipboard preference

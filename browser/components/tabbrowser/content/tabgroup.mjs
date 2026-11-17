@@ -2,11 +2,80 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* global gBrowser, MozXULElement, SessionStore, XPCOMUtils */
+/* global CustomizableUI, gBrowser, MozXULElement, SessionStore, XPCOMUtils */
 
+const { Tabbrowser } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/tabbrowser/Tabbrowser.sys.mjs"
+);
 const { TabMetrics } = ChromeUtils.importESModule(
   "moz-src:///browser/components/tabbrowser/TabMetrics.sys.mjs"
 );
+
+const lazy = XPCOMUtils.declareLazy({
+  showTabGroupHoverPreview: {
+    pref: "browser.tabs.groups.hoverPreview.enabled",
+    default: false,
+  },
+});
+const MAX_SAVE_HINT_SHOWN_COUNT = 3;
+
+/**
+ * Finds the anchor for the "Tab group saved" confirmation hint. This is the
+ * Tab Groups button when the alternate menu is enabled (falling back to the
+ * application menu button if it isn't visible), otherwise the List All Tabs
+ * button. Customizable buttons resolve to their anchor, so one in the
+ * overflow panel anchors to the overflow button. Without the alternate menu
+ * the application menu doesn't list tab groups, so there is no fallback.
+ *
+ * @param {Window} win
+ * @returns {Element|null} The anchor, or null if it isn't visible.
+ */
+function getSaveHintAnchor(win) {
+  let isVisible = el => el?.checkVisibility({ visibilityProperty: true });
+  let alternateMenu = Services.prefs.getBoolPref(
+    "browser.tabs.groups.alternateMenu",
+    false
+  );
+  let widgetId = alternateMenu ? "tab-groups-button" : "alltabs-button";
+  let anchor = CustomizableUI.getPlacementOfWidget(widgetId)
+    ? CustomizableUI.getWidget(widgetId)?.forWindow(win)?.anchor
+    : null;
+  if (alternateMenu && !isVisible(anchor)) {
+    anchor = win.document.getElementById("PanelUI-menu-button");
+  }
+  return isVisible(anchor) ? anchor : null;
+}
+
+/**
+ * Shows the "Tab group saved" confirmation hint the first
+ * MAX_SAVE_HINT_SHOWN_COUNT times a tab group is explicitly saved and
+ * closed by the user.
+ *
+ * @param {Window} win
+ */
+function maybeShowSaveHint(win) {
+  if (win.closed) {
+    return;
+  }
+  let shownCount = Services.prefs.getIntPref(
+    "browser.tabs.groups.saveHintShownCount",
+    0
+  );
+  if (shownCount >= MAX_SAVE_HINT_SHOWN_COUNT) {
+    return;
+  }
+  let anchor = getSaveHintAnchor(win);
+  if (!anchor) {
+    return;
+  }
+  win.ConfirmationHint.show(anchor, "confirmation-hint-tab-group-saved", {
+    position: "bottomright topright",
+  });
+  Services.prefs.setIntPref(
+    "browser.tabs.groups.saveHintShownCount",
+    shownCount + 1
+  );
+}
 
 /**
  * Supported tab group colors.
@@ -33,13 +102,13 @@ export class MozTabbrowserTabGroup extends MozXULElement {
   /** @type {string} */
   #label;
 
-  /** @type {MozTextLabel} */
+  /** @type {MozTabbrowserTabGroupLabel} */
   #labelElement;
 
   /** @type {MozXULElement} */
   #labelContainerElement;
 
-  /** @type {MozTextLabel} */
+  /** @type {XULTextElement} */
   #overflowCountLabel;
 
   /** @type {MozXULElement} */
@@ -54,6 +123,9 @@ export class MozTabbrowserTabGroup extends MozXULElement {
   /** @type {boolean} */
   #wasCreatedByAdoption = false;
 
+  /** @type {boolean} */
+  #removedByAdoption = false;
+
   /**
    * Whether a drag collapsed this tab group, as opposed to the user, and it
    * therefore has to be expanded again when the drag ends. Stays true until
@@ -64,27 +136,7 @@ export class MozTabbrowserTabGroup extends MozXULElement {
    */
   collapsedByDrag = false;
 
-  /**
-   * Whether the group is leaving this window for another one rather than being
-   * closed. `Tabbrowser.adoptTabGroup` sets it on the group it takes the tabs
-   * from, which is discarded once they have moved.
-   *
-   * @type {boolean}
-   */
-  removedByAdoption;
-
   #observerRemoved = false;
-
-  constructor() {
-    super();
-
-    XPCOMUtils.defineLazyPreferenceGetter(
-      this,
-      "_showTabGroupHoverPreview",
-      "browser.tabs.groups.hoverPreview.enabled",
-      false
-    );
-  }
 
   static get inheritedAttributes() {
     return {
@@ -113,7 +165,9 @@ export class MozTabbrowserTabGroup extends MozXULElement {
     this.saveOnWindowClose = true;
 
     this.textContent = "";
-    this.appendChild(this.constructor.fragment);
+    this.appendChild(
+      /** @type {typeof MozTabbrowserTabGroup} */ (this.constructor).fragment
+    );
     this.initializeAttributeInheritance();
 
     Services.obs.addObserver(
@@ -151,13 +205,10 @@ export class MozTabbrowserTabGroup extends MozXULElement {
       ".tab-group-overflow-count"
     );
 
-    let tabGroupCreateDetail = this.#wasCreatedByAdoption
-      ? { isAdoptingGroup: true }
-      : {};
     this.dispatchEvent(
       new CustomEvent("TabGroupCreate", {
         bubbles: true,
-        detail: tabGroupCreateDetail,
+        detail: { adopting: this.#wasCreatedByAdoption },
       })
     );
     // Reset `wasCreatedByAdoption` to default of false so that we only
@@ -200,11 +251,14 @@ export class MozTabbrowserTabGroup extends MozXULElement {
       this.#tabChangeObserver = new window.MutationObserver(mutations => {
         if (!this.tabs.length) {
           this.dispatchEvent(
-            new CustomEvent("TabGroupRemoved", { bubbles: true })
+            new CustomEvent("TabGroupRemoved", {
+              bubbles: true,
+              detail: { adopting: this.#removedByAdoption },
+            })
           );
           this.remove();
           Services.obs.notifyObservers(
-            this,
+            /** @type {nsISupports} */ (this),
             "browser-tabgroup-removed-from-dom"
           );
         } else {
@@ -218,8 +272,8 @@ export class MozTabbrowserTabGroup extends MozXULElement {
 
             // Renumber tabs so that a11y tools can tell users that a given
             // tab is "2 of 7" in the group, for example.
-            tab.setAttribute("aria-posinset", index + 1);
-            tab.setAttribute("aria-setsize", tabCount);
+            tab.setAttribute("aria-posinset", String(index + 1));
+            tab.setAttribute("aria-setsize", String(tabCount));
           });
           this.hasActiveTab = hasActiveTab;
           this.#updateOverflowLabel();
@@ -227,18 +281,18 @@ export class MozTabbrowserTabGroup extends MozXULElement {
         }
         for (const mutation of mutations) {
           for (const addedNode of mutation.addedNodes) {
-            if (gBrowser.isTab(addedNode)) {
+            if (Tabbrowser.isTab(addedNode)) {
               this.#updateTabAriaHidden(addedNode);
-            } else if (gBrowser.isSplitViewWrapper(addedNode)) {
+            } else if (Tabbrowser.isSplitViewWrapper(addedNode)) {
               for (const splitViewTab of addedNode.tabs) {
                 this.#updateTabAriaHidden(splitViewTab);
               }
             }
           }
           for (const removedNode of mutation.removedNodes) {
-            if (gBrowser.isTab(removedNode)) {
+            if (Tabbrowser.isTab(removedNode)) {
               this.#updateTabAriaHidden(removedNode);
-            } else if (gBrowser.isSplitViewWrapper(removedNode)) {
+            } else if (Tabbrowser.isSplitViewWrapper(removedNode)) {
               for (const splitViewTab of removedNode.tabs) {
                 this.#updateTabAriaHidden(splitViewTab);
               }
@@ -376,8 +430,10 @@ export class MozTabbrowserTabGroup extends MozXULElement {
     let pendingAnimationPromises = this.tabs.flatMap(tab =>
       tab
         .getAnimations()
-        .filter(anim =>
-          ["min-width", "max-width"].includes(anim.transitionProperty)
+        .filter(
+          anim =>
+            CSSTransition.isInstance(anim) &&
+            ["min-width", "max-width"].includes(anim.transitionProperty)
         )
         .map(anim => anim.finished)
     );
@@ -397,7 +453,7 @@ export class MozTabbrowserTabGroup extends MozXULElement {
     let tabGroupName = this.#label || this.defaultGroupName;
 
     this.#labelElement?.setAttribute("aria-label", tabGroupName);
-    this.#labelElement?.setAttribute("aria-level", 1);
+    this.#labelElement?.setAttribute("aria-level", "1");
 
     let tabGroupDescriptionL10nID;
     if (this.collapsed) {
@@ -422,7 +478,7 @@ export class MozTabbrowserTabGroup extends MozXULElement {
 
   async #updateTooltip() {
     // Disable the tooltip for collapsed groups when tab group hover preview is enabled
-    if (this._showTabGroupHoverPreview && this.collapsed) {
+    if (lazy.showTabGroupHoverPreview && this.collapsed) {
       delete this.dataset.tooltip;
       return;
     }
@@ -501,7 +557,7 @@ export class MozTabbrowserTabGroup extends MozXULElement {
     let prevLastTabOrSplitView = this.querySelector(`[${LAST_ITEM_ATTRIBUTE}]`);
     if (prevLastTabOrSplitView !== currentLastTabOrSplitView) {
       prevLastTabOrSplitView?.removeAttribute(LAST_ITEM_ATTRIBUTE);
-      currentLastTabOrSplitView.setAttribute(LAST_ITEM_ATTRIBUTE, true);
+      currentLastTabOrSplitView.setAttribute(LAST_ITEM_ATTRIBUTE, "true");
     }
   }
 
@@ -535,11 +591,12 @@ export class MozTabbrowserTabGroup extends MozXULElement {
   get tabs() {
     let childrenArray = Array.from(this.children);
     for (let i = childrenArray.length - 1; i >= 0; i--) {
-      if (childrenArray[i].tagName == "tab-split-view-wrapper") {
-        childrenArray.splice(i, 1, ...childrenArray[i].tabs);
+      let child = childrenArray[i];
+      if (Tabbrowser.isSplitViewWrapper(child)) {
+        childrenArray.splice(i, 1, ...child.tabs);
       }
     }
-    return childrenArray.filter(node => node.matches("tab"));
+    return childrenArray.filter(node => Tabbrowser.isTab(node));
   }
 
   /**
@@ -547,7 +604,7 @@ export class MozTabbrowserTabGroup extends MozXULElement {
    */
   get tabsAndSplitViews() {
     return Array.from(this.children).filter(
-      node => node.matches("tab") || node.tagName == "tab-split-view-wrapper"
+      node => Tabbrowser.isTab(node) || Tabbrowser.isSplitViewWrapper(node)
     );
   }
 
@@ -571,7 +628,7 @@ export class MozTabbrowserTabGroup extends MozXULElement {
   }
 
   /**
-   * @returns {MozTextLabel}
+   * @returns {MozTabbrowserTabGroupLabel}
    */
   get labelElement() {
     return this.#labelElement;
@@ -593,6 +650,17 @@ export class MozTabbrowserTabGroup extends MozXULElement {
    */
   set wasCreatedByAdoption(value) {
     this.#wasCreatedByAdoption = value;
+  }
+
+  /**
+   * Whether the group is leaving this window for another one rather than being
+   * closed. `Tabbrowser.adoptTabGroup` sets it on the group it takes the tabs
+   * from, which is discarded once they have moved.
+   *
+   * @param {boolean} value
+   */
+  set removedByAdoption(value) {
+    this.#removedByAdoption = value;
   }
 
   /**
@@ -635,7 +703,7 @@ export class MozTabbrowserTabGroup extends MozXULElement {
     if (metricsContext?.isUserTriggered) {
       let tabCount = tabsOrSplitViews.reduce(
         (n, item) =>
-          n + (gBrowser.isSplitViewWrapper(item) ? item.tabs.length : 1),
+          n + (Tabbrowser.isSplitViewWrapper(item) ? item.tabs.length : 1),
         0
       );
       gBrowser.recordTabMetrics(
@@ -647,7 +715,7 @@ export class MozTabbrowserTabGroup extends MozXULElement {
     }
 
     for (let tabOrSplitView of tabsOrSplitViews) {
-      if (gBrowser.isSplitViewWrapper(tabOrSplitView)) {
+      if (Tabbrowser.isSplitViewWrapper(tabOrSplitView)) {
         let splitViewToMove =
           this.documentGlobal === tabOrSplitView.documentGlobal
             ? tabOrSplitView
@@ -690,10 +758,11 @@ export class MozTabbrowserTabGroup extends MozXULElement {
       })
     );
     for (let i = this.tabsAndSplitViews.length - 1; i >= 0; i--) {
-      if (gBrowser.isSplitViewWrapper(this.tabsAndSplitViews[i])) {
-        gBrowser.ungroupSplitView(this.tabsAndSplitViews[i]);
-      } else if (gBrowser.isTab(this.tabsAndSplitViews[i])) {
-        gBrowser.ungroupTab(this.tabsAndSplitViews[i]);
+      let item = this.tabsAndSplitViews[i];
+      if (Tabbrowser.isSplitViewWrapper(item)) {
+        gBrowser.ungroupSplitView(item);
+      } else if (Tabbrowser.isTab(item)) {
+        gBrowser.ungroupTab(item);
       }
     }
   }
@@ -714,9 +783,16 @@ export class MozTabbrowserTabGroup extends MozXULElement {
     );
   }
 
-  saveAndClose(metricsContext = TabMetrics.UNKNOWN_CONTEXT) {
+  async saveAndClose(metricsContext = TabMetrics.UNKNOWN_CONTEXT) {
     this.save(metricsContext);
-    gBrowser.removeTabGroup(this, { metricsContext });
+    let win = this.documentGlobal;
+    let groupId = this.id;
+    await gBrowser.removeTabGroup(this, { metricsContext });
+    // make sure the tab group was actually saved before showing the hint
+    if (!SessionStore.getSavedTabGroup(groupId)) {
+      return;
+    }
+    maybeShowSaveHint(win);
   }
 
   /**
@@ -740,12 +816,16 @@ export class MozTabbrowserTabGroup extends MozXULElement {
   }
 
   /**
-   * @param {CustomEvent} event
+   * @param {MouseEvent} event
    */
   on_mouseover(event) {
     // Only fire the event if we are entering the tab group label.
     // mouseover also fires events when moving between elements inside the tab group.
-    if (!this.#labelContainerElement.contains(event.relatedTarget)) {
+    if (
+      !this.#labelContainerElement.contains(
+        /** @type {Node} */ (event.relatedTarget)
+      )
+    ) {
       this.#labelElement.dispatchEvent(
         new CustomEvent("TabGroupLabelHoverStart", { bubbles: true })
       );
@@ -753,12 +833,16 @@ export class MozTabbrowserTabGroup extends MozXULElement {
   }
 
   /**
-   * @param {CustomEvent} event
+   * @param {MouseEvent} event
    */
   on_mouseout(event) {
     // Only fire the event if we are leaving the tab group label.
     // mouseout also fires events when moving between elements inside the tab group.
-    if (!this.#labelContainerElement.contains(event.relatedTarget)) {
+    if (
+      !this.#labelContainerElement.contains(
+        /** @type {Node} */ (event.relatedTarget)
+      )
+    ) {
       this.#labelElement.dispatchEvent(
         new CustomEvent("TabGroupLabelHoverEnd", { bubbles: true })
       );
@@ -770,9 +854,10 @@ export class MozTabbrowserTabGroup extends MozXULElement {
    */
   on_TabSelect(event) {
     const { previousTab } = event.detail;
-    this.hasActiveTab = event.target.group === this;
+    let tab = /** @type {MozTabbrowserTab} */ (event.target);
+    this.hasActiveTab = tab.group === this;
     if (this.hasActiveTab) {
-      this.#updateTabAriaHidden(event.target);
+      this.#updateTabAriaHidden(tab);
     }
     if (previousTab.group === this) {
       this.#updateTabAriaHidden(previousTab);
@@ -790,13 +875,14 @@ export class MozTabbrowserTabGroup extends MozXULElement {
   }
 
   /**
-   * If one of this group's tabs is the selected tab, this will do nothing.
-   * Otherwise, it will expand the group if collapsed, and select the first
-   * tab in its list.
+   * Expands the group if it is collapsed. If one of this group's tabs is the
+   * selected tab, scrolls that tab into view. Otherwise, selects the first tab
+   * in its list.
    */
   select() {
     this.collapsed = false;
     if (gBrowser.selectedTab.group == this) {
+      gBrowser.tabContainer._handleTabSelect();
       return;
     }
     gBrowser.selectedTab = this.tabs[0];

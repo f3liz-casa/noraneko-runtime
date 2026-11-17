@@ -101,12 +101,6 @@ elif toolkit in ("android", "uikit"):
         "EventDispatcherBase.cpp",
     ]
 
-if CONFIG["NS_PRINTING"]:
-    # Needs to go before the XPIDL_MODULE line.
-    XPIDL_SOURCES += [
-        "nsIPrintDialogService.idl",
-    ]
-
 TEST_DIRS += ["tests", "tests/gtest"]
 
 DIRS += ["headless"]
@@ -136,6 +130,7 @@ XPIDL_SOURCES += [
     "nsIMockDragServiceController.idl",
     "nsIPaper.idl",
     "nsIPaperMargin.idl",
+    "nsIPrintDialogService.idl",
     "nsIPrinter.idl",
     "nsIPrinterList.idl",
     "nsIPrintSettings.idl",
@@ -162,6 +157,7 @@ EXPORTS += [
     "nsBaseColorPicker.h",
     "nsBaseDragService.h",
     "nsBaseFilePicker.h",
+    "nsDeviceContextSpecProxy.h",
     "nsDragServiceProxy.h",
     "nsIDeviceContextSpec.h",
     "nsIRollupListener.h",
@@ -169,6 +165,7 @@ EXPORTS += [
     "nsIWidgetListener.h",
     "nsPaper.h",
     "nsPrinterListBase.h",
+    "nsPrintSettingsService.h",
     "nsUserIdleService.h",
     "nsWidgetsCID.h",
     "PuppetWidget.h",
@@ -190,7 +187,7 @@ EXPORTS.mozilla += [
     "DimensionRequest.h",
     "EventClassList.inc",
     "EventForwards.h",
-    "EventMessageList.h",
+    "EventMessageList.inc",
     "FontRange.h",
     "LookAndFeel.h",
     "MiscEvents.h",
@@ -264,13 +261,19 @@ UNIFIED_SOURCES += [
     "nsClipboardHelper.cpp",
     "nsClipboardProxy.cpp",
     "nsColorPickerProxy.cpp",
+    "nsDeviceContextSpecProxy.cpp",
     "nsDragServiceProxy.cpp",
     "nsFilePickerProxy.cpp",
     "nsHTMLFormatConverter.cpp",
     "nsIBaseWindow.cpp",
     "nsIDeviceContextSpec.cpp",
+    "nsPaper.cpp",
+    "nsPaperMargin.cpp",
     "nsPrimitiveHelpers.cpp",
+    "nsPrinterBase.cpp",
+    "nsPrinterListBase.cpp",
     "nsPrintSettingsImpl.cpp",
+    "nsPrintSettingsService.cpp",
     "nsTransferable.cpp",
     "nsUserIdleService.cpp",
     "nsXPLookAndFeel.cpp",
@@ -303,26 +306,17 @@ if CONFIG["OS_ARCH"] == "Linux":
     EXPORTS.mozilla.widget += ["LSBUtils.h"]
     SOURCES += ["LSBUtils.cpp"]
 
-if CONFIG["NS_PRINTING"]:
-    EXPORTS += [
-        "nsDeviceContextSpecProxy.h",
-        "nsPrintSettingsService.h",
-    ]
+if toolkit in ("cocoa", "gtk"):
     UNIFIED_SOURCES += [
-        "nsDeviceContextSpecProxy.cpp",
-        "nsPaper.cpp",
-        "nsPaperMargin.cpp",
-        "nsPrinterBase.cpp",
-        "nsPrinterListBase.cpp",
-        "nsPrintSettingsService.cpp",
+        "nsCUPSShim.cpp",
+        "nsPrinterCUPS.cpp",
+        "nsPrinterListCUPS.cpp",
     ]
-
-    if toolkit in ("cocoa", "gtk"):
-        UNIFIED_SOURCES += [
-            "nsCUPSShim.cpp",
-            "nsPrinterCUPS.cpp",
-            "nsPrinterListCUPS.cpp",
-        ]
+    SOURCE_HEADERS += [
+        "nsCUPSShim.h",
+        "nsPrinterCUPS.h",
+        "nsPrinterListCUPS.h",
+    ]
 
 # nsIWidget.cpp needs to be built separately because of name clashes in the OS X headers
 # nsBaseDragService.cpp moved out of UNIFIED to fix xgill crash (bug 1259850) after moving widget/ContentHelper -> apz/util/TouchActionHelper
@@ -352,6 +346,9 @@ if toolkit in {"gtk", "cocoa", "windows"}:
 if toolkit in ("gtk", "windows", "cocoa", "uikit", "android"):
     UNIFIED_SOURCES += [
         "nsNativeTheme.cpp",
+    ]
+    SOURCE_HEADERS += [
+        "nsNativeTheme.h",
     ]
 
 DEFINES["MOZ_CROSS_PROCESS_IME"] = True
@@ -422,6 +419,9 @@ if CONFIG["ENABLE_TESTS"]:
     UNIFIED_SOURCES += [
         "MockDragServiceController.cpp",
     ]
+    SOURCE_HEADERS += [
+        "MockDragServiceController.h",
+    ]
 
 FINAL_LIBRARY = "xul"
 
@@ -429,3 +429,30 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     CXXFLAGS += CONFIG["MOZ_GTK3_CFLAGS"]
 if CONFIG["MOZ_WAYLAND"]:
     CXXFLAGS += CONFIG["MOZ_WAYLAND_CFLAGS"]
+
+SOURCE_HEADERS += [
+    "nsAppShellSingleton.h",
+    "nsClipboardHelper.h",
+    "nsClipboardProxy.h",
+    "nsColorPickerProxy.h",
+    "nsContentProcessWidgetFactory.h",
+    "nsFilePickerProxy.h",
+    "nsHTMLFormatConverter.h",
+    "nsPaperMargin.h",
+    "nsPrimitiveHelpers.h",
+    "nsPrinterBase.h",
+    "nsPrintSettingsImpl.h",
+    "nsTransferable.h",
+    "PrintBackgroundTask.h",
+    "ScrollbarDrawing.h",
+    "ScrollbarDrawingAndroid.h",
+    "ScrollbarDrawingCocoa.h",
+    "ScrollbarDrawingGTK.h",
+    "ScrollbarDrawingWin.h",
+    "ScrollbarDrawingWin11.h",
+    "SystemTimeConverter.h",
+    "Theme.h",
+    "ThemeCocoa.h",
+    "ThemeColors.h",
+    "TouchResampler.h",
+]

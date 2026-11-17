@@ -234,12 +234,12 @@ dependencies {
     implementation project(':components:browser-engine-gecko')
     implementation project(':components:browser-errorpages')
     implementation project(':components:browser-icons')
-    implementation project(':components:browser-menu')
     implementation project(':components:browser-state')
     implementation project(':components:browser-toolbar')
     implementation project(':components:compose-awesomebar')
     implementation project(':components:compose-base')
     implementation project(':components:compose-cfr')
+    implementation project(':components:compose-menu')
     implementation project(':components:concept-awesomebar')
     implementation project(':components:concept-engine')
     implementation project(':components:concept-fetch')
@@ -300,6 +300,7 @@ dependencies {
     implementation libs.androidx.core.splashscreen
     implementation libs.androidx.emoji2
     implementation libs.androidx.fragment
+    implementation libs.androidx.fragment.compose
     implementation libs.androidx.lifecycle.process
     implementation libs.androidx.lifecycle.viewmodel
     implementation libs.androidx.palette

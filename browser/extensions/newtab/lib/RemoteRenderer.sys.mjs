@@ -2,6 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/**
+ * @import {DeferredTask} from "resource://gre/modules/DeferredTask.sys.mjs"
+ * @import {RemoteSettingsClient} from "resource://services-settings/RemoteSettingsClient.sys.mjs"
+ */
+
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 // Ideally, we'd have this be a separate JSON file that can be loaded at runtime
@@ -36,18 +41,16 @@ const lazy = XPCOMUtils.declareLazy({
     pref: PREF_REMOTE_RENDERER_VERSION,
     default: "",
   },
-});
-
-ChromeUtils.defineLazyGetter(lazy, "logConsole", function () {
-  return console.createInstance({
-    prefix: "RemoteRenderer",
-    maxLogLevel: Services.prefs.getBoolPref(
-      "browser.newtabpage.activity-stream.remote-renderer.log",
-      false
-    )
-      ? "Debug"
-      : "Warn",
-  });
+  logConsole: () =>
+    console.createInstance({
+      prefix: "RemoteRenderer",
+      maxLogLevel: Services.prefs.getBoolPref(
+        "browser.newtabpage.activity-stream.remote-renderer.log",
+        false
+      )
+        ? "Debug"
+        : "Warn",
+    }),
 });
 
 /**
@@ -135,7 +138,7 @@ export class RemoteRenderer {
    * @returns {boolean}
    */
   willDoomOnShutdown(uri) {
-    return this.#cacheEntryURIsToDoomAtShutdown.find(doomedURI =>
+    return this.#cacheEntryURIsToDoomAtShutdown.some(doomedURI =>
       doomedURI.equals(uri)
     );
   }
@@ -360,7 +363,7 @@ export class RemoteRenderer {
    * Writes content to a single cache entry from an ArrayBuffer.
    *
    * @param {nsIURI} uri - Cache key URI
-   * @param {ArrayBuffer} arrayBuffer - Content to write
+   * @param {ArrayBufferLike} arrayBuffer - Content to write
    * @param {string} version - Version identifier
    * @returns {Promise<undefined>}
    */
@@ -420,6 +423,7 @@ export class RemoteRenderer {
    * Version metadata acts as atomic commit flag - both entries written with same version.
    *
    * @param {object} content
+   * @param {ArrayBufferLike} content.manifest - Renderer manifest
    * @param {ArrayBuffer} content.js - JavaScript bundle
    * @param {ArrayBuffer} content.css - CSS stylesheet
    * @param {string} content.version - Version identifier
@@ -654,7 +658,7 @@ export class RemoteRenderer {
    * Fetches the latest JS and CSS bundle from Remote Settings.
    * Downloads attachments and returns them as ArrayBuffers.
    *
-   * @returns {Promise<{js: ArrayBuffer, css: ArrayBuffer, version: string}|null>}
+   * @returns {Promise<{manifest: ArrayBufferLike, js: ArrayBuffer, css: ArrayBuffer, version: string}|null>}
    */
   async fetchLatestContent() {
     try {
@@ -719,7 +723,7 @@ export class RemoteRenderer {
   /**
    * Opens a cache entry for reading.
    *
-   * @param {nsIURI} uri - Cache key URI
+   * @param {nsIURI} resourceURI - Cache key URI
    * @returns {Promise<nsICacheEntry|null>}
    */
   async openCacheEntry(resourceURI) {

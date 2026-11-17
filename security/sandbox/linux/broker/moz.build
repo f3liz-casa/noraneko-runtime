@@ -13,6 +13,8 @@ UNIFIED_SOURCES += [
     "SandboxBrokerPolicyFactory.cpp",
 ]
 
+SOURCE_HEADERS += ["SandboxBrokerUtils.h"]
+
 # Conflicts with ipc/chromium headers in a unified build.
 SOURCES += [
     "SandboxBroker.cpp",
@@ -21,6 +23,16 @@ SOURCES += [
 
 LOCAL_INCLUDES += [
     "/security/sandbox/linux",  # SandboxLogging.h, SandboxInfo.h
+]
+
+LICENSES += ["freebsd-realpath"]
+LICENSES["freebsd-realpath"].title = "FreeBSD realpath License"
+LICENSES["freebsd-realpath"].text = "LICENSE-NOTICE.txt"
+LICENSES["freebsd-realpath"].spdx = "BSD-3-Clause"
+
+LICENSED_UNDER += ["freebsd-realpath"]
+LICENSED_UNDER["freebsd-realpath"].paths = [
+    "SandboxBrokerRealpath.cpp",
 ]
 
 # Need this for mozilla::ipc::FileDescriptor etc.

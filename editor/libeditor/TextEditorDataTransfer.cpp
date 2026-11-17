@@ -13,6 +13,7 @@
 #include "mozilla/dom/DataTransfer.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/Selection.h"
 
 #include "nsAString.h"
@@ -30,7 +31,6 @@
 #include "nsITransferable.h"
 #include "nsIVariant.h"
 #include "nsLiteralString.h"
-#include "nsRange.h"
 #include "nsServiceManagerUtils.h"
 #include "nsString.h"
 #include "nsXPCOM.h"
@@ -212,7 +212,8 @@ nsresult TextEditor::HandlePaste(AutoEditActionDataSetter& aEditActionData,
 }
 
 nsresult TextEditor::HandlePasteTransferable(
-    AutoEditActionDataSetter& aEditActionData, nsITransferable& aTransferable) {
+    AutoEditActionDataSetter& aEditActionData, nsITransferable& aTransferable,
+    DataTransfer* aDataTransfer) {
   if (!IsModifiable()) {
     return NS_OK;
   }

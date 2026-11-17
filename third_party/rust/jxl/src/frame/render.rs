@@ -3,39 +3,35 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::api::JxlColorProfile;
-use crate::api::JxlColorType;
-use crate::api::JxlDataFormat;
-use crate::api::JxlOutputBuffer;
-use crate::api::JxlParallelRunner;
+use std::collections::BTreeSet;
+
+use crate::api::{
+    AlphaMode, JxlColorProfile, JxlColorType, JxlDataFormat, JxlOutputBuffer, JxlParallelRunner,
+    JxlPixelFormat,
+};
 use crate::bit_reader::BitReader;
+use crate::color::tf::TransferFunction;
 use crate::error::{Error, Result};
 use crate::features::epf::SigmaSource;
 use crate::features::noise::Noise;
 use crate::features::patches::PatchesDictionary;
 use crate::features::spline::Splines;
-use crate::frame::DataStatus;
 use crate::frame::color_correlation_map::ColorCorrelationParams;
+use crate::frame::modular::ModularStorage;
 use crate::frame::quantizer::LfQuantFactors;
-use crate::headers::frame_header::Encoding;
-use crate::headers::frame_header::FrameType;
-use crate::headers::{Orientation, color_encoding::ColorSpace, extra_channels::ExtraChannel};
-use crate::image::Image;
-use crate::image::Rect;
-use crate::util::SmallVec;
-use crate::util::sync::atomic::{AtomicUsize, Ordering};
-use crate::util::sync::{Arc, RwLock};
-use std::collections::BTreeSet;
-
+use crate::frame::{DataStatus, DecoderState, Frame};
+use crate::headers::Orientation;
+use crate::headers::color_encoding::ColorSpace;
+use crate::headers::extra_channels::ExtraChannel;
+use crate::headers::frame_header::{Encoding, FrameHeader, FrameType};
+use crate::image::{DataTypeTag, Image, OwnedRawImage, Rect};
 #[cfg(test)]
 use crate::render::SimpleRenderPipeline;
 use crate::render::buffer_splitter::BufferSplitter;
-use crate::render::{LowMemoryRenderPipeline, RenderPipeline, RenderPipelineBuilder, stages::*};
-use crate::{
-    api::JxlPixelFormat,
-    frame::{DecoderState, Frame},
-    headers::frame_header::FrameHeader,
-};
+use crate::render::stages::*;
+use crate::render::{LowMemoryRenderPipeline, RenderPipeline, RenderPipelineBuilder};
+use crate::util::SmallVec;
+use crate::util::sync::{Arc, RwLock};
 
 #[cfg(test)]
 macro_rules! pipeline_mut {
@@ -101,47 +97,9 @@ macro_rules! pipeline {
     }};
 }
 
-pub(crate) use pipeline;
+pub(super) use pipeline;
 
 impl Frame {
-    /// Add conversion stages for non-float output formats.
-    /// This is needed before saving to U8/U16/F16 formats to convert from the pipeline's f32.
-    fn add_conversion_stages<P: RenderPipeline>(
-        mut pipeline: RenderPipelineBuilder<P>,
-        channels: &[usize],
-        data_format: JxlDataFormat,
-        clamp_range_for_f16: Option<(f32, f32)>,
-    ) -> RenderPipelineBuilder<P> {
-        use crate::render::stages::{
-            ConvertF32ToF16Stage, ConvertF32ToU8Stage, ConvertF32ToU16Stage,
-        };
-
-        match data_format {
-            JxlDataFormat::U8 { bit_depth } => {
-                for &channel in channels {
-                    pipeline =
-                        pipeline.add_inout_stage(ConvertF32ToU8Stage::new(channel, bit_depth));
-                }
-            }
-            JxlDataFormat::U16 { bit_depth, .. } => {
-                for &channel in channels {
-                    pipeline =
-                        pipeline.add_inout_stage(ConvertF32ToU16Stage::new(channel, bit_depth));
-                }
-            }
-            JxlDataFormat::F16 { .. } => {
-                for &channel in channels {
-                    pipeline = pipeline.add_inout_stage(
-                        ConvertF32ToF16Stage::new_with_clamp_range(channel, clamp_range_for_f16),
-                    );
-                }
-            }
-            // F32 doesn't need conversion - the pipeline already uses f32
-            JxlDataFormat::F32 { .. } => {}
-        }
-        pipeline
-    }
-
     /// Returns `true` if any pixels were written to the output buffers during
     /// this call, `false` if the call was a no-op for the buffers (e.g. no new
     /// HF groups, no flush work, or the render pipeline was not yet ready).
@@ -385,8 +343,6 @@ impl Frame {
                 BTreeSet::new()
             };
 
-        let ready_steps = modular_global.take_ready_steps();
-
         for g in extra_groups_to_vardct_render.iter() {
             let sz = self.header.group_rect(*g).size;
             let area = sz.0 * sz.1;
@@ -397,6 +353,7 @@ impl Frame {
 
         const TRANSFORM_STEPS_PER_TASK: usize = 3;
 
+        #[derive(Debug)]
         enum RenderStep<'a> {
             Decode {
                 group: usize,
@@ -405,39 +362,64 @@ impl Frame {
             FlushVarDCT {
                 group: usize,
             },
-            RunTransformSteps {
-                steps: SmallVec<usize, TRANSFORM_STEPS_PER_TASK>,
-            },
+            RunTransformSteps,
         }
 
-        let render_steps: Vec<_> = ready_steps
-            .chunks(TRANSFORM_STEPS_PER_TASK)
-            .map(|x| RenderStep::RunTransformSteps {
-                steps: x.iter().copied().collect(),
+        let num_transform_tasks = modular_global
+            .num_ready_steps()
+            .div_ceil(TRANSFORM_STEPS_PER_TASK);
+        let mut render_steps: Vec<_> = groups
+            .into_iter()
+            .map(|(g, p)| RenderStep::Decode {
+                group: g,
+                passes: p,
             })
             .chain(
                 extra_groups_to_vardct_render
                     .iter()
                     .map(|x| RenderStep::FlushVarDCT { group: *x }),
             )
-            .chain(groups.into_iter().map(|(g, p)| RenderStep::Decode {
-                group: g,
-                passes: p,
-            }))
+            .chain((0..num_transform_tasks).map(|_| RenderStep::RunTransformSteps))
             .collect();
+
+        // Note that sorting by group has noticeable positive effects on memory usage,
+        // and also on performance by virtue of increased locality.
+        render_steps.sort_unstable_by_key(|s| match s {
+            RenderStep::Decode { group, .. } => *group,
+            RenderStep::FlushVarDCT { group } => *group,
+            RenderStep::RunTransformSteps => usize::MAX,
+        });
 
         // STEP 4: actually run the steps.
 
-        let pass_to_pipeline = |chan, group, complete, image: Image<i32>| {
-            pipeline!(
-                self,
-                p,
-                p.set_buffer_for_group(chan, group, complete, image, &buffer_splitter)?
-            );
+        let storage = self.lf_global.as_ref().unwrap().modular_global.storage();
+
+        let pass_to_pipeline = |chan, group, complete, raw_image: OwnedRawImage| {
+            match storage {
+                ModularStorage::I16 => {
+                    let image = Image::<i16>::from_raw(raw_image);
+                    pipeline!(
+                        self,
+                        p,
+                        p.set_buffer_for_group(chan, group, complete, image, &buffer_splitter)?
+                    );
+                }
+                ModularStorage::I32 => {
+                    let image = Image::<i32>::from_raw(raw_image);
+                    pipeline!(
+                        self,
+                        p,
+                        p.set_buffer_for_group(chan, group, complete, image, &buffer_splitter)?
+                    );
+                }
+            }
             Ok(())
         };
 
-        let run_step = |i| {
+        // Avoid significantly more than one thread per largest-group worth of work.
+        let max_threads = groups_of_work.div_ceil(THREAD_COUNT_DENOMINATOR).max(1);
+
+        parallel_runner.run_ordered(render_steps.len(), Some(max_threads), &|i| {
             match &render_steps[i] {
                 RenderStep::Decode { group, passes } => {
                     let mut new_passes: SmallVec<_, 11> = passes.iter().cloned().collect();
@@ -451,37 +433,16 @@ impl Frame {
                 RenderStep::FlushVarDCT { group } => {
                     self.decode_hf_group(*group, &mut [], &buffer_splitter, true)?;
                 }
-                RenderStep::RunTransformSteps { steps } => {
-                    let mut steps = steps.iter().copied().collect();
+                RenderStep::RunTransformSteps => {
                     self.lf_global
                         .as_ref()
                         .unwrap()
                         .modular_global
-                        .run_transforms(&self.header, &pass_to_pipeline, &mut steps)?;
+                        .run_transforms(&self.header, &pass_to_pipeline)?;
                 }
             }
             Ok(())
-        };
-
-        // Avoid significantly more than one thread per largest-group worth of work.
-        let max_threads = groups_of_work.div_ceil(THREAD_COUNT_DENOMINATOR).max(1);
-
-        let hw_threads = std::thread::available_parallelism()
-            .map(|x| x.get())
-            .unwrap_or(max_threads);
-
-        if render_steps.len() > max_threads && max_threads < hw_threads {
-            let next_index = AtomicUsize::new(0);
-            parallel_runner.run(max_threads, &|_| loop {
-                let t = next_index.fetch_add(1, Ordering::Relaxed);
-                if t >= render_steps.len() {
-                    return Ok(());
-                }
-                run_step(t)?;
-            })?;
-        } else {
-            parallel_runner.run(render_steps.len(), &run_step)?;
-        }
+        })?;
 
         for g in render_steps.iter().filter_map(|x| match x {
             RenderStep::Decode { group, .. } => Some(*group),
@@ -505,16 +466,41 @@ impl Frame {
         self.reference_frame_data = reference_frame_data;
         self.lf_frame_data = lf_frame_data;
 
-        if self.header.frame_type == FrameType::LFFrame
-            && self.header.lf_level == 1
-            && has_decoded_data
-        {
-            if do_flush && let Some(buffers) = api_buffers {
+        if self.header.frame_type == FrameType::LFFrame && self.header.lf_level == 1 {
+            let (gsx, gsy) = self.header.size_groups();
+            let group_dim = self.header.group_dim();
+            for r in &regions {
+                if r.size.0 == 0 || r.size.1 == 0 {
+                    continue;
+                }
+                let gx0 = r.origin.0 / group_dim;
+                let gx1 = (r.end().0 - 1) / group_dim;
+                let gy0 = r.origin.1 / group_dim;
+                let gy1 = (r.end().1 - 1) / group_dim;
+                for gy in gy0..=gy1 {
+                    for gx in gx0..=gx1 {
+                        let gxm = gx.saturating_sub(1);
+                        let gxp = (gx + 1).min(gsx - 1);
+                        let gym = gy.saturating_sub(1);
+                        let gyp = (gy + 1).min(gsy - 1);
+                        for ny in gym..=gyp {
+                            for nx in gxm..=gxp {
+                                self.lf_preview_dirty_groups.insert(ny * gsx + nx);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if do_flush
+                && let Some(buffers) = api_buffers
+                && has_decoded_data
+            {
                 return self.maybe_preview_lf_frame(
                     pixel_format,
                     buffers,
-                    &regions[..],
                     output_profile,
+                    parallel_runner,
                 );
             } else if self.group_status.incomplete_groups == 0 {
                 // If we are not requesting another flush at the end of the LF frame, we
@@ -528,7 +514,7 @@ impl Frame {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn build_render_pipeline<T: RenderPipeline>(
+    pub fn build_render_pipeline<T: RenderPipeline>(
         decoder_state: &DecoderState,
         frame_header: &FrameHeader,
         patches: Arc<RwLock<PatchesDictionary>>,
@@ -539,36 +525,58 @@ impl Frame {
         epf_sigma: Arc<RwLock<SigmaSource>>,
         pixel_format: &JxlPixelFormat,
         output_profile: &JxlColorProfile,
+        buffer_recycler: Arc<crate::image::BufferRecycler>,
     ) -> Result<Box<T>> {
         let num_channels = frame_header.num_extra_channels as usize + 3;
         let num_temp_channels = if frame_header.has_noise() { 3 } else { 0 };
         let metadata = &decoder_state.file_header.image_metadata;
+        let output_orientation = if decoder_state.adjust_orientation {
+            metadata.orientation
+        } else {
+            Orientation::Identity
+        };
+        let modular_ty = match decoder_state.modular_storage() {
+            ModularStorage::I16 => DataTypeTag::I16,
+            ModularStorage::I32 => DataTypeTag::I32,
+        };
+        let mut channel_types = Vec::with_capacity(num_channels + num_temp_channels);
+        for _ in 0..3 {
+            if frame_header.encoding == Encoding::Modular {
+                let bd = if metadata.xyb_encoded {
+                    None
+                } else {
+                    Some(metadata.bit_depth)
+                };
+                channel_types.push((modular_ty, bd));
+            } else {
+                channel_types.push((DataTypeTag::F32, None));
+            }
+        }
+        for i in 0..frame_header.num_extra_channels as usize {
+            let ec_bit_depth = metadata.extra_channel_info[i].bit_depth();
+            channel_types.push((modular_ty, Some(ec_bit_depth)));
+        }
+        for _ in 0..num_temp_channels {
+            channel_types.push((DataTypeTag::U16, None));
+        }
+
         let mut pipeline = RenderPipelineBuilder::<T>::new(
-            num_channels + num_temp_channels,
+            &channel_types,
             frame_header.size_upsampled(),
             frame_header.upsampling.ilog2() as usize,
             frame_header.log_group_dim(),
-            // TODO(veluca): we should instead have modular mode participate in buffer reuse.
-            if frame_header.encoding == Encoding::Modular {
-                Some(0)
-            } else {
-                None
-            },
+            buffer_recycler,
         );
 
-        if frame_header.encoding == Encoding::Modular {
-            if decoder_state.file_header.image_metadata.xyb_encoded {
-                pipeline = pipeline.add_inout_stage(ConvertModularXYBToF32Stage::new(0, lf_quant))
+        if frame_header.encoding == Encoding::Modular
+            && decoder_state.file_header.image_metadata.xyb_encoded
+        {
+            if decoder_state.modular_storage() == ModularStorage::I16 {
+                pipeline =
+                    pipeline.add_inout_stage(ConvertModular16XYBToF32Stage::new(0, lf_quant));
             } else {
-                for i in 0..3 {
-                    pipeline = pipeline
-                        .add_inout_stage(ConvertModularToF32Stage::new(i, metadata.bit_depth));
-                }
+                pipeline = pipeline.add_inout_stage(ConvertModularXYBToF32Stage::new(0, lf_quant));
             }
-        }
-        for i in 3..num_channels {
-            let ec_bit_depth = metadata.extra_channel_info[i - 3].bit_depth();
-            pipeline = pipeline.add_inout_stage(ConvertModularToF32Stage::new(i, ec_bit_depth));
         }
 
         for c in 0..3 {
@@ -582,22 +590,18 @@ impl Frame {
 
         let filters = &frame_header.restoration_filter;
         if filters.gab {
-            pipeline = pipeline
-                .add_inout_stage(GaborishStage::new(
-                    0,
+            pipeline = pipeline.add_inout_stage(GaborishStage::new(
+                [
                     filters.gab_x_weight1,
-                    filters.gab_x_weight2,
-                ))
-                .add_inout_stage(GaborishStage::new(
-                    1,
                     filters.gab_y_weight1,
-                    filters.gab_y_weight2,
-                ))
-                .add_inout_stage(GaborishStage::new(
-                    2,
                     filters.gab_b_weight1,
+                ],
+                [
+                    filters.gab_x_weight2,
+                    filters.gab_y_weight2,
                     filters.gab_b_weight2,
-                ));
+                ],
+            ));
         }
 
         let rf = &frame_header.restoration_filter;
@@ -678,8 +682,6 @@ impl Frame {
         if frame_header.has_noise() {
             pipeline = pipeline
                 .add_inout_stage(ConvolveNoiseStage::new(num_channels))
-                .add_inout_stage(ConvolveNoiseStage::new(num_channels + 1))
-                .add_inout_stage(ConvolveNoiseStage::new(num_channels + 2))
                 .add_inplace_stage(AddNoiseStage::new(
                     noise,
                     color_correlation_params,
@@ -742,29 +744,14 @@ impl Frame {
             })
             .unwrap_or_else(|| output_color_info.tf.clone());
 
-        // Clamp transfer-domain values while converting to f16 so we don't
-        // emit wild out-of-range values to downstream consumers.
-        //
-        // PQ has a bounded signal domain [0,1].
-        // HLG may carry modest overshoot/undershoot (e.g. from narrow-range
-        // workflows), so preserve headroom with a looser clamp.
-        let clamp_range_for_f16 = match &output_tf {
-            TransferFunction::Pq { .. } => Some((0.0, 1.0)),
-            TransferFunction::Hlg { .. } => Some((-0.074, 1.1)),
-            _ => None,
-        };
-
         let xyb_encoded = decoder_state.file_header.image_metadata.xyb_encoded;
 
         if frame_header.do_ycbcr {
             pipeline = pipeline.add_inplace_stage(YcbcrToRgbStage::new(0));
         } else if xyb_encoded {
-            pipeline = pipeline.add_inplace_stage(XybStage::new(0, output_color_info.clone()));
-        }
-
-        // XYB output is linear, so apply transfer function, but only if output is not linear itself
-        if xyb_encoded && !output_tf.is_linear() {
-            pipeline = pipeline.add_inplace_stage(FromLinearStage::new(0, output_tf.clone()));
+            let mut stage_color_info = output_color_info.clone();
+            stage_color_info.tf = output_tf.clone();
+            pipeline = pipeline.add_inplace_stage(XybColorConvertStage::new(0, stage_color_info));
         }
 
         if frame_header.needs_blending() {
@@ -821,64 +808,81 @@ impl Frame {
             } else {
                 3
             };
-            // Find the alpha channel info (index and metadata) if the color type requires alpha
-            let alpha_channel_info = if pixel_format.color_type.has_alpha() {
-                decoder_state
-                    .file_header
-                    .image_metadata
-                    .extra_channel_info
-                    .iter()
-                    .enumerate()
-                    .find(|x| x.1.ec_type == ExtraChannel::Alpha)
+            let alpha_channel_info = decoder_state
+                .file_header
+                .image_metadata
+                .extra_channel_info
+                .iter()
+                .enumerate()
+                .find(|x| x.1.ec_type == ExtraChannel::Alpha);
+            let alpha_extra_channel = alpha_channel_info.map(|x| x.0 + 3);
+            let alpha_in_color = if pixel_format.color_type.has_alpha() {
+                alpha_extra_channel
             } else {
                 None
             };
-            let alpha_in_color = alpha_channel_info.map(|x| x.0 + 3);
-            // Check if the source alpha is already premultiplied (alpha_associated)
             let source_alpha_associated =
                 alpha_channel_info.is_some_and(|(_, info)| info.alpha_associated());
             if pixel_format.color_type.is_grayscale() && num_color_channels == 3 {
                 return Err(Error::NotGrayscale);
             }
-            // Determine if we need to fill opaque alpha:
-            // - color_type requests alpha (has_alpha() is true)
-            // - but no actual alpha channel exists in the image (alpha_in_color is None)
             let fill_opaque_alpha = pixel_format.color_type.has_alpha() && alpha_in_color.is_none();
 
-            // Determine if we should premultiply:
-            // - premultiply_output is requested
-            // - there is an alpha channel in the output
-            // - source is not already premultiplied (to avoid double-premultiplication)
-            let should_premultiply = decoder_state.premultiply_output
-                && alpha_in_color.is_some()
+            let should_premultiply = decoder_state.alpha_mode == AlphaMode::Premultiplied
+                && alpha_extra_channel.is_some()
                 && !source_alpha_associated;
+            let should_unpremultiply = decoder_state.alpha_mode == AlphaMode::Unpremultiplied
+                && alpha_extra_channel.is_some()
+                && source_alpha_associated;
 
-            let color_source_channels: &[usize] =
+            // For CMYK output, interleave the Black extra channel as the
+            // fourth channel. This requires a color image with a Black extra
+            // channel.
+            let black_in_color = if pixel_format.color_type == JxlColorType::Cmyk {
+                let black_channel = decoder_state
+                    .file_header
+                    .image_metadata
+                    .extra_channel_info
+                    .iter()
+                    .position(|info| info.ec_type == ExtraChannel::Black);
+                match (num_color_channels, black_channel) {
+                    (3, Some(index)) => Some(index + 3),
+                    _ => return Err(Error::NotCmyk),
+                }
+            } else {
+                None
+            };
+            let cmyk_channels;
+            let color_source_channels: &[usize] = if let Some(black) = black_in_color {
+                cmyk_channels = [0, 1, 2, black];
+                &cmyk_channels
+            } else {
                 match (pixel_format.color_type.is_grayscale(), alpha_in_color) {
                     (true, None) => &[0],
                     (true, Some(c)) => &[0, c],
                     (false, None) => &[0, 1, 2],
                     (false, Some(c)) => &[0, 1, 2, c],
-                };
+                }
+            };
             if let Some(df) = &pixel_format.color_data_format {
-                // Add premultiply stage if needed (before conversion to output format)
-                if should_premultiply && let Some(alpha_channel) = alpha_in_color {
+                if (should_premultiply || should_unpremultiply)
+                    && let Some(alpha_channel) = alpha_extra_channel
+                {
+                    let num_output_color_channels = if pixel_format.color_type.is_grayscale() {
+                        1
+                    } else {
+                        3
+                    };
                     pipeline = pipeline.add_inplace_stage(PremultiplyAlphaStage::new(
                         0,
-                        num_color_channels,
+                        num_output_color_channels,
                         alpha_channel,
+                        should_unpremultiply,
                     ));
                 }
-                // Add conversion stages for non-float output formats
-                pipeline = Self::add_conversion_stages(
-                    pipeline,
-                    color_source_channels,
-                    *df,
-                    clamp_range_for_f16,
-                );
                 pipeline = pipeline.add_save_stage(
                     color_source_channels,
-                    metadata.orientation,
+                    output_orientation,
                     0,
                     pixel_format.color_type,
                     *df,
@@ -892,11 +896,9 @@ impl Frame {
             };
             for i in 0..frame_header.num_extra_channels as usize {
                 if let Some(df) = &pixel_format.extra_channel_format[i] {
-                    // Add conversion stages for non-float output formats
-                    pipeline = Self::add_conversion_stages(pipeline, &[3 + i], *df, None);
                     pipeline = pipeline.add_save_stage(
                         &[3 + i],
-                        metadata.orientation,
+                        output_orientation,
                         save_idx,
                         JxlColorType::Grayscale,
                         *df,
@@ -927,6 +929,7 @@ impl Frame {
                 self.epf_sigma.clone(),
                 pixel_format,
                 output_profile,
+                self.buffer_recycler.clone(),
             )? as Box<dyn std::any::Any + Send + Sync>
         } else {
             Self::build_render_pipeline::<LowMemoryRenderPipeline>(
@@ -940,6 +943,7 @@ impl Frame {
                 self.epf_sigma.clone(),
                 pixel_format,
                 output_profile,
+                self.buffer_recycler.clone(),
             )? as Box<dyn std::any::Any + Send + Sync>
         };
         #[cfg(not(test))]
@@ -954,6 +958,7 @@ impl Frame {
             self.epf_sigma.clone(),
             pixel_format,
             output_profile,
+            self.buffer_recycler.clone(),
         )?;
         self.render_pipeline = Some(render_pipeline);
         self.section0_render_up_to_date = false;

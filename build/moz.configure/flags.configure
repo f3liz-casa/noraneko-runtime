@@ -5,7 +5,7 @@
 # The following flags are explicitly passed to C++ compiler invocations from rust
 # even when only passing base flags. If you add more similarly important flags,
 # please consider whether they should be handled the same way.
-# See config/makefiles/rust.mk.
+# See cargo_base_flags in build/moz.configure/rust.configure.
 # We support C++14, but we don't want to enable the sized deallocation
 # facilities in C++14 yet.
 check_and_add_flag("-fno-sized-deallocation", compiler=cxx_compiler)
@@ -439,14 +439,6 @@ def add_non_gnu_dso_flags(dso_flags, target):
         ldopts.append("-MACHINE:ARM64")
 
     dso_flags.ldopts.extend(ldopts)
-
-
-@depends(libfuzzer_flags, when=enable_fuzzing)
-def sancov(libfuzzer_flags):
-    for flag in libfuzzer_flags.use_flags:
-        if "-fsanitize-coverage" in flag or "-fsanitize=fuzzer" in flag:
-            return True
-    return False
 
 
 @depends(target, build_environment)

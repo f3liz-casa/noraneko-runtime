@@ -10,10 +10,10 @@ import glob
 import multiprocessing
 import os
 import pathlib
+import plistlib
 import re
 import subprocess
 import sys
-import tempfile
 from shutil import copyfile, rmtree
 
 from mozsystemmonitor.resourcemonitor import SystemResourceMonitor
@@ -21,7 +21,7 @@ from mozsystemmonitor.resourcemonitor import SystemResourceMonitor
 import mozharness
 from mozharness.base.errors import PythonErrorList
 from mozharness.base.log import CRITICAL, DEBUG, ERROR, INFO, OutputParser
-from mozharness.base.python import Python3Virtualenv
+from mozharness.base.python import perfherder_schema_path
 from mozharness.base.vcs.vcsbase import MercurialScript
 from mozharness.mozilla.automation import (
     EXIT_STATUS_DICT,
@@ -78,9 +78,7 @@ FFMPEG_LOCAL_CACHE = {
 }
 
 
-class Raptor(
-    TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin, Python3Virtualenv
-):
+class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
     """
     Install and run Raptor tests
     """
@@ -919,46 +917,57 @@ class Raptor(
         self.device.install_app(str(cstm_car_m_apk))
         self.info("Custom Chromium-as-Release for Android successfully installed")
 
-    def download_chrome_android(self):
-        # Fetch the APK
-        tmpdir = tempfile.mkdtemp()
-        self.tooltool_fetch(
-            os.path.join(
-                self.raptor_path,
-                "raptor",
-                "tooltool-manifests",
-                "chrome-android",
-                "chrome87.manifest",
-            ),
-            output_dir=tmpdir,
+    def _log_safari_version(self):
+        app_name = {
+            "safari": "Safari",
+            "safari-tp": "Safari Technology Preview",
+        }[self.app]
+        plist_path = pathlib.Path(
+            "/Applications", app_name + ".app", "Contents", "version.plist"
         )
-        files = os.listdir(tmpdir)
-        if len(files) > 1:
-            raise Exception(
-                "Found more than one chrome APK file after tooltool download"
-            )
-        chromeapk = os.path.join(tmpdir, files[0])
-
-        # Disable verification and install the APK
-        self.device.shell_output("settings put global verifier_verify_adb_installs 0")
-        self.install_android_app(chromeapk, replace=True)
-
-        # Re-enable verification and delete the temporary directory
-        self.device.shell_output("settings put global verifier_verify_adb_installs 1")
-        rmtree(tmpdir)
-
-    def install_safari_technology_preview(self):
-        """Ensure latest version of Safari TP binary is running in CI"""
-
-        if self.app != "safari-tp" or self.run_local:
+        try:
+            with plist_path.open("rb") as plist_file:
+                plist = plistlib.load(plist_file)
+            short_version = plist.get("CFBundleShortVersionString")
+            bundle_version = plist.get("CFBundleVersion")
+        except Exception as exc:
+            self.warning(f"Unable to read {app_name} version from {plist_path}: {exc}")
             return
 
-        import mozprocess
+        missing_keys = [
+            key
+            for key, value in (
+                ("CFBundleShortVersionString", short_version),
+                ("CFBundleVersion", bundle_version),
+            )
+            if not value
+        ]
+        if missing_keys:
+            self.warning(
+                f"Unable to read {app_name} version: missing {', '.join(missing_keys)}"
+            )
+            return
 
-        self.info("Checking for Safari Technology Preview updates...")
-        install_script = "/usr/local/bin/install_safari_softwareupdate_updates.py"
-        cmd = [sys.executable, install_script]
-        mozprocess.run_and_wait(cmd)
+        self.info(
+            f"{app_name} version: {short_version} (CFBundleShortVersionString), "
+            f"{bundle_version} (CFBundleVersion)"
+        )
+
+    def install_safari_technology_preview(self):
+        """Update Safari TP in CI, then log the Safari or Safari TP version"""
+
+        if self.app not in ("safari", "safari-tp") or self.run_local:
+            return
+
+        if self.app == "safari-tp":
+            import mozprocess
+
+            self.info("Checking for Safari Technology Preview updates...")
+            install_script = "/usr/local/bin/install_safari_softwareupdate_updates.py"
+            cmd = [sys.executable, install_script]
+            mozprocess.run_and_wait(cmd)
+
+        self._log_safari_version()
 
     def install_chromium_distribution(self):
         """Install Google Chromium distribution in production"""
@@ -1256,6 +1265,15 @@ class Raptor(
             extract_dirs=extract_dirs, suite_categories=["common", "condprof", "raptor"]
         )
 
+    def query_python_constraints(self):
+        return [
+            os.path.abspath(
+                os.path.join(
+                    self.raptor_path, "..", "config", "requirements-raptor.txt"
+                )
+            )
+        ]
+
     def create_virtualenv(self, **kwargs):
         """VirtualenvMixin.create_virtualenv() assumes we're using
         self.config['virtualenv_modules']. Since we're installing
@@ -1291,44 +1309,19 @@ class Raptor(
             sys.path.append(_path)
             return
 
-        # virtualenv doesn't already exist so create it
-        # Install mozbase first, so we use in-tree versions
-        # Additionally, decide where to pull raptor requirements from.
-        if not self.run_local:
-            mozbase_requirements = os.path.join(
-                self.query_abs_dirs()["abs_test_install_dir"],
-                "config",
-                "mozbase_requirements.txt",
-            )
-            raptor_requirements = os.path.join(self.raptor_path, "requirements.txt")
-        else:
-            mozbase_requirements = os.path.join(
-                os.path.dirname(self.raptor_path),
-                "config",
-                "mozbase_source_requirements.txt",
-            )
-            raptor_requirements = os.path.join(
-                self.raptor_path, "source_requirements.txt"
-            )
-        self.register_virtualenv_module(
-            requirements=[mozbase_requirements],
-            editable=True,
+        requirements_file = (
+            "source_requirements.txt" if self.run_local else "requirements.txt"
         )
+        raptor_requirements = os.path.join(self.raptor_path, requirements_file)
+        common_requirements = os.path.join(self.raptor_path, "requirements-common.txt")
+        self.register_virtualenv_module(requirements=[raptor_requirements])
 
         modules = ["pip>=1.5"]
 
         # Add modules required for visual metrics. Packages with non-Python
         # components are particularly fussy about python version.
         py3_minor = sys.version_info.minor
-        if py3_minor <= 7:
-            modules.extend([
-                "numpy==1.16.1",
-                "Pillow==6.1.0",
-                "scipy==1.2.3",
-                "pyssim==0.4",
-                "opencv-python==4.5.4.60",
-            ])
-        elif py3_minor <= 11:
+        if py3_minor <= 11:
             modules.extend([
                 "numpy==1.23.5",
                 "Pillow==9.2.0",
@@ -1349,10 +1342,7 @@ class Raptor(
             self.setup_local_ffmpeg()
 
         # Require pip >= 1.5 so pip will prefer .whl files to install
-        super().create_virtualenv(modules=modules)
-
-        # Install Raptor dependencies
-        self.install_module(requirements=[raptor_requirements])
+        super().create_virtualenv(modules=modules, requirements=[common_requirements])
 
     def setup_local_ffmpeg(self):
         """Make use of the users local ffmpeg when running browsertime visual
@@ -1470,6 +1460,7 @@ class Raptor(
         # mitmproxy needs path to mozharness when installing the cert, and tooltool
         env["SCRIPTSPATH"] = scripts_path
         env["EXTERNALTOOLSPATH"] = external_tools_path
+        env["PERFHERDER_SCHEMA_PATH"] = perfherder_schema_path()
 
         # xpcshell may come from local build, or fetched from build artifacts in
         # the case of CI.

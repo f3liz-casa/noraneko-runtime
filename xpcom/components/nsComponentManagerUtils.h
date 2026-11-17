@@ -15,12 +15,6 @@ nsresult CallCreateInstance(const nsCID& aCID, const nsIID& aIID,
 nsresult CallCreateInstance(const char* aContractID, const nsIID& aIID,
                             void** aResult);
 
-nsresult CallGetClassObject(const nsCID& aCID, const nsIID& aIID,
-                            void** aResult);
-
-nsresult CallGetClassObject(const char* aContractID, const nsIID& aIID,
-                            void** aResult);
-
 class MOZ_STACK_CLASS nsCreateInstanceByCID final : public nsCOMPtr_helper {
  public:
   nsCreateInstanceByCID(const nsCID& aCID, nsresult* aErrorPtr)
@@ -59,61 +53,19 @@ class MOZ_STACK_CLASS nsCreateInstanceFromFactory final
   nsresult* mErrorPtr;
 };
 
-inline const nsCreateInstanceByCID do_CreateInstance(const nsCID& aCID,
-                                                     nsresult* aError = 0) {
+inline const nsCreateInstanceByCID do_CreateInstance(
+    const nsCID& aCID, nsresult* aError = nullptr) {
   return nsCreateInstanceByCID(aCID, aError);
 }
 
 inline const nsCreateInstanceByContractID do_CreateInstance(
-    const char* aContractID, nsresult* aError = 0) {
+    const char* aContractID, nsresult* aError = nullptr) {
   return nsCreateInstanceByContractID(aContractID, aError);
 }
 
 inline const nsCreateInstanceFromFactory do_CreateInstance(
-    nsIFactory* aFactory, nsresult* aError = 0) {
+    nsIFactory* aFactory, nsresult* aError = nullptr) {
   return nsCreateInstanceFromFactory(aFactory, aError);
-}
-
-class MOZ_STACK_CLASS nsGetClassObjectByCID final : public nsCOMPtr_helper {
- public:
-  nsGetClassObjectByCID(const nsCID& aCID, nsresult* aErrorPtr)
-      : mCID(aCID), mErrorPtr(aErrorPtr) {}
-
-  virtual nsresult NS_FASTCALL operator()(const nsIID&, void**) const override;
-
- private:
-  const nsCID& mCID;
-  nsresult* mErrorPtr;
-};
-
-class MOZ_STACK_CLASS nsGetClassObjectByContractID final
-    : public nsCOMPtr_helper {
- public:
-  nsGetClassObjectByContractID(const char* aContractID, nsresult* aErrorPtr)
-      : mContractID(aContractID), mErrorPtr(aErrorPtr) {}
-
-  virtual nsresult NS_FASTCALL operator()(const nsIID&, void**) const override;
-
- private:
-  const char* mContractID;
-  nsresult* mErrorPtr;
-};
-
-/**
- * do_GetClassObject can be used to improve performance of callers
- * that call |CreateInstance| many times.  They can cache the factory
- * and call do_CreateInstance or CallCreateInstance with the cached
- * factory rather than having the component manager retrieve it every
- * time.
- */
-inline const nsGetClassObjectByCID do_GetClassObject(const nsCID& aCID,
-                                                     nsresult* aError = 0) {
-  return nsGetClassObjectByCID(aCID, aError);
-}
-
-inline const nsGetClassObjectByContractID do_GetClassObject(
-    const char* aContractID, nsresult* aError = 0) {
-  return nsGetClassObjectByContractID(aContractID, aError);
 }
 
 // type-safe shortcuts for calling |CreateInstance|
@@ -144,24 +96,6 @@ inline nsresult CallCreateInstance(nsIFactory* aFactory,
 
   return aFactory->CreateInstance(nullptr, NS_GET_IID(DestinationType),
                                   reinterpret_cast<void**>(aDestination));
-}
-
-template <class DestinationType>
-inline nsresult CallGetClassObject(const nsCID& aClass,
-                                   DestinationType** aDestination) {
-  MOZ_ASSERT(aDestination, "null parameter");
-
-  return CallGetClassObject(aClass, NS_GET_IID(DestinationType),
-                            reinterpret_cast<void**>(aDestination));
-}
-
-template <class DestinationType>
-inline nsresult CallGetClassObject(const char* aContractID,
-                                   DestinationType** aDestination) {
-  MOZ_ASSERT(aDestination, "null parameter");
-
-  return CallGetClassObject(aContractID, NS_GET_IID(DestinationType),
-                            reinterpret_cast<void**>(aDestination));
 }
 
 #endif /* nsComponentManagerUtils_h_ */

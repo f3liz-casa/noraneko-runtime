@@ -23,8 +23,6 @@ static const char* mthipcLogTag = "MediaTransportHandler";
 
 MediaTransportHandlerIPC::MediaTransportHandlerIPC() = default;
 
-MediaTransportHandlerIPC::~MediaTransportHandlerIPC() = default;
-
 void MediaTransportHandlerIPC::Initialize() {
   using EndpointPromise =
       MozPromise<mozilla::ipc::Endpoint<mozilla::dom::PMediaTransportChild>,
@@ -191,13 +189,12 @@ nsresult MediaTransportHandlerIPC::SetIceConfig(
   return NS_OK;
 }
 
-void MediaTransportHandlerIPC::Destroy() {
+MediaTransportHandlerIPC::~MediaTransportHandlerIPC() {
   if (mChild) {
     mChild->Shutdown();
     mThread->Dispatch(NS_NewRunnableFunction(
         __func__, [child = std::move(mChild)]() { child->Close(); }));
   }
-  delete this;
 }
 
 // We will probably be able to move the proxy lookup stuff into
@@ -325,13 +322,13 @@ void MediaTransportHandlerIPC::SendPacket(const std::string& aTransportId,
 
 void MediaTransportHandlerIPC::AddIceCandidate(
     const std::string& aTransportId, const std::string& aCandidate,
-    const std::string& aUfrag, const std::string& aObfuscatedAddress) {
+    const std::string& aUfrag, const std::string& aResolvedAddress) {
   mInitPromise->Then(
       mThread, __func__,
       [=, this, self = RefPtr<MediaTransportHandlerIPC>(this)](bool /*dummy*/) {
         if (mChild) {
           mChild->SendAddIceCandidate(aTransportId, aCandidate, aUfrag,
-                                      aObfuscatedAddress);
+                                      aResolvedAddress);
         }
       },
       [](const nsCString& aError) {});

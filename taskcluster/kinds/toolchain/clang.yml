@@ -11,55 +11,6 @@ task-defaults:
         resources:
             - 'build/build-clang/build-clang.py'
 
-linux64-clang-14-stage1:
-    description: "Clang 14 toolchain build"
-    treeherder:
-        symbol: TL(clang-14-stage1)
-    run:
-        using: toolchain-script
-        script: build-clang.sh
-        arguments:
-            - 'build/build-clang/use-system-clang.json'
-            - 'build/build-clang/clang-14.json'
-            - 'build/build-clang/stage-1.json'
-        resources:
-            - 'build/build-clang/use-system-clang.json'
-            - 'build/build-clang/clang-14.json'
-            - 'build/build-clang/stage-1.json'
-        toolchain-artifact: public/build/clang.tar.zst
-    fetches:
-        fetch:
-            - clang-14
-        toolchain:
-            - linux64-toolchain-sysroot
-
-macosx64-clang-14-raw:
-    description: "Clang 14 toolchain build"
-    treeherder:
-        symbol: TM(clang-14-raw)
-    worker-type: b-linux-docker-large-amd
-    worker:
-        max-run-time: 3600
-    run:
-        script: build-clang.sh
-        arguments:
-            - 'build/build-clang/use-clang-artifact.json'
-            - 'build/build-clang/macosx64.json'
-            - 'build/build-clang/clang-14.json'
-            - 'build/build-clang/stage-1.json'
-        resources:
-            - 'build/build-clang/use-clang-artifact.json'
-            - 'build/build-clang/macosx64.json'
-            - 'build/build-clang/clang-14.json'
-            - 'build/build-clang/stage-1.json'
-        toolchain-artifact: public/build/clang.tar.zst
-    fetches:
-        fetch:
-            - clang-14
-        toolchain:
-            - linux64-clang-14-stage1
-            - macosx64-sdk-13.3
-
 linux64-clang-19-raw:
     description: "Clang 19 toolchain build"
     treeherder:
@@ -101,7 +52,7 @@ linux64-clang-19:
 linux64-clang-22-mingw-x86:
     description: "MinGW-Clang 22 x86 toolchain build"
     treeherder:
-        symbol: TMW(clang-22-x86)
+        symbol: TWM(clang-22-x86)
     worker-type: b-linux-docker-amd
     run:
         script: build-clang-mingw.sh
@@ -118,15 +69,13 @@ linux64-clang-22-mingw-x86:
         fetch:
             - clang-22
             - mingw-w64
-            - llvm-mingw
-            - gcc-9.5.0
         toolchain:
             - linux64-clang-22
 
 linux64-clang-22-mingw-x64:
     description: "MinGW-Clang 22 x64 toolchain build"
     treeherder:
-        symbol: TMW(clang-22-x64)
+        symbol: TWM(clang-22-x64)
         tier: 1
     worker-type: b-linux-docker-amd
     run:
@@ -144,8 +93,6 @@ linux64-clang-22-mingw-x64:
         fetch:
             - clang-22
             - mingw-w64
-            - llvm-mingw
-            - gcc-9.5.0
         toolchain:
             - linux64-clang-22
 
@@ -249,9 +196,9 @@ linux64-clang-22:
             - android-arm-libunwind-22
             - android-x64-compiler-rt-22
             - android-x64-libunwind-22
+            - linux32-compiler-rt-22
             - linux64-aarch64-compiler-rt-22
             - linux64-x64-compiler-rt-22
-            - linux64-x86-compiler-rt-22
             - macosx64-aarch64-compiler-rt-22
             - macosx64-x64-compiler-rt-22
             - wasm32-wasi-compiler-rt-22
@@ -311,9 +258,9 @@ linux64-aarch64-clang-22:
             - android-arm-libunwind-22
             - android-x64-compiler-rt-22
             - android-x64-libunwind-22
+            - linux32-compiler-rt-22
             - linux64-aarch64-compiler-rt-22
             - linux64-x64-compiler-rt-22
-            - linux64-x86-compiler-rt-22
             - macosx64-aarch64-compiler-rt-22
             - macosx64-x64-compiler-rt-22
             - wasm32-wasi-compiler-rt-22
@@ -433,9 +380,9 @@ macosx64-clang-22:
             - android-arm-libunwind-22
             - android-x64-compiler-rt-22
             - android-x64-libunwind-22
+            - linux32-compiler-rt-22
             - linux64-aarch64-compiler-rt-22
             - linux64-x64-compiler-rt-22
-            - linux64-x86-compiler-rt-22
             - macosx64-aarch64-compiler-rt-22
             - macosx64-x64-compiler-rt-22
             - wasm32-wasi-compiler-rt-22
@@ -553,9 +500,9 @@ macosx64-aarch64-clang-22:
             - android-arm-libunwind-22
             - android-x64-compiler-rt-22
             - android-x64-libunwind-22
+            - linux32-compiler-rt-22
             - linux64-aarch64-compiler-rt-22
             - linux64-x64-compiler-rt-22
-            - linux64-x86-compiler-rt-22
             - macosx64-aarch64-compiler-rt-22
             - macosx64-x64-compiler-rt-22
             - wasm32-wasi-compiler-rt-22
@@ -676,9 +623,9 @@ win64-clang-22:
             - android-arm-libunwind-22
             - android-x64-compiler-rt-22
             - android-x64-libunwind-22
+            - linux32-compiler-rt-22
             - linux64-aarch64-compiler-rt-22
             - linux64-x64-compiler-rt-22
-            - linux64-x86-compiler-rt-22
             - macosx64-aarch64-compiler-rt-22
             - macosx64-x64-compiler-rt-22
             - wasm32-wasi-compiler-rt-22
@@ -741,9 +688,9 @@ win64-aarch64-clang-22:
             - android-arm-libunwind-22
             - android-x64-compiler-rt-22
             - android-x64-libunwind-22
+            - linux32-compiler-rt-22
             - linux64-aarch64-compiler-rt-22
             - linux64-x64-compiler-rt-22
-            - linux64-x86-compiler-rt-22
             - macosx64-aarch64-compiler-rt-22
             - macosx64-x64-compiler-rt-22
             - wasm32-wasi-compiler-rt-22
@@ -754,7 +701,7 @@ win64-aarch64-clang-22:
 linux64-clang-23-mingw-x86:
     description: "MinGW-Clang 23 x86 toolchain build"
     treeherder:
-        symbol: TMW(clang-23-x86)
+        symbol: TWM(clang-23-x86)
     worker-type: b-linux-docker-amd
     run:
         script: build-clang-mingw.sh
@@ -767,15 +714,13 @@ linux64-clang-23-mingw-x86:
         fetch:
             - clang-23
             - mingw-w64
-            - llvm-mingw
-            - gcc-9.5.0
         toolchain:
             - linux64-clang-23
 
 linux64-clang-23-mingw-x64:
     description: "MinGW-Clang 23 x64 toolchain build"
     treeherder:
-        symbol: TMW(clang-23-x64)
+        symbol: TWM(clang-23-x64)
         tier: 1
     worker-type: b-linux-docker-amd
     run:
@@ -789,8 +734,6 @@ linux64-clang-23-mingw-x64:
         fetch:
             - clang-23
             - mingw-w64
-            - llvm-mingw
-            - gcc-9.5.0
         toolchain:
             - linux64-clang-23
 
@@ -886,9 +829,9 @@ linux64-clang-23:
             - android-arm-libunwind-23
             - android-x64-compiler-rt-23
             - android-x64-libunwind-23
+            - linux32-compiler-rt-23
             - linux64-aarch64-compiler-rt-23
             - linux64-x64-compiler-rt-23
-            - linux64-x86-compiler-rt-23
             - macosx64-aarch64-compiler-rt-23
             - macosx64-x64-compiler-rt-23
             - wasm32-wasi-compiler-rt-23
@@ -944,9 +887,9 @@ linux64-aarch64-clang-23:
             - android-arm-libunwind-23
             - android-x64-compiler-rt-23
             - android-x64-libunwind-23
+            - linux32-compiler-rt-23
             - linux64-aarch64-compiler-rt-23
             - linux64-x64-compiler-rt-23
-            - linux64-x86-compiler-rt-23
             - macosx64-aarch64-compiler-rt-23
             - macosx64-x64-compiler-rt-23
             - wasm32-wasi-compiler-rt-23
@@ -1060,9 +1003,9 @@ macosx64-clang-23:
             - android-arm-libunwind-23
             - android-x64-compiler-rt-23
             - android-x64-libunwind-23
+            - linux32-compiler-rt-23
             - linux64-aarch64-compiler-rt-23
             - linux64-x64-compiler-rt-23
-            - linux64-x86-compiler-rt-23
             - macosx64-aarch64-compiler-rt-23
             - macosx64-x64-compiler-rt-23
             - wasm32-wasi-compiler-rt-23
@@ -1176,9 +1119,9 @@ macosx64-aarch64-clang-23:
             - android-arm-libunwind-23
             - android-x64-compiler-rt-23
             - android-x64-libunwind-23
+            - linux32-compiler-rt-23
             - linux64-aarch64-compiler-rt-23
             - linux64-x64-compiler-rt-23
-            - linux64-x86-compiler-rt-23
             - macosx64-aarch64-compiler-rt-23
             - macosx64-x64-compiler-rt-23
             - wasm32-wasi-compiler-rt-23
@@ -1293,9 +1236,9 @@ win64-clang-23:
             - android-arm-libunwind-23
             - android-x64-compiler-rt-23
             - android-x64-libunwind-23
+            - linux32-compiler-rt-23
             - linux64-aarch64-compiler-rt-23
             - linux64-x64-compiler-rt-23
-            - linux64-x86-compiler-rt-23
             - macosx64-aarch64-compiler-rt-23
             - macosx64-x64-compiler-rt-23
             - wasm32-wasi-compiler-rt-23
@@ -1354,9 +1297,9 @@ win64-aarch64-clang-23:
             - android-arm-libunwind-23
             - android-x64-compiler-rt-23
             - android-x64-libunwind-23
+            - linux32-compiler-rt-23
             - linux64-aarch64-compiler-rt-23
             - linux64-x64-compiler-rt-23
-            - linux64-x86-compiler-rt-23
             - macosx64-aarch64-compiler-rt-23
             - macosx64-x64-compiler-rt-23
             - wasm32-wasi-compiler-rt-23
@@ -1369,7 +1312,7 @@ linux64-clang-trunk-mingw-x86:
     attributes:
         cached_task: false
     treeherder:
-        symbol: TMW(clang-trunk-x86)
+        symbol: TWM(clang-trunk-x86)
     worker-type: b-linux-docker-amd
     run:
         script: build-clang-mingw.sh
@@ -1386,8 +1329,6 @@ linux64-clang-trunk-mingw-x86:
         fetch:
             - clang-trunk
             - mingw-w64-trunk
-            - llvm-mingw
-            - gcc-9.5.0
         toolchain:
             - linux64-clang-trunk
 
@@ -1396,7 +1337,7 @@ linux64-clang-trunk-mingw-x64:
     attributes:
         cached_task: false
     treeherder:
-        symbol: TMW(clang-trunk-x64)
+        symbol: TWM(clang-trunk-x64)
         tier: 1
     worker-type: b-linux-docker-amd
     run:
@@ -1414,8 +1355,6 @@ linux64-clang-trunk-mingw-x64:
         fetch:
             - clang-trunk
             - mingw-w64-trunk
-            - llvm-mingw
-            - gcc-9.5.0
         toolchain:
             - linux64-clang-trunk
 
@@ -1525,9 +1464,9 @@ linux64-clang-trunk:
             - android-arm-libunwind-trunk
             - android-x64-compiler-rt-trunk
             - android-x64-libunwind-trunk
+            - linux32-compiler-rt-trunk
             - linux64-aarch64-compiler-rt-trunk
             - linux64-x64-compiler-rt-trunk
-            - linux64-x86-compiler-rt-trunk
             - macosx64-aarch64-compiler-rt-trunk
             - macosx64-x64-compiler-rt-trunk
             - wasm32-wasi-compiler-rt-trunk
@@ -1589,9 +1528,9 @@ linux64-aarch64-clang-trunk:
             - android-arm-libunwind-trunk
             - android-x64-compiler-rt-trunk
             - android-x64-libunwind-trunk
+            - linux32-compiler-rt-trunk
             - linux64-aarch64-compiler-rt-trunk
             - linux64-x64-compiler-rt-trunk
-            - linux64-x86-compiler-rt-trunk
             - macosx64-aarch64-compiler-rt-trunk
             - macosx64-x64-compiler-rt-trunk
             - wasm32-wasi-compiler-rt-trunk
@@ -1658,6 +1597,7 @@ macosx64-clang-trunk-profile:
         toolchain:
             - macosx64-clang-trunk-stage2
             - macosx64-sdk-toolchain
+            - macosx64-x64-compiler-rt-trunk
 
 macosx64-clang-trunk-raw:
     description: "Clang trunk toolchain build"
@@ -1717,9 +1657,9 @@ macosx64-clang-trunk:
             - android-arm-libunwind-trunk
             - android-x64-compiler-rt-trunk
             - android-x64-libunwind-trunk
+            - linux32-compiler-rt-trunk
             - linux64-aarch64-compiler-rt-trunk
             - linux64-x64-compiler-rt-trunk
-            - linux64-x86-compiler-rt-trunk
             - macosx64-aarch64-compiler-rt-trunk
             - macosx64-x64-compiler-rt-trunk
             - wasm32-wasi-compiler-rt-trunk
@@ -1843,9 +1783,9 @@ macosx64-aarch64-clang-trunk:
             - android-arm-libunwind-trunk
             - android-x64-compiler-rt-trunk
             - android-x64-libunwind-trunk
+            - linux32-compiler-rt-trunk
             - linux64-aarch64-compiler-rt-trunk
             - linux64-x64-compiler-rt-trunk
-            - linux64-x86-compiler-rt-trunk
             - macosx64-aarch64-compiler-rt-trunk
             - macosx64-x64-compiler-rt-trunk
             - wasm32-wasi-compiler-rt-trunk
@@ -1970,9 +1910,9 @@ win64-clang-trunk:
             - android-arm-libunwind-trunk
             - android-x64-compiler-rt-trunk
             - android-x64-libunwind-trunk
+            - linux32-compiler-rt-trunk
             - linux64-aarch64-compiler-rt-trunk
             - linux64-x64-compiler-rt-trunk
-            - linux64-x86-compiler-rt-trunk
             - macosx64-aarch64-compiler-rt-trunk
             - macosx64-x64-compiler-rt-trunk
             - wasm32-wasi-compiler-rt-trunk
@@ -2037,9 +1977,9 @@ win64-aarch64-clang-trunk:
             - android-arm-libunwind-trunk
             - android-x64-compiler-rt-trunk
             - android-x64-libunwind-trunk
+            - linux32-compiler-rt-trunk
             - linux64-aarch64-compiler-rt-trunk
             - linux64-x64-compiler-rt-trunk
-            - linux64-x86-compiler-rt-trunk
             - macosx64-aarch64-compiler-rt-trunk
             - macosx64-x64-compiler-rt-trunk
             - wasm32-wasi-compiler-rt-trunk

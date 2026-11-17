@@ -19,6 +19,7 @@
 #include "nsAttrValueInlines.h"
 #include "nsCExternalHandlerService.h"
 #include "nsCOMPtr.h"
+#include "nsCRTGlue.h"
 #include "nsComponentManagerUtils.h"
 #include "nsContentUtils.h"
 #include "nsDirectoryServiceDefs.h"
@@ -700,6 +701,8 @@ HTMLFormSubmission::HTMLFormSubmission(
       mInitiatedFromUserInput(UserActivation::IsHandlingUserInput()) {
   MOZ_COUNT_CTOR(HTMLFormSubmission);
 }
+
+MOZ_COUNTED_DTOR_VIRTUAL_DEF(HTMLFormSubmission)
 
 Element* HTMLFormSubmission::GetSubmitterElement() const {
   return mFormData ? mFormData->GetSubmitterElement() : nullptr;

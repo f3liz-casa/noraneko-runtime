@@ -19,9 +19,12 @@ Invoked in make via $(call py_action,l10n_repackage,...).
 from __future__ import annotations
 
 import argparse
+import os
+import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import buildconfig
@@ -46,9 +49,9 @@ _NON_CHROME = frozenset((
 def l10n_repackage(
     locale: str,
     mach: Path,
-    make: Path,
     l10n_stage: Path,
     unpack_distdir: Path,
+    en_us_package: Path,
     stagedist: Path,
     xpi_stage: Path,
     pkg_dir: str,
@@ -68,7 +71,20 @@ def l10n_repackage(
     is_cocoa = moz_widget_toolkit == "cocoa"
     is_winnt = os_arch == "WINNT"
 
-    if result := _unpack(mach, l10n_stage, unpack_distdir):
+    if (
+        uses_local_package(buildconfig.substs)
+        and en_us_package.resolve() == output.resolve()
+    ):
+        print(
+            f"{output} is both the en-US package to unpack and the output for "
+            f"{locale}, so the repack would overwrite its own input. Set "
+            "MOZ_ARTIFACT_FILE to a copy of the en-US package, or run "
+            "`./mach repackage-single-locales`, which does that.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if result := _unpack(mach, l10n_stage, unpack_distdir, en_us_package):
         return result
 
     _do_l10n_repack(stagedist, xpi_stage, extra_l10n, non_resources, minify)
@@ -78,8 +94,8 @@ def l10n_repackage(
     if is_winnt:
         if installer_dir is None:
             raise ValueError("--installer-dir is required on WINNT")
-        if result := _build_helper_exe(
-            make, installer_dir, locale, real_locale_mergedir, stagedist
+        if result := _build_uninstaller(
+            installer_dir, locale, real_locale_mergedir, stagedist
         ):
             return result
 
@@ -123,26 +139,43 @@ def l10n_repackage(
     return 0
 
 
+def uses_local_package(
+    substs: Mapping[str, object], environ: Mapping[str, str] = os.environ
+) -> bool:
+    if not substs.get("COMPILE_ENVIRONMENT"):
+        return False
+    if any(
+        name in environ
+        for name in ("MOZ_ARTIFACT_FILE", "MOZ_ARTIFACT_URL", "MOZ_ARTIFACT_REVISION")
+    ):
+        return False
+    return not any(var.startswith("MOZ_ARTIFACT_TASK") for var in environ)
+
+
 def _unpack(
     mach: Path,
     l10n_stage: Path,
     distdir: Path,
+    en_us_package: Path,
 ) -> int:
     shutil.rmtree(l10n_stage, ignore_errors=True)
-    result = subprocess.run(
-        [
-            sys.executable,
-            mach,
-            "--log-no-times",
-            "artifact",
-            "install",
-            "--unfiltered-project-package",
-            "--distdir",
-            distdir,
-            "--verbose",
-        ],
-        check=False,
-    )
+    cmd = [sys.executable, mach, "--log-no-times", "artifact", "install"]
+    local_package = uses_local_package(buildconfig.substs)
+    if local_package:
+        if not en_us_package.is_file():
+            print(
+                f"{en_us_package} does not exist. Run `./mach package` to build "
+                "the en-US package before repackaging a locale.",
+                file=sys.stderr,
+            )
+            return 1
+        cmd.append(str(en_us_package))
+    if local_package or "MOZ_ARTIFACT_FILE" in os.environ:
+        # The processed archive is cached under the package's file name, and a
+        # rebuilt local package keeps its name, so the cache would hide it.
+        cmd.append("--skip-cache")
+    cmd += ["--unfiltered-project-package", "--distdir", distdir, "--verbose"]
+    result = subprocess.run(cmd, check=False)
     return result.returncode
 
 
@@ -199,38 +232,30 @@ def _maybe_rename_lproj(
     return None
 
 
-def _build_helper_exe(
-    make: Path,
+def _build_uninstaller(
     installer_dir: Path,
     locale: str,
     real_locale_mergedir: Path,
     stagedist: Path,
 ) -> int:
-    # NSIS compilation isn't ported to Python yet, so shell out to make
-    # for now. Porting it will move this to a py_action in a follow-up.
-    # AB_CD has to arrive as a command line variable: `config.mk` assigns it, and
-    # a makefile assignment overrides the environment while a command line one
-    # wins.
-    result = subprocess.run(
-        [
-            make,
-            "-C",
-            installer_dir,
-            "CONFIG_DIR=l10ngen",
-            f"AB_CD={locale}",
-            f"REAL_LOCALE_MERGEDIR={real_locale_mergedir}",
-            "IS_LANGUAGE_REPACK=1",
-            "l10ngen/helper.exe",
-        ],
-        check=False,
+    from mozbuild.action import nsis_build, nsis_stage
+
+    substs = buildconfig.substs
+    config_dir = installer_dir / "l10ngen"
+    if result := nsis_stage.stage_repack(
+        spec_path=installer_dir / nsis_stage.SPEC_FILENAME,
+        config_dir=config_dir,
+        ab_cd=locale,
+        real_locale_mergedir=real_locale_mergedir,
+    ):
+        return result
+    return nsis_build.nsis_build(
+        config_dir=config_dir,
+        nsi="uninstaller.nsi",
+        makensis=substs["MAKENSISU"],
+        makensis_flags=shlex.split(substs.get("MAKENSISU_FLAGS", "")),
+        output=str(stagedist / "uninstall" / "helper.exe"),
     )
-    if result.returncode:
-        return result.returncode
-    helper_src = installer_dir / "l10ngen" / "helper.exe"
-    helper_dst = stagedist / "uninstall" / "helper.exe"
-    helper_dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(helper_src, helper_dst)
-    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -245,13 +270,6 @@ def main(argv: list[str]) -> int:
         help="Path to the topsrcdir mach executable",
     )
     parser.add_argument(
-        "--make",
-        required=True,
-        type=Path,
-        help="Path to the configured make binary (mozmake.exe on Windows). "
-        "Used by the inner make invocation that builds NSIS helper.exe.",
-    )
-    parser.add_argument(
         "--l10n-stage",
         required=True,
         type=Path,
@@ -264,6 +282,13 @@ def main(argv: list[str]) -> int:
         type=Path,
         help="Where to unpack the en-US package "
         "(typically <l10n-stage>/<MOZ_PKG_DIR>/)",
+    )
+    parser.add_argument(
+        "--en-us-package",
+        required=True,
+        type=Path,
+        help="The en-US package built in this objdir, unpacked in place of a "
+        "downloaded one when the build has a compile environment",
     )
     parser.add_argument(
         "--stagedist",
@@ -296,13 +321,13 @@ def main(argv: list[str]) -> int:
         "--installer-dir",
         type=Path,
         default=None,
-        help="WINNT-only: directory of the inner installer make",
+        help="WINNT-only: the installer directory in the object directory",
     )
     parser.add_argument(
         "--real-locale-mergedir",
         type=Path,
         default=None,
-        help="WINNT-only: REAL_LOCALE_MERGEDIR for the inner make",
+        help="WINNT-only: the merged locale directory the uninstaller is staged from",
     )
     parser.add_argument(
         "--extra-l10n",
@@ -335,9 +360,9 @@ def main(argv: list[str]) -> int:
     return l10n_repackage(
         locale=args.locale,
         mach=args.mach,
-        make=args.make,
         l10n_stage=args.l10n_stage,
         unpack_distdir=args.unpack_distdir,
+        en_us_package=args.en_us_package,
         stagedist=args.stagedist,
         xpi_stage=args.xpi_stage,
         pkg_dir=args.pkg_dir,

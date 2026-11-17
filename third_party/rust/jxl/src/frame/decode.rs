@@ -3,57 +3,50 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::util::sync::Arc;
 use std::collections::BTreeSet;
 
-use super::render::pipeline;
-use super::{
-    HfMetaSplitter, HfMetaViews, LfImageSplitter,
-    block_context_map::BlockContextMap,
-    coeff_order::decode_coeff_orders,
-    color_correlation_map::ColorCorrelationParams,
-    group::decode_vardct_group,
-    modular::{FullModularImage, ModularStreamId, Tree, decode_hf_metadata, decode_vardct_lf},
-    quant_weights::DequantMatrices,
-    quantizer::{LfQuantFactors, QuantizerParams},
+use jxl_simd::{SimdDescriptor, simd_function};
+use jxl_transforms::transform_map::*;
+
+use super::block_context_map::BlockContextMap;
+use super::coeff_order::decode_coeff_orders;
+use super::color_correlation_map::ColorCorrelationParams;
+use super::group::decode_vardct_group;
+use super::modular::{
+    FullModularImage, ModularStreamId, Tree, decode_hf_metadata, decode_vardct_lf,
 };
-use crate::error::Error;
+use super::quant_weights::DequantMatrices;
+use super::quantizer::{LfQuantFactors, QuantizerParams};
+use super::render::pipeline;
+use super::{HfMetaSplitter, HfMetaViews, LfImageSplitter};
+use crate::bit_reader::BitReader;
+use crate::entropy_coding::decode::Histograms;
+use crate::error::{Error, Result};
 use crate::features::epf::SigmaSource;
+use crate::features::noise::Noise;
+use crate::features::patches::PatchesDictionary;
+use crate::features::spline::Splines;
 use crate::frame::block_context_map::{ZERO_DENSITY_CONTEXT_COUNT, ZERO_DENSITY_CONTEXT_LIMIT};
 use crate::frame::group::VarDctBuffers;
-use crate::frame::{DataStatus, GroupStatus};
-use crate::headers::frame_header::FrameType;
-use crate::image::Rect;
+use crate::frame::modular::ModularStorage;
+use crate::frame::{
+    DataStatus, DecoderState, Frame, GroupStatus, HfGlobalState, HfMetadata, LfGlobalState,
+    PassState, coeff_order,
+};
+use crate::headers::CustomTransformData;
+use crate::headers::color_encoding::ColorSpace;
+use crate::headers::frame_header::{Encoding, FrameHeader, FrameType};
+use crate::headers::toc::Toc;
+use crate::image::{BufferRecycler, DataTypeTag, Image, OwnedRawImage, Rect};
 #[cfg(test)]
 use crate::render::SimpleRenderPipeline;
 use crate::render::buffer_splitter::BufferSplitter;
-use crate::util::sync::{Mutex, RwLock};
-use crate::util::{NewWithCapacity, PerThreadStorage};
-use crate::util::{ShiftRightCeil, mirror};
-use crate::{
-    GROUP_DIM,
-    bit_reader::BitReader,
-    entropy_coding::decode::Histograms,
-    error::Result,
-    features::{noise::Noise, patches::PatchesDictionary, spline::Splines},
-    frame::{
-        DecoderState, Frame, HfGlobalState, HfMetadata, LfGlobalState, PassState, coeff_order,
-    },
-    headers::{
-        color_encoding::ColorSpace,
-        frame_header::{Encoding, FrameHeader},
-        toc::Toc,
-    },
-    image::Image,
-    render::RenderPipeline,
-    util::{CeilLog2, Xorshift128Plus, tracing_wrappers::*},
-};
-use jxl_transforms::transform_map::*;
-
-use crate::headers::CustomTransformData;
-use crate::render::RenderPipelineInOutStage;
+use crate::render::low_memory_pipeline::row_buffers::RowBuffer;
 use crate::render::stages::Upsample8x;
-use crate::render::{Channels, ChannelsMut};
+use crate::render::{Channels, ChannelsMut, RenderPipeline, RenderPipelineInOutStage};
+use crate::util::sync::{Arc, Mutex, RwLock};
+use crate::util::tracing_wrappers::*;
+use crate::util::{CeilLog2, ShiftRightCeil, Xorshift128Plus, mirror};
 
 fn upsample_lf_group(
     group: usize,
@@ -61,6 +54,7 @@ fn upsample_lf_group(
     lf_image: &[Image<f32>; 3],
     header: &FrameHeader,
     factors: &CustomTransformData,
+    buffers: &mut VarDctBuffers,
 ) -> Result<()> {
     let group_dim = header.group_dim();
     let lf_group_dim = group_dim / 8;
@@ -69,15 +63,19 @@ fn upsample_lf_group(
     let gy = group / width_groups;
 
     let upsample = Upsample8x::new(factors, 0);
-    let mut state = upsample.init_local_state()?.unwrap();
 
     let max_width = pixels.iter().map(|x| x.size().0).max().unwrap();
 
-    // Temporary buffer for 8 output rows
-    // We reuse this buffer for each iteration to minimize allocation
-    let mut temp_out_buf: [_; 8] = std::array::from_fn(|_| vec![0.0f32; max_width + 128]);
-
-    let mut input_rows_storage: [_; 5] = std::array::from_fn(|_| vec![0.0; max_width / 8 + 32]);
+    if buffers
+        .lf_upsample_bufs
+        .as_ref()
+        .is_none_or(|(_, _, w)| *w < max_width)
+    {
+        let temp_out_buf = RowBuffer::new(DataTypeTag::F32, 0, 3, 3, max_width)?;
+        let input_rows_storage = RowBuffer::new(DataTypeTag::F32, 2, 0, 0, max_width.div_ceil(8))?;
+        buffers.lf_upsample_bufs = Some((temp_out_buf, input_rows_storage, max_width));
+    }
+    let (temp_out_buf, input_rows_storage, _) = buffers.lf_upsample_bufs.as_mut().unwrap();
 
     for c in 0..3 {
         let lf_img = &lf_image[c];
@@ -93,12 +91,23 @@ fn upsample_lf_group(
         let lf_y0 = gy * lf_group_dim_y;
 
         let lf_width = lf_img.size().0.shrc(hs);
-        let lf_height = lf_img.size().1.shrc(hs);
+        let lf_height = lf_img.size().1.shrc(vs);
 
-        let start_x = lf_x0.saturating_sub(2);
         let lf_x1 = (lf_x0 + lf_group_dim_x).min(lf_width);
-        let end_x = (lf_x1 + 2).min(lf_width);
-        let copy_width = end_x - start_x;
+        let num_blocks = lf_x1 - lf_x0;
+
+        let lfg_dim_x = group_dim >> hs;
+        let lfg_dim_y = group_dim >> vs;
+        let to_storage_x = |x: usize| (x / lfg_dim_x) * group_dim + (x % lfg_dim_x);
+        let to_storage_y = |y: usize| (y / lfg_dim_y) * group_dim + (y % lfg_dim_y);
+
+        let phys_x0 = to_storage_x(lf_x0);
+        let ix0 = to_storage_x(mirror(lf_x0 as isize - 2, lf_width));
+        let ix1 = to_storage_x(mirror(lf_x0 as isize - 1, lf_width));
+        let ix2 = to_storage_x(mirror(lf_x1 as isize, lf_width));
+        let ix3 = to_storage_x(mirror(lf_x1 as isize + 1, lf_width));
+
+        let x0_off = RowBuffer::x0_offset::<f32>();
 
         for y in 0..lf_group_dim_y {
             let cy = lf_y0 + y;
@@ -106,48 +115,42 @@ fn upsample_lf_group(
             for dy in -2..=2 {
                 let iy = cy as isize + dy;
                 let iy = mirror(iy, lf_height);
+                let row = lf_img.row(to_storage_y(iy));
 
-                let storage = &mut input_rows_storage[(dy + 2) as usize];
-
-                let save_start = if start_x == lf_x0 { 2 } else { 0 };
-                let save_end = save_start + copy_width;
-
-                storage[save_start..save_end].copy_from_slice(&lf_img.row(iy)[start_x..end_x]);
-
-                if start_x == lf_x0 {
-                    storage[0] = storage[2 + mirror(-2, copy_width)];
-                    storage[1] = storage[2 + mirror(-1, copy_width)];
-                }
-                if end_x == lf_x1 {
-                    storage[save_end] = storage[save_start + mirror(save_end as isize, save_end)];
-                    storage[save_end + 1] =
-                        storage[save_start + mirror(save_end as isize + 1, save_end)];
-                }
+                let storage = input_rows_storage.get_row_mut::<f32>((dy + 2) as usize);
+                storage[x0_off - 2] = row[ix0];
+                storage[x0_off - 1] = row[ix1];
+                storage[x0_off..x0_off + num_blocks]
+                    .copy_from_slice(&row[phys_x0..phys_x0 + num_blocks]);
+                storage[x0_off + num_blocks] = row[ix2];
+                storage[x0_off + num_blocks + 1] = row[ix3];
             }
 
-            let input_rows_refs = input_rows_storage.iter().map(|x| &x[..]).collect();
-            let input_channels = Channels::new(input_rows_refs, 1, 5);
-
+            let input_ref = &*input_rows_storage;
+            let input_channels =
+                Channels::from_row_buffers(std::slice::from_ref(&input_ref), x0_off, 2, 5, 2);
             {
-                // Prepare output refs
-                let output_rows_refs = temp_out_buf.iter_mut().map(|x| &mut x[..]).collect();
-                let mut output_channels = ChannelsMut::new(output_rows_refs, 1, 8);
+                let mut output_channels =
+                    ChannelsMut::from_row_buffers(std::slice::from_mut(temp_out_buf), x0_off, 0, 8);
 
                 upsample.process_row_chunk(
                     (0, 0),
-                    lf_x1 - lf_x0,
+                    num_blocks,
                     &input_channels,
                     &mut output_channels,
-                    Some(state.as_mut()),
+                    None,
+                    false,
                 );
             }
 
             // Copy back to out_img
             let base_y = y * 8;
-            for (i, buf) in temp_out_buf.iter().enumerate() {
+            for i in 0..8 {
                 let out_y = base_y + i;
                 if out_y < out_height {
-                    out_img.row_mut(out_y)[..out_width].copy_from_slice(&buf[..out_width]);
+                    let buf = temp_out_buf.get_row::<f32>(i);
+                    out_img.row_mut(out_y)[..out_width]
+                        .copy_from_slice(&buf[x0_off..x0_off + out_width]);
                 }
             }
         }
@@ -155,18 +158,55 @@ fn upsample_lf_group(
     Ok(())
 }
 
+#[inline(always)]
+fn render_noise_subregion_channel_simd_impl<D: SimdDescriptor>(
+    d: D,
+    rng: &mut Xorshift128Plus,
+    buf: &mut Image<u16>,
+    sub_x0: usize,
+    sub_y0: usize,
+    sub_xsize: usize,
+    sub_ysize: usize,
+) {
+    for y in 0..sub_ysize {
+        let mut chunks = buf.row_mut(sub_y0 + y)[sub_x0..sub_x0 + sub_xsize].chunks_exact_mut(16);
+        for chunk in &mut chunks {
+            rng.fill_u16_simd(d, chunk);
+        }
+        let rem = chunks.into_remainder();
+        if !rem.is_empty() {
+            let mut temp = [0u16; 16];
+            rng.fill_u16_simd(d, &mut temp);
+            rem.copy_from_slice(&temp[..rem.len()]);
+        }
+    }
+}
+
+simd_function!(
+    render_noise_subregion_channel_dispatch,
+    d: D,
+    fn render_noise_subregion_channel_simd(
+        rng: &mut Xorshift128Plus,
+        buf: &mut Image<u16>,
+        sub_x0: usize,
+        sub_y0: usize,
+        sub_xsize: usize,
+        sub_ysize: usize,
+    ) {
+        render_noise_subregion_channel_simd_impl(
+            d, rng, buf, sub_x0, sub_y0, sub_xsize, sub_ysize,
+        );
+    }
+);
+
 impl Frame {
     pub fn from_header_and_toc(
         frame_header: FrameHeader,
         toc: Toc,
         mut decoder_state: DecoderState,
-    ) -> Result<Self> {
-        if frame_header.is_visible() {
-            decoder_state.visible_frame_index += 1;
-            decoder_state.nonvisible_frame_index = 0;
-        } else {
-            decoder_state.nonvisible_frame_index += 1;
-        }
+        frame_counters: (usize, usize),
+        buffer_recycler: Arc<BufferRecycler>,
+    ) -> Result<Box<Self>> {
         if frame_header.frame_type == FrameType::LFFrame && frame_header.lf_level == 1 {
             decoder_state.lf_frame_was_rendered = false;
         }
@@ -243,7 +283,7 @@ impl Frame {
 
         let num_extra_channels = image_metadata.extra_channel_info.len();
 
-        Ok(Self {
+        Ok(Box::new(Self {
             #[cfg(test)]
             use_simple_pipeline: decoder_state.use_simple_pipeline,
             group_status: GroupStatus::new(&frame_header),
@@ -255,11 +295,11 @@ impl Frame {
             lf_image,
             hf_meta,
             decoder_state,
+            frame_counters,
             render_pipeline: None,
             reference_frame_data,
             lf_frame_data,
             section0_render_up_to_date: false,
-            vardct_buffers: PerThreadStorage::new(VarDctBuffers::new),
             patches: Arc::new(RwLock::new(PatchesDictionary::new(num_extra_channels))),
             splines: Arc::new(RwLock::new(Splines::default())),
             noise: Arc::new(RwLock::new(Noise::default())),
@@ -267,7 +307,9 @@ impl Frame {
             color_correlation_params: Arc::new(RwLock::new(ColorCorrelationParams::default())),
             epf_sigma: Arc::new(RwLock::new(SigmaSource::default())),
             dirty_lf_groups: BTreeSet::new(),
-        })
+            buffer_recycler,
+            lf_preview_dirty_groups: BTreeSet::new(),
+        }))
     }
 
     pub fn allow_rendering_before_last_pass(&self) -> bool {
@@ -286,30 +328,6 @@ impl Frame {
                 && self.header.num_extra_channels == 0)
     }
 
-    /// Given a bit reader pointing at the end of the TOC, returns a vector of `BitReader`s, each
-    /// of which reads a specific section.
-    pub fn sections<'a>(&self, br: &'a mut BitReader) -> Result<Vec<BitReader<'a>>> {
-        debug!(toc = ?self.toc);
-        let ret = self
-            .toc
-            .entries
-            .iter()
-            .scan(br, |br, count| Some(br.split_at(*count as usize)))
-            .collect::<Result<Vec<_>>>()?;
-        if !self.toc.permuted {
-            return Ok(ret);
-        }
-        let mut inv_perm = vec![0; ret.len()];
-        for (i, pos) in self.toc.permutation.iter().enumerate() {
-            inv_perm[*pos as usize] = i;
-        }
-        let mut shuffled_ret = ret.clone();
-        for (br, pos) in ret.into_iter().zip(inv_perm) {
-            shuffled_ret[pos] = br;
-        }
-        Ok(shuffled_ret)
-    }
-
     #[instrument(level = "debug", skip_all)]
     pub fn decode_lf_global(&mut self, br: &mut BitReader, allow_partial: bool) -> Result<()> {
         debug!(section_size = br.total_bits_available());
@@ -321,19 +339,25 @@ impl Frame {
 
             if self.header.has_patches() {
                 info!("decoding patches");
-                let p = PatchesDictionary::read(
+                let p = PatchesDictionary::read_internal(
                     br,
                     self.header.size_padded().0,
                     self.header.size_padded().1,
                     self.decoder_state.extra_channel_info().len(),
                     &self.decoder_state.reference_frames[..],
+                    self.decoder_state.level5_limits,
+                    &mut self.buffer_recycler.modular_scratch.get().lz77_window,
                 )?;
                 *self.patches.try_write().unwrap() = p;
             }
 
             if self.header.has_splines() {
                 info!("decoding splines");
-                let s = Splines::read(br, self.header.width * self.header.height)?;
+                let s = Splines::read(
+                    br,
+                    self.header.width * self.header.height,
+                    &mut self.buffer_recycler.modular_scratch.get().lz77_window,
+                )?;
                 *self.splines.try_write().unwrap() = s;
             }
 
@@ -357,7 +381,10 @@ impl Frame {
 
             let block_context_map = if self.header.encoding == Encoding::VarDCT {
                 info!("decoding block context map");
-                Some(BlockContextMap::read(br)?)
+                Some(BlockContextMap::read(
+                    br,
+                    &mut self.buffer_recycler.modular_scratch.get().lz77_window,
+                )?)
             } else {
                 None
             };
@@ -381,6 +408,7 @@ impl Frame {
                     self.header.size().1 as u64,
                     &color_correlation_params,
                     self.decoder_state.high_precision,
+                    self.decoder_state.level5_limits,
                 )?;
             }
 
@@ -391,7 +419,13 @@ impl Frame {
                         * (self.color_channels + self.decoder_state.extra_channel_info().len())
                         / 16)
                     .min(1 << 22);
-                Some(Tree::read(br, size_limit)?)
+                Some(Tree::read(
+                    br,
+                    size_limit,
+                    self.decoder_state.level5_limits,
+                    "global modular tree nodes",
+                    &mut self.buffer_recycler.modular_scratch.get().lz77_window,
+                )?)
             } else {
                 None
             };
@@ -401,6 +435,10 @@ impl Frame {
                 &self.decoder_state.file_header.image_metadata,
                 self.modular_color_channels(),
                 br,
+                self.buffer_recycler.clone(),
+                self.decoder_state.sample_limit,
+                self.decoder_state.modular_storage(),
+                self.decoder_state.level5_limits,
             )?;
 
             // Ensure that, if we call this function again, we resume from just after
@@ -471,6 +509,9 @@ impl Frame {
                 &mut lf_views,
                 &mut quant_lf_view,
                 br,
+                decoder_state.modular_storage(),
+                lf_global.modular_global.recycler(),
+                decoder_state.level5_limits,
             )?;
         }
 
@@ -498,6 +539,9 @@ impl Frame {
                 &lf_global.tree,
                 &mut hf_views,
                 br,
+                decoder_state.modular_storage(),
+                lf_global.modular_global.recycler(),
+                decoder_state.level5_limits,
             )?;
         }
         Ok(())
@@ -532,14 +576,23 @@ impl Frame {
                     _ => br.read(coeff_order::NUM_ORDERS)?,
                 } as u32;
                 debug!(used_orders);
-                let coeff_orders = decode_coeff_orders(used_orders, br)?;
+                let coeff_orders = decode_coeff_orders(
+                    used_orders,
+                    br,
+                    &mut self.buffer_recycler.modular_scratch.get().lz77_window,
+                )?;
                 assert_eq!(coeff_orders.len(), 3 * coeff_order::NUM_ORDERS);
                 let num_contexts = num_histograms as usize * block_context_map.num_ac_contexts();
                 info!(
                     "Decoding histograms for pass {} with {} contexts",
                     i, num_contexts
                 );
-                let mut histograms = Histograms::decode(num_contexts, br, true)?;
+                let mut histograms = Histograms::decode(
+                    num_contexts,
+                    br,
+                    true,
+                    &mut self.buffer_recycler.modular_scratch.get().lz77_window,
+                )?;
                 // Pad the context map to avoid index out of bounds in decode_vardct_group (group.rs#L514@752e6a4).
                 let padding = ZERO_DENSITY_CONTEXT_LIMIT - ZERO_DENSITY_CONTEXT_COUNT;
                 histograms.resize(num_contexts + padding);
@@ -549,18 +602,23 @@ impl Frame {
                     histograms,
                 });
             }
-            // Since the render pipeline keeps finalized channels, we don't need to store
-            // HF coefficients if there is a single pass.
+            let max_num_bits = passes
+                .iter()
+                .enumerate()
+                .map(|(pass, p)| {
+                    let shift = self.header.passes.shift.get(pass).copied().unwrap_or(0);
+                    p.histograms.max_num_bits().saturating_add(shift as usize)
+                })
+                .max()
+                .unwrap_or(0);
+            let use_i16 = max_num_bits < 16;
+            // Since the render pipeline keeps finalized channels, we only need to store
+            // HF coefficients across calls if passes are decoded incrementally.
             let hf_coefficients = if passes.len() <= 1 {
                 vec![]
             } else {
                 (0..self.header.num_groups())
-                    .map(|_| {
-                        let sz = GROUP_DIM * GROUP_DIM * 3;
-                        let mut v = Vec::new_with_capacity(sz)?;
-                        v.resize(sz, 0);
-                        Ok(Mutex::new(v))
-                    })
+                    .map(|_| Ok(Mutex::new(Vec::new())))
                     .collect::<Result<_>>()?
             };
 
@@ -569,6 +627,7 @@ impl Frame {
                 passes,
                 dequant_matrices,
                 hf_coefficients,
+                use_i16,
             });
         }
         // Set EPF sigma values to the correct values if we are doing EPF.
@@ -589,7 +648,6 @@ impl Frame {
         buffer_splitter: &BufferSplitter,
     ) -> Result<()> {
         // TODO(sboukortt): consider making this a dedicated stage
-        // TODO(veluca): SIMD.
         let num_channels = self.header.num_extra_channels as usize + 3;
 
         let group_dim = self.header.group_dim() as u32;
@@ -605,18 +663,12 @@ impl Frame {
         let buf_xsize = buf_x1.min(upsampled_size.0) - (gx * upsampling * group_dim) as usize;
         let buf_ysize = buf_y1.min(upsampled_size.1) - (gy * upsampling * group_dim) as usize;
 
-        let bits_to_float = |bits: u32| f32::from_bits((bits >> 9) | 0x3F800000);
-
         // Get all 3 noise channel buffers upfront
-        let mut bufs = [
+        let mut bufs: [Image<u16>; 3] = [
             pipeline!(self, p, p.get_buffer(num_channels)?),
             pipeline!(self, p, p.get_buffer(num_channels + 1)?),
             pipeline!(self, p, p.get_buffer(num_channels + 2)?),
         ];
-
-        const FLOATS_PER_BATCH: usize =
-            Xorshift128Plus::N * std::mem::size_of::<u64>() / std::mem::size_of::<f32>();
-        let mut batch = [0u64; Xorshift128Plus::N];
 
         // libjxl iterates through upsampling subdivisions with separate RNG seeds.
         // For each subregion, a single RNG is shared across all 3 channels.
@@ -628,8 +680,8 @@ impl Frame {
 
                 // Create RNG with this subregion's seed - shared across all 3 channels
                 let mut rng = Xorshift128Plus::new_with_seeds(
-                    self.decoder_state.visible_frame_index as u32,
-                    self.decoder_state.nonvisible_frame_index as u32,
+                    self.frame_counters.0 as u32,
+                    self.frame_counters.1 as u32,
                     x0,
                     y0,
                 );
@@ -651,25 +703,9 @@ impl Frame {
 
                 // Fill all 3 channels with this subregion's noise, sharing the RNG
                 for buf in &mut bufs {
-                    for y in 0..sub_ysize {
-                        let row = buf.row_mut(sub_y0 + y);
-                        for batch_index in 0..sub_xsize.div_ceil(FLOATS_PER_BATCH) {
-                            rng.fill(&mut batch);
-                            let batch_size =
-                                (sub_xsize - batch_index * FLOATS_PER_BATCH).min(FLOATS_PER_BATCH);
-                            for i in 0..batch_size {
-                                let x = sub_x0 + FLOATS_PER_BATCH * batch_index + i;
-                                let k = i / 2;
-                                let high_bytes = i % 2 != 0;
-                                let bits = if high_bytes {
-                                    ((batch[k] & 0xFFFFFFFF00000000) >> 32) as u32
-                                } else {
-                                    (batch[k] & 0xFFFFFFFF) as u32
-                                };
-                                row[x] = bits_to_float(bits);
-                            }
-                        }
-                    }
+                    render_noise_subregion_channel_dispatch(
+                        &mut rng, buf, sub_x0, sub_y0, sub_xsize, sub_ysize,
+                    );
                 }
             }
         }
@@ -748,6 +784,8 @@ impl Frame {
         } else {
             self.lf_image.as_ref().unwrap()
         };
+
+        let mut vardct_buffers = self.buffer_recycler.vardct_buffers.get();
         if self.group_status.channel_status[group][0] == DataStatus::Zero && render_vardct {
             info!("Upsampling LF for group {group}");
             upsample_lf_group(
@@ -756,12 +794,12 @@ impl Frame {
                 lf_image,
                 &self.header,
                 &self.decoder_state.file_header.transform_data,
+                &mut vardct_buffers,
             )?;
         } else {
             info!("Decoding VarDCT group {group}");
+            vardct_buffers.ensure_allocated()?;
             let hf_global = self.hf_global.as_ref().unwrap();
-            let mut buffers = self.vardct_buffers.get();
-            buffers.ensure_allocated()?;
             decode_vardct_group(
                 group,
                 passes,
@@ -777,7 +815,7 @@ impl Frame {
                     .opsin_inverse_matrix
                     .quant_biases,
                 &mut pixels,
-                &mut buffers,
+                &mut vardct_buffers,
             )?;
         }
         if let Some(pixels) = pixels {
@@ -807,16 +845,30 @@ impl Frame {
 
         self.decode_and_render_varct_and_noise(group, passes, buffer_splitter, force_render)?;
 
-        let pass_to_pipeline = |chan, group, complete, image: Image<i32>| {
-            pipeline!(
-                self,
-                p,
-                p.set_buffer_for_group(chan, group, complete, image, &*buffer_splitter)?
-            );
+        let lf_global = self.lf_global.as_ref().unwrap();
+        let storage = lf_global.modular_global.storage();
+        let pass_to_pipeline = |chan, group, complete, raw_image: OwnedRawImage| {
+            match storage {
+                ModularStorage::I16 => {
+                    let image = Image::<i16>::from_raw(raw_image);
+                    pipeline!(
+                        self,
+                        p,
+                        p.set_buffer_for_group(chan, group, complete, image, &*buffer_splitter)?
+                    );
+                }
+                ModularStorage::I32 => {
+                    let image = Image::<i32>::from_raw(raw_image);
+                    pipeline!(
+                        self,
+                        p,
+                        p.set_buffer_for_group(chan, group, complete, image, &*buffer_splitter)?
+                    );
+                }
+            }
             Ok(())
         };
 
-        let lf_global = self.lf_global.as_ref().unwrap();
         for (pass, br) in passes.iter_mut() {
             lf_global.modular_global.read_stream(
                 ModularStreamId::ModularHF { group, pass: *pass },

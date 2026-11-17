@@ -986,12 +986,14 @@ class WorkerPrivate final
 
   void EvictFromBFCache();
 
-  nsIContentSecurityPolicy* GetCsp() const {
+  PolicyContainer* GetPolicyContainer() const {
     AssertIsOnMainThread();
-    return mLoadInfo.mCSP;
+    return mLoadInfo.mPolicyContainer;
   }
 
-  nsresult SetCsp(nsIContentSecurityPolicy* aCSP);
+  nsIContentSecurityPolicy* GetCsp() const {
+    return PolicyContainer::GetCSP(GetPolicyContainer());
+  }
 
   nsresult SetCSPFromHeaderValues(const nsACString& aCSPHeaderValue,
                                   const nsACString& aCSPReportOnlyHeaderValue);
@@ -1121,8 +1123,9 @@ class WorkerPrivate final
   // Whether this worker exposes its debugger through the parent-process
   // RemoteWorkerDebugger mechanism (true) or registers its nsIWorkerDebugger on
   // the local main thread (false). Latched at construction from
-  // dom.worker.remoteDebugger.enabled; always false in the parent process. The
-  // two mechanisms are mutually exclusive for a given worker.
+  // dom.worker.remoteDebugger.enabled, and for a parent-process worker also
+  // from RemoteWorkerService::IsInitialized(); see the mUseRemoteDebugger
+  // initializer. The two mechanisms are mutually exclusive for a given worker.
   bool UseRemoteDebugger() const { return mUseRemoteDebugger; }
 
   void SetIsQueued(const bool& aQueued);
@@ -1142,12 +1145,13 @@ class WorkerPrivate final
 
   void CycleCollect();
 
-  nsresult SetPrincipalsAndCSPOnMainThread(nsIPrincipal* aPrincipal,
-                                           nsIPrincipal* aPartitionedPrincipal,
-                                           nsILoadGroup* aLoadGroup,
-                                           nsIContentSecurityPolicy* aCsp);
+  nsresult SetPrincipalsOnMainThread(nsIPrincipal* aPrincipal,
+                                     nsIPrincipal* aPartitionedPrincipal,
+                                     nsILoadGroup* aLoadGroup);
 
-  nsresult SetPrincipalsAndCSPFromChannel(nsIChannel* aChannel);
+  nsresult SetPolicyContainerOnMainThread(PolicyContainer* aPolicyContainer);
+
+  nsresult SetPrincipalsAndPolicyContainerFromChannel(nsIChannel* aChannel);
 
   bool FinalChannelPrincipalIsValid(nsIChannel* aChannel);
 
@@ -1600,6 +1604,13 @@ class WorkerPrivate final
   mozilla::ipc::Endpoint<PRemoteWorkerDebuggerParent> mDebuggerParentEp;
   bool mRemoteDebuggerRegistered MOZ_GUARDED_BY(mMutex);
   bool mRemoteDebuggerReady MOZ_GUARDED_BY(mMutex);
+  // Whether the worker thread has finished trying to bind the current
+  // PRemoteWorkerDebugger child endpoint, either by binding it or by ending
+  // without one. Until then mRemoteDebugger being null is not conclusive, so
+  // this is the predicate EnableRemoteDebugger waits on. Cleared whenever
+  // CreateRemoteDebuggerEndpoints arms a new endpoint pair, so that a
+  // freeze/thaw cycle waits for the new binding rather than the old one.
+  bool mRemoteDebuggerBindingDone MOZ_GUARDED_BY(mMutex);
   // True while the parent thread is blocked in Enable/DisableRemoteDebugger
   // waiting for the register/unregister handshake reply (RecvRegisterDone /
   // RecvUnregisterDone) to run on the worker thread. That reply is delivered on

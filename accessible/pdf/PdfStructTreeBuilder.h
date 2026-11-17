@@ -62,6 +62,21 @@ class PdfStructTreeBuilder {
    */
   static GlobalAccessibleId GetAccId(nsIFrame* aFrame);
 
+  /**
+   * Specifies that subsequent drawing commands are not associated with an
+   * accessibility node. These ids are passed to DrawTarget::AccessibleId
+   * alongside an inner window id of 0.
+   */
+  struct SpecialId {
+    static constexpr uint64_t Nothing = 0;
+    static constexpr uint64_t PageHeader = 1;
+    static constexpr uint64_t PageFooter = 2;
+    // Used for content which is purely visual and is communicated semantically
+    // through other means. For example, the MathML <msqrt> tag draws a square
+    // root sign, but that shouldn't be exposed to assistive technology.
+    static constexpr uint64_t OtherArtifact = 3;
+  };
+
   using ReadyPromise = MozPromise<Ok, Ok, true>;
   /**
    * Return a promise which is resolved when this builder is ready.
@@ -81,7 +96,8 @@ class PdfStructTreeBuilder {
   explicit PdfStructTreeBuilder(uint64_t aInnerWindowId);
   void InitInternal(dom::WindowContext*);
   int GeneratePdfId(Accessible* aAcc);
-  void BuildStructSubtree(Accessible* aAcc, SkPDF::StructureElementNode& aPdf);
+  void BuildStructSubtree(Accessible* aAcc, SkPDF::StructureElementNode& aPdf,
+                          bool aInMath = false);
   int GetPdfIdInternal(uint64_t aInnerWindowId, uint64_t aAccId) const;
 
   // We can't take a reference to an Accessible, so we store the inner window
@@ -94,12 +110,13 @@ class PdfStructTreeBuilder {
   nsTHashSet<uint64_t> mRequestedBrowserParentIds;
   RefPtr<ReadyPromise::Private> mReadyPromise;
   int mLastPdfId = 0;
+  // Whether BuildStructSubtree was called and succeeded.
+  bool mBuilt = false;
   // Maps {innerWindowId, accessibleId} to SkPDF id.
-  mozilla::HashMap<GlobalAccessibleId, int, PairHasher<uint64_t, uint64_t>>
-      mAccToPdf;
+  HashMap<GlobalAccessibleId, int, PairHasher<uint64_t, uint64_t>> mAccToPdf;
 
   // Needed so nsTArray::EmplaceBack can access our private constructor.
-  friend class nsTArrayElementTraits<mozilla::a11y::PdfStructTreeBuilder>;
+  friend class nsTArrayElementTraits<a11y::PdfStructTreeBuilder>;
 };
 
 }  // namespace a11y

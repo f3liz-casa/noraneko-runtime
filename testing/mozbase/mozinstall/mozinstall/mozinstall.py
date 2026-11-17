@@ -88,19 +88,29 @@ def get_binary(path, app_name):
     return binary
 
 
-def install(src, dest):
+def install(src, dest, verify=True, dmg_tool=None, hfs_tool=None):
     """Install a zip, exe, tar.gz, tar.bz2, tar.xz or dmg file, and return the path of
     the installation folder.
 
     :param src: Path to the install file
     :param dest: Path to install to (to ensure we do not overwrite any existent
                  files the folder should not exist yet)
+    :param verify: Whether to verify the checksum of a dmg file when mounting it.
+                   Only affects dmg files on macOS; other formats verify
+                   integrity as part of extraction.
+    :param dmg_tool: Path to the libdmg-hfsplus `dmg` tool. Together with
+                     `hfs_tool`, lets a dmg file be extracted without mounting
+                     it. Defaults to the DMG_TOOL build config or environment variable,
+                     then to `dmg/dmg` in MOZ_FETCHES_DIR.
+    :param hfs_tool: Path to the libdmg-hfsplus `hfsplus` tool. Defaults to the
+                     HFS_TOOL build config or environment variable, then to `dmg/hfsplus` in
+                     MOZ_FETCHES_DIR.
     """
     if not is_installer(src):
         msg = f"{src} is not a valid installer file"
         if "://" in src:
             try:
-                return _install_url(src, dest)
+                return _install_url(src, dest, verify=verify)
             except Exception:
                 exc, val, tb = sys.exc_info()
                 error = InvalidSource(f"{msg} ({val})")
@@ -122,7 +132,9 @@ def install(src, dest):
             # MSIX packages _are_ ZIP files, so we need to look for them first.
             install_dir = _install_msix(src)
         elif src.lower().endswith(".dmg"):
-            install_dir = _install_dmg(src, dest)
+            install_dir = _install_dmg(
+                src, dest, verify=verify, dmg_tool=dmg_tool, hfs_tool=hfs_tool
+            )
         elif src.lower().endswith(".exe"):
             install_dir = _install_exe(src, dest)
         elif zipfile.is_zipfile(src) or tarfile.is_tarfile(src):
@@ -265,13 +277,16 @@ def uninstall(install_folder):
     mozfile.remove(install_folder)
 
 
-def _install_url(url, dest):
+def _install_url(url, dest, verify=True):
     """Saves a url to a temporary file, and passes that through to the
     install function.
 
     :param url: Url to the install file
     :param dest: Path to install to (to ensure we do not overwrite any existent
                  files the folder should not exist yet)
+    :param verify: Whether to verify the checksum of a dmg file when attaching it.
+                   Only affects dmg files on macOS; other formats verify
+                   integrity as part of extraction.
     """
     r = requests.get(url, stream=True)
     name = tempfile.mkstemp()[1]
@@ -279,22 +294,51 @@ def _install_url(url, dest):
         with open(name, "w+b") as fh:
             for chunk in r.iter_content(chunk_size=16 * 1024):
                 fh.write(chunk)
-        result = install(name, dest)
+        result = install(name, dest, verify=verify)
     finally:
         mozfile.remove(name)
     return result
 
 
-def _install_dmg(src, dest_app):
+def _find_dmg_tools(dmg_tool=None, hfs_tool=None):
+    substs = {}
+    try:
+        import buildconfig
+
+        substs = buildconfig.substs
+    except ImportError:
+        pass
+    fetches_dir = os.environ.get("MOZ_FETCHES_DIR")
+
+    def find(tool, var, name):
+        tool = tool or substs.get(var) or os.environ.get(var)
+        if not tool and fetches_dir:
+            path = os.path.join(fetches_dir, "dmg", name)
+            if os.path.isfile(path):
+                tool = path
+        return tool
+
+    return find(dmg_tool, "DMG_TOOL", "dmg"), find(hfs_tool, "HFS_TOOL", "hfsplus")
+
+
+def _install_dmg(src, dest_app, verify=True, dmg_tool=None, hfs_tool=None):
     """Extract a dmg file into the destination folder and return the
     application folder.
 
     src -- DMG image which has to be extracted
     dest -- the path to extract to
+    verify -- whether to verify the checksum of the image when mounting it
+    dmg_tool, hfs_tool -- libdmg-hfsplus tools to extract the image without
+                          mounting it
 
     """
+    dmg_tool, hfs_tool = _find_dmg_tools(dmg_tool, hfs_tool)
+    if dmg_tool and hfs_tool:
+        return _install_dmg_extract(src, dest_app, dmg_tool, hfs_tool)
     if mozinfo.isLinux:
-        return _install_dmg_cross(src, dest_app)
+        raise InstallError(
+            "DMG_TOOL and HFS_TOOL are required to install a dmg on Linux"
+        )
 
     def _detach_with_retry(volume, retries=4, delay=0.25):
         for i in range(retries):
@@ -340,10 +384,11 @@ def _install_dmg(src, dest_app):
             # to older macOS versions. According to the Apple docs, the hdiutil
             # output is stable and is based on the tab separators. Therefore,
             # $3 should give us the mounted path.
+            verify_flag = "" if verify else " -noverify"
             app_dir = (
                 subprocess
                 .check_output(
-                    f'hdiutil attach -noautoopen -nobrowse -readonly "{src}"'
+                    f'hdiutil attach -noautoopen -nobrowse -readonly{verify_flag} "{src}"'
                     "| grep /Volumes/ | awk 'BEGIN{FS=\"\t\"} {print $3}'",
                     shell=True,
                     stderr=subprocess.STDOUT,
@@ -381,47 +426,35 @@ def _install_dmg(src, dest_app):
     return dest_app
 
 
-def _install_dmg_cross(src, dest):
-    # This is a cross build, use hfsplus and dmg tools to extract the dmg.
+def _install_dmg_extract(src, dest, dmg_tool, hfs_tool):
+    """Extract the .app bundle of a dmg file into dest without mounting the
+    image, and return the path of the bundle."""
+    tmpdir = tempfile.mkdtemp(dir=dest)
     try:
-        import buildconfig
+        hfs_file = os.path.join(tmpdir, "image.hfs")
+        contents = os.path.join(tmpdir, "contents")
+        os.mkdir(contents)
+        subprocess.check_call(
+            [dmg_tool, "extract", src, hfs_file], stdout=subprocess.DEVNULL
+        )
+        subprocess.check_call(
+            [hfs_tool, hfs_file, "extractall", "/", contents],
+            stdout=subprocess.DEVNULL,
+        )
 
-        dmg_tool = buildconfig.substs.get("DMG_TOOL")
-        hfs_tool = buildconfig.substs.get("HFS_TOOL")
-    except ImportError:
-        pass
+        app_name = next((e for e in os.listdir(contents) if e.endswith(".app")), None)
+        if not app_name:
+            raise InstallError(f"No .app bundle found in {src}")
 
-    if not dmg_tool:
-        dmg_tool = os.environ.get("DMG_TOOL")
-    if not dmg_tool:
-        raise InstallError("No DMG_TOOL in environment")
+        dest_app = os.path.join(dest, app_name)
+        if os.path.exists(dest_app):
+            raise InstallError(f"App bundle already exists: {dest_app}")
 
-    if not hfs_tool:
-        hfs_tool = os.environ.get("HFS_TOOL")
-    if not hfs_tool:
-        raise InstallError("No HFS_TOOL in environment")
-
-    oldcwd = os.getcwd()
-    try:
-        os.chdir(dest)
-        with open(os.devnull, "wb") as devnull:
-            subprocess.check_call(
-                [
-                    dmg_tool,
-                    "extract",
-                    src,
-                    "extracted_img",
-                ],
-                stdout=devnull,
-            )
-            subprocess.check_call(
-                [hfs_tool, "extracted_img", "extractall"],
-                stdout=devnull,
-            )
+        os.rename(os.path.join(contents, app_name), dest_app)
     finally:
-        os.chdir(oldcwd)
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
-    return dest
+    return dest_app
 
 
 def _install_exe(src, dest):
@@ -519,6 +552,13 @@ def install_cli(argv=sys.argv[1:]):
         default="firefox",
         help="Application being installed. [default: %default]",
     )
+    parser.add_option(
+        "--no-verify",
+        dest="verify",
+        action="store_false",
+        default=True,
+        help="Skip checksum verification when attaching a dmg file.",
+    )
 
     (options, args) = parser.parse_args(argv)
     if not len(args) == 1:
@@ -530,7 +570,7 @@ def install_cli(argv=sys.argv[1:]):
     if os.path.isdir(src):
         binary = get_binary(src, app_name=options.app)
     else:
-        install_path = install(src, options.dest)
+        install_path = install(src, options.dest, verify=options.verify)
         binary = get_binary(install_path, app_name=options.app)
 
     print(binary)

@@ -402,19 +402,13 @@ EglDrmDevice::~EglDrmDevice() {
     close(drm_fd_);
   }
 
-  if (fbo_) {
-    GlDeleteFramebuffers(1, &fbo_);
-  }
-
-  if (texture_) {
-    GlDeleteTextures(1, &texture_);
-  }
-
   if (egl_.display != EGL_NO_DISPLAY) {
     EglMakeCurrent(egl_.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
                    EGL_NO_CONTEXT);
   }
 
+  // Destroying the EGL context automatically frees all associated GL resources
+  // (textures, framebuffers) created within it.
   if (egl_.context != EGL_NO_CONTEXT) {
     EglDestroyContext(egl_.display, egl_.context);
   }
@@ -523,9 +517,10 @@ std::vector<uint64_t> EglDrmDevice::QueryDmaBufModifiers(uint32_t format) {
   // can still use modifier-less DMA-BUFs if we have required extension
   if (EglQueryDmaBufFormatsEXT == nullptr ||
       EglQueryDmaBufModifiersEXT == nullptr) {
-    return has_image_dma_buf_import_ext_
-               ? std::vector<uint64_t>{DRM_FORMAT_MOD_INVALID}
-               : std::vector<uint64_t>{};
+    if (has_image_dma_buf_import_ext_) {
+      return FilterFailedModifiers(format, {DRM_FORMAT_MOD_INVALID});
+    }
+    return {};
   }
 
   uint32_t drm_format = SpaPixelFormatToDrmFormat(format);
@@ -538,7 +533,7 @@ std::vector<uint64_t> EglDrmDevice::QueryDmaBufModifiers(uint32_t format) {
 
   if (!success || !count) {
     RTC_LOG(LS_WARNING) << "Cannot query the number of formats.";
-    return {DRM_FORMAT_MOD_INVALID};
+    return FilterFailedModifiers(format, {DRM_FORMAT_MOD_INVALID});
   }
 
   std::vector<uint32_t> formats(count);
@@ -546,13 +541,13 @@ std::vector<uint64_t> EglDrmDevice::QueryDmaBufModifiers(uint32_t format) {
                                 reinterpret_cast<EGLint*>(formats.data()),
                                 &count)) {
     RTC_LOG(LS_WARNING) << "Cannot query a list of formats.";
-    return {DRM_FORMAT_MOD_INVALID};
+    return FilterFailedModifiers(format, {DRM_FORMAT_MOD_INVALID});
   }
 
   if (std::find(formats.begin(), formats.end(), drm_format) == formats.end()) {
     RTC_LOG(LS_WARNING) << "Format " << drm_format
                         << " not supported for modifiers.";
-    return {DRM_FORMAT_MOD_INVALID};
+    return FilterFailedModifiers(format, {DRM_FORMAT_MOD_INVALID});
   }
 
   success = EglQueryDmaBufModifiersEXT(egl_.display, drm_format, 0, nullptr,
@@ -560,7 +555,7 @@ std::vector<uint64_t> EglDrmDevice::QueryDmaBufModifiers(uint32_t format) {
 
   if (!success || !count) {
     RTC_LOG(LS_WARNING) << "Cannot query the number of modifiers.";
-    return {DRM_FORMAT_MOD_INVALID};
+    return FilterFailedModifiers(format, {DRM_FORMAT_MOD_INVALID});
   }
 
   std::vector<uint64_t> modifiers(count);
@@ -572,7 +567,12 @@ std::vector<uint64_t> EglDrmDevice::QueryDmaBufModifiers(uint32_t format) {
   // Support modifier-less buffers
   modifiers.push_back(DRM_FORMAT_MOD_INVALID);
 
-  // Filter out failed modifiers
+  return FilterFailedModifiers(format, std::move(modifiers));
+}
+
+std::vector<uint64_t> EglDrmDevice::FilterFailedModifiers(
+    uint32_t format,
+    std::vector<uint64_t> modifiers) {
   MutexLock lock(&failed_modifiers_lock_);
   auto it = failed_modifiers_.find(format);
   if (it == failed_modifiers_.end()) {
@@ -701,7 +701,12 @@ bool EglDrmDevice::ImageFromDmaBuf(const DesktopSize& size,
   attribs[atti++] = EGL_NONE;
 
   // bind context to render thread
-  EglMakeCurrent(egl_.display, EGL_NO_SURFACE, EGL_NO_SURFACE, egl_.context);
+  if (EglMakeCurrent(egl_.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                     egl_.context) == EGL_FALSE) {
+    RTC_LOG(LS_ERROR) << "Failed to make EGL context current: "
+                      << FormatEGLError(EglGetError());
+    return false;
+  }
 
   // create EGL image from attribute list
   EGLImageKHR image = EglCreateImageKHR(
@@ -710,6 +715,8 @@ bool EglDrmDevice::ImageFromDmaBuf(const DesktopSize& size,
   if (image == EGL_NO_IMAGE) {
     RTC_LOG(LS_ERROR) << "Failed to record frame: Error creating EGLImage - "
                       << FormatEGLError(EglGetError());
+    EglMakeCurrent(egl_.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                   EGL_NO_CONTEXT);
     return false;
   }
 
@@ -734,6 +741,8 @@ bool EglDrmDevice::ImageFromDmaBuf(const DesktopSize& size,
   if (GlCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
     RTC_LOG(LS_ERROR) << "Failed to bind DMA buf framebuffer";
     EglDestroyImageKHR(egl_.display, image);
+    EglMakeCurrent(egl_.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                   EGL_NO_CONTEXT);
     return false;
   }
 
@@ -762,6 +771,7 @@ bool EglDrmDevice::ImageFromDmaBuf(const DesktopSize& size,
   }
 
   EglDestroyImageKHR(egl_.display, image);
+  EglMakeCurrent(egl_.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 
   return !error;
 }

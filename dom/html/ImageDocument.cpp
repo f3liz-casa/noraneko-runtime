@@ -66,9 +66,9 @@ ImageListener::~ImageListener() = default;
 
 NS_IMETHODIMP
 ImageListener::OnStartRequest(nsIRequest* request) {
-  NS_ENSURE_TRUE(mDocument, NS_ERROR_FAILURE);
+  RefPtr<ImageDocument> imgDoc = static_cast<ImageDocument*>(mDocument.get());
+  NS_ENSURE_TRUE(imgDoc, NS_ERROR_FAILURE);
 
-  ImageDocument* imgDoc = static_cast<ImageDocument*>(mDocument.get());
   nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
   if (!channel) {
     return NS_ERROR_FAILURE;
@@ -90,10 +90,18 @@ ImageListener::OnStartRequest(nsIRequest* request) {
 
   if (!imgDoc->mObservingImageLoader) {
     NS_ENSURE_TRUE(imgDoc->mImageContent, NS_ERROR_UNEXPECTED);
-    imgDoc->mImageContent->AddNativeObserver(imgDoc);
     imgDoc->mObservingImageLoader = true;
-    imgDoc->mImageContent->LoadImageWithChannel(channel,
-                                                getter_AddRefs(mNextStream));
+    imgDoc->mImageContent->AddNativeObserver(imgDoc);
+    // Image status that may have gotten replayed, in AddNativeObserver may run
+    // script and destroy the document.
+    NS_ENSURE_TRUE(mDocument, NS_ERROR_FAILURE);
+    NS_ENSURE_TRUE(imgDoc->mImageContent, NS_ERROR_UNEXPECTED);
+    // If script adopted the image into another document, its adopting steps
+    // queued its own load there, so the channel isn't needed.
+    if (imgDoc->mImageContent->OwnerDoc() == imgDoc) {
+      imgDoc->mImageContent->LoadImageWithChannel(channel,
+                                                  getter_AddRefs(mNextStream));
+    }
   }
 
   return MediaDocumentStreamListener::OnStartRequest(request);
@@ -386,7 +394,7 @@ void ImageDocument::OnHasTransparency() {
 }
 
 void ImageDocument::SetModeClass(eModeClasses mode) {
-  nsDOMTokenList* classList = mImageContent->ClassList();
+  RefPtr<nsDOMTokenList> classList = mImageContent->ClassList();
 
   if (mode == eShrinkToFit) {
     classList->Add(u"shrinkToFit"_ns, IgnoreErrors());
@@ -447,7 +455,8 @@ void ImageDocument::OnLoadComplete(imgIRequest* aRequest, nsresult aStatus) {
     nsAutoString errorMsg;
     FormatStringFromName("InvalidImage", formatString, errorMsg);
 
-    mImageContent->SetAttr(kNameSpaceID_None, nsGkAtoms::alt, errorMsg, false);
+    mImageContent->SetAttr(kNameSpaceID_None, nsGkAtoms::alt, errorMsg, false,
+                           IsKnownNewAttr::No);
   }
 
   MaybeSendResultToEmbedder(aStatus);
@@ -578,8 +587,10 @@ nsresult ImageDocument::CreateSyntheticDocument() {
   NS_ConvertUTF8toUTF16 srcString(src);
   // Make sure not to start the image load from here...
   mImageContent->SetLoadingEnabled(false);
-  mImageContent->SetAttr(kNameSpaceID_None, nsGkAtoms::src, srcString, false);
-  mImageContent->SetAttr(kNameSpaceID_None, nsGkAtoms::alt, srcString, false);
+  mImageContent->SetAttr(kNameSpaceID_None, nsGkAtoms::src, srcString, false,
+                         IsKnownNewAttr::Yes);
+  mImageContent->SetAttr(kNameSpaceID_None, nsGkAtoms::alt, srcString, false,
+                         IsKnownNewAttr::Yes);
 
   if (mIsInObjectOrEmbed) {
     SetModeClass(eIsInObjectOrEmbed);
@@ -723,7 +734,7 @@ float ImageDocument::GetZoomLevel() {
 }
 
 void ImageDocument::CheckFullZoom() {
-  nsDOMTokenList* classList =
+  RefPtr<nsDOMTokenList> classList =
       mImageContent ? mImageContent->ClassList() : nullptr;
 
   if (!classList) {

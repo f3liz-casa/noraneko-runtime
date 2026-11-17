@@ -8,8 +8,10 @@ import android.database.sqlite.SQLiteException
 import java.io.File
 import java.io.IOException
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import mozilla.components.browser.state.state.recover.RecoverableTab
 import mozilla.components.browser.state.state.recover.TabState
@@ -18,14 +20,15 @@ import mozilla.components.concept.base.crash.CrashReporting
 import mozilla.components.concept.engine.Engine
 import mozilla.components.feature.tab.collections.Tab
 import mozilla.components.feature.tab.collections.TabCollection
+import mozilla.components.feature.tabgroups.storage.data.TabGroup
+import mozilla.components.feature.tabgroups.storage.repository.TabGroupRepository
 import mozilla.components.feature.tabs.TabsUseCases
 import mozilla.components.support.base.log.logger.Logger
 import mozilla.components.support.utils.DateTimeProvider
 import mozilla.components.support.utils.DefaultDateTimeProvider
 import org.mozilla.fenix.components.TabCollectionStorage
-import org.mozilla.fenix.tabgroups.storage.data.TabGroup
-import org.mozilla.fenix.tabgroups.storage.repository.TabGroupRepository
 import org.mozilla.fenix.tabstray.data.TabGroupTheme
+import org.mozilla.fenix.tabstray.data.nextOrDefault
 
 private const val BREADCRUMB_CATEGORY = "CollectionsToTabGroupsMigration"
 
@@ -45,7 +48,6 @@ private const val BREADCRUMB_CATEGORY = "CollectionsToTabGroupsMigration"
  * @param ioDispatcher The [CoroutineDispatcher] used for reading the collections' session snapshots from disk and
  *   persisting the migration progress.
  */
-@Suppress("LongParameterList")
 class CollectionsToTabGroupsMigration(
     private val tabCollectionStorage: TabCollectionStorage,
     private val restoreUseCase: TabsUseCases.RestoreUseCase,
@@ -84,7 +86,15 @@ class CollectionsToTabGroupsMigration(
             data = mapOf("collections" to pendingCollections.size.toString()),
         )
 
-        val results = pendingCollections.map { collection -> migrateCollection(collection = collection) }
+        var lastUsedTheme = getLastUsedTabGroupTheme()
+        val results = pendingCollections.map { collection ->
+            val theme = lastUsedTheme.nextOrDefault()
+            migrateCollection(collection = collection, theme = theme).also { result ->
+                if (result == MigrationResult.TAB_GROUP_CREATED) {
+                    lastUsedTheme = theme
+                }
+            }
+        }
         val migratedAllCollections = results.all {
             it == MigrationResult.TAB_GROUP_CREATED || it == MigrationResult.NO_TABS_TO_MIGRATE
         }
@@ -119,6 +129,26 @@ class CollectionsToTabGroupsMigration(
         }
 
     /**
+     * Returns the [TabGroupTheme] of the most recently modified [TabGroup] or null if there are no tab groups or the
+     * tab group storage could not be read.
+     */
+    @Suppress("TooGenericExceptionCaught")
+    private suspend fun getLastUsedTabGroupTheme(): TabGroupTheme? =
+        try {
+            tabGroupRepository.tabGroupDataFlow
+                .first()
+                .tabGroups
+                .maxByOrNull { it.lastModified }
+                ?.theme
+                ?.let { theme -> TabGroupTheme.entries.find { it.name == theme } }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            reportFailure(message = "Unable to fetch the last used tab group theme", throwable = e)
+            null
+        }
+
+    /**
      * Migrates a single [TabCollection] to a [TabGroup] and returns the [MigrationResult].
      *
      * The broad exception catch is deliberate to handle unexpected exceptions. Restoring a tab reads and deserializes
@@ -127,12 +157,13 @@ class CollectionsToTabGroupsMigration(
      * next retry.
      *
      * @param collection The [TabCollection] to migrate.
+     * @param theme The [TabGroupTheme] to use for the new [TabGroup].
      * @return The [MigrationResult] for the given [collection].
      */
     @Suppress("TooGenericExceptionCaught")
-    private suspend fun migrateCollection(collection: TabCollection): MigrationResult =
+    private suspend fun migrateCollection(collection: TabCollection, theme: TabGroupTheme): MigrationResult =
         try {
-            val result = migrateCollectionToTabGroup(collection = collection)
+            val result = migrateCollectionToTabGroup(collection = collection, theme = theme)
 
             if (result != MigrationResult.FAILED) {
                 // Only record the collection as migrated once it succeeded, so a failed collection is retried.
@@ -148,8 +179,8 @@ class CollectionsToTabGroupsMigration(
             MigrationResult.FAILED
         }
 
-    /** Migrates a [TabCollection] to a closed [TabGroup] and returns the [MigrationResult]. */
-    private suspend fun migrateCollectionToTabGroup(collection: TabCollection): MigrationResult =
+    /** Migrates a [TabCollection] to a closed [TabGroup] with the given [theme] and returns the [MigrationResult]. */
+    private suspend fun migrateCollectionToTabGroup(collection: TabCollection, theme: TabGroupTheme): MigrationResult =
         withContext(ioDispatcher) {
             val recoverableTabs =
                 collection.tabs.map { tab ->
@@ -166,11 +197,11 @@ class CollectionsToTabGroupsMigration(
                     tabGroup =
                         TabGroup(
                             title = collection.title,
-                            theme = TabGroupTheme.default.name,
+                            theme = theme.name,
                             closed = true,
                             lastModified = dateTimeProvider.currentTimeMillis(),
-                        ),
-                    tabIds = recoverableTabs.map { it.state.id },
+                            tabIds = recoverableTabs.map { it.state.id },
+                        )
                 )
                 MigrationResult.TAB_GROUP_CREATED
             }

@@ -12,7 +12,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
   ASRouterScreenUtils:
     "resource:///modules/asrouter/ASRouterScreenUtils.sys.mjs",
-  BackupService: "resource:///modules/backup/BackupService.sys.mjs",
+  BackupService: "moz-src:///browser/components/backup/BackupService.sys.mjs",
   BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
   BuiltInThemes: "resource:///modules/BuiltInThemes.sys.mjs",
   EnrollmentType: "resource://nimbus/ExperimentAPI.sys.mjs",
@@ -222,7 +222,7 @@ export class AboutWelcomeParent extends JSWindowActorParent {
   }
 
   static isDefaultBrowser() {
-    return lazy.ShellService.isDefaultBrowser();
+    return lazy.ShellService.isDefaultBrowserAsync();
   }
 
   didDestroy() {
@@ -337,7 +337,7 @@ export class AboutWelcomeParent extends JSWindowActorParent {
         // Only need to set default if we're supposed to check and not default.
         return (
           Services.prefs.getBoolPref("browser.shell.checkDefaultBrowser") &&
-          !AboutWelcomeParent.isDefaultBrowser()
+          !(await AboutWelcomeParent.isDefaultBrowser())
         );
       case "AWPage:WAIT_FOR_MIGRATION_CLOSE":
         // Support multiples types of migration: 1) content modal 2) old

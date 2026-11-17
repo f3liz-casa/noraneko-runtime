@@ -20,14 +20,14 @@ functions to convert time values between the two.
 
 Note that absolute and clock times are not normally used in timing
 operations. For functions that deal with the measurement of elapsed time
-and with timeouts, see [Interval Timing](Interval_Timing).
+and with timeouts, see [Interval Timing](interval_timing.md).
 
 - [Macros for Time Unit
-  Conversion](#Macros_for_Time_Unit_Conversion)
-- [Types and Constants](#Types_and_Constants)
+  Conversion](#macros-for-time-unit-conversion)
+- [Types and Constants](#types-and-constants)
 - [Time Parameter Callback
-  Functions](#Time_Parameter_Callback_Functions)
-- [Functions](#Functions)
+  Functions](#time-parameter-callback-functions)
+- [Functions](#functions)
 
 (macros-for-time-unit-conversion)=
 
@@ -36,11 +36,11 @@ and with timeouts, see [Interval Timing](Interval_Timing).
 Macros for converting between seconds, milliseconds, microseconds, and
 nanoseconds.
 
-- {ref}`PR_MSEC_PER_SEC`
-- {ref}`PR_USEC_PER_SEC`
-- {ref}`PR_NSEC_PER_SEC`
-- {ref}`PR_USEC_PER_MSEC`
-- {ref}`PR_NSEC_PER_MSEC`
+- {doc}`pr_msec_per_sec`
+- {doc}`pr_usec_per_sec`
+- {doc}`pr_nsec_per_sec`
+- {doc}`pr_usec_per_msec`
+- {doc}`pr_nsec_per_msec`
 
 (types-and-constants)=
 
@@ -48,9 +48,9 @@ nanoseconds.
 
 Types and constants defined for NSPR dates and times are:
 
-- {ref}`PRTime`
-- {ref}`PRTimeParameters`
-- {ref}`PRExplodedTime`
+- {doc}`prtime`
+- {doc}`prtimeparameters`
+- {doc}`prexplodedtime`
 
 (time-parameter-callback-functions)=
 
@@ -62,17 +62,17 @@ a few times. Therefore, a callback function is used to determine time
 zone information.
 
 You can define your own time parameter callback functions, which must
-conform to the definition {ref}`PRTimeParamFn`. Two often-used callback
+conform to the definition {doc}`prtimeparamfn`. Two often-used callback
 functions of this type are provided by NSPR:
 
-- {ref}`PRTimeParamFn`
-- {ref}`PR_LocalTimeParameters` and {ref}`PR_GMTParameters`
+- {doc}`prtimeparamfn`
+- {doc}`pr_localtimeparameters` and {doc}`pr_gmtparameters`
 
 # Functions
 
 The functions that create and manipulate time and date values are:
 
-- {ref}`PR_Now`
-- {ref}`PR_ExplodeTime`
-- {ref}`PR_ImplodeTime`
-- {ref}`PR_NormalizeTime`
+- {doc}`pr_now`
+- {doc}`pr_explodetime`
+- {doc}`pr_implodetime`
+- {doc}`pr_normalizetime`

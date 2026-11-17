@@ -14,6 +14,8 @@ transforms:
     - gecko_taskgraph.transforms.build_attrs:transforms
     - gecko_taskgraph.transforms.build_schedules:transforms
     - gecko_taskgraph.transforms.build_lints:transforms
+    - gecko_taskgraph.transforms.mozconfig:transforms
+    - taskgraph.transforms.task_context:transforms
     - gecko_taskgraph.transforms.job:transforms
     - gecko_taskgraph.transforms.artifact:transforms
     - gecko_taskgraph.transforms.task:transforms
@@ -32,6 +34,11 @@ tasks-from:
     - fenix.yml
 
 task-defaults:
+    task-context:
+        from-parameters:
+            build_date: build_date
+        substitution-fields:
+            - worker.env
     worker:
         env:
             MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE: system
@@ -40,9 +47,8 @@ task-defaults:
     fetches:
         toolchain:
             - terser
-    run:
-        clone-with: hg
-        mozconfig-variant:
+    mozconfig:
+        variant:
             by-release-type:
                 beta: beta
                 release: release
@@ -51,6 +57,8 @@ task-defaults:
                 # https://searchfox.org/mozilla-central/rev/ce9ff94ffed34dc17ec0bfa406156d489eaa8ee1/browser/config/mozconfigs/linux32/release#1    # noqa
                 esr.*: release
                 default: nightly
+    run:
+        clone-with: hg
         # Note: These settings are only honored by nightly (i.e. shipping) builds
         update-channel:
             by-release-type:

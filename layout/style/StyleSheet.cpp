@@ -548,7 +548,9 @@ void StyleSheet::GetSourceURL(nsACString& aSourceURL) {
   Servo_StyleSheet_GetSourceURL(mInner->mContents, &aSourceURL);
 }
 
-css::Rule* StyleSheet::GetDOMOwnerRule() const { return GetOwnerRule(); }
+already_AddRefed<css::Rule> StyleSheet::GetDOMOwnerRule() const {
+  return do_AddRef(GetOwnerRule());
+}
 
 // https://drafts.csswg.org/cssom/#dom-cssstylesheet-insertrule
 // https://wicg.github.io/construct-stylesheets/#dom-cssstylesheet-insertrule
@@ -1081,7 +1083,14 @@ dom::MediaList* StyleSheet::Media() {
 
 JSObject* StyleSheet::WrapObject(JSContext* aCx,
                                  JS::Handle<JSObject*> aGivenProto) {
-  return dom::CSSStyleSheet_Binding::Wrap(aCx, this, aGivenProto);
+  // An imported sheet may be kept alive only by an import rule awaiting
+  // deletion by the cycle collector, and Wrap() might GC.
+  JS::Rooted<JSObject*> result(aCx);
+  {
+    RefPtr kungFuDeathGrip{this};
+    result = dom::CSSStyleSheet_Binding::Wrap(aCx, this, aGivenProto);
+  }
+  return result;
 }
 
 void StyleSheet::FixUpRuleListAfterContentsChangeIfNeeded(bool aFromClone) {

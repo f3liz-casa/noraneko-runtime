@@ -1191,7 +1191,7 @@ void LIRGenerator::visitTest(MTest* test) {
 
 #if defined(ENABLE_JIT_SIMD) &&                            \
     (defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64) || \
-     defined(JS_CODEGEN_ARM64))
+     defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_LOONG64))
   // Check if the operand for this test is an any_true/all_true SIMD operation.
   // If it is, we want to emit an LWasmReduceAndBranchSimd128 node to avoid
   // generating an intermediate boolean result.
@@ -1656,6 +1656,9 @@ void LIRGenerator::lowerBitOp(JSOp op, MBinaryInstruction* ins) {
     MOZ_ASSERT(lhs->type() == MIRType::Int32);
     MOZ_ASSERT(rhs->type() == MIRType::Int32);
     ReorderCommutative(&lhs, &rhs, ins);
+    if (lowerForALUWithShiftedOperand(op, ins, lhs, rhs)) {
+      return;
+    }
     lowerForALU(new (alloc()) LBitOpI(op), ins, lhs, rhs);
     return;
   }
@@ -2317,6 +2320,9 @@ void LIRGenerator::visitAdd(MAdd* ins) {
   if (ins->type() == MIRType::Int32) {
     MOZ_ASSERT(lhs->type() == MIRType::Int32);
     ReorderCommutative(&lhs, &rhs, ins);
+    if (lowerForALUWithShiftedOperand(JSOp::Add, ins, lhs, rhs)) {
+      return;
+    }
     LAddI* lir = new (alloc()) LAddI;
 
     if (ins->fallible()) {
@@ -2380,6 +2386,9 @@ void LIRGenerator::visitSub(MSub* ins) {
       return;
     }
 
+    if (lowerForALUWithShiftedOperand(JSOp::Sub, ins, lhs, rhs)) {
+      return;
+    }
     LSubI* lir = new (alloc()) LSubI;
     if (ins->fallible()) {
       assignSnapshot(lir, ins->bailoutKind());
@@ -4381,12 +4390,7 @@ void LIRGenerator::visitStoreDynamicSlot(MStoreDynamicSlot* ins) {
 void LIRGenerator::visitPostWriteBarrier(MPostWriteBarrier* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
 
-  // We need a barrier if the value might be allocated in the nursery. If the
-  // value is a constant, it must be tenured because MIR can't contain nursery
-  // pointers.
-  MConstant* constValue = ins->value()->maybeConstantValue();
-  if (constValue) {
-    MOZ_ASSERT(JS::GCPolicy<Value>::isTenured(constValue->toJSValue()));
+  if (!ValueNeedsPostBarrier(ins->value())) {
     return;
   }
 
@@ -4428,10 +4432,7 @@ void LIRGenerator::visitPostWriteBarrier(MPostWriteBarrier* ins) {
       break;
     }
     default:
-      // Currently, only objects, strings, and bigints can be in the nursery.
-      // Other instruction types cannot hold nursery pointers.
-      MOZ_ASSERT(!NeedsPostBarrier(ins->value()->type()));
-      break;
+      MOZ_CRASH("Unexpected value type");
   }
 }
 
@@ -4439,12 +4440,7 @@ void LIRGenerator::visitPostWriteElementBarrier(MPostWriteElementBarrier* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
   MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
 
-  // We need a barrier if the value might be allocated in the nursery. If the
-  // value is a constant, it must be tenured because MIR can't contain nursery
-  // pointers.
-  MConstant* constValue = ins->value()->maybeConstantValue();
-  if (constValue) {
-    MOZ_ASSERT(JS::GCPolicy<Value>::isTenured(constValue->toJSValue()));
+  if (!ValueNeedsPostBarrier(ins->value())) {
     return;
   }
 
@@ -4490,10 +4486,7 @@ void LIRGenerator::visitPostWriteElementBarrier(MPostWriteElementBarrier* ins) {
       break;
     }
     default:
-      // Currently, only objects, strings, and bigints can be in the nursery.
-      // Other instruction types cannot hold nursery pointers.
-      MOZ_ASSERT(!NeedsPostBarrier(ins->value()->type()));
-      break;
+      MOZ_CRASH("Unexpected value type");
   }
 }
 
@@ -6484,6 +6477,10 @@ void LIRGenerator::visitIteratorEnd(MIteratorEnd* ins) {
 }
 
 void LIRGenerator::visitCloseIterCache(MCloseIterCache* ins) {
+  // Emit an overrecursed check: this is necessary because the cache can
+  // attach a scripted getter stub that calls this script recursively.
+  gen->setNeedsOverrecursedCheck();
+
   LCloseIterCache* lir =
       new (alloc()) LCloseIterCache(useRegister(ins->iter()), temp());
   add(lir, ins);
@@ -8433,6 +8430,25 @@ void LIRGenerator::visitDateFromTime(MDateFromTime* ins) {
       LDateFromTime(useRegisterAtStart(ins->utcTime()), tempFixed(CallTempReg0),
                     tempFixed(CallTempReg1));
   defineReturn(lir, ins);
+}
+
+void LIRGenerator::visitUnpackTime(MUnpackTime* ins) {
+  // Allocate an additional register on 32-bit targets to hold half of a 64-bit
+  // value.
+#ifdef JS_NUNBOX32
+  auto* lir = new (alloc()) LUnpackTime(useBox(ins->packedVal()), temp());
+#else
+  auto* lir = new (alloc())
+      LUnpackTime(useBoxAtStart(ins->packedVal()), LDefinition::BogusTemp());
+#endif
+  define(lir, ins);
+}
+
+void LIRGenerator::visitEpochMilliseconds(MEpochMilliseconds* ins) {
+  auto* lir = new (alloc())
+      LEpochMilliseconds(useRegisterAtStart(ins->seconds()),
+                         useRegisterAtStart(ins->nanoseconds()), temp());
+  define(lir, ins);
 }
 
 void LIRGenerator::visitPostIntPtrConversion(MPostIntPtrConversion* ins) {

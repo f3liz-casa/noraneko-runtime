@@ -163,6 +163,10 @@ nssCertificate_SetCertTrust(
     NSSCertificate *c,
     NSSTrust *trust);
 
+NSS_EXTERN PRStatus
+nssCertificate_SetCertKeyID(
+    NSSCertificate *c);
+
 NSS_EXTERN nssDecodedCert *
 nssCertificate_GetDecoding(NSSCertificate *c);
 
@@ -194,19 +198,8 @@ nssCRL_AddRef(NSSCRL *crl);
 NSS_EXTERN PRStatus
 nssCRL_Destroy(NSSCRL *crl);
 
-NSS_EXTERN PRStatus
-nssCRL_DeleteStoredObject(
-    NSSCRL *crl,
-    NSSCallback *uhh);
-
-NSS_EXTERN NSSPrivateKey *
-nssPrivateKey_Create(nssPKIObject *o);
-
 NSS_EXTERN NSSDER *
 nssCRL_GetEncoding(NSSCRL *crl);
-
-NSS_EXTERN NSSPublicKey *
-nssPublicKey_Create(nssPKIObject *object);
 
 /* nssCertificateArray
  *
@@ -216,7 +209,6 @@ nssPublicKey_Create(nssPKIObject *object);
  * nssCertificateArray_Destroy
  * nssCertificateArray_Join
  * nssCertificateArray_FindBestCertificate
- * nssCertificateArray_Traverse
  */
 
 /* nssCertificateArray_Destroy
@@ -253,17 +245,6 @@ nssCertificateArray_FindBestCertificate(
     const NSSUsage *usage,
     NSSPolicies *policiesOpt);
 
-/* nssCertificateArray_Traverse
- *
- * Do the callback for each cert, terminate the traversal if the callback
- * fails.
- */
-NSS_EXTERN PRStatus
-nssCertificateArray_Traverse(
-    NSSCertificate **certs,
-    PRStatus (*callback)(NSSCertificate *c, void *arg),
-    void *arg);
-
 NSS_EXTERN void
 nssCRLArray_Destroy(NSSCRL **crls);
 
@@ -275,8 +256,6 @@ nssCRLArray_Destroy(NSSCRL **crls);
  * been formed yet.
  *
  * nssCertificateCollection_Create
- * nssPrivateKeyCollection_Create
- * nssPublicKeyCollection_Create
  *
  * If this was a language that provided for inheritance, each type would
  * inherit all of the following methods.  Instead, there is only one
@@ -296,8 +275,6 @@ nssCRLArray_Destroy(NSSCRL **crls);
  *
  * nssPKIObjectCollection_GetCertificates
  * nssPKIObjectCollection_GetCRLs
- * nssPKIObjectCollection_GetPrivateKeys
- * nssPKIObjectCollection_GetPublicKeys
  */
 
 /* nssCertificateCollection_Create
@@ -319,26 +296,6 @@ NSS_EXTERN nssPKIObjectCollection *
 nssCRLCollection_Create(
     NSSTrustDomain *td,
     NSSCRL **crlsOpt);
-
-/* nssPrivateKeyCollection_Create
- *
- * Create a collection of private keys in the specified trust domain.
- * Optionally provide a starting set of keys.
- */
-NSS_EXTERN nssPKIObjectCollection *
-nssPrivateKeyCollection_Create(
-    NSSTrustDomain *td,
-    NSSPrivateKey **pvkOpt);
-
-/* nssPublicKeyCollection_Create
- *
- * Create a collection of public keys in the specified trust domain.
- * Optionally provide a starting set of keys.
- */
-NSS_EXTERN nssPKIObjectCollection *
-nssPublicKeyCollection_Create(
-    NSSTrustDomain *td,
-    NSSPublicKey **pvkOpt);
 
 /* nssPKIObjectCollection_Destroy
  */
@@ -404,20 +361,6 @@ NSS_EXTERN NSSCRL **
 nssPKIObjectCollection_GetCRLs(
     nssPKIObjectCollection *collection,
     NSSCRL **rvOpt,
-    PRUint32 maximumOpt,
-    NSSArena *arenaOpt);
-
-NSS_EXTERN NSSPrivateKey **
-nssPKIObjectCollection_GetPrivateKeys(
-    nssPKIObjectCollection *collection,
-    NSSPrivateKey **rvOpt,
-    PRUint32 maximumOpt,
-    NSSArena *arenaOpt);
-
-NSS_EXTERN NSSPublicKey **
-nssPKIObjectCollection_GetPublicKeys(
-    nssPKIObjectCollection *collection,
-    NSSPublicKey **rvOpt,
     PRUint32 maximumOpt,
     NSSArena *arenaOpt);
 
@@ -517,14 +460,6 @@ nssTrustDomain_GetCertForIssuerAndSNFromCache(
     NSSTrustDomain *td,
     NSSDER *issuer,
     NSSDER *serialNum);
-
-/*
- * Look for a specific cert in the cache.
- */
-NSS_EXTERN NSSCertificate *
-nssTrustDomain_GetCertByDERFromCache(
-    NSSTrustDomain *td,
-    NSSDER *der);
 
 /* Get all certs from the cache */
 /* XXX this is being included to make some old-style calls word, not to

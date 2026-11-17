@@ -2,17 +2,17 @@ This chapter describes the most common NSPR types. Other chapters
 describe more specialized types when describing the functions that use
 them.
 
-- [Calling Convention Types](#Calling_Convention_Types) are used for
+- [Calling Convention Types](#calling-convention-types) are used for
   externally visible functions and globals.
-- [Algebraic Types](#Algebraic_Types) of various lengths are used
+- [Algebraic Types](#algebraic-types) of various lengths are used
   for integer algebra.
-- [Miscellaneous Types](#Miscellaneous_Types) are used for
+- [Miscellaneous Types](#miscellaneous-types) are used for
   representing size, pointer difference, Boolean values, and return
   values.
 
 For information on naming conventions for NSPR types, functions, and
 macros, see [NSPR Naming
-Conventions](Introduction_to_NSPR#NSPR_Naming_Conventions).
+Conventions](introduction_to_nspr.md#nspr-naming-conventions).
 
 (calling-convention-types)=
 
@@ -21,9 +21,9 @@ Conventions](Introduction_to_NSPR#NSPR_Naming_Conventions).
 These types are used to support cross-platform declarations of
 prototypes and implementations:
 
-> - {ref}`PR_EXTERN` is used for declarations of external functions or
+> - {doc}`pr_extern` is used for declarations of external functions or
 >   variables.
-> - {ref}`PR_IMPLEMENT` is used for definitions of external functions or
+> - {doc}`pr_implement` is used for definitions of external functions or
 >   variables.
 > - `PR_CALLBACK` is used for definitions and declarations of functions
 >   that are called via function pointers. A typical example is a
@@ -62,14 +62,14 @@ NSPR provides the following type definitions with unambiguous bit widths
 for algebraic operations:
 
 - [8-, 16-, and 32-bit Integer
-  Types](#8-,_16-,_and_32-bit_Integer_Types)
+  Types](#8--16--and-32-bit-integer-types)
 - [64-bit Integer Types](#nspr-types-64-bit-integer-types)
-- [Floating-Point Number Type](#Floating-Point_Number_Type)
+- [Floating-Point Number Type](#floating-point-number-type)
 
 For convenience, NSPR also provides type definitions with
 platform-dependent bit widths:
 
-- [Native OS Integer Types](#Native_OS_Integer_Types)
+- [Native OS Integer Types](#native-os-integer-types)
 
 (c-16-2c-and-32-bit-integer-types)=
 
@@ -79,17 +79,17 @@ platform-dependent bit widths:
 
 ### Signed Integers
 
-> - {ref}`PRInt8`
-> - {ref}`PRInt16`
-> - {ref}`PRInt32`
+> - {doc}`print8`
+> - {doc}`print16`
+> - {doc}`print32`
 
 (unsigned-integers)=
 
 ### Unsigned Integers
 
-> - {ref}`PRUint8`
-> - {ref}`PRUint16`
-> - {ref}`PRUint32`
+> - {doc}`pruint8`
+> - {doc}`pruint16`
+> - {doc}`pruint32`
 
 (nspr-types-64-bit-integer-types)=
 
@@ -104,8 +104,8 @@ manipulate 64-bit numeric fields. These macros are defined in
 code to all the platforms supported by NSPR and still provides optimal
 behavior on those systems that treat long long values directly.
 
-> - {ref}`PRInt64`
-> - {ref}`PRUint64`
+> - {doc}`print64`
+> - {doc}`pruint64`
 
 (floating-point-number-type)=
 
@@ -113,7 +113,7 @@ behavior on those systems that treat long long values directly.
 
 The NSPR floating-point type is always 64 bits.
 
-> - {ref}`PRFloat64`
+> - {doc}`prfloat64`
 
 (native-os-integer-types)=
 
@@ -124,23 +124,23 @@ guaranteed to be at least 16 bits, though various architectures may
 define them to be wider (for example, 32 or even 64 bits). These types
 are never valid for fields of a structure.
 
-> - {ref}`PRIntn`
-> - {ref}`PRUintn`
+> - {doc}`printn`
+> - {doc}`pruintn`
 
 (miscellaneous-types)=
 
 # Miscellaneous Types
 
-- [Size Type](#Size_Type)
-- [Pointer Difference Types](#Pointer_Difference_Types)
-- [Boolean Types](#Boolean_Types)
-- [Status Type for Return Values](#Status_Type_for_Return_Values)
+- [Size Type](#size-type)
+- [Pointer Difference Types](#pointer-difference-types)
+- [Boolean Types](#boolean-types)
+- [Status Type for Return Values](#status-type-for-return-values)
 
 (size-type)=
 
 ## Size Type
 
-> - {ref}`PRSize`
+> - {doc}`prsize`
 
 (pointer-difference-types)=
 
@@ -150,8 +150,8 @@ Types for pointer difference. Variables of these types are suitable for
 storing a pointer or pointer subtraction. These are the same as the
 corresponding types in `libc`.
 
-> - {ref}`PRPtrdiff`
-> - {ref}`PRUptrdiff`
+> - {doc}`prptrdiff`
+> - {doc}`pruptrdiff`
 
 (boolean-types)=
 
@@ -159,11 +159,11 @@ corresponding types in `libc`.
 
 Type and constants for Boolean values.
 
-> - {ref}`PRBool`
-> - {ref}`PRPackedBool`
+> - {doc}`prbool`
+> - {doc}`prpackedbool`
 
 (status-type-for-return-values)=
 
 ## Status Type for Return Values
 
-> - {ref}`PRStatus`
+> - {doc}`prstatus`

@@ -11,9 +11,6 @@ support-files = [
 tags = "os_integration"
 
 ["test_crash_AsyncShutdown.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1993829
-]
 
 ["test_crash_abort.js"]
 skip-if = [
@@ -33,9 +30,6 @@ skip-if = [
 ["test_crash_backgroundtask_moz_crash.js"]
 
 ["test_crash_exc_guard.js"]
-skip-if = [
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 2023967
-]
 run-if = [
   "os == 'mac'",
 ]
@@ -164,15 +158,6 @@ reason = "Windows test specific to the x86-64 architecture"
 ["test_crash_with_memory_report.js"]
 
 ["test_crashreporter.js"]
-
-["test_crashreporter_appmem.js"]
-# we need to skip this due to bug 838613
-skip-if = [
-  "os == 'android'",
-  "os == 'mac' && os_version == '10.15' && arch == 'x86_64'",
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64'",
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'",
-]
 
 ["test_crashreporter_crash.js"]
 

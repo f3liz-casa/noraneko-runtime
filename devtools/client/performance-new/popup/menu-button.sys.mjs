@@ -136,7 +136,7 @@ function initialize(toggleProfilerKeyShortcuts) {
   /**
    * This is mutable state that will be shared between panel displays.
    *
-   * @type {import("devtools/client/performance-new/popup/logic.sys.mjs").State}
+   * @type {import("resource://devtools/client/performance-new/popup/logic.sys.mjs").State}
    */
   const panelState = {
     cleanup: [],
@@ -292,7 +292,7 @@ function initialize(toggleProfilerKeyShortcuts) {
           "profiler-popup-button-recording"
         );
         buttonElement.classList.toggle("profiler-active", true);
-        buttonElement.classList.toggle("profiler-paused", false);
+        buttonElement.toggleAttribute("disabled", false);
       }
       function setButtonPaused() {
         document.l10n.setAttributes(
@@ -300,7 +300,7 @@ function initialize(toggleProfilerKeyShortcuts) {
           "profiler-popup-button-capturing"
         );
         buttonElement.classList.toggle("profiler-active", false);
-        buttonElement.classList.toggle("profiler-paused", true);
+        buttonElement.toggleAttribute("disabled", true);
       }
       function setButtonInactive() {
         document.l10n.setAttributes(
@@ -308,7 +308,7 @@ function initialize(toggleProfilerKeyShortcuts) {
           "profiler-popup-button-idle"
         );
         buttonElement.classList.toggle("profiler-active", false);
-        buttonElement.classList.toggle("profiler-paused", false);
+        buttonElement.toggleAttribute("disabled", false);
       }
 
       if (Services.profiler.IsPaused()) {

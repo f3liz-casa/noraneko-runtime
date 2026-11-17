@@ -18,7 +18,6 @@
 #include "mozilla/Logging.h"
 #include "mozilla/mozalloc.h"
 #include "mozilla/RangeBoundary.h"
-#include "mozilla/StaticPrefs_editor.h"
 #include "mozilla/dom/Selection.h"
 
 #include "nsAtom.h"
@@ -37,7 +36,7 @@ using namespace dom;
 using EditorType = EditorUtils::EditorType;
 
 DeleteRangeTransaction::DeleteRangeTransaction(EditorBase& aEditorBase,
-                                               const nsRange& aRangeToDelete)
+                                               const dom::Range& aRangeToDelete)
     : mEditorBase(&aEditorBase), mRangeToDelete(aRangeToDelete.CloneRange()) {}
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(DeleteRangeTransaction,
@@ -50,62 +49,6 @@ NS_INTERFACE_MAP_END_INHERITING(EditAggregateTransaction)
 void DeleteRangeTransaction::AppendChild(
     DeleteContentTransactionBase& aTransaction) {
   mChildren.AppendElement(aTransaction);
-}
-
-nsresult
-DeleteRangeTransaction::MaybeExtendDeletingRangeWithSurroundingWhitespace(
-    nsRange& aRange) const {
-  if (!mEditorBase->mEditActionData->SelectionCreatedByDoubleclick() ||
-      !StaticPrefs::
-          editor_word_select_delete_space_after_doubleclick_selection()) {
-    return NS_OK;
-  }
-  EditorRawDOMPoint startPoint(aRange.StartRef());
-  EditorRawDOMPoint endPoint(aRange.EndRef());
-  const bool maybeRangeStartsAfterWhiteSpace =
-      startPoint.IsInTextNode() && !startPoint.IsStartOfContainer();
-  const bool maybeRangeEndsAtWhiteSpace =
-      endPoint.IsInTextNode() && !endPoint.IsEndOfContainer();
-
-  if (!maybeRangeStartsAfterWhiteSpace && !maybeRangeEndsAtWhiteSpace) {
-    // no whitespace before or after word => nothing to do here.
-    return NS_OK;
-  }
-
-  const bool precedingCharIsWhitespace =
-      maybeRangeStartsAfterWhiteSpace
-          ? startPoint.IsPreviousCharASCIISpaceOrNBSP()
-          : false;
-  const bool trailingCharIsWhitespace =
-      maybeRangeEndsAtWhiteSpace ? endPoint.IsCharASCIISpaceOrNBSP() : false;
-
-  // if possible, try to remove the preceding whitespace
-  // so the caret is at the end of the previous word.
-  if (precedingCharIsWhitespace) {
-    // "one [two]", "one [two] three" or "one [two], three"
-    ErrorResult err;
-    aRange.SetStart(startPoint.PreviousPoint(), err);
-    if (auto rv = err.StealNSResult(); NS_FAILED(rv)) {
-      NS_WARNING(
-          "DeleteRangeTransaction::"
-          "MaybeExtendDeletingRangeWithSurroundingWhitespace"
-          " failed to update the start of the deleting range");
-      return rv;
-    }
-  } else if (trailingCharIsWhitespace) {
-    // "[one] two"
-    ErrorResult err;
-    aRange.SetEnd(endPoint.NextPoint(), err);
-    if (auto rv = err.StealNSResult(); NS_FAILED(rv)) {
-      NS_WARNING(
-          "DeleteRangeTransaction::"
-          "MaybeExtendDeletingRangeWithSurroundingWhitespace"
-          " failed to update the end of the deleting range");
-      return rv;
-    }
-  }
-
-  return NS_OK;
 }
 
 NS_IMETHODIMP DeleteRangeTransaction::DoTransaction() {
@@ -123,10 +66,8 @@ NS_IMETHODIMP DeleteRangeTransaction::DoTransaction() {
   // out on return from this function.  Once this function returns, we no longer
   // need mRangeToDelete, and keeping it alive in the long term slows down all
   // DOM mutations because it's observing them.
-  RefPtr<nsRange> rangeToDelete;
+  RefPtr<dom::Range> rangeToDelete;
   rangeToDelete.swap(mRangeToDelete);
-
-  MaybeExtendDeletingRangeWithSurroundingWhitespace(*rangeToDelete);
 
   // build the child transactions
   // XXX We should move this to the constructor.  Then, we don't need to make

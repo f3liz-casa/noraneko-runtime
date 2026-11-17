@@ -206,10 +206,16 @@ def test_openh264(mocker, run_action, get_artifact):
 def test_googleplay(mocker, run_action, get_artifact):
     graph = make_graph(
         make_task(
-            label="push-fenix",
-            kind="push-bundle",
-            attributes={"build-type": "fenix-nightly"},
-            task_def={"name": "push-fenix"},
+            label="push-android-google-fenix-nightly",
+            kind="push-android",
+            attributes={"build-type": "fenix-nightly", "target-store": "google"},
+            task_def={"name": "push-android-google-fenix-nightly"},
+        ),
+        make_task(
+            label="push-android-samsung-fenix-release",
+            kind="push-android",
+            attributes={"build-type": "fenix-release", "target-store": "samsung"},
+            task_def={"name": "push-android-samsung-fenix-release"},
         ),
         make_task(label="build", kind="build", task_def={"name": "build"}),
     )
@@ -219,7 +225,8 @@ def test_googleplay(mocker, run_action, get_artifact):
     run_action("googleplay", params={"project": "mozilla-central"})
 
     to_run = get_artifact("to-run.json")
-    assert "push-fenix" in to_run
+    assert "push-android-google-fenix-nightly" in to_run
+    assert "push-android-samsung-fenix-release" not in to_run
     assert "build" not in to_run
 
 
@@ -672,53 +679,105 @@ def test_add_all_browsertime(mocker, run_action, get_artifact):
     assert "build" not in to_run
 
 
-def test_gecko_profile(mocker, responses, run_action, get_artifact):
+@pytest.mark.parametrize(
+    "test_platform,node_toolchain,has_node",
+    (
+        pytest.param(
+            "linux2404-64-shippable/opt", "linux64-node-24", False, id="linux"
+        ),
+        pytest.param(
+            "macosx1500-aarch64-shippable/opt",
+            "macosx64-aarch64-node-24",
+            False,
+            id="macosx-aarch64",
+        ),
+        pytest.param(
+            "macosx1470-64-shippable/opt", "macosx64-node-22", False, id="macosx"
+        ),
+        pytest.param(
+            "windows11-64-24h2-shippable/opt",
+            "win64-node-24",
+            True,
+            id="windows-existing-node",
+        ),
+        # Backfilled pushes may predate the current node version.
+        pytest.param(
+            "linux2404-64-shippable/opt",
+            "linux64-node-22",
+            False,
+            id="linux-older-graph",
+        ),
+    ),
+)
+def test_gecko_profile(
+    mocker,
+    responses,
+    run_action,
+    get_artifact,
+    test_platform,
+    node_toolchain,
+    has_node,
+):
     task_id = "tid"
+    fetches = []
+    if has_node:
+        fetches.append({
+            "artifact": "public/build/node.tar.zst",
+            "extract": True,
+            "task": f"<toolchain-{node_toolchain}>",
+        })
     task_def = {
         "metadata": {"name": "test-raptor"},
         "payload": {
             "command": [["run-tests"]],
-            "env": {"MOZ_FETCHES": {"task-reference": "[]"}},
+            "env": {"MOZ_FETCHES": {"task-reference": json.dumps(fetches)}},
         },
         "extra": {
             "suite": "raptor",
             "treeherder": {"symbol": "R", "groupName": "Raptor"},
         },
     }
-    graph = make_graph(
+    toolchain_platform = node_toolchain.rsplit("-node-", 1)[0]
+    toolchain_labels = ["profiler-node-tools", f"{toolchain_platform}-samply"]
+    tasks = [
         make_task(
             label="test-raptor",
             kind="test",
-            attributes={"unittest_suite": "raptor"},
+            attributes={"unittest_suite": "raptor", "test_platform": test_platform},
             task_def={
                 "name": "test-raptor",
                 "deadline": "",
                 "payload": {
                     "command": [["run-tests"]],
-                    "env": {"MOZ_FETCHES": {"task-reference": "[]"}},
+                    "env": {"MOZ_FETCHES": {"task-reference": json.dumps(fetches)}},
                 },
                 "extra": {
                     "suite": "raptor",
                     "treeherder": {"symbol": "R", "groupName": "Raptor"},
                 },
             },
-        ),
+        )
+    ]
+    tasks.extend(
         make_task(
-            label="toolchain-linux64-samply",
+            label=f"toolchain-{name}",
             kind="toolchain",
-            task_def={"name": "toolchain-linux64-samply"},
-        ),
-        make_task(
-            label="toolchain-profiler-node-tools",
-            kind="toolchain",
-            task_def={"name": "toolchain-profiler-node-tools"},
-        ),
-        make_task(
-            label="toolchain-linux64-node-22",
-            kind="toolchain",
-            task_def={"name": "toolchain-linux64-node-22"},
-        ),
+            task_def={"name": f"toolchain-{name}"},
+        )
+        for name in toolchain_labels
     )
+    node_label = f"toolchain-{node_toolchain}"
+    tasks.append(
+        make_task(
+            label=node_label,
+            kind="toolchain",
+            attributes={"toolchain-alias": [f"{toolchain_platform}-node"]},
+            task_def={"name": node_label},
+        )
+    )
+    if has_node:
+        tasks.append(("test-raptor", node_label, node_label))
+    graph = make_graph(*tasks)
 
     responses.get(
         "http://hg.example.com/json-pushes?version=2&startID=99&endID=100",
@@ -756,6 +815,16 @@ def test_gecko_profile(mocker, responses, run_action, get_artifact):
 
     to_run = get_artifact("to-run-100.json")
     assert "test-raptor" in to_run
+
+    result_graph = get_artifact("task-graph-100.json")
+    labels = {task_id: task["label"] for task_id, task in result_graph.items()}
+    result = next(t for t in result_graph.values() if t["label"] == "test-raptor")
+    node_fetches = [
+        labels[f["task"]]
+        for f in json.loads(result["task"]["payload"]["env"]["MOZ_FETCHES"])
+        if f["artifact"] == "public/build/node.tar.zst"
+    ]
+    assert node_fetches == [node_label]
 
 
 def test_side_by_side(mocker, responses, run_action, get_artifact):
@@ -1245,6 +1314,12 @@ def _bhr_graph():
                     }
                 },
                 "extra": {"treeherder": {"symbol": "BHR"}},
+                "routes": [
+                    "index.gecko.v2.mozilla-central.latest.firefox.bhr-aggregate",
+                    "index.gecko.v2.mozilla-central.pushdate.2026.09.02.latest"
+                    ".firefox.bhr-aggregate",
+                    "tc-treeherder.v2.mozilla-central.abcdef",
+                ],
             },
         ),
     )
@@ -1296,6 +1371,45 @@ def test_bhr_aggregate_accepts_either_field_alone(run_bhr_action):
     env = run_bhr_action({"date": "20260401"})["payload"]["env"]
     assert env["BHR_AGGREGATE_DATE"] == "20260401"
     assert env["BHR_AGGREGATE_SAMPLE_SIZE"] == "0.5"
+
+
+def test_bhr_aggregate_publishes_under_the_build_date(run_bhr_action):
+    task = run_bhr_action({"date": "20260802"})
+    assert task["routes"] == [
+        "tc-treeherder.v2.mozilla-central.abcdef",
+        "index.gecko.v2.mozilla-central.bhr-aggregate.build.20260802",
+    ]
+
+
+def test_bhr_aggregate_never_takes_the_crons_index_routes(run_bhr_action):
+    # Without a date there is no build date to publish under, so the run is
+    # reachable by task id alone rather than displacing the day's real run.
+    task = run_bhr_action({"sample_size": 0.01})
+    assert task["routes"] == ["tc-treeherder.v2.mozilla-central.abcdef"]
+
+
+def test_bhr_aggregate_leaves_the_timeseries_alone(run_bhr_action):
+    for action_input in ({"date": "20260802"}, {"sample_size": 0.01}, {}):
+        env = run_bhr_action(action_input)["payload"]["env"]
+        assert env["BHR_SKIP_TIMESERIES"] == "1"
+
+
+def test_bhr_aggregate_refill_keeps_the_crons_routes_and_roll_up(run_bhr_action):
+    task = run_bhr_action({"refill_dates": ["20260816", "20260817"]})
+    env = task["payload"]["env"]
+    assert env["BHR_TIMESERIES_REFILL_DATES"] == "20260816,20260817"
+    assert "BHR_SKIP_TIMESERIES" not in env
+    # It replaces the day's run rather than sitting beside it, so it publishes
+    # where the dashboard and the next cron run look.
+    assert (
+        "index.gecko.v2.mozilla-central.latest.firefox.bhr-aggregate" in task["routes"]
+    )
+    assert task["extra"]["treeherder"]["symbol"] == "BHR-custom"
+
+
+def test_bhr_aggregate_refuses_a_pinned_date_with_a_refill(run_bhr_action):
+    with pytest.raises(Exception, match="cannot be combined"):
+        run_bhr_action({"date": "20260802", "refill_dates": ["20260816"]})
 
 
 if __name__ == "__main__":

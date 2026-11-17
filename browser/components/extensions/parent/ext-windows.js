@@ -118,7 +118,15 @@ this.windows = class extends ExtensionAPIPersistent {
           let windowId = Window.WINDOW_ID_NONE;
           let window = Services.focus.activeWindow;
           if (window && extension.canAccessWindow(window)) {
-            windowId = windowTracker.getId(window);
+            if (window.document.readyState !== "complete") {
+              // isBrowserWindow() is not reliable when the window is loading.
+              // Wait a little bit until it is ready.
+              window.addEventListener("load", listener, { once: true });
+              return;
+            }
+            if (windowTracker.isBrowserWindow(window)) {
+              windowId = windowTracker.getId(window);
+            }
           }
           if (windowId !== lastOnFocusChangedWindowId) {
             fire.async(windowId);
@@ -410,7 +418,11 @@ this.windows = class extends ExtensionAPIPersistent {
               "resizable",
               "minimizable",
               "titlebar",
-              "close"
+              "close",
+              // Ensures new windows appear in the user's current view
+              // instead of restoring a persisted fullscreen sizemode and
+              // taking a Space of their own.
+              "suppressinitialfullscreen"
             );
             if (createData.left === null && createData.top === null) {
               features.push("centerscreen");

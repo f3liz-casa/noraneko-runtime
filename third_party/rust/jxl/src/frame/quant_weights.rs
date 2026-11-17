@@ -3,25 +3,23 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use std::{borrow::Cow, f32::consts::SQRT_2, sync::OnceLock};
+use std::borrow::Cow;
+use std::f32::consts::SQRT_2;
+use std::sync::OnceLock;
 
+use jxl_transforms::transform_map::*;
+
+use crate::bit_reader::BitReader;
+use crate::error::Error::{
+    HfQuantFactorTooSmall, InvalidDistanceBand, InvalidQuantEncoding, InvalidQuantEncodingMode,
+    InvalidQuantizationTableWeight, InvalidRawQuantTable,
+};
+use crate::error::Result;
+use crate::frame::LfGlobalState;
 use crate::frame::modular::decode_quant_table;
 use crate::headers::frame_header::FrameHeader;
 use crate::util::f16;
-
-use crate::{
-    BLOCK_DIM, BLOCK_SIZE,
-    bit_reader::BitReader,
-    error::{
-        Error::{
-            HfQuantFactorTooSmall, InvalidDistanceBand, InvalidQuantEncoding,
-            InvalidQuantEncodingMode, InvalidQuantizationTableWeight, InvalidRawQuantTable,
-        },
-        Result,
-    },
-    frame::LfGlobalState,
-};
-use jxl_transforms::transform_map::*;
+use crate::{BLOCK_DIM, BLOCK_SIZE};
 
 pub const INV_LF_QUANT: [f32; 3] = [4096.0, 512.0, 256.0];
 
@@ -107,15 +105,6 @@ pub enum QuantEncoding {
 }
 
 impl QuantEncoding {
-    // TODO(veluca): figure out if this should actually be unused.
-    #[allow(dead_code)]
-    pub fn raw_from_qtable(qtable: Vec<i32>, shift: i32) -> Self {
-        Self::Raw {
-            qtable,
-            qtable_den: (1 << shift) as f32 * (1.0 / (8.0 * 255.0)),
-        }
-    }
-
     pub fn decode(
         mut required_size_x: usize,
         mut required_size_y: usize,
@@ -245,6 +234,9 @@ impl QuantEncoding {
                         (required_size_x, required_size_y),
                         &lf_global.tree,
                         br,
+                        lf_global.modular_global.recycler(),
+                        lf_global.modular_global.storage(),
+                        lf_global.modular_global.level5_limits,
                     )?,
                     qtable_den,
                 })

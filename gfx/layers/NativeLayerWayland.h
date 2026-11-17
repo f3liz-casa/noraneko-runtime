@@ -13,6 +13,8 @@
 #include "nsRegion.h"
 #include "nsTArray.h"
 
+class DMABufSurfaceRGBA;
+
 namespace mozilla::wr {
 class RenderDMABUFTextureHost;
 }  // namespace mozilla::wr
@@ -94,7 +96,7 @@ class NativeLayerRootWayland final : public NativeLayerRoot {
   void VSyncCallbackHandler(uint32_t aTime, bool aEmulated);
 
   RefPtr<widget::WaylandBuffer> BorrowExternalBuffer(
-      RefPtr<DMABufSurface> aDMABufSurface);
+      RefPtr<BufferSurface> aBufferSurface);
 
 #ifdef MOZ_LOGGING
   nsAutoCString GetDebugTag() const;
@@ -118,6 +120,7 @@ class NativeLayerRootWayland final : public NativeLayerRoot {
   NativeLayerWaylandRender* GetLayerForSnapshot();
 
   void SetGLContext(gl::GLContext* aGL) { mGL = aGL; }
+  gl::GLContext* gl() { return mGL; }
 
  private:
   ~NativeLayerRootWayland();
@@ -153,7 +156,7 @@ class NativeLayerRootWayland final : public NativeLayerRoot {
 
   // Empty buffer attached to mSurface. We need to have something
   // attached to make mSurface and all child visible.
-  RefPtr<widget::WaylandBufferSHM> mTmpBuffer;
+  RefPtr<widget::WaylandBuffer> mTmpBuffer;
 
   // Child layers attached to this root, they're all on the same level
   // so all child layers are attached to mContainer as subsurfaces.
@@ -172,7 +175,7 @@ class NativeLayerRootWayland final : public NativeLayerRoot {
 
   // External buffers (DMABuf) used by the layers.
   // We want to cache and reuse wl_buffer of external images.
-  nsTArray<widget::WaylandBufferDMABUFHolder> mExternalBuffers;
+  nsTArray<widget::WaylandBufferHolder> mExternalBuffers;
 
   // We're between CompositorBeginFrame() / CompositorEndFrame() calls.
   mozilla::Atomic<bool, mozilla::Relaxed> mFrameInProcess{false};
@@ -220,7 +223,7 @@ class NativeLayerWayland : public NativeLayer {
 
   void RenderLayer(double aScale);
   // TODO
-  GpuFence* GetGpuFence() override { return nullptr; }
+  RefPtr<GpuFence> GetGpuFence() override { return nullptr; }
 
   RefPtr<widget::WaylandSurface> GetWaylandSurface() { return mSurface; }
 
@@ -281,6 +284,8 @@ class NativeLayerWayland : public NativeLayer {
 
  protected:
   ~NativeLayerWayland();
+
+  virtual RefPtr<BufferSurface> GetSurface() { return nullptr; }
 
   // There's a cycle dependency here as NativeLayerRootWayland holds strong
   // reference to NativeLayerWayland and vice versa.
@@ -393,10 +398,12 @@ class NativeLayerWaylandExternal final : public NativeLayerWayland {
   void NotifySurfaceReady() override {};
   void AttachExternalImage(wr::RenderTextureHost* aExternalImage) override;
   bool IsFrontBufferChanged() override;
-  RefPtr<DMABufSurface> GetSurface();
 
   NativeLayerWaylandExternal(NativeLayerRootWayland* aRootLayer,
                              bool aIsOpaque);
+
+ protected:
+  RefPtr<BufferSurface> GetSurface() override;
 
  private:
   ~NativeLayerWaylandExternal() override;
@@ -407,7 +414,8 @@ class NativeLayerWaylandExternal final : public NativeLayerWayland {
   bool CommitFrontBufferToScreenLocked(
       const widget::WaylandSurfaceLock& aProofOfLock) override;
 
-  RefPtr<wr::RenderDMABUFTextureHost> mTextureHost;
+  uintptr_t mLastSurface = 0;
+  RefPtr<wr::RenderTextureHost> mTextureHost;
 };
 
 class NativeLayerRootSnapshotterWayland final

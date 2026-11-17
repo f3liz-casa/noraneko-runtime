@@ -12,7 +12,7 @@ EXPORTS += [
 ]
 
 EXPORTS.mozilla += [
-    "!GeckoProcessTypes.h",
+    "!GeckoProcessTypes.inc",
     "FileLocation.h",
     "IOInterposer.h",
     "LateWriteChecks.h",
@@ -40,6 +40,9 @@ elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
     if CONFIG["TARGET_CPU"] != "aarch64":
         SOURCES += ["mach_override.c"]
         SOURCES["mach_override.c"].flags += ["-Wno-unused-function"]
+        SOURCE_HEADERS += [
+            "mach_override.h",
+        ]
 else:
     SOURCES += ["PoisonIOInterposerStub.cpp"]
 
@@ -65,9 +68,12 @@ if CONFIG["OS_ARCH"] != "WINNT":
     SOURCES += [
         "NSPRInterposer.cpp",
     ]
+    SOURCE_HEADERS += [
+        "NSPRInterposer.h",
+    ]
 
 GeneratedFile(
-    "GeckoProcessTypes.h",
+    "GeckoProcessTypes.inc",
     script="gen_process_types.py",
     entry_point="main",
 )
@@ -99,3 +105,11 @@ if CONFIG["MOZ_VPX"]:
 
 if CONFIG["MOZ_PHC"]:
     DEFINES["MOZ_PHC"] = 1
+
+SOURCE_HEADERS += [
+    "BinaryPath.h",
+    "IOInterposerPrivate.h",
+    "MainThreadIOLogger.h",
+    "nsXPCOMPrivate.h",
+    "XPCOMModule.h",
+]

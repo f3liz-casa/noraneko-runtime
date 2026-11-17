@@ -43,7 +43,7 @@ list of acceptable features is given below:
      - Clang
      -
    * - Current minimal requirement
-     - 10.1
+     - 11.1
      - 19.0
      -
    * - Feature
@@ -297,11 +297,11 @@ list of acceptable features is given below:
    * - ``using enum`` (C++20)
      - 11.0
      - 13.0
-     - **No** (see notes)
+     - **Yes**
    * - ``std::source_location`` (C++20)
      - 11.0
      - 16.0
-     - **No** (see notes)
+     - **Yes**
 ```
 
 ### Sources
@@ -365,15 +365,6 @@ Coroutines
 
 : Clang's implementation of coroutines is ["out of maintenance" on Windows](https://reviews.llvm.org/D146187?id=506821) due to [ABI and stability issues on 32-bit Windows](https://github.com/llvm/llvm-project/issues/59382).
 
-`using enum`
-
-: Not supported until GCC 11 and we still support GCC 10. In the meantime, use
-  `mozilla/UsingEnum.h`'s `MOZ_USING_ENUM` macro.
-
-`std::source_location`
-
-: C++20's `std::source_location` is not supported until libstdc++11 (GCC 11).
-
 ## C++ and Mozilla standard libraries
 
 The Mozilla codebase contains within it several subprojects which follow
@@ -424,7 +415,7 @@ A list of approved standard library headers is maintained in
    * - ``nsClassHashtable``
      - ``nsClassHashtable.h``
      -
-     - Adaptation of nsTHashtable, see :ref:`XPCOM Hashtable Guide`
+     - Adaptation of nsTHashtable, see :doc:`/xpcom/hashtables`
    * - ``nsCOMArray``
      - ``nsCOMArray.h``
      -
@@ -432,11 +423,11 @@ A list of approved standard library headers is maintained in
    * - ``nsTHashMap``
      - ``nsTHashMap.h``
      - ``std::unordered_map``
-     - Adaptation of ``nsTHashtable``, see :ref:`XPCOM Hashtable Guide`
+     - Adaptation of ``nsTHashtable``, see :doc:`/xpcom/hashtables`
    * - ``nsTHashSet``
      - ``nsTHashSet.h``
      - ``std::unordered_set``
-     - Adaptation of ``nsTHashtable``, see :ref:`XPCOM Hashtable Guide`
+     - Adaptation of ``nsTHashtable``, see :doc:`/xpcom/hashtables`
    * - ``nsDeque``
      - ``nsDeque.h``
      - ``std::deque<T>``
@@ -452,7 +443,7 @@ A list of approved standard library headers is maintained in
    * - ``nsInterfaceHashtable``
      - ``nsInterfaceHashtable.h``
      - ``std::unordered_map``
-     - Adaptation of ``nsTHashtable``, see :ref:`XPCOM Hashtable Guide`
+     - Adaptation of ``nsTHashtable``, see :doc:`/xpcom/hashtables`
    * - ``mozilla::LinkedList``
      - ``mozilla/LinkedList.h``
      - ``std::list``
@@ -460,7 +451,7 @@ A list of approved standard library headers is maintained in
    * - ``nsRefPtrHashtable``
      - ``nsRefPtrHashtable.h``
      - ``std::unordered_map``
-     - Adaptation of ``nsTHashtable``, see :ref:`XPCOM Hashtable Guide`
+     - Adaptation of ``nsTHashtable``, see :doc:`/xpcom/hashtables`
    * - ``mozilla::SegmentedVector``
      - ``mozilla/SegmentedVector.h``
      - ``std::deque`` w/o O(1) pop_front
@@ -476,7 +467,7 @@ A list of approved standard library headers is maintained in
    * - ``nsTHashtable``
      - ``nsTHashtable.h``
      - ``std::unordered_{map,set}``
-     - See :ref:`XPCOM Hashtable Guide`,  you probably want a subclass
+     - See :doc:`/xpcom/hashtables`,  you probably want a subclass
    * - ``nsTObserverArray``
      - ``nsTObserverArray.h``
      -
@@ -851,7 +842,7 @@ only capturing what you expect to capture.
 
 ### Use namespaces
 
-Namespaces may be used according to the style guidelines in {ref}`C++ Coding style`.
+Namespaces may be used according to the style guidelines in {doc}`coding_style_cpp`.
 
 ### Don't mix varargs and inlines
 

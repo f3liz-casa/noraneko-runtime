@@ -127,6 +127,7 @@ class BackgroundParentImpl : public PBackgroundParent {
       const uint64_t& aBrowsingContextID, const IPCClientInfo& aClientInfo,
       const bool& aDedicated, const bool& aRequireUnreliable,
       const uint32_t& aCongestionControl, nsTArray<nsString>&& aProtocols,
+      nsTArray<WebTransportHeader>&& aHeaders,
       nsTArray<WebTransportHash>&& aServerCertHashes,
       Endpoint<PWebTransportParent>&& aParentEndpoint,
       CreateWebTransportParentResolver&& aResolver) override;
@@ -220,15 +221,13 @@ class BackgroundParentImpl : public PBackgroundParent {
       PUDPSocketParent*, const Maybe<PrincipalInfo>& aPrincipalInfo,
       const nsACString& aFilter) override;
 
-  PMessagePortParent* AllocPMessagePortParent(
+  already_AddRefed<PMessagePortParent> AllocPMessagePortParent(
       const nsID& aUUID, const nsID& aDestinationUUID,
       const uint32_t& aSequenceID) override;
 
   mozilla::ipc::IPCResult RecvPMessagePortConstructor(
       PMessagePortParent* aActor, const nsID& aUUID,
       const nsID& aDestinationUUID, const uint32_t& aSequenceID) override;
-
-  bool DeallocPMessagePortParent(PMessagePortParent* aActor) override;
 
   mozilla::ipc::IPCResult RecvMessagePortForceClose(
       const nsID& aUUID, const nsID& aDestinationUUID,

@@ -40,6 +40,13 @@ NSS_CMSDecoder_Start(PLArenaPool *poolp,
                      NSSCMSGetDecryptKeyCallback decrypt_key_cb, void *decrypt_key_cb_arg);
 
 /*
+ * NSS_CMSDecoder_SetMaxInputSize - set the maximum number of bytes that may
+ * be fed to the decoder. Set to 0 to indicate there is no limit.
+ */
+extern SECStatus
+NSS_CMSDecoder_SetMaxInputSize(NSSCMSDecoderContext *p7dcx, unsigned long max_input_size);
+
+/*
  * NSS_CMSDecoder_Update - feed DER-encoded data to decoder
  */
 extern SECStatus
@@ -59,6 +66,10 @@ NSS_CMSDecoder_Finish(NSSCMSDecoderContext *p7dcx);
 
 /*
  * NSS_CMSMessage_CreateFromDER - decode a CMS message from DER encoded data
+ *
+ * Messages larger than SEC_ASN1D_MAX_INPUT_SIZE are rejected; use the
+ * streaming NSS_CMSDecoder_* API with NSS_CMSDecoder_SetMaxInputSize to
+ * decode larger inputs.
  */
 extern NSSCMSMessage *
 NSS_CMSMessage_CreateFromDER(SECItem *DERmessage,
@@ -158,12 +169,6 @@ extern NSSCMSMessage *
 NSS_CMSMessage_Copy(NSSCMSMessage *cmsg);
 
 /*
- * NSS_CMSMessage_GetArena - return a pointer to the message's arena pool
- */
-extern PLArenaPool *
-NSS_CMSMessage_GetArena(NSSCMSMessage *cmsg);
-
-/*
  * NSS_CMSMessage_GetContentInfo - return a pointer to the top level contentInfo
  */
 extern NSSCMSContentInfo *
@@ -194,12 +199,6 @@ extern NSSCMSContentInfo *
 NSS_CMSMessage_ContentLevel(NSSCMSMessage *cmsg, int n);
 
 /*
- * NSS_CMSMessage_ContainsCertsOrCrls - see if message contains certs along the way
- */
-extern PRBool
-NSS_CMSMessage_ContainsCertsOrCrls(NSSCMSMessage *cmsg);
-
-/*
  * NSS_CMSMessage_IsEncrypted - see if message contains a encrypted submessage
  */
 extern PRBool
@@ -217,15 +216,6 @@ NSS_CMSMessage_IsEncrypted(NSSCMSMessage *cmsg);
  */
 extern PRBool
 NSS_CMSMessage_IsSigned(NSSCMSMessage *cmsg);
-
-/*
- * NSS_CMSMessage_IsContentEmpty - see if content is empty
- *
- * returns PR_TRUE is innermost content length is < minLen
- * XXX need the encrypted content length (why?)
- */
-extern PRBool
-NSS_CMSMessage_IsContentEmpty(NSSCMSMessage *cmsg, unsigned int minLen);
 
 /************************************************************************
  * cmscinfo.c - CMS contentInfo methods
@@ -452,12 +442,6 @@ NSS_CMSSignedData_Decode_AfterData(NSSCMSSignedData *sigd);
 extern SECStatus
 NSS_CMSSignedData_Decode_AfterEnd(NSSCMSSignedData *sigd);
 
-/*
- * NSS_CMSSignedData_GetSignerInfos - retrieve the SignedData's signer list
- */
-extern NSSCMSSignerInfo **
-NSS_CMSSignedData_GetSignerInfos(NSSCMSSignedData *sigd);
-
 extern int
 NSS_CMSSignedData_SignerInfoCount(NSSCMSSignedData *sigd);
 
@@ -475,12 +459,6 @@ NSS_CMSSignedData_GetDigestAlgs(NSSCMSSignedData *sigd);
  */
 extern NSSCMSContentInfo *
 NSS_CMSSignedData_GetContentInfo(NSSCMSSignedData *sigd);
-
-/*
- * NSS_CMSSignedData_GetCertificateList - retrieve the SignedData's certificate list
- */
-extern SECItem **
-NSS_CMSSignedData_GetCertificateList(NSSCMSSignedData *sigd);
 
 extern SECStatus
 NSS_CMSSignedData_ImportCerts(NSSCMSSignedData *sigd, CERTCertDBHandle *certdb,
@@ -664,13 +642,6 @@ extern SECStatus
 NSS_CMSSignerInfo_AddAuthAttr(NSSCMSSignerInfo *signerinfo, NSSCMSAttribute *attr);
 
 /*
- * NSS_CMSSignerInfo_AddUnauthAttr - add an attribute to the
- * unauthenticated attributes of "signerinfo".
- */
-extern SECStatus
-NSS_CMSSignerInfo_AddUnauthAttr(NSSCMSSignerInfo *signerinfo, NSSCMSAttribute *attr);
-
-/*
  * NSS_CMSSignerInfo_AddSigningTime - add the signing time to the
  * authenticated (i.e. signed) attributes of "signerinfo".
  *
@@ -714,13 +685,6 @@ NSS_CMSSignerInfo_AddSMIMEEncKeyPrefs(NSSCMSSignerInfo *signerinfo, CERTCertific
  */
 SECStatus
 NSS_CMSSignerInfo_AddMSSMIMEEncKeyPrefs(NSSCMSSignerInfo *signerinfo, CERTCertificate *cert, CERTCertDBHandle *certdb);
-
-/*
- * NSS_CMSSignerInfo_AddCounterSignature - countersign a signerinfo
- */
-extern SECStatus
-NSS_CMSSignerInfo_AddCounterSignature(NSSCMSSignerInfo *signerinfo,
-                                      SECOidTag digestalg, CERTCertificate signingcert);
 
 /*
  * XXXX the following needs to be done in the S/MIME layer code
@@ -818,9 +782,6 @@ NSS_CMSEnvelopedData_Decode_AfterEnd(NSSCMSEnvelopedData *envd);
 extern void
 NSS_CMSAuthEnvelopedData_Destroy(NSSCMSAuthEnvelopedData *authenvd);
 
-extern NSSCMSContentInfo *
-NSS_CMSAuthEnvelopedData_GetContentInfo(NSSCMSAuthEnvelopedData *authenvd);
-
 extern SECStatus
 NSS_CMSAuthEnvelopedData_Decode_BeforeData(NSSCMSAuthEnvelopedData *authenvd);
 
@@ -885,18 +846,12 @@ SECStatus NSS_CMSRecipientInfo_GetCertAndKey(NSSCMSRecipientInfo *ri,
 extern int
 NSS_CMSRecipientInfo_GetVersion(NSSCMSRecipientInfo *ri);
 
-extern SECItem *
-NSS_CMSRecipientInfo_GetEncryptedKey(NSSCMSRecipientInfo *ri, int subIndex);
-
 /*
  * NSS_CMSRecipientInfo_Encode - encode an NSS_CMSRecipientInfo as ASN.1
  */
 SECStatus NSS_CMSRecipientInfo_Encode(PLArenaPool *poolp,
                                       const NSSCMSRecipientInfo *src,
                                       SECItem *returned);
-
-extern SECOidTag
-NSS_CMSRecipientInfo_GetKeyEncryptionAlgorithmTag(NSSCMSRecipientInfo *ri);
 
 extern SECStatus
 NSS_CMSRecipientInfo_WrapBulkKey(NSSCMSRecipientInfo *ri, PK11SymKey *bulkkey,

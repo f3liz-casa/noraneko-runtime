@@ -21,8 +21,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
 // ${InstallDir}/distribution folder.
 const POLICIES_FILENAME = "policies.json";
 
-// When true browser policy is loaded per-user from
-// /run/user/$UID/appname
+// Load browser policy per-user from /run/user/$UID/appname for
+// testing only.
 const PREF_PER_USER_DIR = "toolkit.policies.perUserDir";
 // For easy testing, modify the helpers/sample.json file,
 // and set PREF_ALTERNATE_PATH in firefox.js as:
@@ -60,14 +60,15 @@ ChromeUtils.defineLazyGetter(lazy, "log", () => {
 
 // On Nightly in automation, ignore real system/user policies so a developer's
 // local policies.json or registry entries don't leak into tests.
-function shouldIgnoreLocalPolicies() {
+function ignoreLocalPoliciesInAutomation() {
   return AppConstants.NIGHTLY_BUILD && Cu.isInAutomation;
 }
 
 // We're only testing for empty objects, not
 // empty strings or empty arrays.
 function isEmptyObject(obj) {
-  if (typeof obj != "object" || Array.isArray(obj)) {
+  // typeof null == "object", so null has to be rejected before Object.keys().
+  if (obj === null || typeof obj != "object" || Array.isArray(obj)) {
     return false;
   }
   for (let key of Object.keys(obj)) {
@@ -79,6 +80,8 @@ function isEmptyObject(obj) {
 }
 
 export function EnterprisePoliciesManager() {
+  // Promises of the async policy callbacks run so far.
+  this._pendingCallbacks = [];
   Services.obs.addObserver(this, "profile-after-change", true);
   Services.obs.addObserver(this, "final-ui-startup", true);
   Services.obs.addObserver(this, "sessionstore-windows-restored", true);
@@ -94,7 +97,12 @@ EnterprisePoliciesManager.prototype = {
   ]),
 
   _initialize() {
-    if (Services.prefs.getBoolPref(PREF_POLICIES_APPLIED, false)) {
+    let previouslyApplied = Services.prefs.getBoolPref(
+      PREF_POLICIES_APPLIED,
+      false
+    );
+
+    if (previouslyApplied) {
       if ("_cleanup" in lazy.Policies) {
         let policyImpl = lazy.Policies._cleanup;
 
@@ -118,11 +126,17 @@ EnterprisePoliciesManager.prototype = {
     let provider = this._buildProvider();
 
     if (provider.failed) {
+      if (previouslyApplied) {
+        this._runMissingPolicyCallbacks();
+      }
       this.status = Ci.nsIEnterprisePolicies.FAILED;
       return;
     }
 
     if (!provider.hasPolicies) {
+      if (previouslyApplied) {
+        this._runMissingPolicyCallbacks();
+      }
       this.status = Ci.nsIEnterprisePolicies.INACTIVE;
       return;
     }
@@ -151,7 +165,7 @@ EnterprisePoliciesManager.prototype = {
       .setBoolPref("dom.webserial.enabled", false);
 
     this._parsedPolicies = {};
-    this._activatePolicies(provider.policies);
+    this._activatePolicies(provider.policies, previouslyApplied);
 
     Services.prefs.setBoolPref(PREF_POLICIES_APPLIED, true);
   },
@@ -189,10 +203,20 @@ EnterprisePoliciesManager.prototype = {
     return provider;
   },
 
-  _activatePolicies(unparsedPolicies) {
+  _activatePolicies(unparsedPolicies, previouslyApplied) {
     let { schema } = ChromeUtils.importESModule(
       "resource:///modules/policies/schema.sys.mjs"
     );
+
+    if (previouslyApplied) {
+      // Allow a policy to provide a default for when the provider did not set a policy.
+      for (let policyName of Object.keys(lazy.Policies)) {
+        let policyImpl = lazy.Policies[policyName];
+        if (policyImpl.onMissing && !(policyName in unparsedPolicies)) {
+          unparsedPolicies[policyName] = policyImpl.onMissing();
+        }
+      }
+    }
 
     for (let policyName of Object.keys(unparsedPolicies)) {
       let policySchema = schema.properties[policyName];
@@ -263,6 +287,26 @@ EnterprisePoliciesManager.prototype = {
     }
   },
 
+  _runMissingPolicyCallbacks() {
+    for (let policyName of Object.keys(lazy.Policies)) {
+      let policyImpl = lazy.Policies[policyName];
+      if (!policyImpl.onMissing) {
+        continue;
+      }
+      let params = policyImpl.onMissing();
+      for (let timing of Object.keys(this._callbacks)) {
+        let policyCallback = policyImpl[timing];
+        if (policyCallback) {
+          this._schedulePolicyCallback(
+            timing,
+            policyName,
+            policyCallback.bind(policyImpl, this, params)
+          );
+        }
+      }
+    }
+  },
+
   _callbacks: {
     // The earliest that a policy callback can run. This will
     // happen right after the Policy Engine itself has started,
@@ -297,8 +341,10 @@ EnterprisePoliciesManager.prototype = {
         // An async callback rejects long after it returned, so its failure
         // can only be recorded when it happens.
         if (typeof result?.then == "function") {
-          result.then(null, ex =>
-            this._reportCallbackFailure(policyName, timing, ex)
+          this._pendingCallbacks.push(
+            result.then(null, ex =>
+              this._reportCallbackFailure(policyName, timing, ex)
+            )
           );
         }
       } catch (ex) {
@@ -336,6 +382,7 @@ EnterprisePoliciesManager.prototype = {
     for (let timing of Object.keys(this._callbacks)) {
       this._callbacks[timing] = [];
     }
+    this._pendingCallbacks = [];
 
     // Simulate the startup process. This step-by-step is a bit ugly but it
     // tries to emulate the same behavior as of a normal startup.
@@ -350,6 +397,7 @@ EnterprisePoliciesManager.prototype = {
     await notifyTopicOnIdle("profile-after-change");
     await notifyTopicOnIdle("final-ui-startup");
     await notifyTopicOnIdle("sessionstore-windows-restored");
+    await Promise.all(this._pendingCallbacks);
     await notifyTopicOnIdle("distribution-customization-complete");
   },
 
@@ -449,6 +497,31 @@ EnterprisePoliciesManager.prototype = {
       feature,
       uri
     );
+  },
+
+  getContainerForURI(uri) {
+    let normalized = lazy.SitePolicyUtils.normalizeURI(uri);
+
+    for (let policies of SitePolicies) {
+      if (
+        policies.exceptions.matches(normalized) ||
+        policies.exceptions.matchesAllWebUrls
+      ) {
+        continue;
+      }
+
+      if (
+        !policies.match.matches(normalized) &&
+        !policies.match.matchesAllWebUrls
+      ) {
+        continue;
+      }
+
+      if ("container" in policies.features) {
+        return policies.features.container;
+      }
+    }
+    return 0;
   },
 
   getActivePolicies() {
@@ -675,6 +748,14 @@ class PoliciesProvider {
   get failed() {
     return this._failed;
   }
+
+  /**
+   * Policies from sources a standard user can write. They rank below the
+   * policies of every provider.
+   */
+  get userPolicies() {
+    return null;
+  }
 }
 
 /*
@@ -692,7 +773,7 @@ class JSONPoliciesProvider extends PoliciesProvider {
   }
 
   _getLocalConfigurationFile() {
-    if (shouldIgnoreLocalPolicies()) {
+    if (ignoreLocalPoliciesInAutomation()) {
       return null;
     }
 
@@ -707,7 +788,9 @@ class JSONPoliciesProvider extends PoliciesProvider {
 
     try {
       let configFile;
-      let perUserPath = Services.prefs.getBoolPref(PREF_PER_USER_DIR, false);
+      let perUserPath =
+        Cu.isInAutomation &&
+        Services.prefs.getBoolPref(PREF_PER_USER_DIR, false);
       if (perUserPath) {
         configFile = Services.dirsvc.get("XREUserRunTimeDir", Ci.nsIFile);
       } else {
@@ -819,7 +902,7 @@ class WindowsGPOPoliciesProvider extends PoliciesProvider {
         let altLocation = Services.prefs.getStringPref(PREF_ALTERNATE_GPO, "");
         if (altLocation) {
           regLocation = altLocation;
-        } else if (shouldIgnoreLocalPolicies()) {
+        } else if (ignoreLocalPoliciesInAutomation()) {
           return;
         }
       }
@@ -845,15 +928,32 @@ class WindowsGPOPoliciesProvider extends PoliciesProvider {
 }
 
 class macOSPoliciesProvider extends PoliciesProvider {
-  constructor() {
+  /**
+   * @param {object} [options]
+   * @param {boolean} [options.allowUserPolicies] whether policies from the
+   *        user's preferences and user-scope profiles may be used.
+   */
+  constructor({ allowUserPolicies = true } = {}) {
     super();
+    this._userPolicies = null;
+    if (ignoreLocalPoliciesInAutomation()) {
+      return;
+    }
     let prefReader = Cc["@mozilla.org/mac-preferences-reader;1"].createInstance(
       Ci.nsIMacPreferencesReader
     );
     if (!prefReader.policiesEnabled()) {
       return;
     }
-    this._policies = lazy.macOSPoliciesParser.readPolicies(prefReader);
+    let result = lazy.macOSPoliciesParser.readPolicies(prefReader, {
+      allowUserPolicies,
+    });
+    this._policies = result?.policies ?? null;
+    this._userPolicies = result?.userPolicies ?? null;
+  }
+
+  get userPolicies() {
+    return this._userPolicies;
   }
 }
 
@@ -875,8 +975,40 @@ export class CombinedProvider extends PoliciesProvider {
 
   mergePolicies() {
     // Combine the top-level policies of every provider, with providers added
-    // later taking precedence over those added earlier.
-    this._policies = Object.assign({}, ...this._providers.map(p => p.policies));
+    // later taking precedence over those added earlier. User policies rank
+    // below all of them and are dropped when DisableMacOSUserPolicies is set.
+    let policies = Object.assign({}, ...this._providers.map(p => p.policies));
+    const userPolicies = Object.assign(
+      {},
+      ...this._providers.map(p => p.userPolicies)
+    );
+    // Drop the user entries an admin also sets, so every admin policy comes
+    // after the user-only ones and its callbacks run last.
+    let userOnly = Object.fromEntries(
+      Object.entries(userPolicies).filter(([name]) => !(name in policies))
+    );
+    if (this._disablesUserPolicies(policies)) {
+      let ignored = Object.keys(userOnly);
+      if (ignored.length) {
+        lazy.log.warn(`Ignoring user policies: ${ignored.join(", ")}`);
+      }
+      userOnly = {};
+    }
+    this._policies = { ...userOnly, ...policies };
+  }
+
+  _disablesUserPolicies(policies) {
+    if (!("DisableMacOSUserPolicies" in policies)) {
+      return false;
+    }
+    let { schema } = ChromeUtils.importESModule(
+      "resource:///modules/policies/schema.sys.mjs"
+    );
+    let { valid, parsedValue } = lazy.PolicySchemaValidator.validate(
+      policies.DisableMacOSUserPolicies,
+      schema.properties.DisableMacOSUserPolicies
+    );
+    return valid && parsedValue === true;
   }
 
   get failed() {

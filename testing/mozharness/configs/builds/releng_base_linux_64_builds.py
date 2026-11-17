@@ -12,7 +12,6 @@ config = {
     # code block.
     # note: overridden by MOZHARNESS_ACTIONS in TaskCluster tasks
     "default_actions": [
-        "clobber",
         "build",
     ],
     "secret_files": [
@@ -49,12 +48,9 @@ config = {
         "LC_ALL": "C",
         "PATH": "/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin",
     },
-    "mozconfig_variant": "nightly",
     #########################################################################
     #########################################################################
     ###### 64 bit specific ######
     "platform": "linux64",
-    "stage_platform": "linux64",
-    "mozconfig_platform": "linux64",
     #########################################################################
 }

@@ -1,0 +1,90 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+:host {
+  display: block;
+
+  @media (forced-colors) {
+    .card {
+      --ai-action-confirmation-background-color: var(--background-color-box);
+    }
+  }
+}
+
+.card {
+  background-color: var(--ai-action-confirmation-background-color);
+  border: var(--border-width) solid var(--border-color-deemphasized);
+  border-radius: var(--border-radius-large);
+  display: grid;
+  gap: var(--space-medium);
+  padding: var(--space-small);
+}
+
+.title {
+  display: flex;
+  gap: var(--space-small);
+  padding: var(--space-xsmall) var(--space-small);
+  align-items: center;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-color);
+  text-decoration: none;
+  border-radius: var(--border-radius-medium);
+
+  &:hover {
+    background-color: var(--button-background-color-menu-hover);
+  }
+}
+
+.title img {
+  -moz-context-properties: fill;
+  fill: currentColor;
+}
+
+p.title {
+  min-width: 0;
+
+  &:hover {
+    background: none;
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-small);
+  justify-content: end;
+}
+
+.card-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.complete-title {
+  /* stylelint-disable-next-line stylelint-plugin-mozilla/use-design-tokens --
+   * Figma style */
+  color: var(--smartwindow-text-color-accent-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-small);
+  cursor: pointer;
+  padding: var(--space-xsmall) var(--space-small);
+
+  img {
+    -moz-context-properties: fill;
+    fill: currentColor;
+    transform: translateY(-1px);
+    width: var(--icon-size-small);
+    height: var(--icon-size-small);
+  }
+}
+
+.complete {
+  .title {
+    padding: var(--space-xsmall) var(--space-small);
+  }
+}

@@ -11,7 +11,6 @@
 #include <stdlib.h>
 
 #include "../unit_test/unit_test.h"
-#include "libyuv/basic_types.h"
 #include "libyuv/convert.h"
 #include "libyuv/convert_argb.h"
 #include "libyuv/convert_from.h"
@@ -150,6 +149,7 @@ static void YUVToRGB(int y, int u, int v, int* r, int* g, int* b) {
   memset(orig_y, y, kPixels);
   memset(orig_u, u, kHalfPixels);
   memset(orig_v, v, kHalfPixels);
+  memset(orig_pixels, 0, sizeof(orig_pixels));
 
   /* YUV converted to ARGB. */
   I422ToARGB(orig_y, kWidth, orig_u, (kWidth + 1) / 2, orig_v, (kWidth + 1) / 2,
@@ -173,6 +173,7 @@ static void YUVJToRGB(int y, int u, int v, int* r, int* g, int* b) {
   memset(orig_y, y, kPixels);
   memset(orig_u, u, kHalfPixels);
   memset(orig_v, v, kHalfPixels);
+  memset(orig_pixels, 0, sizeof(orig_pixels));
 
   /* YUV converted to ARGB. */
   J422ToARGB(orig_y, kWidth, orig_u, (kWidth + 1) / 2, orig_v, (kWidth + 1) / 2,

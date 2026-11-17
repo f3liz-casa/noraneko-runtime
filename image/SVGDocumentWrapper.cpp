@@ -4,6 +4,7 @@
 
 #include "SVGDocumentWrapper.h"
 
+#include "mozilla/AutoRestore.h"
 #include "mozilla/Components.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/SMILAnimationController.h"
@@ -51,14 +52,28 @@ SVGDocumentWrapper::~SVGDocumentWrapper() {
   }
 }
 
+static MOZ_CAN_RUN_SCRIPT void DoDestroyViewer(nsIDocumentViewer* aViewer) {
+  if (RefPtr doc = aViewer->GetDocument()) {
+    doc->OnPageHide(false, nullptr);
+  }
+  aViewer->Close();
+  aViewer->Destroy();
+}
+
 void SVGDocumentWrapper::DestroyViewer() {
   MOZ_ASSERT(NS_IsMainThread());
-  if (mViewer) {
-    const RefPtr<Document> doc = mViewer->GetDocument();
-    doc->OnPageHide(false, nullptr);
-    mViewer->Close();
-    mViewer->Destroy();
-    mViewer = nullptr;
+  nsCOMPtr viewer = mViewer.forget();
+  if (!viewer) {
+    return;
+  }
+
+  if (nsContentUtils::IsSafeToRunScript()) {
+    DoDestroyViewer(viewer);
+  } else {
+    nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
+        "DestroyViewer",
+        [viewer = std::move(viewer)]()
+            MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA { DoDestroyViewer(viewer); }));
   }
 }
 
@@ -197,6 +212,10 @@ void SVGDocumentWrapper::SetCurrentTime(float aTime) {
 }
 
 void SVGDocumentWrapper::TickRefreshDriver() {
+  // The tick flushes our document, so nested draws of it must be refused.
+  AutoRestore<bool> isDrawing(mIsDrawing);
+  mIsDrawing = true;
+
   if (RefPtr<PresShell> presShell = mViewer->GetPresShell()) {
     if (RefPtr<nsPresContext> presContext = presShell->GetPresContext()) {
       if (RefPtr<nsRefreshDriver> driver = presContext->RefreshDriver()) {

@@ -18,9 +18,7 @@ EXPORTS += [
     "COLRFonts.h",
     "DrawMode.h",
     "gfx2DGlue.h",
-    "gfxAlphaRecovery.h",
     "gfxASurface.h",
-    "gfxBaseSharedMemorySurface.h",
     "gfxBlur.h",
     "gfxColor.h",
     "gfxContext.h",
@@ -52,7 +50,6 @@ EXPORTS += [
     "gfxQuaternion.h",
     "gfxRect.h",
     "gfxScriptItemizer.h",
-    "gfxSharedImageSurface.h",
     "gfxSkipChars.h",
     "gfxSparseBitSet.h",
     "gfxSVGGlyphs.h",
@@ -68,17 +65,15 @@ EXPORTS += [
 
 EXPORTS.mozilla.gfx += [
     "D3D11Checks.h",
-    "DeviceManagerDx.h",
-    "DisplayConfigWindows.h",
     "FontData.h",
     "FontPaletteCache.h",
     "PrintPromise.h",
     "PrintTarget.h",
-    "PrintTargetThebes.h",
+    "PrintTargetRecording.h",
+    "PrintTargetSkPDF.h",
+    "SkMemoryReporter.h",
     "ThebesRLBox.h",
 ]
-
-EXPORTS.mozilla.gfx += ["SkMemoryReporter.h"]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
     EXPORTS += [
@@ -86,19 +81,24 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
         "gfxFT2FontBase.h",
         "gfxFT2Fonts.h",
     ]
-    EXPORTS.mozilla.gfx += [
-        "PrintTargetPDF.h",
-    ]
     SOURCES += [
         "gfxAndroidPlatform.cpp",
         "gfxFT2FontBase.cpp",
         "gfxFT2FontList.cpp",
         "gfxFT2Fonts.cpp",
         "gfxFT2Utils.cpp",
-        "PrintTargetPDF.cpp",
     ]
+
+    SOURCE_HEADERS += [
+        "gfxFT2FontList.h",
+        "gfxFT2Utils.h",
+    ]
+
     UNIFIED_SOURCES += [
         "AndroidSystemFontIterator.cpp",
+    ]
+    SOURCE_HEADERS += [
+        "AndroidSystemFontIterator.h",
     ]
 elif CONFIG["MOZ_WIDGET_TOOLKIT"] in ("cocoa", "uikit"):
     EXPORTS += [
@@ -116,27 +116,28 @@ elif CONFIG["MOZ_WIDGET_TOOLKIT"] in ("cocoa", "uikit"):
         "gfxQuartzNativeDrawing.cpp",
         "gfxQuartzSurface.cpp",
     ]
-    if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
-        EXPORTS.mozilla.gfx += [
-            "PrintTargetCG.h",
-        ]
-        SOURCES += [
-            "PrintTargetCG.mm",
-        ]
+
+    SOURCE_HEADERS += [
+        "CoreTextFontList.h",
+        "gfxCoreTextShaper.h",
+        "gfxMacFont.h",
+    ]
 elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     EXPORTS += [
         "gfxFT2FontBase.h",
         "gfxPlatformGtk.h",
-    ]
-    EXPORTS.mozilla.gfx += [
-        "PrintTargetPDF.h",
     ]
     SOURCES += [
         "gfxFcPlatformFontList.cpp",
         "gfxFT2FontBase.cpp",
         "gfxFT2Utils.cpp",
         "gfxPlatformGtk.cpp",
-        "PrintTargetPDF.cpp",
+    ]
+
+    SOURCE_HEADERS += [
+        "gfxFcPlatformFontList.h",
+        "gfxFT2FontList.h",
+        "gfxFT2Utils.h",
     ]
 
     if CONFIG["MOZ_X11"]:
@@ -155,34 +156,29 @@ elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
     EXPORTS += [
         "gfxDWriteCommon.h",
         "gfxDWriteFonts.h",
-        "gfxWindowsNativeDrawing.h",
         "gfxWindowsPlatform.h",
         "gfxWindowsSurface.h",
     ]
     EXPORTS.mozilla.gfx += [
-        "PrintTargetPDF.h",
+        "DeviceManagerDx.h",
+        "DisplayConfigWindows.h",
         "PrintTargetWindows.h",
     ]
     SOURCES += [
         "DisplayConfigWindows.cpp",
         "gfxDWriteCommon.cpp",
         "gfxDWriteFonts.cpp",
-        "gfxWindowsNativeDrawing.cpp",
         "gfxWindowsPlatform.cpp",
         "gfxWindowsSurface.cpp",
-        "PrintTargetPDF.cpp",
         "PrintTargetWindows.cpp",
     ]
     UNIFIED_SOURCES += [
         "gfxDWriteFontList.cpp",
     ]
-
-# Are we targeting x86 or x64?  If so, build gfxAlphaRecoverySSE2.cpp.
-if CONFIG["INTEL_ARCHITECTURE"]:
-    SOURCES += ["gfxAlphaRecoverySSE2.cpp"]
-    # The file uses SSE2 intrinsics, so it needs special compile flags on some
-    # compilers.
-    SOURCES["gfxAlphaRecoverySSE2.cpp"].flags += CONFIG["SSE2_FLAGS"]
+    SOURCE_HEADERS += [
+        "d3dkmtQueryStatistics.h",
+        "gfxDWriteFontList.h",
+    ]
 
 SOURCES += [
     # Includes mac system header conflicting with point/size,
@@ -196,15 +192,12 @@ SOURCES += [
     "gfxFontUtils.cpp",
     "gfxPlatform.cpp",
     "PrintTarget.cpp",
-    "PrintTargetThebes.cpp",
 ]
 
 UNIFIED_SOURCES += [
     "CJKCompatSVS.cpp",
     "COLRFonts.cpp",
     "FontPaletteCache.cpp",
-    "gfxAlphaRecovery.cpp",
-    "gfxBaseSharedMemorySurface.cpp",
     "gfxBlur.cpp",
     "gfxContext.cpp",
     "gfxFont.cpp",
@@ -229,35 +222,34 @@ UNIFIED_SOURCES += [
     "gfxTextRun.cpp",
     "gfxUserFontSet.cpp",
     "gfxUtils.cpp",
+    "PrintTargetRecording.cpp",
+    "PrintTargetSkPDF.cpp",
     "SharedFontList.cpp",
+    "SkMemoryReporter.cpp",
     "SoftwareVsyncSource.cpp",
     "VsyncSource.cpp",
-]
-
-UNIFIED_SOURCES += [
-    "SkMemoryReporter.cpp",
 ]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
     UNIFIED_SOURCES += [
         "gfxMacPlatformFontList.mm",
     ]
+
+    SOURCE_HEADERS += [
+        "gfxMacPlatformFontList.h",
+    ]
 elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "uikit":
     UNIFIED_SOURCES += [
         "IOSPlatformFontList.mm",
+    ]
+
+    SOURCE_HEADERS += [
+        "IOSPlatformFontList.h",
     ]
 elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
     UNIFIED_SOURCES += [
         "D3D11Checks.cpp",
         "DeviceManagerDx.cpp",
-    ]
-
-if CONFIG["MOZ_ENABLE_SKIA_PDF"]:
-    EXPORTS.mozilla.gfx += [
-        "PrintTargetSkPDF.h",
-    ]
-    SOURCES += [
-        "PrintTargetSkPDF.cpp",
     ]
 
 # We use ICU for normalization functions:
@@ -276,7 +268,6 @@ LOCAL_INCLUDES += [
     "/dom/xml",
     "/gfx/cairo/cairo/src",
     "/image/encoders/jpeg",
-    "/third_party/xsimd/include",
     "/widget/gtk",
 ]
 
@@ -301,3 +292,30 @@ DEFINES["GRAPHITE2_STATIC"] = True
 COMPILE_FLAGS["WARNINGS_CXXFLAGS"] += ["-Werror=switch"]
 
 include("/tools/fuzzing/libfuzzer-config.mozbuild")
+
+LICENSES += ["icu"]
+LICENSES["icu"].title = "ICU License"
+LICENSES["icu"].text = "LICENSE-NOTICE.txt"
+LICENSES["icu"].spdx = "ICU"
+LICENSES["icu"].notice = """
+<p>This license applies to some code in the <code>gfx/thebes</code> directory.</p>
+"""
+
+LICENSED_UNDER += [
+    "icu",
+]
+
+LICENSED_UNDER += ["gfx-font-list"]
+LICENSED_UNDER["gfx-font-list"].paths = [
+    "gfxMacPlatformFontList.mm",
+    "gfxPlatformFontList.cpp",
+]
+
+SOURCE_HEADERS += [
+    "cairo-xlib-utils.h",
+    "gfxFontMissingGlyphs.h",
+    "gfxGlyphExtents.h",
+    "gfxGraphiteShaper.h",
+    "gfxHarfBuzzShaper.h",
+    "SharedFontList-impl.h",
+]

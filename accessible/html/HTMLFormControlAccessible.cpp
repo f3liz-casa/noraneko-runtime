@@ -122,14 +122,14 @@ Relation HTMLRadioButtonAccessible::ComputeGroupAttributes(
   }
   NS_ENSURE_TRUE(inputElms, rel);
 
-  uint32_t inputCount = inputElms->Length(false);
+  uint32_t inputCount = inputElms->Length();
 
   // Compute posinset and setsize.
   int32_t indexOf = 0;
   int32_t count = 0;
 
   for (uint32_t index = 0; index < inputCount; index++) {
-    nsIContent* inputElm = inputElms->Item(index, false);
+    nsIContent* inputElm = inputElms->Item(index);
     if (inputElm->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
                                            type, eCaseMatters) &&
         inputElm->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name,
@@ -861,7 +861,7 @@ double HTMLProgressAccessible::CurValue() const {
   return NS_FAILED(error) ? UnspecifiedNaN<double>() : value;
 }
 
-bool HTMLProgressAccessible::SetCurValue(double aValue) {
+bool HTMLProgressAccessible::SetCurValue(double /*aValue*/) {
   return false;  // progress meters are readonly.
 }
 
@@ -988,7 +988,7 @@ double HTMLMeterAccessible::CurValue() const {
   return value;
 }
 
-bool HTMLMeterAccessible::SetCurValue(double aValue) {
+bool HTMLMeterAccessible::SetCurValue(double /*aValue*/) {
   return false;  // meters are readonly.
 }
 

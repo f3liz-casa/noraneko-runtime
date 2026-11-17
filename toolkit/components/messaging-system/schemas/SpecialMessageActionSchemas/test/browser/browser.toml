@@ -15,7 +15,10 @@ support-files = [
 
 ["browser_sma_bookmark_current_tab_confirmation_hint.js"]
 
-["browser_sma_cfrmessageprovider.js"]
+["browser_sma_closed_browser_notifications.js"]
+run-if = [
+  "os == 'win'",
+]
 
 ["browser_sma_configure_homepage.js"]
 
@@ -90,7 +93,11 @@ run-if = [
   "os == 'linux'",
 ]
 
+["browser_sma_reset_profile.js"]
+
 ["browser_sma_restore_session.js"]
+
+["browser_sma_select_and_mark_menu_item.js"]
 
 ["browser_sma_set_bookmarks_toolbar_visibility.js"]
 
@@ -106,9 +113,6 @@ run-if = [
 ["browser_sma_show_firefox_accounts.js"]
 
 ["browser_sma_show_migration_wizard.js"]
-skip-if = [
-  "os == 'mac' && os_version == '10.15' && arch == 'x86_64' && debug", # Bug 1837646
-]
 
 ["browser_sma_submit_onboarding_opt_out_ping.js"]
 

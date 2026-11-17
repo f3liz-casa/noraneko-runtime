@@ -1594,6 +1594,12 @@ bool BytecodeEmitter::emitTDZCheckIfNeeded(TaggedParserAtomIndex name,
     return true;
   }
 
+  // `.initializers` is an implementation detail that is always populated
+  // before a constructor can read it.
+  if (name == TaggedParserAtomIndex::WellKnown::dot_initializers_()) {
+    return true;
+  }
+
   Maybe<MaybeCheckTDZ> check =
       innermostTDZCheckCache->needsTDZCheck(this, name);
   if (!check) {
@@ -2163,6 +2169,11 @@ bool BytecodeEmitter::allocateResumeIndex(BytecodeOffset offset,
 bool BytecodeEmitter::allocateTableSwitchResumeIndexRange(
     mozilla::Span<BytecodeOffset> caseOffsets, BytecodeOffset switchOffset,
     uint32_t* firstResumeIndex) {
+  if (caseOffsets.empty()) {
+    // Empty switches don't need adjustment.
+    *firstResumeIndex = 0;
+    return true;
+  }
   auto& list = bytecodeSection().tableSwitchOffsetList();
 
   // The final resume index depends on the number of yield and await ops in the
@@ -2569,6 +2580,12 @@ BytecodeEmitter::createImmutableScriptData() {
     propertyCountEstimate +=
         sc->asFunctionBox()->memberInitializers().numMemberInitializers;
   }
+
+#ifdef DEBUG
+  uint32_t codeLength = bytecodeSection().code().length();
+  bytecodeSection().tryNoteList().checkTryNotes(codeLength);
+  bytecodeSection().scopeNoteList().checkScopeNotes(codeLength);
+#endif
 
   return ImmutableScriptData::new_(
       fc, mainOffset(), maxFixedSlots, nslots, bodyScopeIndex,
@@ -11080,6 +11097,56 @@ bool BytecodeEmitter::emitInitializeInstanceMembers(
     }
   }
 
+  if (memberInitializers.hasInlinedZeroFields) {
+    MOZ_ASSERT(!isDerivedClassConstructor);
+    for (const InlinedZeroField& field :
+         sc->asFunctionBox()->inlinedZeroFields()) {
+      if (!emitGetName(TaggedParserAtomIndex::WellKnown::dot_this_())) {
+        //              [stack] THIS
+        return false;
+      }
+      if (field.isPrivate) {
+        if (!emitGetPrivateName(field.name)) {
+          //            [stack] THIS KEY
+          return false;
+        }
+        // There is no private brand to check, this class has no private
+        // methods.
+        if (!emitCheckPrivateField(ThrowCondition::ThrowHas,
+                                   ThrowMsgKind::PrivateDoubleInit)) {
+          //            [stack] THIS KEY BOOL
+          return false;
+        }
+        if (!emit1(JSOp::Pop)) {
+          //            [stack] THIS KEY
+          return false;
+        }
+        if (!emit1(JSOp::Zero)) {
+          //            [stack] THIS KEY ZERO
+          return false;
+        }
+        if (!emit1(JSOp::InitHiddenElem)) {
+          //            [stack] THIS
+          return false;
+        }
+      } else {
+        if (!emit1(JSOp::Zero)) {
+          //            [stack] THIS ZERO
+          return false;
+        }
+        if (!emitAtomOp(JSOp::InitProp, field.name)) {
+          //            [stack] THIS
+          return false;
+        }
+      }
+      if (!emit1(JSOp::Pop)) {
+        //              [stack]
+        return false;
+      }
+    }
+    return true;
+  }
+
   size_t numInitializers = memberInitializers.numMemberInitializers;
   if (numInitializers > 0) {
     if (!emitGetName(TaggedParserAtomIndex::WellKnown::dot_initializers_())) {
@@ -12414,6 +12481,8 @@ bool BytecodeEmitter::emitClass(
                TaggedParserAtomIndex::WellKnown::dot_initializers_());
 #endif
 
+    ctor = &constructorScope->scopeBody()->as<ClassMethod>().method();
+
     auto needsInitializer = [](ParseNode* propdef) {
       return NeedsFieldInitializer(propdef, false) ||
              NeedsAccessorInitializer(propdef, false);
@@ -12433,7 +12502,8 @@ bool BytecodeEmitter::emitClass(
       }
 #endif
       // Any class with field initializers will have a constructor
-      if (!emitCreateMemberInitializers(ce, classMembers,
+      if (!ctor->funbox()->memberInitializers().hasInlinedZeroFields &&
+          !emitCreateMemberInitializers(ce, classMembers,
                                         FieldPlacement::Instance
 #ifdef ENABLE_DECORATORS
                                         ,
@@ -12444,7 +12514,6 @@ bool BytecodeEmitter::emitClass(
       }
     }
 
-    ctor = &constructorScope->scopeBody()->as<ClassMethod>().method();
   } else {
     // The |.initializers| binding is never emitted when in self-hosting mode.
     MOZ_ASSERT(emitterMode == BytecodeEmitter::SelfHosting);

@@ -3,6 +3,12 @@
 
 "use strict";
 
+/* import-globals-from head_aitab.js */
+Services.scriptloader.loadSubScript(
+  getRootDirectory(gTestPath) + "head_aitab.js",
+  this
+);
+
 const AITAB_PREF = "browser.smartwindow.aitab.enabled";
 const UNKNOWN_SLUG = "unknown-slug";
 const STORED_SLUG = "stored-slug";
@@ -14,7 +20,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///browser/components/aiwindow/ui/modules/AITabStore.sys.mjs",
 });
 
-describe("about:aitab store integration", () => {
+describe("about:smartpage store integration", () => {
   let tab;
 
   beforeEach(async () => {
@@ -35,7 +41,7 @@ describe("about:aitab store integration", () => {
   it("shows the unavailable state for an unknown slug", async () => {
     tab = await BrowserTestUtils.openNewForegroundTab(
       gBrowser,
-      `about:aitab?page=${UNKNOWN_SLUG}`
+      `about:smartpage?page=${UNKNOWN_SLUG}`
     );
 
     await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
@@ -52,14 +58,133 @@ describe("about:aitab store integration", () => {
       Assert.equal(
         page.status,
         "unavailable",
-        "An unknown slug produces the unavailable state"
+        "An unknown slug produces the unavailable error state"
       );
       Assert.equal(page.page, null, "No page data is returned");
-      Assert.equal(
-        element.shadowRoot.querySelector(".aitab-status")?.dataset.l10nId,
-        "ai-tab-page-unavailable",
-        "The unavailable message is rendered"
+      Assert.ok(
+        element.shadowRoot.querySelector("aitab-error"),
+        "The error component is rendered"
       );
+    });
+  });
+
+  describe("refreshing a generated page", () => {
+    let context;
+    let destination;
+
+    beforeEach(async () => {
+      destination = null;
+      context = {};
+      setupAITabGenerationMocks(context);
+      await openAITabGenerationChat(context);
+    });
+
+    afterEach(async () => {
+      if (destination && !destination.closed) {
+        await BrowserTestUtils.closeWindow(destination);
+      }
+      await cleanupAITabGeneration(context);
+    });
+
+    it("renders a revision when the user returns to the page tab", async () => {
+      const originalTitle = "Lisbon hotels";
+      const updatedTitle = "Lisbon hotels for families";
+      const viewerURL = await createTestAITab(context, originalTitle);
+      const pageTab = await openGeneratedAITab(context, viewerURL);
+      await waitForAITabHeading(pageTab, originalTitle);
+      const windowId =
+        pageTab.linkedBrowser.browsingContext.currentWindowGlobal.innerWindowId;
+
+      await selectAITabTestTab(context.chatTab);
+      await reviseTestAITab(context, viewerURL, updatedTitle);
+
+      await selectAITabTestTab(pageTab);
+      await waitForAITabHeading(pageTab, updatedTitle);
+
+      Assert.equal(
+        pageTab.linkedBrowser.browsingContext.currentWindowGlobal.innerWindowId,
+        windowId,
+        "The page document is unchanged after rendering the revision"
+      );
+    });
+
+    describe("when the page is moved to a different window", () => {
+      const originalTitle = "Lisbon hotels";
+      const updatedTitle = "Lisbon hotels for families";
+      let pageTab;
+      let otherTab;
+      let windowId;
+
+      async function focusWindow(win) {
+        await SimpleTest.promiseFocus(win);
+        await TestUtils.waitForCondition(
+          () => Services.focus.activeWindow === win,
+          "The requested window becomes active"
+        );
+      }
+
+      beforeEach(async () => {
+        context.viewerURL = await createTestAITab(context, originalTitle);
+        const originalTab = await openGeneratedAITab(
+          context,
+          context.viewerURL
+        );
+        await waitForAITabHeading(originalTab, originalTitle);
+        windowId =
+          originalTab.linkedBrowser.browsingContext.currentWindowGlobal
+            .innerWindowId;
+
+        destination = await openAIWindow();
+        otherTab = destination.gBrowser.selectedTab;
+        pageTab = destination.gBrowser.adoptTab(originalTab, {
+          tabIndex: destination.gBrowser.tabs.length,
+          selectTab: true,
+        });
+        Assert.ok(pageTab, "The destination window adopts the page tab");
+        await waitForAITabHeading(pageTab, originalTitle);
+      });
+
+      it("refreshes the selected page when its window becomes active", async () => {
+        await focusWindow(context.win);
+        await reviseTestAITab(context, context.viewerURL, updatedTitle);
+        Assert.equal(
+          destination.gBrowser.selectedTab,
+          pageTab,
+          "The page remains selected while its window is inactive"
+        );
+
+        await focusWindow(destination);
+        await waitForAITabHeading(pageTab, updatedTitle);
+
+        Assert.equal(
+          pageTab.linkedBrowser.browsingContext.currentWindowGlobal
+            .innerWindowId,
+          windowId,
+          "Moving and refreshing the page preserves its document"
+        );
+      });
+
+      it("refreshes when the moved page tab is selected again", async () => {
+        await selectAITabTestTab(otherTab);
+        await focusWindow(context.win);
+        await reviseTestAITab(context, context.viewerURL, updatedTitle);
+
+        await focusWindow(destination);
+        Assert.equal(
+          destination.gBrowser.selectedTab,
+          otherTab,
+          "The page is still in a background tab after window activation"
+        );
+        await selectAITabTestTab(pageTab);
+        await waitForAITabHeading(pageTab, updatedTitle);
+
+        Assert.equal(
+          pageTab.linkedBrowser.browsingContext.currentWindowGlobal
+            .innerWindowId,
+          windowId,
+          "Moving and refreshing the page preserves its document"
+        );
+      });
     });
   });
 
@@ -71,20 +196,19 @@ describe("about:aitab store integration", () => {
         convId: "stored-conversation",
         slug: STORED_SLUG,
         title: "Stored AI Tab",
-        components: [
-          {
-            type: "text",
-            layout: "summary",
-            title: "Stored component",
+        components: {
+          surface: {
+            components: [],
+            dataModel: {},
           },
-        ],
+        },
       });
     });
 
     it("loads the stored page through the actor pair", async () => {
       tab = await BrowserTestUtils.openNewForegroundTab(
         gBrowser,
-        `about:aitab?page=${STORED_SLUG}`
+        `about:smartpage?page=${STORED_SLUG}`
       );
 
       await SpecialPowers.spawn(

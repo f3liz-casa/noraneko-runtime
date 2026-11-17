@@ -9,13 +9,13 @@
 #include "EventTokenBucket.h"
 #include "HttpTransactionShell.h"
 #include "TimingStruct.h"
+#include "gtest/MozGtestFriend.h"
 #include "mozilla/StaticPrefs_security.h"
 #include "mozilla/net/DNS.h"
 #include "mozilla/net/NeckoChannelParams.h"
 #include "nsAHttpConnection.h"
 #include "nsAHttpTransaction.h"
 #include "nsCOMPtr.h"
-#include "nsContentPermissionHelper.h"
 #include "nsHttp.h"
 #include "nsIAsyncOutputStream.h"
 #include "nsIClassOfService.h"
@@ -111,12 +111,6 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // time stamp (if now is false)
   void SetPendingTime(bool now = true) {
     mozilla::MutexAutoLock lock(mLock);
-    if (!now && !mTimings.transactionPending.IsNull()) {
-      // Remember how long it took. We will use this value to record
-      // TRANSACTION_WAIT_TIME_HTTP2_SUP_HTTP3 telemetry, but we need to wait
-      // for the response headers.
-      mPendingDurationTime = TimeStamp::Now() - mTimings.transactionPending;
-    }
     // Note that the transaction could be added in to a pending queue multiple
     // times (when the transaction is restarted or moved to a new conn entry due
     // to HTTPS RR), so we should only set the pending time once.
@@ -150,6 +144,9 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   bool ChannelPipeFull() { return mWaitingOnPipeOut; }
 
   // Locked methods to get and set timing info
+  // Replaces the domainLookup, connect and TLS timings with aTimes, which is
+  // empty for a transaction running on a connection it did not establish, so
+  // that it can't report a connect phase belonging to another connection.
   void BootstrapTimings(TimingStruct times);
   void SetConnectStart(mozilla::TimeStamp timeStamp, bool onlyIfNull = false);
   void SetConnectEnd(mozilla::TimeStamp timeStamp, bool onlyIfNull = false);
@@ -252,6 +249,15 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   void SetIsTRRTransaction() override { mIsTRRTransaction = true; }
   bool IsTRRTransaction() { return mIsTRRTransaction; }
 
+  // Marks this transaction as uploading a non-replayable streaming body,
+  // whose length is not known when the transaction is initialised. Restart
+  // and retry logic must not attempt to re-send it, because the body stream
+  // has already been consumed.
+  void SetRequestBodyIsStreaming(bool aIsStreaming) override {
+    mRequestBodyIsStreaming = aIsStreaming;
+  }
+  bool RequestBodyIsStreaming() const { return mRequestBodyIsStreaming; }
+
   // Used by the HE speculative path to propagate the failed-handshake
   // security info onto the real transaction whose mConnection was never
   // set (so its own MaybeRefreshSecurityInfo skips). Without this the
@@ -269,6 +275,8 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   virtual ~nsHttpTransaction();
 
   [[nodiscard]] nsresult Restart();
+  FRIEND_TEST(HttpTransactionRestart,
+              RestartRefusesStartedStreamingRequestBody);
   // For an accepted 0-RTT request, report connectEnd and requestStart at the
   // early-data send point. Caller must hold mLock.
   void Apply0RTTTimingOverride();
@@ -320,6 +328,9 @@ class nsHttpTransaction final : public nsAHttpTransaction,
                                   bool& aAllRecordsHaveEchConfig);
   // This function setups a new connection info for restarting this transaction.
   void PrepareConnInfoForRetry(nsresult aReason);
+  // Switches to a direct-route connection info with HTTP/3 disabled, so the
+  // transaction is restarted over HTTP/2 or HTTP/1.1.
+  void DisableHttp3ForRestart();
   // This function is used to select the next non http3 record and is only
   // executed when the fast fallback timer is triggered.
   already_AddRefed<nsHttpConnectionInfo> PrepareFastFallbackConnInfo(
@@ -420,7 +431,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // mixed-access patterns (e.g. mConnection is checked without the lock on the
   // socket thread but modified with it; mChunkedDecoder is accessed without the
   // lock except during trailer extraction).
-  Mutex mLock{"transaction lock"};
+  mutable Mutex mLock{"transaction lock"};
 
   nsCOMPtr<nsIInterfaceRequestor> mCallbacks MOZ_GUARDED_BY(mLock);
   nsCOMPtr<nsITransportEventSink> mTransportSink;
@@ -449,7 +460,10 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // 2. If only some records have echConfig and some not, we always fallback to
   // this origin conn info.
   RefPtr<nsHttpConnectionInfo> mOrigConnInfo;
-  nsHttpRequestHead* mRequestHead{nullptr};    // weak ref
+  // nsHttpRequestHead has its own lock.  The channel outlives this
+  // transaction because the pump reading mPipeIn holds it until
+  // Close() closes the pipe.
+  nsHttpRequestHead* mRequestHead{nullptr};
   nsHttpResponseHead* mResponseHead{nullptr};  // owning pointer
 
   nsAHttpSegmentReader* mReader{nullptr};
@@ -523,7 +537,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   bool mConnected{false};
   bool mActivated{false};
   bool mHaveStatusLine{false};
-  bool mHaveAllHeaders{false};
+  Atomic<bool, ReleaseAcquire> mHaveAllHeaders{false};
   bool mTransactionDone{false};
   bool mDidContentStart{false};
   bool mNoContent{false};  // expecting an empty entity body
@@ -531,7 +545,8 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   bool mReceivedData{false};
   bool mStatusEventPending{false};
   bool mHasRequestBody{false};
-  bool mProxyConnectFailed{false};
+  bool mRequestBodyIsStreaming{false};
+  Atomic<bool, Relaxed> mProxyConnectFailed{false};
   bool mHttpResponseMatched{false};
   bool mPreserveStream{false};
   bool mDispatchedAsBlocking{false};
@@ -555,17 +570,14 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   bool mReportedStart{false};
   bool mReportedResponseHeader{false};
 
-  // protected by nsHttp::GetLock()
-  bool mResponseHeadTaken{false};
-  UniquePtr<nsHttpHeaderArray> mForTakeResponseTrailers;
-  bool mResponseTrailersTaken{false};
+  // protected by mLock
+  bool mResponseHeadTaken MOZ_GUARDED_BY(mLock){false};
+  UniquePtr<nsHttpHeaderArray> mForTakeResponseTrailers MOZ_GUARDED_BY(mLock);
+  bool mResponseTrailersTaken MOZ_GUARDED_BY(mLock){false};
 
   // Set when this transaction was restarted by call to Restart().  Used to tell
   // the http channel to reset proxy authentication.
   Atomic<bool> mRestarted{false};
-
-  // The time when the transaction was submitted to the Connection Manager
-  TimeDuration mPendingDurationTime;
 
   uint64_t mBrowserId{0};
 
@@ -629,6 +641,9 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   }
   // Called when this transaction is inserted in the pending queue.
   void OnPendingQueueInserted(const nsACString& aConnectionHashKey);
+  // Starts the timer that opens a TCP backup connection if this HTTP/3
+  // transaction is not connected in time. Only the first call has an effect.
+  void MaybeStartHttp3BackupTimer();
 
  private:
   TransactionObserverFunc mTransactionObserver;
@@ -678,7 +693,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   nsCOMPtr<nsITimer> mHttp3BackupTimer;
   nsCOMPtr<nsITimer> mHttp3TunnelFallbackTimer;
   RefPtr<nsHttpConnectionInfo> mBackupConnInfo;
-  // A clone of mConnInfo taken when this transaction is activated.
+  // The value of mConnInfo when this transaction was activated.
   // Describes the server that the associated connection is connected to.
   RefPtr<nsHttpConnectionInfo> mFinalizedConnInfo MOZ_GUARDED_BY(mLock);
   RefPtr<HTTPSRecordResolver> mResolver;
@@ -692,7 +707,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   };
   nsTHashMap<nsUint32HashKey, uint32_t> mEchRetryCounterMap;
 
-  bool mSupportsHTTP3 = false;
+  Atomic<bool, Relaxed> mSupportsHTTP3{false};
   Atomic<bool, Relaxed> mIsForWebTransport{false};
   bool mIsResettingForTunnelConn = false;
   Maybe<bool> mIsWebsocketUpgrade;

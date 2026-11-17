@@ -79,7 +79,6 @@ const IS_MAIN_PROCESS =
 // https://github.com/mozilla/experimenter/blob/cca860ba06f07874800423bed616b9f51166d9e0/experimenter/experimenter/experiments/constants.py#L280-L283
 const SECURE_FEATURE_IDS = new Set([
   "prefFlips",
-  "newtabTrainhopAddon",
   "newtabTrainhopAddonDeployment",
 ]);
 
@@ -496,7 +495,11 @@ export class RemoteSettingsExperimentLoader {
     // See-also: https://bugzilla.mozilla.org/show_bug.cgi?id=1936317
     // See-also: https://bugzilla.mozilla.org/show_bug.cgi?id=1936319
     if (lazy.TARGETING_CONTEXT_TELEMETRY_ENABLED) {
-      await lazy.recordTargetingContext();
+      // Some targeting context attributes end up doing IO (e.g., places
+      // queries).
+      //
+      // Prevent waiting for disk IO causing a shutdown crash.
+      await this.#raceShutdown(() => lazy.recordTargetingContext());
     }
 
     try {

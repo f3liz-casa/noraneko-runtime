@@ -3,277 +3,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-use crate::util::sync::{Arc, RwLock};
+use jxl_simd::{F32SimdVec, I32SimdVec, ScalarDescriptor, SimdDescriptor, simd_function};
 
-use crate::{
-    frame::quantizer::LfQuantFactors,
-    headers::bit_depth::BitDepth,
-    render::{Channels, ChannelsMut, ErasedLocalState, RenderPipelineInOutStage, StageSpecialCase},
+use crate::frame::quantizer::LfQuantFactors;
+use crate::headers::bit_depth::BitDepth;
+use crate::render::{
+    Channels, ChannelsMut, ErasedLocalState, RenderPipelineInOutStage, VecLoad, for_each_chunk,
 };
-use jxl_simd::{F32SimdVec, I32SimdVec, SimdMask, simd_function};
-
-// 32x32 blue noise dithering pattern from
-// https://momentsingraphics.de/BlueNoise.html#Downloads scaled to have
-// an average of 0 and be fully contained in (0.49219 to -0.49219).
-// Rows are padded to 48 (32 + 16) to allow SIMD to wrap around horizontally
-const DITHER_TABLE: [[f32; 48]; 32] = [
-    [
-        -0.26057, 0.32619, 0.21039, -0.03281, -0.10616, 0.16792, 0.43042, -0.48061, -0.00965,
-        -0.31075, 0.24899, -0.35322, -0.02509, -0.25285, 0.02895, 0.10230, -0.28373, -0.00193,
-        0.23355, 0.43428, -0.23741, 0.18336, -0.31847, -0.11002, -0.36094, 0.26057, -0.19108,
-        -0.29531, 0.40726, -0.09458, 0.11002, -0.48833, -0.26057, 0.32619, 0.21039, -0.03281,
-        -0.10616, 0.16792, 0.43042, -0.48061, -0.00965, -0.31075, 0.24899, -0.35322, -0.02509,
-        -0.25285, 0.02895, 0.10230,
-    ],
-    [
-        0.16020, -0.35708, -0.18336, 0.36094, -0.28373, -0.34550, -0.20267, 0.07914, 0.35708,
-        -0.41498, 0.47675, -0.21811, -0.12546, 0.44200, -0.41884, -0.17178, 0.39954, 0.33778,
-        -0.33778, 0.04053, -0.46517, 0.27215, -0.16792, 0.39182, 0.20653, -0.43814, -0.02895,
-        0.17950, -0.41498, 0.01737, 0.24899, 0.49219, 0.16020, -0.35708, -0.18336, 0.36094,
-        -0.28373, -0.34550, -0.20267, 0.07914, 0.35708, -0.41498, 0.47675, -0.21811, -0.12546,
-        0.44200, -0.41884, -0.17178,
-    ],
-    [
-        -0.00965, 0.08300, 0.41112, -0.46903, 0.04053, 0.47289, 0.26057, -0.05983, -0.13704,
-        0.14862, 0.03281, 0.29531, -0.45744, 0.22583, 0.14862, -0.09072, -0.37638, 0.19881,
-        -0.14476, 0.14476, -0.09072, 0.48447, -0.39954, 0.06369, -0.05983, -0.26829, 0.43428,
-        -0.12546, 0.28759, -0.22969, -0.32619, -0.15248, -0.00965, 0.08300, 0.41112, -0.46903,
-        0.04053, 0.47289, 0.26057, -0.05983, -0.13704, 0.14862, 0.03281, 0.29531, -0.45744,
-        0.22583, 0.14862, -0.09072,
-    ],
-    [
-        -0.42270, 0.23741, -0.23355, -0.11774, 0.18722, 0.11388, -0.43814, -0.24899, 0.41884,
-        0.21039, -0.28373, -0.06756, 0.07914, 0.36480, -0.31075, 0.30303, -0.03281, 0.07142,
-        -0.42656, 0.38024, -0.27987, 0.00579, 0.12546, -0.22197, 0.29917, 0.36866, 0.13704,
-        -0.47289, 0.09072, 0.35708, -0.04825, 0.38796, -0.42270, 0.23741, -0.23355, -0.11774,
-        0.18722, 0.11388, -0.43814, -0.24899, 0.41884, 0.21039, -0.28373, -0.06756, 0.07914,
-        0.36480, -0.31075, 0.30303,
-    ],
-    [
-        -0.28759, -0.07142, 0.44200, 0.27601, -0.38024, -0.16020, -0.01737, 0.30303, -0.33006,
-        -0.40340, -0.16792, 0.40726, -0.36480, -0.00579, -0.19108, 0.41498, -0.26443, 0.46903,
-        -0.21811, 0.28759, -0.04053, 0.22197, 0.34550, -0.44972, -0.14476, -0.34164, 0.04053,
-        -0.19494, 0.45358, -0.37252, 0.21425, 0.05597, -0.28759, -0.07142, 0.44200, 0.27601,
-        -0.38024, -0.16020, -0.01737, 0.30303, -0.33006, -0.40340, -0.16792, 0.40726, -0.36480,
-        -0.00579, -0.19108, 0.41498,
-    ],
-    [
-        0.31075, 0.14090, -0.33778, 0.00579, 0.34550, -0.29917, 0.38796, 0.13704, 0.05983,
-        -0.10230, 0.34164, 0.10616, -0.23741, 0.19494, -0.47675, 0.04439, -0.39568, 0.24127,
-        0.10616, -0.49219, -0.17950, -0.36094, -0.30303, 0.45744, -0.01351, 0.24513, -0.39182,
-        -0.07528, 0.18722, -0.26057, -0.11002, -0.45358, 0.31075, 0.14090, -0.33778, 0.00579,
-        0.34550, -0.29917, 0.38796, 0.13704, 0.05983, -0.10230, 0.34164, 0.10616, -0.23741,
-        0.19494, -0.47675, 0.04439,
-    ],
-    [
-        0.46903, -0.17178, -0.41112, 0.07528, -0.09458, 0.21811, -0.20267, -0.48833, 0.44972,
-        0.00965, 0.24127, -0.42656, 0.48447, -0.11774, 0.26443, 0.14090, -0.15634, -0.07142,
-        -0.32233, 0.36094, 0.42270, 0.19108, 0.07142, -0.11002, 0.15634, 0.38024, -0.28759,
-        0.27987, -0.00193, 0.33006, 0.11388, -0.21039, 0.46903, -0.17178, -0.41112, 0.07528,
-        -0.09458, 0.21811, -0.20267, -0.48833, 0.44972, 0.00965, 0.24127, -0.42656, 0.48447,
-        -0.11774, 0.26443, 0.14090,
-    ],
-    [
-        0.02123, 0.17950, 0.38024, -0.24127, -0.44586, 0.48833, -0.03667, 0.26829, -0.36866,
-        -0.22583, 0.17178, -0.30689, 0.29145, -0.04825, -0.35322, 0.43042, 0.34936, 0.00193,
-        0.16792, -0.12932, 0.03667, -0.06756, 0.31847, -0.40726, -0.24513, 0.09458, -0.17564,
-        0.47675, -0.43042, -0.32233, 0.40340, 0.26057, 0.02123, 0.17950, 0.38024, -0.24127,
-        -0.44586, 0.48833, -0.03667, 0.26829, -0.36866, -0.22583, 0.17178, -0.30689, 0.29145,
-        -0.04825, -0.35322, 0.43042,
-    ],
-    [
-        -0.47675, -0.12160, -0.04825, 0.28759, 0.10230, 0.15634, -0.14862, -0.27601, 0.36094,
-        -0.12932, -0.05983, -0.45358, -0.17950, 0.01737, 0.09458, -0.29145, -0.22969, -0.43428,
-        0.45744, -0.38796, -0.27601, -0.21039, -0.46131, 0.22969, 0.41112, -0.05211, -0.48061,
-        0.16406, 0.05211, -0.14862, -0.03281, -0.36866, -0.47675, -0.12160, -0.04825, 0.28759,
-        0.10230, 0.15634, -0.14862, -0.27601, 0.36094, -0.12932, -0.05983, -0.45358, -0.17950,
-        0.01737, 0.09458, -0.29145,
-    ],
-    [
-        -0.27215, 0.34164, -0.31075, 0.42656, -0.38410, -0.32619, 0.02895, 0.19881, 0.08300,
-        0.42270, 0.31461, 0.13318, 0.45744, 0.37638, -0.40726, 0.31847, -0.08686, 0.21425, 0.29917,
-        0.07914, 0.26829, 0.13704, 0.48447, -0.15248, 0.02509, -0.34936, 0.34936, -0.10230,
-        0.42656, -0.23741, 0.22583, 0.09072, -0.27215, 0.34164, -0.31075, 0.42656, -0.38410,
-        -0.32619, 0.02895, 0.19881, 0.08300, 0.42270, 0.31461, 0.13318, 0.45744, 0.37638, -0.40726,
-        0.31847,
-    ],
-    [
-        0.44972, 0.20267, 0.04825, -0.21425, 0.24513, -0.07142, 0.39954, -0.46131, -0.39568,
-        -0.01351, -0.33392, 0.05597, -0.26443, 0.22197, -0.20653, 0.15248, 0.04439, -0.46517,
-        -0.16406, -0.04439, -0.34936, 0.37252, -0.01351, -0.30689, 0.29917, 0.20653, -0.26829,
-        0.26443, 0.13318, -0.39954, 0.30303, -0.08686, 0.44972, 0.20267, 0.04825, -0.21425,
-        0.24513, -0.07142, 0.39954, -0.46131, -0.39568, -0.01351, -0.33392, 0.05597, -0.26443,
-        0.22197, -0.20653, 0.15248,
-    ],
-    [
-        -0.42656, 0.12932, -0.14476, -0.46903, -0.00579, 0.34936, -0.18722, 0.28373, -0.23741,
-        0.22969, -0.16020, -0.38024, -0.08300, -0.48447, -0.02123, -0.14862, 0.48061, -0.31847,
-        0.39568, -0.24899, 0.18722, -0.41884, 0.10230, -0.08300, -0.38796, 0.06369, -0.19881,
-        -0.44972, 0.00579, -0.33392, 0.37252, -0.19108, -0.42656, 0.12932, -0.14476, -0.46903,
-        -0.00579, 0.34936, -0.18722, 0.28373, -0.23741, 0.22969, -0.16020, -0.38024, -0.08300,
-        -0.48447, -0.02123, -0.14862,
-    ],
-    [
-        -0.02509, -0.35708, 0.32619, 0.46517, 0.17178, -0.28373, 0.10616, 0.47675, -0.09458,
-        0.15248, 0.43428, 0.35322, 0.17564, 0.27215, 0.41112, -0.36480, 0.24899, 0.11774, 0.01351,
-        0.33006, -0.11388, -0.18336, 0.41884, -0.23355, 0.16406, 0.46131, 0.38410, -0.04825,
-        -0.15634, 0.49219, 0.17564, 0.03667, -0.02509, -0.35708, 0.32619, 0.46517, 0.17178,
-        -0.28373, 0.10616, 0.47675, -0.09458, 0.15248, 0.43428, 0.35322, 0.17564, 0.27215, 0.41112,
-        -0.36480,
-    ],
-    [
-        0.40726, 0.23355, -0.25285, -0.08300, -0.41112, -0.12160, -0.35708, 0.05211, -0.41884,
-        -0.29531, 0.02123, -0.21425, 0.09844, -0.30689, -0.11388, 0.34550, -0.26443, -0.07142,
-        -0.39954, 0.44586, 0.05983, -0.48833, 0.24127, 0.34936, -0.44200, -0.12546, 0.12160,
-        -0.30303, 0.27215, 0.07528, -0.48447, -0.29145, 0.40726, 0.23355, -0.25285, -0.08300,
-        -0.41112, -0.12160, -0.35708, 0.05211, -0.41884, -0.29531, 0.02123, -0.21425, 0.09844,
-        -0.30689, -0.11388, 0.34550,
-    ],
-    [
-        0.28373, -0.17564, 0.09458, 0.02123, 0.30689, 0.41884, 0.20653, -0.03667, 0.32233, 0.25671,
-        -0.45744, -0.05597, 0.46517, -0.41498, 0.00965, 0.07142, -0.44586, 0.16406, -0.20653,
-        0.21811, -0.29917, 0.28759, -0.05597, 0.03281, -0.32619, -0.00965, 0.31847, -0.37252,
-        0.18722, -0.11002, -0.22969, -0.06369, 0.28373, -0.17564, 0.09458, 0.02123, 0.30689,
-        0.41884, 0.20653, -0.03667, 0.32233, 0.25671, -0.45744, -0.05597, 0.46517, -0.41498,
-        0.00965, 0.07142,
-    ],
-    [
-        -0.39568, 0.36866, -0.45744, -0.31847, 0.14476, -0.22583, -0.49219, 0.37638, -0.19494,
-        -0.13318, 0.39182, -0.35322, 0.29531, -0.24127, 0.21039, -0.18722, 0.45358, 0.31461,
-        -0.13318, -0.01737, -0.36094, 0.12932, -0.25671, 0.43814, -0.16792, 0.23355, -0.22197,
-        0.44972, -0.42270, 0.33392, 0.42656, 0.11774, -0.39568, 0.36866, -0.45744, -0.31847,
-        0.14476, -0.22583, -0.49219, 0.37638, -0.19494, -0.13318, 0.39182, -0.35322, 0.29531,
-        -0.24127, 0.21039, -0.18722,
-    ],
-    [
-        -0.13318, 0.19494, -0.03667, 0.44972, 0.24513, -0.15248, 0.08300, -0.33006, 0.00579,
-        0.12546, 0.19494, 0.05983, -0.15634, 0.14476, 0.36480, -0.04053, -0.33006, 0.25671,
-        -0.46903, 0.37252, 0.48833, -0.09458, -0.41112, 0.19108, 0.08686, -0.46903, -0.07528,
-        0.04053, -0.26829, -0.02895, 0.22197, -0.34164, -0.13318, 0.19494, -0.03667, 0.44972,
-        0.24513, -0.15248, 0.08300, -0.33006, 0.00579, 0.12546, 0.19494, 0.05983, -0.15634,
-        0.14476, 0.36480, -0.04053,
-    ],
-    [
-        0.47289, -0.21811, 0.06756, -0.38410, -0.27987, -0.06369, 0.27987, 0.43814, -0.25671,
-        -0.39182, 0.49219, -0.27601, -0.07914, -0.48061, 0.42656, -0.38410, 0.11002, 0.03667,
-        -0.27215, 0.15634, 0.07528, -0.22197, 0.33006, 0.38410, -0.34936, 0.27987, 0.15248,
-        0.40340, 0.09844, -0.16406, -0.46131, 0.03281, 0.47289, -0.21811, 0.06756, -0.38410,
-        -0.27987, -0.06369, 0.27987, 0.43814, -0.25671, -0.39182, 0.49219, -0.27601, -0.07914,
-        -0.48061, 0.42656, -0.38410,
-    ],
-    [
-        -0.29531, 0.31461, -0.10616, 0.39954, 0.01351, 0.33778, -0.43814, 0.17178, -0.08686,
-        0.23741, -0.44586, 0.33778, -0.00193, -0.31461, 0.23741, -0.12932, -0.22583, -0.06756,
-        0.40340, -0.16792, -0.43428, 0.01351, -0.14476, -0.04053, -0.29145, 0.46517, -0.13704,
-        -0.39182, -0.32233, 0.29531, 0.38410, 0.16020, -0.29531, 0.31461, -0.10616, 0.39954,
-        0.01351, 0.33778, -0.43814, 0.17178, -0.08686, 0.23741, -0.44586, 0.33778, -0.00193,
-        -0.31461, 0.23741, -0.12932,
-    ],
-    [
-        -0.44200, 0.26443, 0.12546, -0.42270, 0.21425, -0.19881, -0.35708, 0.04825, 0.36480,
-        -0.02895, -0.21425, 0.09072, 0.41498, 0.18336, 0.04439, 0.29917, 0.47675, -0.40340,
-        0.27601, -0.31461, 0.31075, 0.17564, 0.24899, -0.45744, 0.05597, -0.19494, 0.00193,
-        0.36094, 0.24127, -0.09844, -0.24513, -0.00965, -0.44200, 0.26443, 0.12546, -0.42270,
-        0.21425, -0.19881, -0.35708, 0.04825, 0.36480, -0.02895, -0.21425, 0.09072, 0.41498,
-        0.18336, 0.04439, 0.29917,
-    ],
-    [
-        -0.17564, -0.05597, -0.34550, -0.24899, 0.48061, 0.15248, -0.11388, 0.45358, -0.16406,
-        -0.32233, 0.31461, -0.11774, -0.36866, -0.18722, -0.25671, -0.44200, 0.13318, -0.02123,
-        0.19881, -0.10616, 0.43042, -0.36866, -0.24899, 0.41112, 0.11002, 0.21425, -0.25671,
-        -0.47675, -0.04439, 0.13704, -0.37252, 0.43814, -0.17564, -0.05597, -0.34550, -0.24899,
-        0.48061, 0.15248, -0.11388, 0.45358, -0.16406, -0.32233, 0.31461, -0.11774, -0.36866,
-        -0.18722, -0.25671, -0.44200,
-    ],
-    [
-        0.19108, 0.03667, 0.35708, -0.14090, 0.08300, -0.02123, -0.30303, -0.48061, 0.11774,
-        0.20267, -0.43042, 0.25285, 0.14090, -0.04439, 0.38796, 0.34550, -0.34164, -0.19494,
-        0.05983, -0.48447, 0.09844, -0.00579, -0.07914, 0.33778, -0.41498, -0.10230, 0.30689,
-        0.17178, 0.48833, -0.20267, 0.07914, 0.33392, 0.19108, 0.03667, 0.35708, -0.14090, 0.08300,
-        -0.02123, -0.30303, -0.48061, 0.11774, 0.20267, -0.43042, 0.25285, 0.14090, -0.04439,
-        0.38796, 0.34550,
-    ],
-    [
-        -0.48833, -0.30689, 0.41498, 0.22969, -0.44586, 0.32233, 0.25285, 0.39182, -0.23355,
-        0.01737, 0.42270, -0.27987, 0.46903, -0.47289, 0.02123, -0.09072, 0.21811, 0.44586,
-        -0.25285, 0.36480, -0.29145, 0.47289, -0.18722, 0.14476, -0.31461, 0.43814, -0.36094,
-        0.04439, -0.29917, -0.41884, 0.25285, -0.11774, -0.48833, -0.30689, 0.41498, 0.22969,
-        -0.44586, 0.32233, 0.25285, 0.39182, -0.23355, 0.01737, 0.42270, -0.27987, 0.46903,
-        -0.47289, 0.02123, -0.09072,
-    ],
-    [
-        0.46131, 0.11388, -0.21039, -0.07528, -0.38024, -0.26057, 0.06369, -0.05983, 0.29145,
-        -0.40340, -0.09072, 0.06756, -0.16020, 0.27601, -0.31075, 0.10616, -0.14090, -0.43042,
-        0.25671, -0.05211, -0.13318, 0.23355, -0.44972, 0.02895, 0.26829, -0.02895, -0.17950,
-        0.37252, -0.13704, 0.40726, 0.01351, -0.26443, 0.46131, 0.11388, -0.21039, -0.07528,
-        -0.38024, -0.26057, 0.06369, -0.05983, 0.29145, -0.40340, -0.09072, 0.06756, -0.16020,
-        0.27601, -0.31075, 0.10616,
-    ],
-    [
-        -0.03281, -0.40340, 0.27987, 0.17564, 0.02509, 0.44200, -0.15248, -0.34550, 0.14862,
-        -0.19881, -0.01351, 0.36866, -0.38796, 0.19494, -0.22197, 0.32619, -0.37638, 0.00193,
-        0.30689, 0.12160, -0.39182, 0.16792, -0.34550, 0.39954, -0.23355, 0.09072, -0.43428,
-        0.22969, -0.06369, 0.12546, -0.35322, 0.30689, -0.03281, -0.40340, 0.27987, 0.17564,
-        0.02509, 0.44200, -0.15248, -0.34550, 0.14862, -0.19881, -0.01351, 0.36866, -0.38796,
-        0.19494, -0.22197, 0.32619,
-    ],
-    [
-        -0.09844, 0.06756, 0.38410, -0.33392, -0.18336, 0.35322, 0.21039, -0.42270, 0.48833,
-        0.33006, 0.21811, -0.33392, 0.12932, -0.05211, 0.39568, 0.04825, 0.48061, 0.17950,
-        -0.31847, -0.21811, 0.38024, 0.05211, 0.32233, -0.06756, -0.12546, 0.46131, 0.16020,
-        -0.25285, 0.29531, -0.44972, 0.17950, -0.16406, -0.09844, 0.06756, 0.38410, -0.33392,
-        -0.18336, 0.35322, 0.21039, -0.42270, 0.48833, 0.33006, 0.21811, -0.33392, 0.12932,
-        -0.05211, 0.39568, 0.04825,
-    ],
-    [
-        0.22583, -0.46131, -0.27601, -0.00579, 0.12932, -0.47289, -0.09844, 0.10230, -0.28759,
-        -0.12160, -0.49219, -0.24127, 0.44586, -0.11388, -0.45358, -0.27215, -0.17178, -0.07528,
-        -0.47675, 0.43042, -0.02509, -0.27215, -0.19108, 0.19881, -0.49219, -0.37252, 0.33392,
-        -0.00193, -0.33006, -0.20267, 0.48061, 0.34164, 0.22583, -0.46131, -0.27601, -0.00579,
-        0.12932, -0.47289, -0.09844, 0.10230, -0.28759, -0.12160, -0.49219, -0.24127, 0.44586,
-        -0.11388, -0.45358, -0.27215,
-    ],
-    [
-        -0.22969, 0.42270, -0.12160, 0.31075, 0.46903, -0.22583, 0.27215, -0.02509, 0.03281,
-        0.40340, 0.25671, 0.08686, 0.00965, 0.29145, -0.41112, 0.14090, 0.24513, 0.34164, 0.08686,
-        -0.14862, 0.27601, -0.42656, 0.48447, 0.09844, 0.26443, -0.27987, 0.05597, -0.10230,
-        0.43428, 0.08686, 0.02895, -0.38024, -0.22969, 0.42270, -0.12160, 0.31075, 0.46903,
-        -0.22583, 0.27215, -0.02509, 0.03281, 0.40340, 0.25671, 0.08686, 0.00965, 0.29145,
-        -0.41112, 0.14090,
-    ],
-    [
-        0.15634, 0.09458, -0.36480, 0.18336, -0.05211, -0.40726, 0.36866, -0.33778, -0.19881,
-        0.16020, -0.37638, -0.16020, -0.29917, 0.20267, 0.41884, -0.01737, -0.34936, -0.24127,
-        0.02509, 0.20653, -0.36480, -0.08686, 0.01737, -0.33778, 0.41498, -0.03667, 0.37638,
-        -0.17178, -0.47289, 0.26829, -0.28759, -0.05597, 0.15634, 0.09458, -0.36480, 0.18336,
-        -0.05211, -0.40726, 0.36866, -0.33778, -0.19881, 0.16020, -0.37638, -0.16020, -0.29917,
-        0.20267, 0.41884, -0.01737,
-    ],
-    [
-        0.35708, 0.00193, 0.25285, -0.15634, -0.30303, 0.06369, 0.22197, 0.45358, -0.43814,
-        0.30303, -0.04053, 0.46517, 0.35322, -0.21039, 0.06756, -0.14090, 0.37638, -0.43042,
-        0.45744, -0.29531, 0.39568, 0.14862, 0.23741, -0.13704, -0.21425, 0.16406, -0.40726,
-        0.22583, 0.13318, 0.38796, -0.12932, -0.43428, 0.35708, 0.00193, 0.25285, -0.15634,
-        -0.30303, 0.06369, 0.22197, 0.45358, -0.43814, 0.30303, -0.04053, 0.46517, 0.35322,
-        -0.21039, 0.06756, -0.14090,
-    ],
-    [
-        -0.31461, -0.20653, 0.46131, -0.45358, 0.39568, -0.24513, -0.14090, 0.11002, -0.08300,
-        -0.26829, 0.05211, -0.46517, -0.09844, -0.39568, -0.32619, -0.06369, 0.16792, 0.28373,
-        0.11388, -0.04439, -0.18336, -0.44200, 0.35322, -0.26057, -0.46517, 0.31075, -0.07914,
-        -0.34164, -0.24513, -0.02123, 0.19108, 0.44200, -0.31461, -0.20653, 0.46131, -0.45358,
-        0.39568, -0.24513, -0.14090, 0.11002, -0.08300, -0.26829, 0.05211, -0.46517, -0.09844,
-        -0.39568, -0.32619, -0.06369,
-    ],
-    [
-        0.04825, -0.07914, -0.39954, 0.12160, 0.29145, 0.00965, -0.37638, 0.32233, 0.20267,
-        -0.17564, 0.39182, 0.12160, 0.18336, 0.32619, 0.26057, 0.49219, -0.48447, -0.20653,
-        -0.10616, -0.38796, 0.31847, 0.07528, -0.01737, 0.44586, 0.11774, 0.02509, 0.47289,
-        0.07142, 0.33392, -0.38410, -0.17950, 0.28373, 0.04825, -0.07914, -0.39954, 0.12160,
-        0.29145, 0.00965, -0.37638, 0.32233, 0.20267, -0.17564, 0.39182, 0.12160, 0.18336, 0.32619,
-        0.26057, 0.49219,
-    ],
-];
+use crate::util::sync::{Arc, RwLock};
 
 pub struct ConvertModularXYBToF32Stage {
     first_channel: usize,
@@ -303,6 +40,63 @@ impl std::fmt::Display for ConvertModularXYBToF32Stage {
     }
 }
 
+#[inline(always)]
+fn modular_xyb_to_float_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
+    d: D,
+    input_rows: &Channels<T>,
+    output_rows: &mut ChannelsMut<f32>,
+    [scale_x, scale_y, scale_b]: [f32; 3],
+    xsize: usize,
+) {
+    let scale_x = D::F32Vec::splat(d, scale_x);
+    let scale_y = D::F32Vec::splat(d, scale_y);
+    let scale_b = D::F32Vec::splat(d, scale_b);
+
+    // Input channels: [Y, X, B] (modular XYB order)
+    // Output channels: [X, Y, B] (standard XYB order)
+    for_each_chunk(
+        d,
+        xsize,
+        input_rows.view::<3, 1, 0>(),
+        output_rows.view::<3, 1, 1>(),
+        |_x, inv, outv| {
+            let vy = inv.load::<_, 0>(d, 0, 0).as_f32();
+            let vx = inv.load::<_, 1>(d, 0, 0).as_f32();
+            let vb = inv.load::<_, 2>(d, 0, 0).as_f32();
+
+            outv.store::<_, 0>(d, 0, vx * scale_x);
+            outv.store::<_, 1>(d, 0, vy * scale_y);
+            outv.store::<_, 2>(d, 0, (vb + vy) * scale_b);
+        },
+    );
+}
+
+simd_function!(
+    modular32_xyb_to_float_simd_dispatch,
+    d: D,
+    fn modular32_xyb_to_float(
+        input_rows: &Channels<i32>,
+        output_rows: &mut ChannelsMut<f32>,
+        scales: [f32; 3],
+        xsize: usize,
+    ) {
+        modular_xyb_to_float_simd(d, input_rows, output_rows, scales, xsize);
+    }
+);
+
+simd_function!(
+    modular16_xyb_to_float_simd_dispatch,
+    d: D,
+    fn modular16_xyb_to_float(
+        input_rows: &Channels<i16>,
+        output_rows: &mut ChannelsMut<f32>,
+        scales: [f32; 3],
+        xsize: usize,
+    ) {
+        modular_xyb_to_float_simd(d, input_rows, output_rows, scales, xsize);
+    }
+);
+
 impl RenderPipelineInOutStage for ConvertModularXYBToF32Stage {
     type InputT = i32;
     type OutputT = f32;
@@ -320,25 +114,72 @@ impl RenderPipelineInOutStage for ConvertModularXYBToF32Stage {
         input_rows: &Channels<i32>,
         output_rows: &mut ChannelsMut<f32>,
         _state: Option<&mut ErasedLocalState>,
+        _previous_call_was_previous_row: bool,
     ) {
         let lf_quant = self.lf_quant.try_read().unwrap();
-        let [scale_x, scale_y, scale_b] = lf_quant.quant_factors;
-        assert_eq!(
-            input_rows.len(),
-            3,
-            "incorrect number of channels; expected 3, found {}",
-            input_rows.len()
+        modular32_xyb_to_float_simd_dispatch(
+            input_rows,
+            output_rows,
+            lf_quant.quant_factors,
+            xsize,
         );
-        // Input channels: [Y, X, B] (modular XYB order)
-        // Output channels: [X, Y, B] (standard XYB order)
-        let (input_y, input_x, input_b) = (&input_rows[0], &input_rows[1], &input_rows[2]);
-        let (output_x, output_y, output_b) = output_rows.split_first_3_mut();
-        // TODO(veluca): SIMD this
-        for i in 0..xsize {
-            output_x[0][i] = input_x[0][i] as f32 * scale_x;
-            output_y[0][i] = input_y[0][i] as f32 * scale_y;
-            output_b[0][i] = (input_b[0][i] as f32 + input_y[0][i] as f32) * scale_b;
+    }
+}
+
+pub struct ConvertModular16XYBToF32Stage {
+    first_channel: usize,
+    lf_quant: Arc<RwLock<LfQuantFactors>>,
+}
+
+impl ConvertModular16XYBToF32Stage {
+    pub fn new(
+        first_channel: usize,
+        lf_quant: Arc<RwLock<LfQuantFactors>>,
+    ) -> ConvertModular16XYBToF32Stage {
+        ConvertModular16XYBToF32Stage {
+            first_channel,
+            lf_quant,
         }
+    }
+}
+
+impl std::fmt::Display for ConvertModular16XYBToF32Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "convert modular xyb data to F32 in channels {}..{}",
+            self.first_channel,
+            self.first_channel + 2,
+        )
+    }
+}
+
+impl RenderPipelineInOutStage for ConvertModular16XYBToF32Stage {
+    type InputT = i16;
+    type OutputT = f32;
+    const SHIFT: (u8, u8) = (0, 0);
+    const BORDER: (u8, u8) = (0, 0);
+
+    fn uses_channel(&self, c: usize) -> bool {
+        (self.first_channel..self.first_channel + 3).contains(&c)
+    }
+
+    fn process_row_chunk(
+        &self,
+        _position: (usize, usize),
+        xsize: usize,
+        input_rows: &Channels<i16>,
+        output_rows: &mut ChannelsMut<f32>,
+        _state: Option<&mut ErasedLocalState>,
+        _previous_call_was_previous_row: bool,
+    ) {
+        let lf_quant = self.lf_quant.try_read().unwrap();
+        modular16_xyb_to_float_simd_dispatch(
+            input_rows,
+            output_rows,
+            lf_quant.quant_factors,
+            xsize,
+        );
     }
 }
 
@@ -367,142 +208,221 @@ impl std::fmt::Display for ConvertModularToF32Stage {
 simd_function!(
     int_to_float_32bit_simd_dispatch,
     d: D,
-    fn int_to_float_32bit_simd(input: &[i32], output: &mut [f32], xsize: usize) {
-        let simd_width = D::I32Vec::LEN;
-
-        // Process complete SIMD vectors
-        for (in_chunk, out_chunk) in input
-            .chunks_exact(simd_width)
-            .zip(output.chunks_exact_mut(simd_width))
-            .take(xsize.div_ceil(simd_width))
-        {
-            let val = D::I32Vec::load(d, in_chunk);
-            val.bitcast_to_f32().store(out_chunk);
-        }
+    fn int_to_float_32bit_simd(
+        input_rows: &Channels<i32>,
+        output_rows: &mut ChannelsMut<f32>,
+        xsize: usize,
+    ) {
+        for_each_chunk(
+            d,
+            xsize,
+            input_rows.view::<1, 1, 0>(),
+            output_rows.view::<1, 1, 1>(),
+            |_x, inv, outv| {
+                let val = inv.load::<_, 0>(d, 0, 0);
+                outv.store::<_, 0>(d, 0, val.bitcast_to_f32());
+            },
+        );
     }
 );
 
 // SIMD 16-bit float (half-precision) to 32-bit float conversion
 // Uses hardware F16C/NEON instructions when available via F32Vec::load_f16_bits()
-simd_function!(
-    int_to_float_16bit_simd_dispatch,
+#[inline(always)]
+fn int_to_float_16bit_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
     d: D,
-    fn int_to_float_16bit_simd(input: &[i32], output: &mut [f32], xsize: usize) {
-        let simd_width = D::F32Vec::LEN;
+    input_rows: &Channels<T>,
+    output_rows: &mut ChannelsMut<f32>,
+    xsize: usize,
+) {
+    let simd_width = D::F32Vec::LEN;
 
-        // Temporary buffer for i32->u16 conversion via SIMD
-        // Note: Using constant 16 (max AVX-512 width) because D::F32Vec::LEN
-        // cannot be used as array size in Rust (const generics limitation)
-        const { assert!(D::F32Vec::LEN <= 16) }
-        let mut u16_buf = [0u16; 16];
+    // Temporary buffer for i32->u16 conversion via SIMD
+    // Note: Using constant 16 (max AVX-512 width) because D::F32Vec::LEN
+    // cannot be used as array size in Rust (const generics limitation)
+    const { assert!(D::F32Vec::LEN <= 16) }
+    let mut u16_buf = [0u16; 16];
 
-        // Process complete SIMD vectors
-        for (in_chunk, out_chunk) in input
-            .chunks_exact(simd_width)
-            .zip(output.chunks_exact_mut(simd_width))
-            .take(xsize.div_ceil(simd_width))
-        {
+    for_each_chunk(
+        d,
+        xsize,
+        input_rows.view::<1, 1, 0>(),
+        output_rows.view::<1, 1, 1>(),
+        |_x, inv, outv| {
             // Use SIMD to extract lower 16 bits from each i32 lane
-            let i32_vec = D::I32Vec::load(d, in_chunk);
+            let i32_vec = inv.load::<_, 0>(d, 0, 0);
             i32_vec.store_u16(&mut u16_buf[..simd_width]);
             // Use hardware f16->f32 conversion
             let result = D::F32Vec::load_f16_bits(d, &u16_buf[..simd_width]);
-            result.store(out_chunk);
-        }
+            outv.store::<_, 0>(d, 0, result);
+        },
+    );
+}
+
+simd_function!(
+    int32_to_float_16bit_simd_dispatch,
+    d: D,
+    fn int32_to_float_16bit(
+        input_rows: &Channels<i32>,
+        output_rows: &mut ChannelsMut<f32>,
+        xsize: usize,
+    ) {
+        int_to_float_16bit_simd(d, input_rows, output_rows, xsize);
+    }
+);
+
+simd_function!(
+    int16_to_float_16bit_simd_dispatch,
+    d: D,
+    fn int16_to_float_16bit(
+        input_rows: &Channels<i16>,
+        output_rows: &mut ChannelsMut<f32>,
+        xsize: usize,
+    ) {
+        int_to_float_16bit_simd(d, input_rows, output_rows, xsize);
     }
 );
 
 // Converts custom [bits]-bit float (with [exp_bits] exponent bits) stored as
 // int back to binary32 float.
-fn int_to_float(input: &[i32], output: &mut [f32], bit_depth: &BitDepth, xsize: usize) {
-    assert_eq!(input.len(), output.len());
+fn int_to_float(
+    input_rows: &Channels<i32>,
+    output_rows: &mut ChannelsMut<f32>,
+    bit_depth: &BitDepth,
+    xsize: usize,
+) {
     let bits = bit_depth.bits_per_sample();
     let exp_bits = bit_depth.exponent_bits_per_sample();
 
     // Use SIMD fast paths for common formats
     if bits == 32 && exp_bits == 8 {
         // 32-bit float passthrough
-        int_to_float_32bit_simd_dispatch(input, output, xsize);
+        int_to_float_32bit_simd_dispatch(input_rows, output_rows, xsize);
         return;
     }
 
     if bits == 16 && exp_bits == 5 {
         // IEEE 754 half-precision (f16) - common HDR format
-        int_to_float_16bit_simd_dispatch(input, output, xsize);
+        int32_to_float_16bit_simd_dispatch(input_rows, output_rows, xsize);
         return;
     }
 
     // Generic scalar path for other custom float formats
-    int_to_float_generic(input, output, bits, exp_bits);
+    int_to_float_generic(input_rows, output_rows, bits, exp_bits, xsize);
 }
 
-// Generic scalar conversion for arbitrary bit-depth floats
-// TODO: SIMD optimization for custom float formats
-fn int_to_float_generic(input: &[i32], output: &mut [f32], bits: u32, exp_bits: u32) {
+fn custom_float_sample_to_f32(mut f: u32, bits: u32, exp_bits: u32) -> f32 {
     let exp_bias = (1 << (exp_bits - 1)) - 1;
     let sign_shift = bits - 1;
     let mant_bits = bits - exp_bits - 1;
     let mant_shift = 23 - mant_bits;
-    for (&in_val, out_val) in input.iter().zip(output) {
-        let mut f = in_val as u32;
-        let signbit = (f >> sign_shift) != 0;
-        f &= (1 << sign_shift) - 1;
-        if f == 0 {
-            *out_val = if signbit { -0.0 } else { 0.0 };
-            continue;
-        }
-        let mut exp = (f >> mant_bits) as i32;
-        let mut mantissa = f & ((1 << mant_bits) - 1);
-        if exp == (1 << exp_bits) - 1 {
-            // NaN or infinity
-            f = if signbit { 0x80000000 } else { 0 };
-            f |= 0b11111111 << 23;
-            f |= mantissa << mant_shift;
-            *out_val = f32::from_bits(f);
-            continue;
-        }
-        mantissa <<= mant_shift;
-        // Try to normalize only if there is space for maneuver.
-        if exp == 0 && exp_bits < 8 {
-            // subnormal number
-            while (mantissa & 0x800000) == 0 {
-                mantissa <<= 1;
-                exp -= 1;
-            }
-            exp += 1;
-            // remove leading 1 because it is implicit now
-            mantissa &= 0x7fffff;
-        }
-        exp -= exp_bias;
-        // broke up the arbitrary float into its parts, now reassemble into
-        // binary32
-        exp += 127;
-        assert!(exp >= 0);
-        f = if signbit { 0x80000000 } else { 0 };
-        f |= (exp as u32) << 23;
-        f |= mantissa;
-        *out_val = f32::from_bits(f);
+    let signbit = ((f >> sign_shift) & 1) != 0;
+    f &= (1 << sign_shift) - 1;
+    if f == 0 {
+        return if signbit { -0.0 } else { 0.0 };
     }
+    let mut exp = (f >> mant_bits) as i32;
+    let mut mantissa = f & ((1 << mant_bits) - 1);
+    if exp == (1 << exp_bits) - 1 {
+        // NaN or infinity
+        f = if signbit { 0x80000000 } else { 0 };
+        f |= 0b11111111 << 23;
+        f |= mantissa << mant_shift;
+        return f32::from_bits(f);
+    }
+    mantissa <<= mant_shift;
+    // Try to normalize only if there is space for maneuver.
+    if exp == 0 && exp_bits < 8 {
+        // subnormal number
+        while (mantissa & 0x800000) == 0 {
+            mantissa <<= 1;
+            exp -= 1;
+        }
+        exp += 1;
+        // remove leading 1 because it is implicit now
+        mantissa &= 0x7fffff;
+    }
+    exp -= exp_bias;
+    // broke up the arbitrary float into its parts, now reassemble into
+    // binary32
+    exp += 127;
+    assert!(exp >= 0);
+    f = if signbit { 0x80000000 } else { 0 };
+    f |= (exp as u32) << 23;
+    f |= mantissa;
+    f32::from_bits(f)
 }
 
-// SIMD modular to 32 bit float conversion
-simd_function!(
-    modular_to_float_32bit_simd_dispatch,
+// Generic scalar conversion for arbitrary bit-depth floats
+// TODO: SIMD optimization for custom float formats
+fn int_to_float_generic<T>(
+    input_rows: &Channels<T>,
+    output_rows: &mut ChannelsMut<f32>,
+    bits: u32,
+    exp_bits: u32,
+    xsize: usize,
+) where
+    T: VecLoad<ScalarDescriptor, Vec = std::num::Wrapping<i32>>,
+{
+    let d = ScalarDescriptor::new().unwrap();
+    for_each_chunk(
+        d,
+        xsize,
+        input_rows.view::<1, 1, 0>(),
+        output_rows.view::<1, 1, 1>(),
+        |_x, inv, outv| {
+            let in_val = inv.load::<_, 0>(d, 0, 0).0;
+            let out_val = custom_float_sample_to_f32(in_val as u32, bits, exp_bits);
+            outv.store::<_, 0>(d, 0, out_val);
+        },
+    );
+}
+
+#[inline(always)]
+fn modular_to_float_simd<D: SimdDescriptor, T: VecLoad<D, Vec = D::I32Vec>>(
     d: D,
-    fn modular_to_float_32bit_simd(input: &[i32], output: &mut [f32], scale: f32, xsize: usize) {
-        let simd_width = D::I32Vec::LEN;
+    input_rows: &Channels<T>,
+    output_rows: &mut ChannelsMut<f32>,
+    scale: f32,
+    xsize: usize,
+) {
+    let scale = D::F32Vec::splat(d, scale);
 
-        let scale = D::F32Vec::splat(d, scale);
+    for_each_chunk(
+        d,
+        xsize,
+        input_rows.view::<1, 1, 0>(),
+        output_rows.view::<1, 1, 1>(),
+        |_x, inv, outv| {
+            let val = inv.load::<_, 0>(d, 0, 0);
+            outv.store::<_, 0>(d, 0, val.as_f32() * scale);
+        },
+    );
+}
 
-        // Process complete SIMD vectors
-        for (in_chunk, out_chunk) in input
-            .chunks_exact(simd_width)
-            .zip(output.chunks_exact_mut(simd_width))
-            .take(xsize.div_ceil(simd_width))
-        {
-            let val = D::I32Vec::load(d, in_chunk);
-            (val.as_f32() * scale).store(out_chunk);
-        }
+simd_function!(
+    modular32_to_float_simd_dispatch,
+    d: D,
+    fn modular32_to_float(
+        input_rows: &Channels<i32>,
+        output_rows: &mut ChannelsMut<f32>,
+        scale: f32,
+        xsize: usize,
+    ) {
+        modular_to_float_simd(d, input_rows, output_rows, scale, xsize);
+    }
+);
+
+simd_function!(
+    modular16_to_float_simd_dispatch,
+    d: D,
+    fn modular16_to_float(
+        input_rows: &Channels<i16>,
+        output_rows: &mut ChannelsMut<f32>,
+        scale: f32,
+        xsize: usize,
+    ) {
+        modular_to_float_simd(d, input_rows, output_rows, scale, xsize);
     }
 );
 
@@ -523,381 +443,92 @@ impl RenderPipelineInOutStage for ConvertModularToF32Stage {
         input_rows: &Channels<i32>,
         output_rows: &mut ChannelsMut<f32>,
         _state: Option<&mut ErasedLocalState>,
+        _previous_call_was_previous_row: bool,
     ) {
-        let input = &input_rows[0];
         if self.bit_depth.floating_point_sample() {
-            int_to_float(input[0], output_rows[0][0], &self.bit_depth, xsize);
+            int_to_float(input_rows, output_rows, &self.bit_depth, xsize);
         } else {
             let scale = 1.0 / ((1u64 << self.bit_depth.bits_per_sample()) - 1) as f32;
-            modular_to_float_32bit_simd_dispatch(input[0], output_rows[0][0], scale, xsize);
+            modular32_to_float_simd_dispatch(input_rows, output_rows, scale, xsize);
         }
     }
+}
 
-    fn is_special_case(&self) -> Option<StageSpecialCase> {
+pub struct ConvertModular16ToF32Stage {
+    channel: usize,
+    bit_depth: BitDepth,
+}
+
+impl ConvertModular16ToF32Stage {
+    pub fn new(channel: usize, bit_depth: BitDepth) -> ConvertModular16ToF32Stage {
+        ConvertModular16ToF32Stage { channel, bit_depth }
+    }
+}
+
+impl std::fmt::Display for ConvertModular16ToF32Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "convert modular data to F32 in channel {} with bit depth {:?}",
+            self.channel, self.bit_depth
+        )
+    }
+}
+
+fn int16_to_float(
+    input_rows: &Channels<i16>,
+    output_rows: &mut ChannelsMut<f32>,
+    bit_depth: &BitDepth,
+    xsize: usize,
+) {
+    let bits = bit_depth.bits_per_sample();
+    let exp_bits = bit_depth.exponent_bits_per_sample();
+
+    if bits == 16 && exp_bits == 5 {
+        int16_to_float_16bit_simd_dispatch(input_rows, output_rows, xsize);
+        return;
+    }
+
+    int_to_float_generic(input_rows, output_rows, bits, exp_bits, xsize);
+}
+
+impl RenderPipelineInOutStage for ConvertModular16ToF32Stage {
+    type InputT = i16;
+    type OutputT = f32;
+    const SHIFT: (u8, u8) = (0, 0);
+    const BORDER: (u8, u8) = (0, 0);
+
+    fn uses_channel(&self, c: usize) -> bool {
+        c == self.channel
+    }
+
+    fn process_row_chunk(
+        &self,
+        _position: (usize, usize),
+        xsize: usize,
+        input_rows: &Channels<i16>,
+        output_rows: &mut ChannelsMut<f32>,
+        _state: Option<&mut ErasedLocalState>,
+        _previous_call_was_previous_row: bool,
+    ) {
         if self.bit_depth.floating_point_sample() {
-            None
+            int16_to_float(input_rows, output_rows, &self.bit_depth, xsize);
         } else {
-            Some(StageSpecialCase::ModularToF32 {
-                channel: self.channel,
-                bit_depth: self.bit_depth.bits_per_sample() as u8,
-            })
-        }
-    }
-}
-
-/// Stage that converts f32 values in [0, 1] range to u8 values.
-pub struct ConvertF32ToU8Stage {
-    channel: usize,
-    bit_depth: u8,
-}
-
-impl ConvertF32ToU8Stage {
-    pub fn new(channel: usize, bit_depth: u8) -> ConvertF32ToU8Stage {
-        ConvertF32ToU8Stage { channel, bit_depth }
-    }
-}
-
-impl std::fmt::Display for ConvertF32ToU8Stage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "convert F32 to U8 in channel {} with bit depth {}",
-            self.channel, self.bit_depth
-        )
-    }
-}
-
-// SIMD F32 to U8 conversion
-simd_function!(
-    f32_to_u8_simd_dispatch,
-    d: D,
-    fn f32_to_u8_simd(
-        input: &[f32],
-        output: &mut [u8],
-        max: f32,
-        position: (usize, usize),
-        channel: usize,
-        xsize: usize,
-    ) {
-        let (x0, y0) = position;
-        let simd_width = D::F32Vec::LEN;
-        let zero = D::F32Vec::splat(d, 0.0);
-        let scale = D::F32Vec::splat(d, max);
-
-        for (block, (input_chunk, output_chunk)) in input
-            .chunks_exact(simd_width)
-            .zip(output.chunks_exact_mut(simd_width))
-            .take(xsize.div_ceil(simd_width))
-            .enumerate()
-        {
-            let x = block * simd_width;
-            let val = D::F32Vec::load(d, input_chunk);
-            let dither_x = (x0 + x + channel * 23) % 32;
-            let dither_y = (y0 + channel * 13) % 32;
-            let dither = D::F32Vec::load(
-                d,
-                &DITHER_TABLE[dither_y][dither_x..],
-            );
-            let scaled = val * scale;
-            let dithered = scaled + dither;
-            let clamped = dithered.max(zero).min(scale);
-            clamped.round_store_u8(output_chunk);
-        }
-    }
-);
-
-impl RenderPipelineInOutStage for ConvertF32ToU8Stage {
-    type InputT = f32;
-    type OutputT = u8;
-    const SHIFT: (u8, u8) = (0, 0);
-    const BORDER: (u8, u8) = (0, 0);
-
-    fn uses_channel(&self, c: usize) -> bool {
-        c == self.channel
-    }
-
-    fn process_row_chunk(
-        &self,
-        position: (usize, usize),
-        xsize: usize,
-        input_rows: &Channels<f32>,
-        output_rows: &mut ChannelsMut<u8>,
-        _state: Option<&mut ErasedLocalState>,
-    ) {
-        let input = input_rows[0][0];
-        let output = &mut output_rows[0][0];
-        let max = ((1u32 << self.bit_depth) - 1) as f32;
-        f32_to_u8_simd_dispatch(input, output, max, position, self.channel, xsize);
-    }
-
-    fn is_special_case(&self) -> Option<StageSpecialCase> {
-        Some(StageSpecialCase::F32ToU8 {
-            channel: self.channel,
-            bit_depth: self.bit_depth,
-        })
-    }
-}
-
-/// Stage that converts i32 values to u8 values, applying a multiplier.
-pub struct ConvertI32ToU8Stage {
-    channel: usize,
-    multiplier: i32,
-    max: i32,
-}
-
-impl ConvertI32ToU8Stage {
-    pub fn new(channel: usize, multiplier: i32, max: i32) -> ConvertI32ToU8Stage {
-        ConvertI32ToU8Stage {
-            channel,
-            multiplier,
-            max,
-        }
-    }
-}
-
-impl std::fmt::Display for ConvertI32ToU8Stage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "convert I32 to U8 in channel {} with multiplier {}",
-            self.channel, self.multiplier
-        )
-    }
-}
-
-// SIMD I32 to U8 conversion
-simd_function!(
-    i32_to_u8_simd_dispatch,
-    d: D,
-    fn i32_to_u8_simd(input: &[i32], output: &mut [u8], scale: i32, max: i32, xsize: usize) {
-        let simd_width = D::F32Vec::LEN;
-        let scale = D::I32Vec::splat(d, scale);
-        let max = D::I32Vec::splat(d, max);
-        let zero = D::I32Vec::splat(d, 0);
-
-        // Process SIMD vectors using div_ceil (buffers are padded)
-        for (input_chunk, output_chunk) in input
-            .chunks_exact(simd_width)
-            .zip(output.chunks_exact_mut(simd_width))
-            .take(xsize.div_ceil(simd_width))
-        {
-            let val = D::I32Vec::load(d, input_chunk);
-            let scaled = val * scale;
-            let zeroclip = scaled.lt_zero().if_then_else_i32(zero, scaled);
-            let clip = scaled.gt(max).if_then_else_i32(max, zeroclip);
-            clip.store_u8(output_chunk);
-        }
-    }
-);
-
-impl RenderPipelineInOutStage for ConvertI32ToU8Stage {
-    type InputT = i32;
-    type OutputT = u8;
-    const SHIFT: (u8, u8) = (0, 0);
-    const BORDER: (u8, u8) = (0, 0);
-
-    fn uses_channel(&self, c: usize) -> bool {
-        c == self.channel
-    }
-
-    fn process_row_chunk(
-        &self,
-        _position: (usize, usize),
-        xsize: usize,
-        input_rows: &Channels<i32>,
-        output_rows: &mut ChannelsMut<u8>,
-        _state: Option<&mut ErasedLocalState>,
-    ) {
-        let input = input_rows[0][0];
-        let output = &mut output_rows[0][0];
-        i32_to_u8_simd_dispatch(input, output, self.multiplier, self.max, xsize);
-    }
-}
-
-/// Stage that converts f32 values in [0, 1] range to u16 values.
-pub struct ConvertF32ToU16Stage {
-    channel: usize,
-    bit_depth: u8,
-}
-
-impl ConvertF32ToU16Stage {
-    pub fn new(channel: usize, bit_depth: u8) -> ConvertF32ToU16Stage {
-        ConvertF32ToU16Stage { channel, bit_depth }
-    }
-}
-
-impl std::fmt::Display for ConvertF32ToU16Stage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "convert F32 to U16 in channel {} with bit depth {}",
-            self.channel, self.bit_depth
-        )
-    }
-}
-
-// SIMD F32 to U16 conversion
-simd_function!(
-    f32_to_u16_simd_dispatch,
-    d: D,
-    fn f32_to_u16_simd(input: &[f32], output: &mut [u16], max: f32, xsize: usize) {
-        let simd_width = D::F32Vec::LEN;
-        let zero = D::F32Vec::splat(d, 0.0);
-        let one = D::F32Vec::splat(d, 1.0);
-        let scale = D::F32Vec::splat(d, max);
-
-        // Process SIMD vectors using div_ceil (buffers are padded)
-        for (input_chunk, output_chunk) in input
-            .chunks_exact(simd_width)
-            .zip(output.chunks_exact_mut(simd_width))
-            .take(xsize.div_ceil(simd_width))
-        {
-            let val = D::F32Vec::load(d, input_chunk);
-            // Clamp to [0, 1] and scale
-            let clamped = val.max(zero).min(one);
-            let scaled = clamped * scale;
-            scaled.round_store_u16(output_chunk);
-        }
-    }
-);
-
-impl RenderPipelineInOutStage for ConvertF32ToU16Stage {
-    type InputT = f32;
-    type OutputT = u16;
-    const SHIFT: (u8, u8) = (0, 0);
-    const BORDER: (u8, u8) = (0, 0);
-
-    fn uses_channel(&self, c: usize) -> bool {
-        c == self.channel
-    }
-
-    fn process_row_chunk(
-        &self,
-        _position: (usize, usize),
-        xsize: usize,
-        input_rows: &Channels<f32>,
-        output_rows: &mut ChannelsMut<u16>,
-        _state: Option<&mut ErasedLocalState>,
-    ) {
-        let input = input_rows[0][0];
-        let output = &mut output_rows[0][0];
-        let max = ((1u32 << self.bit_depth) - 1) as f32;
-        f32_to_u16_simd_dispatch(input, output, max, xsize);
-    }
-}
-
-/// Stage that converts f32 values to f16 (half-precision float) values.
-pub struct ConvertF32ToF16Stage {
-    channel: usize,
-    clamp_range: Option<(f32, f32)>,
-}
-
-impl ConvertF32ToF16Stage {
-    pub fn new(channel: usize) -> ConvertF32ToF16Stage {
-        ConvertF32ToF16Stage {
-            channel,
-            clamp_range: None,
-        }
-    }
-
-    pub fn new_with_clamp_range(
-        channel: usize,
-        clamp_range: Option<(f32, f32)>,
-    ) -> ConvertF32ToF16Stage {
-        ConvertF32ToF16Stage {
-            channel,
-            clamp_range,
-        }
-    }
-
-    pub fn new_with_unit_clamp(channel: usize, clamp_unit_range: bool) -> ConvertF32ToF16Stage {
-        ConvertF32ToF16Stage {
-            channel,
-            clamp_range: if clamp_unit_range {
-                Some((0.0, 1.0))
-            } else {
-                None
-            },
-        }
-    }
-}
-
-impl std::fmt::Display for ConvertF32ToF16Stage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "convert F32 to F16 in channel {}", self.channel)
-    }
-}
-
-impl RenderPipelineInOutStage for ConvertF32ToF16Stage {
-    type InputT = f32;
-    type OutputT = crate::util::f16;
-    const SHIFT: (u8, u8) = (0, 0);
-    const BORDER: (u8, u8) = (0, 0);
-
-    fn uses_channel(&self, c: usize) -> bool {
-        c == self.channel
-    }
-
-    fn process_row_chunk(
-        &self,
-        _position: (usize, usize),
-        xsize: usize,
-        input_rows: &Channels<f32>,
-        output_rows: &mut ChannelsMut<crate::util::f16>,
-        _state: Option<&mut ErasedLocalState>,
-    ) {
-        let input = &input_rows[0];
-        if let Some((min_value, max_value)) = self.clamp_range {
-            for i in 0..xsize {
-                output_rows[0][0][i] =
-                    crate::util::f16::from_f32(input[0][i].clamp(min_value, max_value));
-            }
-        } else {
-            for i in 0..xsize {
-                output_rows[0][0][i] = crate::util::f16::from_f32(input[0][i]);
-            }
+            let scale = 1.0 / ((1u64 << self.bit_depth.bits_per_sample()) - 1) as f32;
+            modular16_to_float_simd_dispatch(input_rows, output_rows, scale, xsize);
         }
     }
 }
 
 #[cfg(test)]
 mod test {
+    use test_log::test;
+
     use super::*;
     use crate::error::Result;
     use crate::headers::bit_depth::BitDepth;
-    use test_log::test;
-
-    #[test]
-    fn f32_to_u8_consistency() -> Result<()> {
-        crate::render::test::test_stage_consistency(
-            || ConvertF32ToU8Stage::new(0, 8),
-            (500, 500),
-            1,
-        )
-    }
-
-    #[test]
-    fn f32_to_u16_consistency() -> Result<()> {
-        crate::render::test::test_stage_consistency(
-            || ConvertF32ToU16Stage::new(0, 16),
-            (500, 500),
-            1,
-        )
-    }
-
-    #[test]
-    fn f32_to_f16_consistency() -> Result<()> {
-        crate::render::test::test_stage_consistency(|| ConvertF32ToF16Stage::new(0), (500, 500), 1)
-    }
-
-    #[test]
-    fn f32_to_f16_consistency_with_unit_clamp() -> Result<()> {
-        crate::render::test::test_stage_consistency(
-            || ConvertF32ToF16Stage::new_with_unit_clamp(0, true),
-            (500, 500),
-            1,
-        )
-    }
+    use crate::image::DataTypeTag;
+    use crate::render::low_memory_pipeline::row_buffers::RowBuffer;
 
     /// Test ConvertModularToF32Stage consistency with different bit depths.
     #[test]
@@ -919,6 +550,38 @@ mod test {
     }
 
     #[test]
+    fn modular16_to_f32_8bit_consistency() -> Result<()> {
+        crate::render::test::test_stage_consistency(
+            || ConvertModular16ToF32Stage::new(0, BitDepth::integer_samples(8)),
+            (500, 500),
+            1,
+        )
+    }
+
+    #[test]
+    fn modular16_to_f32_16bit_consistency() -> Result<()> {
+        crate::render::test::test_stage_consistency(
+            || ConvertModular16ToF32Stage::new(0, BitDepth::integer_samples(16)),
+            (500, 500),
+            1,
+        )
+    }
+
+    #[test]
+    fn modular16_xyb_to_f32_consistency() -> Result<()> {
+        crate::render::test::test_stage_consistency(
+            || {
+                ConvertModular16XYBToF32Stage::new(
+                    0,
+                    Arc::new(RwLock::new(LfQuantFactors::default())),
+                )
+            },
+            (500, 500),
+            3,
+        )
+    }
+
+    #[test]
     fn test_int_to_float_32bit() {
         // Test 32-bit float passthrough
         let bit_depth = BitDepth::f32();
@@ -933,16 +596,30 @@ mod test {
             1e-30,
             1e30,
         ];
-        let input: Vec<i32> = test_values
-            .iter()
-            .map(|&f| f.to_bits() as i32)
-            .chain(std::iter::repeat(0))
-            .take(16)
-            .collect();
-        let mut output = vec![0.0f32; 16];
+        let x0 = RowBuffer::x0_offset::<i32>();
+        let mut in_buf = RowBuffer::new(DataTypeTag::I32, 0, 0, 0, 16).unwrap();
+        let mut out_buf = RowBuffer::new(DataTypeTag::F32, 0, 0, 0, 16).unwrap();
 
-        int_to_float(&input, &mut output, &bit_depth, test_values.len());
+        let in_row = in_buf.get_row_mut::<i32>(0);
+        for (i, &f) in test_values.iter().enumerate() {
+            in_row[x0 + i] = f.to_bits() as i32;
+        }
 
+        let in_refs = [&in_buf];
+        let in_channels = Channels::from_row_buffers(&in_refs, x0, 0, 1, 0);
+        {
+            let mut out_channels =
+                ChannelsMut::from_row_buffers(std::slice::from_mut(&mut out_buf), x0, 0, 1);
+
+            int_to_float(
+                &in_channels,
+                &mut out_channels,
+                &bit_depth,
+                test_values.len(),
+            );
+        }
+
+        let output = &out_buf.get_row::<f32>(0)[x0..x0 + test_values.len()];
         for (i, (&expected, &actual)) in test_values.iter().zip(output.iter()).enumerate() {
             if expected.is_nan() {
                 assert!(actual.is_nan(), "index {}: expected NaN, got {}", i, actual);
@@ -975,16 +652,30 @@ mod test {
             (0x8001, -5.960_464_5e-8),   // smallest negative subnormal
         ];
 
-        let input: Vec<i32> = test_cases
-            .iter()
-            .map(|(bits, _)| *bits as i32)
-            .chain(std::iter::repeat(0))
-            .take(16)
-            .collect();
-        let mut output = vec![0.0f32; 16];
+        let x0 = RowBuffer::x0_offset::<i32>();
+        let mut in_buf = RowBuffer::new(DataTypeTag::I32, 0, 0, 0, 16).unwrap();
+        let mut out_buf = RowBuffer::new(DataTypeTag::F32, 0, 0, 0, 16).unwrap();
 
-        int_to_float(&input, &mut output, &bit_depth, test_cases.len());
+        let in_row = in_buf.get_row_mut::<i32>(0);
+        for (i, &(bits, _)) in test_cases.iter().enumerate() {
+            in_row[x0 + i] = bits as i32;
+        }
 
+        let in_refs = [&in_buf];
+        let in_channels = Channels::from_row_buffers(&in_refs, x0, 0, 1, 0);
+        {
+            let mut out_channels =
+                ChannelsMut::from_row_buffers(std::slice::from_mut(&mut out_buf), x0, 0, 1);
+
+            int_to_float(
+                &in_channels,
+                &mut out_channels,
+                &bit_depth,
+                test_cases.len(),
+            );
+        }
+
+        let output = &out_buf.get_row::<f32>(0)[x0..x0 + test_cases.len()];
         for (i, (&(_, expected), &actual)) in test_cases.iter().zip(output.iter()).enumerate() {
             assert!(
                 (expected - actual).abs() < 1e-6

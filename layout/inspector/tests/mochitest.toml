@@ -1,11 +1,11 @@
 [DEFAULT]
 prefs = [
   "layout.css.at-scope.enabled=true",
-  "layout.css.attr.enabled=true",
   "layout.css.basic-shape-shape.enabled=true",
   "layout.css.calc-typed-arithmetic.enabled=true",
   "layout.css.progress-function.enabled=true",
   "layout.css.properties-and-values.enabled=true",
+  "layout.css.random.enabled=true",
   "layout.css.starting-style-at-rules.enabled=true",
   "layout.css.tree-counting-functions.enabled=true",
 ]
@@ -84,6 +84,8 @@ support-files = [
 
 ["test_getRuleIndex.html"]
 
+["test_getSubstitutedValue.html"]
+
 ["test_get_all_style_sheets.html"]
 
 ["test_isUsedColorSchemeDark.html"]
@@ -110,6 +112,8 @@ skip-if = [
 ["test_selectormatcheselement.html"]
 
 ["test_selectormatcheselement_host.html"]
+
+["test_selectormatcheselement_part.html"]
 
 ["test_selectormatcheselement_scope.html"]
 

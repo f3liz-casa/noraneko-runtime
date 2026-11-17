@@ -161,10 +161,13 @@ struct StreamFunctionTypeSelector<T, false> {
 };
 
 // Helper for a marker type.
-// A marker type is defined in a `struct` with some expected static member
-// functions. See example in BaseProfilerMarkers.h.
+// A marker type is defined in a `struct` deriving from `BaseMarkerType`. See
+// examples in BaseProfilerMarkers.h.
 template <typename MarkerType>
 struct MarkerTypeSerialization {
+  static_assert(std::is_base_of_v<BaseMarkerType<MarkerType>, MarkerType>,
+                "Marker types must derive from mozilla::BaseMarkerType");
+
   using StreamFunctionType =
       typename StreamFunctionTypeSelector<MarkerType>::Type;
   constexpr static size_t scStreamFunctionParameterCount =
@@ -194,9 +197,9 @@ struct MarkerTypeSerialization {
     // `Streaming::TagForMarkerTypeFunctions()`, and also would add a (small)
     // cost for everybody, even the majority of users not using the profiler.
     static const Streaming::DeserializerTag tag =
-        Streaming::TagForMarkerTypeFunctions(Deserialize,
-                                             MarkerType::MarkerTypeName,
-                                             MarkerType::MarkerTypeDisplay);
+        Streaming::TagForMarkerTypeFunctions(
+            Deserialize, BaseMarkerType<MarkerType>::MarkerTypeName,
+            BaseMarkerType<MarkerType>::MarkerTypeDisplay);
     return StreamFunctionType::Serialize(aBuffer, aName, aCategory,
                                          std::move(aOptions), tag, aTs...);
   }
@@ -238,7 +241,8 @@ struct MarkerTypeSerialization {
  public:
   static void Deserialize(ProfileBufferEntryReader& aEntryReader,
                           baseprofiler::SpliceableJSONWriter& aWriter) {
-    aWriter.StringProperty("type", MarkerType::MarkerTypeName());
+    aWriter.StringProperty("type",
+                           BaseMarkerType<MarkerType>::MarkerTypeName());
     DeserializeArguments(aEntryReader, aWriter);
   }
 };
@@ -246,6 +250,15 @@ struct MarkerTypeSerialization {
 template <>
 struct MarkerTypeSerialization<::mozilla::baseprofiler::markers::NoPayload> {
   // Nothing! NoPayload has special handling avoiding payload work.
+};
+
+struct NoPayloadUserData : public mozilla::BaseMarkerType<NoPayloadUserData> {
+  static constexpr const char* Name = "NoPayloadUserData";
+  using MS = mozilla::MarkerSchema;
+  static constexpr MS::Location Locations[] = {
+      MS::Location::MarkerChart,
+      MS::Location::MarkerTable,
+  };
 };
 
 template <typename MarkerType, typename... Ts>
@@ -265,21 +278,6 @@ static ProfileBufferBlockIndex AddMarkerWithOptionalStackToBuffer(
     // TODO: Remove this when bug 1646714 lands.
     if (aOptions.Stack().GetChunkedBuffer() ||
         !aOptions.InnerWindowId().IsUnspecified()) {
-      struct NoPayloadUserData {
-        static constexpr Span<const char> MarkerTypeName() {
-          return MakeStringSpan("NoPayloadUserData");
-        }
-        static void StreamJSONMarkerData(
-            baseprofiler::SpliceableJSONWriter& aWriter) {
-          // No user payload.
-        }
-        static mozilla::MarkerSchema MarkerTypeDisplay() {
-          using MS = mozilla::MarkerSchema;
-          MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
-          // No user data to display.
-          return schema;
-        }
-      };
       return MarkerTypeSerialization<NoPayloadUserData>::Serialize(
           aBuffer, aName, aCategory, std::move(aOptions));
     }

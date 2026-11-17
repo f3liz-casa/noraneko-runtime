@@ -20,6 +20,7 @@
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ElementInlines.h"
+#include "mozilla/dom/Range.h"
 #include "nsAString.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
@@ -34,7 +35,6 @@
 #include "nsITableCellLayout.h"  // For efficient access to table cell
 #include "nsLiteralString.h"
 #include "nsQueryFrame.h"
-#include "nsRange.h"
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsTableCellFrame.h"
@@ -247,8 +247,9 @@ nsresult HTMLEditor::InsertCell(Element* aCell, int32_t aRowSpan,
     // Note: Do NOT use editor transaction for this
     nsAutoString newRowSpan;
     newRowSpan.AppendInt(aRowSpan, 10);
-    DebugOnly<nsresult> rvIgnored = newCell->SetAttr(
-        kNameSpaceID_None, nsGkAtoms::rowspan, newRowSpan, true);
+    DebugOnly<nsresult> rvIgnored =
+        newCell->SetAttr(kNameSpaceID_None, nsGkAtoms::rowspan, newRowSpan,
+                         true, IsKnownNewAttr::No);
     NS_WARNING_ASSERTION(
         NS_SUCCEEDED(rvIgnored),
         "Element::SetAttr(nsGkAtoms::rawspan) failed, but ignored");
@@ -257,8 +258,9 @@ nsresult HTMLEditor::InsertCell(Element* aCell, int32_t aRowSpan,
     // Note: Do NOT use editor transaction for this
     nsAutoString newColSpan;
     newColSpan.AppendInt(aColSpan, 10);
-    DebugOnly<nsresult> rvIgnored = newCell->SetAttr(
-        kNameSpaceID_None, nsGkAtoms::colspan, newColSpan, true);
+    DebugOnly<nsresult> rvIgnored =
+        newCell->SetAttr(kNameSpaceID_None, nsGkAtoms::colspan, newColSpan,
+                         true, IsKnownNewAttr::No);
     NS_WARNING_ASSERTION(
         NS_SUCCEEDED(rvIgnored),
         "Element::SetAttr(nsGkAtoms::colspan) failed, but ignored");
@@ -1247,11 +1249,11 @@ nsresult HTMLEditor::DeleteTableElementAndChildrenWithTransaction(
       }
     }
 
-    RefPtr<nsRange> range = nsRange::Create(&aTableElement);
+    RefPtr<dom::Range> range = dom::Range::Create(&aTableElement);
     ErrorResult error;
     range->SelectNode(aTableElement, error);
     if (error.Failed()) {
-      NS_WARNING("nsRange::SelectNode() failed");
+      NS_WARNING("Range::SelectNode() failed");
       return error.StealNSResult();
     }
     SelectionRef().AddRangeAndSelectFramesAndNotifyListeners(*range, error);
@@ -3334,7 +3336,7 @@ NS_IMETHODIMP HTMLEditor::JoinTableCells(bool aMergeNonContiguousContents) {
     uint32_t rangeCount = SelectionRef().RangeCount();
 
     // TODO: Rewriting this with reversed ranged-loop may make it simpler.
-    RefPtr<nsRange> range;
+    RefPtr<dom::Range> range;
     for (uint32_t i = 0; i < rangeCount; i++) {
       range = SelectionRef().GetRangeAt(i);
       if (NS_WARN_IF(!range)) {

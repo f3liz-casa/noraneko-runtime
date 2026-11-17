@@ -9,6 +9,7 @@ import {
   getNovaColumnLayout,
 } from "../../lib/utils";
 import { TOP_SITES_SOURCE } from "../TopSites/TopSitesConstants";
+import { SpaceActiveContext } from "../../lib/SpaceActiveContext";
 import React from "react";
 
 const VISIBLE = "visible";
@@ -84,7 +85,7 @@ export class ImpressionStats extends React.PureComponent {
                 type: "impression",
                 tile_id: card.id,
                 source: "newtab",
-                advertiser: card.advertiser,
+                advertiser_name: card.advertiser_name,
                 // Keep the 0-based position, can be adjusted by the telemetry
                 // sender if necessary.
                 position: card.pos,
@@ -112,6 +113,8 @@ export class ImpressionStats extends React.PureComponent {
           scheduled_corpus_item_id: link.scheduled_corpus_item_id,
           recommended_at: link.recommended_at,
           received_rank: link.received_rank,
+          variant_id: link.variant_id,
+          source_section_id: link.source_section_id,
           topic: link.topic,
           features: link.features,
           attribution: link.attribution,
@@ -133,7 +136,7 @@ export class ImpressionStats extends React.PureComponent {
                 section: link.section,
                 section_position: link.section_position,
                 is_section_followed: link.is_section_followed,
-                layout_name: link.sectionLayoutName,
+                layout_name: link.layout_name,
               }
             : {}),
         })),
@@ -254,8 +257,14 @@ export class ImpressionStats extends React.PureComponent {
     this.impressionObserver.observe(this.impressionRef.current);
   }
 
+  // A hidden carousel slide, or a space other than the active one.
+  _isActive() {
+    return this.props.isActive && this.context;
+  }
+
   componentDidMount() {
-    if (this.props.rows.length && this.props.isActive) {
+    this._wasActive = this._isActive();
+    if (this.props.rows.length && this._wasActive) {
       this.setImpressionObserverOrAddListener();
     }
   }
@@ -277,14 +286,18 @@ export class ImpressionStats extends React.PureComponent {
   // A carousel stacks its slides, so a hidden slide still intersects and would
   // report an impression while invisible. A slide only observes while it is
   // the visible one, and never observes again once it has reported, so a card
-  // that cycles back around isn't counted twice.
-  componentDidUpdate(prevProps) {
-    if (this._hasReported || this.props.isActive === prevProps.isActive) {
+  // that cycles back around isn't counted twice. Spaces work the same way, as a
+  // peeked space is visible but not active.
+  componentDidUpdate() {
+    const isActive = this._isActive();
+    const wasActive = this._wasActive;
+    this._wasActive = isActive;
+    if (this._hasReported || isActive === wasActive) {
       return;
     }
-    if (this.props.isActive && this.props.rows.length) {
+    if (isActive && this.props.rows.length) {
       this.setImpressionObserverOrAddListener();
-    } else if (!this.props.isActive) {
+    } else if (!isActive) {
       this._teardownImpressionObserver();
     }
   }
@@ -310,3 +323,5 @@ ImpressionStats.defaultProps = {
   // Only a carousel slide passes this as false, and only while hidden.
   isActive: true,
 };
+
+ImpressionStats.contextType = SpaceActiveContext;

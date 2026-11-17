@@ -298,7 +298,9 @@ class InputModule extends RootBiDiModule {
       lazy.pprint`Expected "context" to be a string, got ${contextId}`
     );
 
-    const context = this._getNavigable(contextId);
+    const context = this._getNavigable(contextId, {
+      supportsPrivilegedScope: true,
+    });
 
     // Bug 1821460: Fetch top-level browsing context.
     const inputState = this.#getInputState(context);
@@ -339,7 +341,9 @@ class InputModule extends RootBiDiModule {
       lazy.pprint`Expected "context" to be a string, got ${contextId}`
     );
 
-    const context = this._getNavigable(contextId);
+    const context = this._getNavigable(contextId, {
+      supportsPrivilegedScope: true,
+    });
 
     // Bug 1821460: Fetch top-level browsing context.
     const inputState = this.#getInputState(context);
@@ -405,6 +409,10 @@ class InputModule extends RootBiDiModule {
       element,
       files,
     });
+  }
+
+  static get supportedCommandsInRestrictedSession() {
+    return ["performActions", "releaseActions", "setFiles"];
   }
 
   static get supportedEvents() {

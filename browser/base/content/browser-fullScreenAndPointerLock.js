@@ -37,7 +37,7 @@ var PointerlockFsWarning = {
   },
 
   showPointerLock(aOrigin) {
-    if (!document.fullscreen) {
+    if (!document.fullscreenElement) {
       let timeout = Services.prefs.getIntPref(
         "pointer-lock-api.warning.timeout"
       );
@@ -477,7 +477,7 @@ var FullScreen = {
 
   exitDomFullScreen() {
     // Don't use `this` here. It does not reliably refer to this object.
-    if (document.fullscreen) {
+    if (document.fullscreenElement) {
       document.exitFullscreen();
     }
   },
@@ -525,14 +525,13 @@ var FullScreen = {
     shiftSize = shiftSize.toFixed(2);
     let translate = shiftSize > 0 ? `0 ${shiftSize}px` : "";
     gNavToolbox.classList.toggle("fullscreen-floating-toolbox", shiftSize > 0);
-    gNavToolbox.style.translate = translate;
-    // The shifted toolbox floats over what is below it, which with vertical
-    // tabs is the launcher rather than the content (bug 2064638).
-    document.documentElement.style.setProperty(
-      "--fullscreen-menubar-shift",
-      shiftSize > 0 ? `${shiftSize}px` : ""
-    );
-
+    let elementsToTranslate = [
+      gNavToolbox,
+      document.getElementById("vertical-tabs"),
+    ];
+    for (let element of elementsToTranslate) {
+      element.style.translate = translate;
+    }
     this._currentToolbarShift = shiftSize;
   },
 

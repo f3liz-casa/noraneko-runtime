@@ -19,7 +19,7 @@ PRThread* PR_CreateThread(
 
 ### Parameters
 
-{ref}`PR_CreateThread` has the following parameters:
+{doc}`pr_createthread` has the following parameters:
 
 `type`
 
@@ -57,7 +57,7 @@ PRThread* PR_CreateThread(
 
 : Specifies your preference for the size of the stack, in bytes,
   associated with the newly created thread. If you pass zero in this
-  parameter, {ref}`PR_CreateThread` chooses the most favorable
+  parameter, {doc}`pr_createthread` chooses the most favorable
   machine-specific stack size.
 
 ### Returns
@@ -76,8 +76,8 @@ something, enter a lock before creating the thread and then have the
 thread's root function enter and exit the same lock. When you are ready
 for the thread to run, exit the lock. For more information on locks and
 thread synchronization, see [Introduction to
-NSPR](Introduction_to_NSPR).
+NSPR](introduction_to_nspr.md).
 
 If you want to detect the completion of the created thread, make it
-joinable. You can then use {ref}`PR_JoinThread` to synchronize the
+joinable. You can then use {doc}`pr_jointhread` to synchronize the
 termination of another thread.

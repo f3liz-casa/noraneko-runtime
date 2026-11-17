@@ -82,7 +82,8 @@
 #include "js/experimental/TypedData.h"         // JS_GetObjectAsUint8Array
 #include "js/friend/DumpFunctions.h"  // js::Dump{Backtrace,Heap,Object}, JS::FormatStackDump, js::IgnoreNurseryObjects
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/friend/WindowProxy.h"    // js::ToWindowProxyIfWindow
+#include "js/friend/PerformanceHint.h"  // js::SetRealmIsDyingHint
+#include "js/friend/WindowProxy.h"      // js::ToWindowProxyIfWindow
 #include "js/GlobalObject.h"
 #include "js/HashTable.h"
 #include "js/Interrupt.h"
@@ -104,6 +105,7 @@
 #include "js/Vector.h"
 #include "js/Wrapper.h"
 #include "threading/CpuCount.h"
+#include "util/Denormals.h"
 #include "util/DifferentialTesting.h"
 #include "util/LanguageId.h"
 #include "util/StringBuilder.h"
@@ -600,14 +602,9 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-#if (defined(__GNUC__) && defined(__SSE__) && defined(__x86_64__)) || \
-    defined(__arm__) || defined(__aarch64__)
-  // See js.cpp "disable-main-thread-denormals" command line option.
-  value = BooleanValue(true);
-#else
-  value = BooleanValue(false);
-#endif
-  if (!JS_SetProperty(cx, info, "can-disable-main-thread-denormals", value)) {
+  value = BooleanValue(CanDisableDenormals());
+  if (!JS_SetProperty(cx, info, "can-disable-main-thread-wasm-denormals",
+                      value)) {
     return false;
   }
 
@@ -2343,7 +2340,12 @@ static bool WasmDumpIon(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-enum class Flag { Tier2Complete, Deserialized, ParsedBranchHints };
+enum class Flag {
+  Tier2Complete,
+  Deserialized,
+  ParsedBranchHints,
+  ParsedNameSection
+};
 
 static bool WasmReturnFlag(JSContext* cx, unsigned argc, Value* vp, Flag flag) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -2370,6 +2372,9 @@ static bool WasmReturnFlag(JSContext* cx, unsigned argc, Value* vp, Flag flag) {
       break;
     case Flag::ParsedBranchHints:
       b = !module->module().codeMeta().branchHints.failedParse();
+      break;
+    case Flag::ParsedNameSection:
+      b = module->module().codeMeta().nameSection.isSome();
       break;
   }
 
@@ -2448,6 +2453,10 @@ static bool WasmParsedBranchHints(JSContext* cx, unsigned argc, Value* vp) {
 }
 #endif  // ENABLE_WASM_BRANCH_HINTING
 
+static bool WasmParsedNameSection(JSContext* cx, unsigned argc, Value* vp) {
+  return WasmReturnFlag(cx, argc, vp, Flag::ParsedNameSection);
+}
+
 static bool WasmBuiltinI8VecMul(JSContext* cx, unsigned argc, Value* vp) {
   if (!wasm::HasSupport(cx)) {
     JS_ReportErrorASCII(cx, "wasm support unavailable");
@@ -2517,11 +2526,12 @@ static bool WasmGcArrayLength(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 #ifdef ENABLE_WASM_COMPONENTS
-static bool WasmComponentCoreInstance(JSContext* cx, unsigned argc, Value* vp) {
+static bool WasmComponentCoreInstanceExports(JSContext* cx, unsigned argc,
+                                             Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   RootedObject callee(cx, &args.callee());
 
-  if (!args.requireAtLeast(cx, "wasmComponentCoreInstance", 2)) {
+  if (!args.requireAtLeast(cx, "wasmComponentCoreInstanceExports", 2)) {
     return false;
   }
 
@@ -2540,15 +2550,14 @@ static bool WasmComponentCoreInstance(JSContext* cx, unsigned argc, Value* vp) {
   const WasmComponentInstanceObject& instanceObj =
       args[0].toObject().as<WasmComponentInstanceObject>();
   const wasm::ComponentInstance& instance = instanceObj.instance();
-  WasmInstanceObject* coreInstance = instance.coreInstance(coreInstanceIndex);
-  if (!coreInstance) {
+  JSObject* exportsObj = instance.coreInstanceExports(coreInstanceIndex);
+  if (!exportsObj) {
     ReportUsageErrorASCII(
-        cx, callee,
-        "Second argument must refer to a `(core instance (instantiate ...))`");
+        cx, callee, "Second argument must be a valid core instance index");
     return false;
   }
 
-  args.rval().setObject(*coreInstance);
+  args.rval().setObject(*exportsObj);
   return true;
 }
 #endif
@@ -2768,6 +2777,15 @@ static bool InternalConst(JSContext* cx, unsigned argc, Value* vp) {
     JS_ReportErrorASCII(cx, "unknown const name");
     return false;
   }
+  return true;
+}
+
+static bool SetRealmIsDyingHint(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  js::SetRealmIsDyingHint(cx->global());
+
+  args.rval().setUndefined();
   return true;
 }
 
@@ -3320,7 +3338,8 @@ static bool IsAtomMarked(JSContext* cx, unsigned argc, Value* vp) {
   Maybe<bool> result;
   gc::GCRuntime* gc = &cx->runtime()->gc;
   if (args[1].isSymbol()) {
-    result = Some(gc->atomReferences.hasRef(zone, args[1].toSymbol()));
+    JS::Symbol* symbol = UnwrapSymbol(args[1].toSymbol());
+    result = Some(gc->atomReferences.hasRef(zone, symbol));
   } else if (args[1].isString()) {
     JSString* str = args[1].toString();
     if (str->isAtom()) {
@@ -3395,8 +3414,8 @@ static bool GetAtomMarkColor(JSContext* cx, unsigned argc, Value* vp) {
   size_t index = args[1].toInt32();
 
   gc::GCRuntime* gc = &cx->runtime()->gc;
-  gc::CellColor color = gc->atomReferences.getRefColorForIndex(zone, index);
-  RootedString name(cx, JS_NewStringCopyZ(cx, gc::CellColorName(color)));
+  bool hasRef = gc->atomReferences.hasRefForIndex(zone, index);
+  RootedString name(cx, JS_NewStringCopyZ(cx, hasRef ? "black" : "white"));
   if (!name) {
     return false;
   }
@@ -3628,6 +3647,13 @@ static bool CaptureFirstSubsumedFrame(JSContext* cx, unsigned argc,
   return true;
 }
 
+static bool CallAfterSettingRval(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setUndefined();
+  return JS::Call(cx, UndefinedHandleValue, args.get(0),
+                  JS::HandleValueArray::empty(), args.rval());
+}
+
 static bool CallFunctionFromNativeFrame(JSContext* cx, unsigned argc,
                                         Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -3712,6 +3738,57 @@ static bool SetTestFilenameValidationCallback(JSContext* cx, unsigned argc,
   JS::SetFilenameValidationCallback(testCb);
 
   args.rval().setUndefined();
+  return true;
+}
+
+// A forwarding proxy whose [[OwnPropertyKeys]] reports every key of its target
+// twice. Scripted proxies can't do this because the spec rejects duplicate
+// keys.
+class DuplicateOwnKeysProxyHandler final : public ForwardingProxyHandler {
+ public:
+  static const DuplicateOwnKeysProxyHandler singleton;
+  static const char family;
+
+  constexpr DuplicateOwnKeysProxyHandler() : ForwardingProxyHandler(&family) {}
+
+  bool ownPropertyKeys(JSContext* cx, HandleObject proxy,
+                       MutableHandleIdVector props) const override {
+    if (!ForwardingProxyHandler::ownPropertyKeys(cx, proxy, props)) {
+      return false;
+    }
+    size_t length = props.length();
+    for (size_t i = 0; i < length; i++) {
+      RootedId id(cx, props[i]);
+      if (!props.append(id)) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
+
+const DuplicateOwnKeysProxyHandler DuplicateOwnKeysProxyHandler::singleton;
+const char DuplicateOwnKeysProxyHandler::family = 0;
+
+static bool NewProxyWithDuplicateOwnKeys(JSContext* cx, unsigned argc,
+                                         Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  if (!args.requireAtLeast(cx, "newProxyWithDuplicateOwnKeys", 1)) {
+    return false;
+  }
+  if (!args[0].isObject()) {
+    JS_ReportErrorASCII(cx, "target must be an object");
+    return false;
+  }
+
+  RootedValue target(cx, args[0]);
+  JSObject* proxy = NewProxyObject(cx, &DuplicateOwnKeysProxyHandler::singleton,
+                                   target, nullptr);
+  if (!proxy) {
+    return false;
+  }
+
+  args.rval().setObject(*proxy);
   return true;
 }
 
@@ -5056,7 +5133,6 @@ static bool ResolvePromise(JSContext* cx, unsigned argc, Value* vp) {
   return result;
 }
 
-#ifdef NIGHTLY_BUILD
 static bool SafeResolvePromise(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   if (!args.requireAtLeast(cx, "safeResolvePromise", 2)) {
@@ -5082,7 +5158,6 @@ static bool SafeResolvePromise(JSContext* cx, unsigned argc, Value* vp) {
   args.rval().setUndefined();
   return JS::SafeResolve(cx, promise, resolution);
 }
-#endif  // NIGHTLY_BUILD
 
 static bool RejectPromise(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -5545,6 +5620,12 @@ const ShellAllocationMetadataBuilder
 static bool EnableShellAllocationMetadataBuilder(JSContext* cx, unsigned argc,
                                                  Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
+
+  // ShellAllocationMetadataBuilder::build constructs arrays. Ensure the
+  // Array constructor is already resolved.
+  if (!GlobalObject::ensureConstructor(cx, cx->global(), JSProto_Array)) {
+    return false;
+  }
 
   SetAllocationMetadataBuilder(
       cx, &ShellAllocationMetadataBuilder::metadataBuilder);
@@ -7696,7 +7777,7 @@ static bool ShortestPaths(JSContext* cx, unsigned argc, Value* vp) {
 
     for (size_t i = 0; i < length; i++) {
       if (!values.append(GCVector<GCVector<Value>>(cx)) ||
-          !names.append(Vector<Vector<JS::ubi::EdgeName>>(cx))) {
+          !names.emplaceBack(cx)) {
         return false;
       }
 
@@ -10468,6 +10549,11 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  object's compartment's principals. If 'shouldIgnoreSelfHosted' is given,\n"
 "  control whether self-hosted frames are considered when checking principals."),
 
+    JS_FN_HELP("callAfterSettingRval", CallAfterSettingRval, 1, 0,
+"callAfterSettingRval(callback)",
+"  Set the return value to undefined, then call callback with no arguments\n"
+"  and return its result."),
+
     JS_FN_HELP("callFunctionFromNativeFrame", CallFunctionFromNativeFrame, 1, 0,
 "callFunctionFromNativeFrame(function)",
 "  Call 'function' with a (C++-)native frame on stack.\n"
@@ -10494,6 +10580,11 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "setTestFilenameValidationCallback()",
 "  Set the filename validation callback to a callback that accepts only\n"
 "  filenames starting with 'safe' or (only in system realms) 'system'."),
+
+    JS_FN_HELP("newProxyWithDuplicateOwnKeys", NewProxyWithDuplicateOwnKeys, 1, 0,
+"newProxyWithDuplicateOwnKeys(target)",
+"  Returns a proxy that forwards to |target| but reports each of its own keys\n"
+"  twice from [[OwnPropertyKeys]]."),
 
     JS_FN_HELP("newObjectWithAddPropertyHook", NewObjectWithAddPropertyHook, 0, 0,
 "newObjectWithAddPropertyHook()",
@@ -10666,13 +10757,11 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 JS_FN_HELP("resolvePromise", ResolvePromise, 2, 0,
 "resolvePromise(promise, resolution)",
 "  Resolve a Promise by calling the JSAPI function JS::ResolvePromise."),
-#ifdef NIGHTLY_BUILD
 JS_FN_HELP("safeResolvePromise", SafeResolvePromise, 2, 0,
 "safeResolvePromise(promise, resolution)",
 "  Resolve a Promise by calling the JSAPI function JS::SafeResolve, which\n"
 "  implements the SafePromiseResolve abstract operation from the\n"
 "  thenable-curtailment proposal."),
-#endif  // NIGHTLY_BUILD
 JS_FN_HELP("rejectPromise", RejectPromise, 2, 0,
 "rejectPromise(promise, reason)",
 "  Reject a Promise by calling the JSAPI function JS::RejectPromise."),
@@ -10694,6 +10783,11 @@ JS_FN_HELP("rejectPromise", RejectPromise, 2, 0,
     JS_FN_HELP("gcPreserveCode", GCPreserveCode, 0, 0,
 "gcPreserveCode()",
 "  Preserve JIT code during garbage collections."),
+
+    JS_FN_HELP("setRealmIsDyingHint", SetRealmIsDyingHint, 0, 0,
+"setRealmIsDyingHint()",
+"  Hint that the current realm is dying, like the browser does when a window\n"
+"  goes away. The GC then no longer preserves JIT code for it."),
 
 #ifdef JS_GC_ZEAL
     JS_FN_HELP("gczeal", GCZeal, 2, 0,
@@ -10785,7 +10879,8 @@ gc::ZealModeHelpText),
 
     JS_FN_HELP("getAtomMarkColor", GetAtomMarkColor, 2, 0,
 "getAtomMarkColor(obj, index)",
-"  Return the atom reference bitmap's color for |index| relative to the zone containing |obj|."),
+"  Return the atom reference bitmap's color for |index| relative to the zone\n"
+"  containing |obj|."),
 
     JS_FN_HELP("setMallocMaxDirtyPageModifier", SetMallocMaxDirtyPageModifier, 1, 0,
 "setMallocMaxDirtyPageModifier(value)",
@@ -11021,6 +11116,11 @@ JS_FOR_WASM_FEATURES(WASM_FEATURE)
 "  custom branch hinting section."),
 
 #endif // ENABLE_WASM_BRANCH_HINTING
+
+    JS_FN_HELP("wasmParsedNameSection", WasmParsedNameSection, 1, 0,
+"wasmParsedNameSection(module)",
+"  Returns a boolean indicating whether a given module has successfully parsed a\n"
+"  custom name section."),
 
     JS_FN_HELP("largeArrayBufferSupported", LargeArrayBufferSupported, 0, 0,
 "largeArrayBufferSupported()",
@@ -11697,9 +11797,9 @@ JS_FN_HELP("getFuseState", GetFuseState, 0, 0,
 "  Prints an analysis of the size of metadata on this wasm object.\n"),
 
 #ifdef ENABLE_WASM_COMPONENTS
-    JS_FN_HELP("wasmComponentCoreInstance", WasmComponentCoreInstance, 2, 0,
-"wasmComponentCoreInstance(componentInstance, coreInstanceIndex)",
-"  Extracts a WebAssembly.Instance from a WebAssembly.ComponentInstance.\n"),
+    JS_FN_HELP("wasmComponentCoreInstanceExports", WasmComponentCoreInstanceExports, 2, 0,
+"wasmComponentCoreInstanceExports(componentInstance, coreInstanceIndex)",
+"  Gets the exports object of a core instance in a WebAssembly.ComponentInstance.\n"),
 #endif
 
     JS_FS_HELP_END

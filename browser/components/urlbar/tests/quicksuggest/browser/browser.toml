@@ -12,7 +12,6 @@ support-files = [
 ]
 prefs = [
   "browser.bookmarks.testing.skipDefaultBookmarksImport=true",
-  "layout.css.attr.enabled=true",
 ]
 
 ["browser_pickedSearchSuggestion.js"]
@@ -24,8 +23,6 @@ prefs = [
 ["browser_quicksuggest_block.js"]
 
 ["browser_quicksuggest_configuration.js"]
-
-["browser_quicksuggest_contextual_optin.js"]
 
 ["browser_quicksuggest_dynamicSuggestions.js"]
 
@@ -64,6 +61,8 @@ support-files = [
   "moz-flipped.png",
 ]
 
+["browser_quicksuggest_temporal.js"]
+
 ["browser_quicksuggest_yelp.js"]
 
 ["browser_telemetry_environment.js"]
@@ -71,8 +70,5 @@ tags = "search-telemetry"
 
 ["browser_telemetry_suggestMetrics.js"]
 tags = "search-telemetry"
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # Bug 1971091
-]
 
 ["browser_weather.js"]

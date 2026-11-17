@@ -63,9 +63,6 @@ with Files("**"):
 with Files("docs/**"):
     SCHEDULES.exclusive = ["docs"]
 
-with Files("Makefile.in"):
-    BUG_COMPONENT = ("Firefox Build System", "General")
-
 with Files("*.mk"):
     BUG_COMPONENT = ("Firefox Build System", "General")
 
@@ -95,6 +92,9 @@ with Files("config/**"):
 
 with Files("docs/**"):
     BUG_COMPONENT = ("Toolkit", "Telemetry")
+
+with Files("docs/DistributionIni.md"):
+    BUG_COMPONENT = ("Firefox", "Distributions")
 
 with Files("fonts/**"):
     BUG_COMPONENT = ("Core", "Graphics: Text")

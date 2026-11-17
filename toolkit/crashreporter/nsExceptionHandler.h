@@ -175,10 +175,6 @@ void SetInactiveStateStart();
 
 nsresult SetRestartArgs(int argc, char** argv);
 nsresult SetupExtraData(nsIFile* aAppDataDirectory, nsIFile* aXreDirectory);
-// Registers an additional memory region to be included in the minidump
-nsresult RegisterAppMemory(void* ptr, size_t length);
-nsresult UnregisterAppMemory(void* ptr);
-
 // Include heap regions of the crash context.
 void SetIncludeContextHeap(bool aValue);
 
@@ -254,7 +250,7 @@ ThreadId CurrentThreadId();
  * The .extra information created will not include an 'additional_minidumps'
  * annotation.
  *
- * @param aTargetPid The target process for the minidump.
+ * @param aId The ID of the target process for the minidump.
  * @param aTargetBlamedThread The target thread for the minidump.
  * @param aIncomingPairName The name to apply to the paired dump the caller
  *   passes in.
@@ -262,8 +258,7 @@ ThreadId CurrentThreadId();
  * @param aTargetAnnotations The crash annotations of the target process.
  * @return bool indicating success or failure
  */
-bool CreateMinidumpsAndPair(ProcessHandle aTargetPid,
-                            ThreadId aTargetBlamedThread,
+bool CreateMinidumpsAndPair(GeckoChildID aId, ThreadId aTargetBlamedThread,
                             const nsACString& aIncomingPairName,
                             AnnotationTable& aTargetAnnotations,
                             nsIFile** aTargetDumpOut);

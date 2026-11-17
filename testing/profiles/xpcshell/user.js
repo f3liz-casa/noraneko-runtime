@@ -23,6 +23,8 @@ user_pref("toolkit.telemetry.server", "https://%(server)s/telemetry-dummy");
 user_pref("telemetry.fog.test.localhost_port", -1);
 user_pref("telemetry.fog.test.activity_limit", -1);
 user_pref("telemetry.fog.test.inactivity_limit", -1);
+// Slow down early "events" pings to make testing easier.
+user_pref("telemetry.fog.test.decelerate_early_events", true);
 // Prevent Remote Settings to issue non local connections.
 user_pref("services.settings.server", "data:,#remote-settings-dummy/v1");
 // Prevent intermediate preloads to be downloaded on Remote Settings polling.
@@ -32,6 +34,9 @@ user_pref("security.remote_settings.intermediates.enabled", false);
 // all processes would run at low priority, which is not desirable, so we
 // disable the process priority manager entirely here.
 user_pref("dom.ipc.processPriorityManager.enabled", false);
+// xpcshell tests composite nothing, so a GPU process is only overhead, and on
+// macOS it can hang at shutdown.
+user_pref("layers.gpu-process.enabled", false);
 // Bug 455077 - Ensure we use sRGB as the output profile for test consistency.
 user_pref("gfx.color_management.force_srgb", true);
 user_pref("gfx.color_management.mode", 1);
@@ -39,6 +44,12 @@ user_pref("gfx.color_management.mode", 1);
 user_pref("browser.topsites.contile.enabled", false);
 // Don't pull weather data from the network
 user_pref("browser.newtabpage.activity-stream.system.showWeather", false);
+// Don't render or load any New Tab widget
+user_pref("browser.newtabpage.activity-stream.widgets.enabled", false);
+// Widgets that load from the network stay off even when a test turns widgets
+// back on
+user_pref("browser.newtabpage.activity-stream.widgets.system.pictureOfTheDay.enabled", false);
+user_pref("browser.newtabpage.activity-stream.widgets.system.crossword.enabled", false);
 // Don't pull wallpaper content from the network
 user_pref("browser.newtabpage.activity-stream.newtabWallpapers.enabled", false);
 // Don't pull sponsored Top Sites content from the network

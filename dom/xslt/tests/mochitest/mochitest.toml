@@ -1,6 +1,9 @@
 [DEFAULT]
+prefs = ["dom.xslt.enabled=true"]
 
 ["test_bug319374.html"]
+
+["test_bug325891.html"]
 
 ["test_bug427060.html"]
 
@@ -51,9 +54,6 @@ support-files = [
 support-files = [
   "bug1769155.sjs",
   "file_bug1769155.html",
-]
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && debug && http2", # Bug 1900716
 ]
 
 ["test_exslt.html"]

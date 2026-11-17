@@ -20,13 +20,9 @@
   vertical-align: bottom;
 
   &.alltabs-icon {
-    background: url("chrome://global/skin/icons/arrow-down.svg");
+    background: url("chrome://browser/skin/search-tabs.svg");
     -moz-context-properties: fill;
     fill: currentColor;
-
-    &.alltabs-icon-generic {
-      background-image: url("chrome://browser/skin/tabs.svg");
-    }
   }
 }
 

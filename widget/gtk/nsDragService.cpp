@@ -969,6 +969,11 @@ gboolean nsDragSession::Schedule(UniquePtr<DragTask> aTask) {
     return FALSE;
   }
 
+  // A leave task carries no window, and mSourceWindow is only set on Wayland,
+  // so the null test is not redundant. Set here and not in RunScheduledTask(),
+  // which runs from a timeout that may still be pending when the drag ends.
+  mDragIsOverSourceWindow = aTask->mWindow && aTask->mWindow == mSourceWindow;
+
   mNextScheduledTask = std::move(aTask);
 
   if (!mTaskSource) {
@@ -1219,8 +1224,12 @@ bool nsDragSession::IsTextFlavor(GdkAtom aFlavor) {
 nsDragSession::DragTask::DragTask(
     DragTaskType aType, nsWindow* aWindow,
     const mozilla::LayoutDeviceIntPoint& aWindowPoint, guint aTime)
-    : mType(aType), mWindow(aWindow), mWindowPoint(aWindowPoint), mTime(aTime) {
-      };
+    : mType(aType),
+      mWindow(aWindow),
+      mWindowPoint(aWindowPoint),
+      mTime(aTime) {}
+
+nsDragSession::DragTask::~DragTask() = default;
 
 #undef LOGDRAG
 #undef LOGDRAGSTATIC

@@ -172,6 +172,7 @@ let Player = {
     "command",
     "dblclick",
     "keydown",
+    "mousedown",
     "mouseup",
     "mousemove",
     "MozDOMFullscreen:Entered",
@@ -221,6 +222,12 @@ let Player = {
    * Set a shortcut that can be used for unpiping without pausing
    */
   isUnpipWithoutPauseShortcut: e => e.shiftKey === true,
+
+  /**
+   * Becomes true once the first Tab press puts focus on the play/pause button
+   * or, for Shift + Tab, on the visible control preceding it.
+   */
+  didTabOverrideControlFocus: false,
 
   /**
    * Initializes the player browser, and sets up the initial state.
@@ -318,13 +325,9 @@ let Player = {
       }
     });
 
-    for (let radio of document.querySelectorAll(
-      'input[type=radio][name="cc-size"]'
-    )) {
-      radio.addEventListener("change", event => {
-        this.onSubtitleChange(event.target.id);
-      });
-    }
+    this.fontSizeRadioGroup.addEventListener("change", event => {
+      this.onSubtitleChange(event.target.value);
+    });
 
     this.playbackRateSlider.addEventListener("input", event => {
       this.requestPlaybackRate(parseFloat(event.target.value));
@@ -336,11 +339,9 @@ let Player = {
       });
     }
 
-    document
-      .querySelector("#subtitles-toggle")
-      .addEventListener("change", () => {
-        this.onToggleChange();
-      });
+    this.subtitlesToggle.addEventListener("toggle", () => {
+      this.onToggleChange();
+    });
 
     // If the content process hosting the video crashes, let's
     // just close the window for now.
@@ -411,11 +412,10 @@ let Player = {
     );
 
     // fallback to medium if the pref value is not a valid option
-    if (fontSize === "small" || fontSize === "large") {
-      document.querySelector(`#${fontSize}`).checked = "true";
-    } else {
-      document.querySelector("#medium").checked = "true";
+    if (fontSize !== "small" && fontSize !== "large") {
+      fontSize = "medium";
     }
+    this.fontSizeRadioGroup.value = fontSize;
 
     // In see-through mode the PiP window is made semi-transparent on hover.
     if (Services.prefs.getBoolPref(SEETHROUGH_MODE_ENABLED_PREF, false)) {
@@ -477,6 +477,28 @@ let Player = {
         if (event.keyCode == KeyEvent.DOM_VK_TAB) {
           this.controls.setAttribute(KEYING_ATTRIBUTE, true);
           this.showVideoControls();
+          // Tab order follows DOM order. To ensure Tab lands on primary controls
+          // after opening PiP for the first time, override the default Tab
+          // behaviour and focus on the primary buttons.
+          // Do not override in init() to prevent regressing the "space" play/pause shortcut.
+          if (
+            !this.didTabOverrideControlFocus &&
+            !this.controls.contains(document.activeElement)
+          ) {
+            if (!event.shiftKey) {
+              this.didTabOverrideControlFocus = true;
+              event.preventDefault();
+              // On all window sizes, the play/pause button is always visible.
+              this.playpauseButton.focus();
+            } else {
+              let previousControl = this.getControlBefore(this.playpauseButton);
+              if (previousControl) {
+                this.didTabOverrideControlFocus = true;
+                event.preventDefault();
+                previousControl.focus();
+              }
+            }
+          }
         } else if (event.keyCode == KeyEvent.DOM_VK_ESCAPE) {
           let isSettingsPanelInFocus = this.settingsPanel.contains(
             document.activeElement
@@ -514,14 +536,19 @@ let Player = {
           this.cyclePlaybackRate(event.key == ">" ? 1 : -1);
         } else if (
           Services.prefs.getBoolPref(KEYBOARD_CONTROLS_ENABLED_PREF, false) &&
-          (event.keyCode != KeyEvent.DOM_VK_SPACE || !event.target.id)
+          (event.key != " " || !event.target.closest(".control-button, .panel"))
         ) {
-          // Pressing "space" fires a "keydown" event which can also trigger a control
-          // button's "click" event. Handle the "keydown" event only when the event did
-          // not originate from a control button and it is not a "space" keypress.
+          // Pressing "space" fires a "keydown" event which can also activate a
+          // focused control. Let "space" toggle playback unless a control that
+          // it would activate has focus.
           this.onKeyDown(event);
         }
 
+        break;
+      }
+
+      case "mousedown": {
+        this.onMouseDown(event);
         break;
       }
 
@@ -865,16 +892,12 @@ let Player = {
     // Set the subtitles font size prefs
     Services.prefs.setBoolPref(
       CAPTIONS_TOGGLE_ENABLED_PREF,
-      document.querySelector("#subtitles-toggle").checked
+      this.subtitlesToggle.pressed
     );
-    for (let radio of document.querySelectorAll(
-      'input[type=radio][name="cc-size"]'
-    )) {
-      if (radio.checked) {
-        Services.prefs.setCharPref(TEXT_TRACK_FONT_SIZE_PREF, radio.id);
-        break;
-      }
-    }
+    Services.prefs.setCharPref(
+      TEXT_TRACK_FONT_SIZE_PREF,
+      this.fontSizeRadioGroup.value
+    );
     const { reason } = closeData;
     PictureInPicture.closeSinglePipWindow({ reason, actorRef: this.actor });
   },
@@ -952,21 +975,6 @@ let Player = {
         });
         break;
       }
-
-      case "font-size-selection-radio-small": {
-        document.getElementById("small").click();
-        break;
-      }
-
-      case "font-size-selection-radio-medium": {
-        document.getElementById("medium").click();
-        break;
-      }
-
-      case "font-size-selection-radio-large": {
-        document.getElementById("large").click();
-        break;
-      }
     }
     // If the click came from a element that is not inside the subtitles settings panel
     // then we want to hide the panel
@@ -1011,7 +1019,7 @@ let Player = {
       this.showVideoControls();
 
       if (options?.isKeyboard) {
-        document.querySelector("#subtitles-toggle").focus();
+        this.subtitlesToggle.focus();
       }
     }
   },
@@ -1079,9 +1087,7 @@ let Player = {
     // We don't want to send a keydown event if the event target was one of the
     // font sizes in the settings panel or a control in the playback speed panel
     if (
-      event.target.parentElement?.parentElement?.classList?.contains(
-        "font-size-selection"
-      ) ||
+      this.fontSizeRadioGroup.contains(event.target) ||
       this.playbackRatePanel.contains(event.target)
     ) {
       return;
@@ -1154,9 +1160,7 @@ let Player = {
     // The subtitles toggle has been click in the settings panel so we toggle
     // the overlay above the font sizes and send a message to toggle the
     // visibility of the subtitles and set the toggle pref
-    document
-      .querySelector(".font-size-selection")
-      .classList.toggle("font-size-overlay");
+    this.fontSizeRadioGroup.classList.toggle("font-size-overlay");
     this.actor.sendAsyncMessage("PictureInPicture:ToggleTextTracks");
 
     this.captionsToggleEnabled = !this.captionsToggleEnabled;
@@ -1253,6 +1257,21 @@ let Player = {
       dragDirection = "draggedUp";
     }
     return dragDirection;
+  },
+
+  /**
+   * Event handler for "mousedown" events on the PiP window.
+   *
+   * @param {Event} event
+   *  Event context details
+   */
+  onMouseDown(event) {
+    // Prevent mouse clicks moving focus onto the control buttons.
+    // Otherwise, if focus stays, "space" key presses would act on that button
+    // instead of toggling playback.
+    if (event.target.closest(".control-button")) {
+      event.preventDefault();
+    }
   },
 
   /**
@@ -1382,7 +1401,7 @@ let Player = {
     // the UI toggle to change the toggle to unchecked. This will call
     // onToggleChange where this.captionsToggleEnabled will be updated
     if (!Services.prefs.getBoolPref(CAPTIONS_TOGGLE_ENABLED_PREF, true)) {
-      document.querySelector("#subtitles-toggle").click();
+      this.subtitlesToggle.click();
     }
   },
 
@@ -1429,9 +1448,42 @@ let Player = {
     this.closePipWindow({ reason: "Shortcut" });
   },
 
+  /**
+   * Get the visible control preceding another button, wrapping around
+   * if needed. For example, if the next preceding button is at the top
+   * right corner from the buttom center, return the button from that position.
+   *
+   * @returns {Element|null}
+   *  The preceding control
+   */
+  getControlBefore(control) {
+    let controls = this.focusableControls;
+    let index = controls.indexOf(control);
+    if (index < 0) {
+      return null;
+    }
+    return controls.at(index - 1) ?? null;
+  },
+
   get controls() {
     delete this.controls;
     return (this.controls = document.getElementById("controls"));
+  },
+
+  /**
+   * Get an array of visible controls that can take focus, in DOM order.
+   * Don't store the result, for the layout can change when the window
+   * resizes or metadata loads.
+   *
+   * @returns {Array<Element>}
+   *  Array of focusable, visible controls
+   */
+  get focusableControls() {
+    return [
+      ...this.controls.querySelectorAll(
+        "button.control-item, input.control-item"
+      ),
+    ].filter(control => !control.disabled && control.checkVisibility());
   },
 
   get scrubber() {
@@ -1457,6 +1509,11 @@ let Player = {
   get seekBackward() {
     delete this.seekBackward;
     return (this.seekBackward = document.getElementById("seekBackward"));
+  },
+
+  get playpauseButton() {
+    delete this.playpauseButton;
+    return (this.playpauseButton = document.getElementById("playpause"));
   },
 
   get seekForward() {
@@ -1492,6 +1549,18 @@ let Player = {
   get settingsPanel() {
     delete this.settingsPanel;
     return (this.settingsPanel = document.getElementById("settings"));
+  },
+
+  get subtitlesToggle() {
+    delete this.subtitlesToggle;
+    return (this.subtitlesToggle = document.getElementById("subtitles-toggle"));
+  },
+
+  get fontSizeRadioGroup() {
+    delete this.fontSizeRadioGroup;
+    return (this.fontSizeRadioGroup = document.querySelector(
+      ".font-size-selection"
+    ));
   },
 
   _isPlaying: false,

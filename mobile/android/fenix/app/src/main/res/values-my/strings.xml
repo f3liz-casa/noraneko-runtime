@@ -77,11 +77,7 @@
   <string name="home_screen_shortcut_open_new_private_tab_2">တစ်ကိုယ်ရေသုံး တပ်ဗ်အသစ်</string>
   <!-- Button text for showing all the tabs in the tabs tray -->
   <string name="recent_tabs_show_all">အားလုံးကို ပြပါ</string>
-  <!--
-    Browser Fragment
-
-    Content description (not visible, for screen readers etc.): Navigate backward (browsing history)
-  -->
+  <!-- Content description (not visible, for screen readers etc.): Navigate backward (browsing history) -->
   <string name="browser_menu_back">နောက်သို့</string>
   <!-- Content description (not visible, for screen readers etc.): Navigate forward (browsing history) -->
   <string name="browser_menu_forward">ရှေ့သို့</string>
@@ -175,7 +171,11 @@
     Title for the settings page
   -->
   <string name="settings">အပြင်အဆင်များ</string>
-  <!-- Preference category for general settings -->
+  <!--
+    Preferences
+
+    Preference category for general settings
+  -->
   <string name="preferences_category_general">အထွေထွေ</string>
   <!-- Preference category for all links about Fenix -->
   <string name="preferences_category_about">အကြောင်းအရာ</string>
@@ -402,8 +402,6 @@
     Title of preference for tabs management
   -->
   <string name="preferences_tabs">တက်ဗ်များ</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">တက်ဗ် မြင်ကွင်း</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">စာရင်း</string>
   <!-- Option for a grid tab view -->

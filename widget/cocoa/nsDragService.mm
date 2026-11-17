@@ -24,6 +24,7 @@
 #include "nsPoint.h"
 #include "nsPrimitiveHelpers.h"
 #include "nsRect.h"
+#include "nsServiceManagerUtils.h"
 #include "nsString.h"
 #include "nsXPCOM.h"
 
@@ -44,6 +45,59 @@ mozilla::StaticRefPtr<nsIArray> gDraggedTransferables;
 already_AddRefed<nsIDragSession> nsDragService::CreateDragSession() {
   auto sess = MakeRefPtr<nsDragSession>();
   return sess.forget();
+}
+
+/* static */
+void nsDragService::EndStaleDragSession(const char* aCaller) {
+  nsCOMPtr<nsIDragService> service =
+      do_GetService("@mozilla.org/widget/dragservice;1");
+  if (!service) {
+    return;
+  }
+
+  nsCOMPtr<nsIDragSession> session;
+  service->GetCurrentSession(nullptr, getter_AddRefs(session));
+  if (!session) {
+    return;
+  }
+
+  RefPtr<nsDragSession> dragSession =
+      static_cast<nsDragSession*>(session.get());
+  MOZ_LOG(sCocoaLog, LogLevel::Info,
+          ("nsDragService::EndStaleDragSession: %s found session %p", aCaller,
+           dragSession.get()));
+  dragSession->EndAsStale();
+}
+
+void nsDragSession::EndAsStale() {
+  // Ending a session tells the source about the end of the drag, which runs
+  // script. Leave a session that is already doing this alone, and leave the
+  // sessions that automated tests drive by hand alone as well. A drag that
+  // another application started has no native drag view. macOS can send us
+  // mouse moves without a pressed button while it is over one of our views, and
+  // it ends through draggingExited: or performDragOperation:.
+  if (mEndingSession || mSessionIsSynthesizedForTests || !mNativeDragView) {
+    MOZ_LOG(
+        sCocoaLog, LogLevel::Info,
+        ("nsDragSession::EndAsStale: keeping session %p | ending: %d | "
+         "synthesized for tests: %d | native drag view: %p",
+         this, mEndingSession, mSessionIsSynthesizedForTests, mNativeDragView));
+    return;
+  }
+
+  MOZ_LOG(sCocoaLog, LogLevel::Info,
+          ("nsDragSession::EndAsStale: ending session %p", this));
+  NS_WARNING("Ending a drag session that lost its native drag session.");
+
+  // Report this as a drag that the user cancelled. Any other drop effect would,
+  // for example, make a tab drag tear the tab into a new window at whatever
+  // position the mouse happens to be in. EndDragSessionImpl takes
+  // mUserCancelled from gUserCancelledDrag.
+  gUserCancelledDrag = true;
+  if (mDataTransfer) {
+    mDataTransfer->SetDropEffectInt(nsIDragService::DRAGDROP_ACTION_NONE);
+  }
+  EndDragSession(true, 0);
 }
 
 NSImage* nsDragSession::ConstructDragImage(nsINode* aDOMNode,
@@ -121,7 +175,7 @@ NSImage* nsDragSession::ConstructDragImage(nsINode* aDOMNode,
   }
 
   RefPtr<DrawTarget> dt = Factory::CreateDrawTargetForData(
-      BackendType::CAIRO, map.mData, dataSurface->GetSize(), map.mStride,
+      BackendType::SKIA, map.mData, dataSurface->GetSize(), map.mStride,
       dataSurface->GetFormat());
   if (!dt) {
     dataSurface->Unmap();
@@ -255,6 +309,14 @@ nsresult nsDragSession::InvokeDragSessionImpl(
       beginDraggingSessionWithItems:[NSArray arrayWithObject:dragItem]
                               event:mNativeDragEvent
                              source:mNativeDragView];
+  if (!mNSDraggingSession) {
+    // The system refused to start a drag, for example because the mouse button
+    // was released before we got here. Fail, so that our caller ends this drag
+    // session instead of leaving it behind without a native drag session that
+    // could ever end it.
+    NS_WARNING("The system refused to begin a native drag session.");
+    return NS_ERROR_FAILURE;
+  }
 
   mNSDraggingSession.animatesToStartingPositionsOnCancelOrFail =
       !mDataTransfer || mDataTransfer->MozShowFailAnimation();
@@ -498,6 +560,12 @@ nsresult nsDragSession::EndDragSessionImpl(bool aDoneDrag,
                                            uint32_t aKeyModifiers) {
   NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
+  // The base class runs script while it ends the session, and that script can
+  // try to end the session again.
+  if (mEndingSession) {
+    return NS_ERROR_FAILURE;
+  }
+
   mNSDraggingSession = nil;
 
   if (mNativeDragView) {
@@ -510,6 +578,7 @@ nsresult nsDragSession::EndDragSessionImpl(bool aDoneDrag,
   }
 
   mUserCancelled = gUserCancelledDrag;
+  gUserCancelledDrag = false;
 
   nsresult rv = nsBaseDragSession::EndDragSessionImpl(aDoneDrag, aKeyModifiers);
   mDataItems = nullptr;

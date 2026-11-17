@@ -84,8 +84,6 @@ def issue_api_call():
     branch = os.environ["BRANCH"]
     url = f"{GITHUB_API}/repos/{GITHUB_REPO}/actions/workflows/{workflow_id}/dispatches"
     data = {"ref": branch, "inputs": {input_key: target_url}}
-    if os.environ.get("TEST_SET"):
-        data["inputs"]["test_set"] = os.environ.get("TEST_SET")
     resp = get_session().post(url=url, headers=build_headers(), json=data, timeout=30)
     print(url, data)
     print(resp.status_code, resp.reason)

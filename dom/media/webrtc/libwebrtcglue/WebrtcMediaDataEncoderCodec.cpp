@@ -9,6 +9,7 @@
 #include "AnnexB.h"
 #include "ImageContainer.h"
 #include "MediaData.h"
+#include "MediaDataCodec.h"
 #include "PEMFactory.h"
 #include "VideoUtils.h"
 #include "api/video_codecs/h264_profile_level_id.h"
@@ -17,7 +18,6 @@
 #include "modules/video_coding/utility/vp9_uncompressed_header_parser.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/gfx/Point.h"
 #include "mozilla/media/MediaUtils.h"
 
@@ -38,25 +38,6 @@ extern LazyLogModule sPEMLog;
 using namespace media;
 using namespace layers;
 
-CodecType ConvertWebrtcCodecTypeToCodecType(
-    const webrtc::VideoCodecType& aType) {
-  switch (aType) {
-    case webrtc::VideoCodecType::kVideoCodecVP8:
-      return CodecType::VP8;
-    case webrtc::VideoCodecType::kVideoCodecVP9:
-      return CodecType::VP9;
-    case webrtc::VideoCodecType::kVideoCodecH264:
-      return CodecType::H264;
-    case webrtc::VideoCodecType::kVideoCodecAV1:
-      return CodecType::AV1;
-    case webrtc::VideoCodecType::kVideoCodecGeneric:
-    case webrtc::VideoCodecType::kVideoCodecH265:
-      return CodecType::Unknown;
-  }
-  MOZ_CRASH("Unsupported codec type");
-  return CodecType::Unknown;
-}
-
 /* static */
 media::EncodeSupportSet WebrtcMediaDataEncoder::SupportsCodec(
     const webrtc::VideoCodecType aCodecType) {
@@ -67,7 +48,7 @@ media::EncodeSupportSet WebrtcMediaDataEncoder::SupportsCodec(
     return {};
   }
   auto factory = MakeRefPtr<PEMFactory>();
-  CodecType type = ConvertWebrtcCodecTypeToCodecType(aCodecType);
+  CodecType type = ToCodecType(aCodecType);
   return factory->SupportsCodec(type);
 }
 
@@ -355,6 +336,15 @@ WebrtcVideoEncoder::EncoderInfo WebrtcMediaDataEncoder::GetEncoderInfo() const {
   info.is_hardware_accelerated = false;
   info.supports_simulcast = false;
 
+  if (mCodecSpecific.codecType == webrtc::VideoCodecType::kVideoCodecH264) {
+    // Without this, libwebrtc's QualityScalerResource is torn down whenever
+    // this encoder becomes active, discarding any resolution restriction a
+    // fallback encoder already established (see
+    // VideoStreamEncoderResourceManager::UpdateQualityScalerSettings).
+    info.scaling_settings = WebrtcVideoEncoder::ScalingSettings(
+        kLowH264QpThreshold, kHighH264QpThreshold);
+  }
+
 #ifdef MOZ_WIDGET_ANDROID
   // Assume MediaDataEncoder is used mainly for hardware encoding. 16-alignment
   // seems required on Android. This could be improved by querying the
@@ -410,7 +400,9 @@ static already_AddRefed<VideoData> CreateVideoDataFromWebrtcVideoFrame(
   yCbCrData.mChromaSubsampling = gfx::ChromaSubsampling::HALF_WIDTH_AND_HEIGHT;
 
   RefPtr image = MakeRefPtr<RecyclingPlanarYCbCrImage>(new BufferRecycleBin());
-  image->CopyData(yCbCrData);
+  if (NS_FAILED(image->CopyData(yCbCrData))) {
+    return nullptr;
+  }
 
   // Use the input frame's microsecond timestamp ("webrtc time") as the
   // encoder's time base. This matches what libwebrtc's own encoders do, and
@@ -499,6 +491,9 @@ int32_t WebrtcMediaDataEncoder::Encode(
   RefPtr<VideoData> data = CreateVideoDataFromWebrtcVideoFrame(
       aInputFrame, (*aFrameTypes)[0] == webrtc::VideoFrameType::kVideoFrameKey,
       TimeUnit::FromSeconds(1.0 / mMaxFrameRate));
+  if (!data) {
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
   const gfx::IntSize displaySize = data->mDisplay;
 
   // Record per-frame metadata for the encoder output to recover, keyed by

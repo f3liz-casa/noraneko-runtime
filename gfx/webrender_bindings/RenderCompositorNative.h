@@ -11,13 +11,13 @@
 #include "GLTypes.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/layers/GpuFence.h"
 #include "mozilla/layers/ScreenshotGrabber.h"
 #include "mozilla/webrender/RenderCompositor.h"
 
 namespace mozilla {
 
 namespace layers {
-class GpuFence;
 class NativeLayerRootSnapshotter;
 class NativeLayerRoot;
 class NativeLayer;
@@ -62,8 +62,8 @@ class RenderCompositorNative : public RenderCompositor {
   // Interface for wr::Compositor
   void CompositorBeginFrame() override;
   void CompositorEndFrame() override;
-  void CreateSurface(wr::NativeSurfaceId aId, wr::DeviceIntPoint aVirtualOffset,
-                     wr::DeviceIntSize aTileSize, bool aIsOpaque) override;
+  void CreateSurface(wr::NativeSurfaceId aId, wr::DeviceIntSize aTileSize,
+                     bool aIsOpaque) override;
   void CreateExternalSurface(wr::NativeSurfaceId aId, bool aIsOpaque) override;
   void CreateBackdropSurface(wr::NativeSurfaceId aId,
                              wr::ColorF aColor) override;

@@ -78,7 +78,7 @@ When working on the profiler, here are some guiding principles to keep in mind:
   instead, more below.)
 
 - Follow the
-  [Coding Style](https://firefox-source-docs.mozilla.org/code-quality/coding-style/index.html).
+  {doc}`Coding Style </code-quality/coding-style/index>`.
 
 - Whenever possible, write tests (if not present already) for code you add or
   modify -- but this may be too difficult in some case, use good judgement and
@@ -250,7 +250,7 @@ continue, see [bug 1681416](https://bugzilla.mozilla.org/show_bug.cgi?id=1681416
 
 ### Platform support
 
-Mozilla officially supports the Profiler on [tier-1 platforms](https://firefox-source-docs.mozilla.org/build/buildsystem/supported-configurations.html):
+Mozilla officially supports the Profiler on {doc}`tier-1 platforms </build/buildsystem/supported-configurations>`:
 Windows, macos, Linux and Android.
 There is also some code (markers recording) running on tier 2-3 platforms (e.g., for FreeBSD), but
 the team at Mozilla is not obligated to maintain it; we do try to keep it
@@ -902,7 +902,7 @@ takes all this information and eventually outputs it in the final JSON profile.
 
 ### Adding Markers from C++
 
-See <https://firefox-source-docs.mozilla.org/tools/profiler/markers-guide.html>
+See {doc}`/tools/profiler/markers-guide`
 
 ### Implementation
 
@@ -963,7 +963,8 @@ retrieves the deserialization tag associated with the marker type. If it's the
 first time this marker type is used,
 [Streaming::TagForMarkerTypeFunctions](https://searchfox.org/mozilla-central/search?q=symbol:_ZN7mozilla28base_profiler_markers_detail9Streaming25TagForMarkerTypeFunctionsEPFvRNS_24ProfileBufferEntryReaderERNS_12baseprofiler20SpliceableJSONWriterEEPFNS_4SpanIKcLy18446744073709551615EEEvEPFNS_12MarkerSchemaEvE,_ZN7mozilla28base_profiler_markers_detail9Streaming25TagForMarkerTypeFunctionsEPFvRNS_24ProfileBufferEntryReaderERNS_12baseprofiler20SpliceableJSONWriterEEPFNS_4SpanIKcLm18446744073709551615EEEvEPFNS_12MarkerSchemaEvE,_ZN7mozilla28base_profiler_markers_detail9Streaming25TagForMarkerTypeFunctionsEPFvRNS_24ProfileBufferEntryReaderERNS_12baseprofiler20SpliceableJSONWriterEEPFNS_4SpanIKcLj4294967295EEEvEPFNS_12MarkerSchemaEvE)
 adds it to the global list (which stores some function pointers used during
-deserialization).
+deserialization, including the marker type name and schema functions that
+every marker type inherits from `BaseMarkerType`).
 
 Then the main serialization happens in
 [StreamFunctionTypeHelper\<decltype(MarkerType::StreamJSONMarkerData)>::Serialize](https://searchfox.org/mozilla-central/search?q=symbol:_ZN7mozilla28base_profiler_markers_detail24StreamFunctionTypeHelperIFT_RNS_12baseprofiler20SpliceableJSONWriterEDpT0_EE9SerializeERNS_20ProfileChunkedBufferERKNS_18ProfilerStringViewIcEERKNS_14MarkerCategoryEONS_13MarkerOptionsEhDpRKS6_).
@@ -971,7 +972,9 @@ Deconstructing this mouthful of an template:
 
 - `MarkerType::StreamJSONMarkerData` is the user-provided function that will
   eventually produce the final JSON, but here it's only used to know the
-  parameter types that it expects.
+  parameter types that it expects. Marker types that don't provide one go
+  through `PayloadFieldsStreamHelper` instead, which takes these parameter
+  types from the `InputType` of each of their `PayloadFields`.
 
 - `StreamFunctionTypeHelper` takes that function prototype, and can extract
   its argument by specializing on `` `R(SpliceableJSONWriter&, As...) ``, now
@@ -998,11 +1001,11 @@ Markers".
 
 ### Adding Markers from Rust
 
-See <https://firefox-source-docs.mozilla.org/tools/profiler/instrumenting-rust.html#adding-markers>
+See [Adding markers](/tools/profiler/instrumenting-rust.md#adding-markers)
 
 ### Adding Markers from JS
 
-See <https://firefox-source-docs.mozilla.org/tools/profiler/instrumenting-javascript.html>
+See {doc}`/tools/profiler/instrumenting-javascript`
 
 ### Adding Markers from Java
 
@@ -1237,11 +1240,12 @@ code in BaseProfilerMarkersDetail.h, the function is defined as
 [MarkerTypeSerialization\<MarkerType>::Deserialize](https://searchfox.org/mozilla-central/search?q=symbol:_ZN7mozilla28base_profiler_markers_detail23MarkerTypeSerialization11DeserializeERNS_24ProfileBufferEntryReaderERNS_12baseprofiler20SpliceableJSONWriterE),
 which outputs the marker type name, and then each marker payload argument. The
 latter is done by using the user-defined `MarkerType::StreamJSONMarkerData`
-parameter list, and recursively deserializing each parameter from the profile
-buffer into an on-stack variable of a corresponding type, at the end of which
-`MarkerType::StreamJSONMarkerData` can be called with all of these arguments
-at it expects, and that function does the actual JSON streaming as the user
-programmed.
+parameter list (or the `PayloadFields` types when there is none), and
+recursively deserializing each parameter from the profile buffer into an
+on-stack variable of a corresponding type, at the end of which
+`MarkerType::StreamJSONMarkerData` (or `BaseMarkerType`'s
+`StreamJSONMarkerDataImpl`) can be called with all of these arguments at it
+expects, and that function does the actual JSON streaming.
 
 ## Profiler Stop
 
@@ -1277,7 +1281,7 @@ The following sections explains how profiling Firefox as a whole works.
 
 ### IPC (Inter-Process Communication)
 
-See <https://firefox-source-docs.mozilla.org/ipc/>.
+See {doc}`/ipc/index`.
 
 As a quick summary, some message-passing function-like declarations live in
 {searchfox}`PProfiler.ipdl <tools/profiler/gecko/PProfiler.ipdl>`,

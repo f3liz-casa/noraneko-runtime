@@ -1633,9 +1633,7 @@ int32_t FilterNodeTileSoftware::InputIndex(uint32_t aInputEnumIndex) {
 void FilterNodeTileSoftware::SetAttribute(uint32_t aIndex,
                                           const IntRect& aSourceRect) {
   MOZ_ASSERT(aIndex == ATT_TILE_SOURCE_RECT);
-  mSourceRect.SetRect(int32_t(aSourceRect.X()), int32_t(aSourceRect.Y()),
-                      int32_t(aSourceRect.Width()),
-                      int32_t(aSourceRect.Height()));
+  mSourceRect = aSourceRect;
   Invalidate();
 }
 
@@ -1673,14 +1671,24 @@ already_AddRefed<DataSourceSurface> FilterNodeTileSoftware::Render(
       InputMap;
   InputMap inputs;
 
+  auto IntRectToInt64Rect = [](const IntRect& aRect) {
+    return RectTyped<UnknownUnits, int64_t>(aRect.X(), aRect.Y(), aRect.Width(),
+                                            aRect.Height());
+  };
+
   IntPoint startIndex = TileIndex(mSourceRect, aRect.TopLeft());
   IntPoint endIndex = TileIndex(mSourceRect, aRect.BottomRight());
   for (int32_t ix = startIndex.x; ix <= endIndex.x; ix++) {
     for (int32_t iy = startIndex.y; iy <= endIndex.y; iy++) {
-      IntPoint sourceToDestOffset(ix * mSourceRect.Width(),
-                                  iy * mSourceRect.Height());
-      IntRect destRect = aRect.Intersect(mSourceRect + sourceToDestOffset);
-      IntRect srcRect = destRect - sourceToDestOffset;
+      auto sourceToDestOffset = PointTyped<UnknownUnits, int64_t>(
+          ix * mSourceRect.Width(), iy * mSourceRect.Height());
+      auto destRect64 = IntRectToInt64Rect(aRect).Intersect(
+          IntRectToInt64Rect(mSourceRect) + sourceToDestOffset);
+      auto srcRect64 = destRect64 - sourceToDestOffset;
+      IntRect destRect, srcRect;
+      if (!destRect64.ToIntRect(&destRect) || !srcRect64.ToIntRect(&srcRect)) {
+        return nullptr;
+      }
       if (srcRect.IsEmpty()) {
         continue;
       }
@@ -2575,7 +2583,7 @@ IntRect FilterNodeConvolveMatrixSoftware::GetOutputRectInRect(
 }
 
 FilterNodeDisplacementMapSoftware::FilterNodeDisplacementMapSoftware()
-    : mScale(0.0f), mChannelX(COLOR_CHANNEL_R), mChannelY(COLOR_CHANNEL_G) {}
+    : mScale(Size{}), mChannelX(COLOR_CHANNEL_R), mChannelY(COLOR_CHANNEL_G) {}
 
 int32_t FilterNodeDisplacementMapSoftware::InputIndex(
     uint32_t aInputEnumIndex) {
@@ -2590,12 +2598,15 @@ int32_t FilterNodeDisplacementMapSoftware::InputIndex(
 }
 
 void FilterNodeDisplacementMapSoftware::SetAttribute(uint32_t aIndex,
-                                                     Float aScale) {
+                                                     const Size& aScale) {
   MOZ_ASSERT(aIndex == ATT_DISPLACEMENT_MAP_SCALE);
-  if (!std::isfinite(aScale)) {
-    aScale = 0.0f;
-  }
   mScale = aScale;
+  if (!std::isfinite(mScale.Width())) {
+    mScale.width = 0.0f;
+  }
+  if (!std::isfinite(mScale.Height())) {
+    mScale.height = 0.0f;
+  }
   Invalidate();
 }
 
@@ -2658,19 +2669,21 @@ already_AddRefed<DataSourceSurface> FilterNodeDisplacementMapSoftware::Render(
   uint16_t xChannel = channelMap[mChannelX];
   uint16_t yChannel = channelMap[mChannelY];
 
-  float scaleOver255 = mScale / 255.0f;
-  float scaleAdjustment = -0.5f * mScale;
+  float xScaleOver255 = mScale.Width() / 255.0f;
+  float xScaleAdjustment = -0.5f * mScale.Width();
+  float yScaleOver255 = mScale.Height() / 255.0f;
+  float yScaleAdjustment = -0.5f * mScale.Height();
 
   for (int32_t y = 0; y < aRect.Height(); y++) {
     for (int32_t x = 0; x < aRect.Width(); x++) {
       uint32_t mapIndex = y * mapStride + 4 * x;
       uint32_t targIndex = y * targetStride + 4 * x;
       int32_t sourceX =
-          x + int32_t(scaleOver255 * mapData[mapIndex + xChannel] +
-                      scaleAdjustment);
+          x + int32_t(xScaleOver255 * mapData[mapIndex + xChannel] +
+                      xScaleAdjustment);
       int32_t sourceY =
-          y + int32_t(scaleOver255 * mapData[mapIndex + yChannel] +
-                      scaleAdjustment);
+          y + int32_t(yScaleOver255 * mapData[mapIndex + yChannel] +
+                      yScaleAdjustment);
       *(uint32_t*)(targetData + targIndex) = ColorAtPoint(
           sourceData, sourceStride, sourceBegin, sourceEnd, sourceX, sourceY);
     }
@@ -2706,7 +2719,8 @@ IntRect FilterNodeDisplacementMapSoftware::InflatedSourceOrDestRect(
   }
 
   RectDouble destOrSourceRect(aDestOrSourceRect);
-  destOrSourceRect.Inflate(ceil(fabs(mScale) / 2));
+  destOrSourceRect.Inflate(ceil(fabs(mScale.Width()) / 2),
+                           ceil(fabs(mScale.Height()) / 2));
   if (!RectIsInt32Safe(destOrSourceRect)) {
     return IntRect();
   }

@@ -3,43 +3,6 @@ ChromeUtils.defineESModuleGetters(this, {
   TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
 });
 
-const SINGLE_TRY_TIMEOUT = 100;
-const NUMBER_OF_TRIES = 30;
-
-function waitForConditionPromise(
-  condition,
-  timeoutMsg,
-  tryCount = NUMBER_OF_TRIES
-) {
-  return new Promise((resolve, reject) => {
-    let tries = 0;
-    function checkCondition() {
-      if (tries >= tryCount) {
-        reject(timeoutMsg);
-      }
-      var conditionPassed;
-      try {
-        conditionPassed = condition();
-      } catch (e) {
-        return reject(e);
-      }
-      if (conditionPassed) {
-        return resolve();
-      }
-      tries++;
-      setTimeout(checkCondition, SINGLE_TRY_TIMEOUT);
-      return undefined;
-    }
-    setTimeout(checkCondition, SINGLE_TRY_TIMEOUT);
-  });
-}
-
-function waitForCondition(condition, nextTest, errorMsg) {
-  waitForConditionPromise(condition, errorMsg).then(nextTest, reason => {
-    ok(false, reason + (reason.stack ? "\n" + reason.stack : ""));
-  });
-}
-
 /**
  * An utility function to write some text in the search input box
  * in a content page.
@@ -206,20 +169,6 @@ function getPopupNotificationNode() {
   return popupNotifications[0];
 }
 
-/**
- * Disable non-release page actions (that are tested elsewhere).
- *
- * @return void
- */
-async function disableNonReleaseActions() {
-  if (!["release", "esr"].includes(AppConstants.MOZ_UPDATE_CHANNEL)) {
-    SpecialPowers.Services.prefs.setBoolPref(
-      "extensions.webcompat-reporter.enabled",
-      false
-    );
-  }
-}
-
 function assertActivatedPageActionPanelHidden() {
   Assert.ok(
     !document.getElementById(BrowserPageActions._activatedActionPanelID)
@@ -329,8 +278,6 @@ async function promisePageActionViewChildrenVisible(panelViewNode) {
 }
 
 async function initPageActionsTest() {
-  await disableNonReleaseActions();
-
   // Make the main button visible. It's not unless the window is narrow. This
   // test isn't concerned with that behavior. We have other tests for that.
   BrowserPageActions.mainButtonNode.style.display = "flex";

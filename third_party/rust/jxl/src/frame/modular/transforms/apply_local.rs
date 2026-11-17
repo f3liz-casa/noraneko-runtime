@@ -4,17 +4,17 @@
 // license that can be found in the LICENSE file.
 use std::fmt::Debug;
 
-use crate::{
-    error::Result,
-    frame::modular::{
-        ChannelInfo,
-        buffers::ModularChannel,
-        transforms::{meta_apply::meta_apply_single_transform, step::TransformStep},
-    },
-    headers::modular::GroupHeader,
-    image::Rect,
-    util::tracing_wrappers::*,
+use crate::error::{Error, Result};
+use crate::frame::modular::buffers::ModularChannel;
+use crate::frame::modular::transforms::meta_apply::meta_apply_single_transform;
+use crate::frame::modular::transforms::palette::PaletteStep;
+use crate::frame::modular::transforms::step::TransformStep;
+use crate::frame::modular::{
+    ChannelInfo, ModularStorage, ScratchSpace, max_channels, max_modular_transforms,
 };
+use crate::headers::modular::GroupHeader;
+use crate::image::BufferRecycler;
+use crate::util::tracing_wrappers::*;
 
 #[derive(Debug)]
 pub enum LocalTransformBuffer<'a> {
@@ -29,12 +29,12 @@ pub enum LocalTransformBuffer<'a> {
 }
 
 impl LocalTransformBuffer<'_> {
-    fn channel_info(&self) -> ChannelInfo {
+    fn channel_info(&self, storage: ModularStorage) -> ChannelInfo {
         match self {
             LocalTransformBuffer::Empty => unreachable!("an empty buffer has no channel info"),
-            LocalTransformBuffer::Owned(m) => m.channel_info(),
+            LocalTransformBuffer::Owned(m) => m.channel_info(storage),
             LocalTransformBuffer::Placeholder(c) => *c,
-            LocalTransformBuffer::Borrowed(m) => m.channel_info(),
+            LocalTransformBuffer::Borrowed(m) => m.channel_info(storage),
         }
     }
 
@@ -56,12 +56,24 @@ impl LocalTransformBuffer<'_> {
         r
     }
 
-    fn allocate_if_needed(&mut self) -> Result<()> {
+    pub fn recycle(self, recycler: &BufferRecycler) {
+        if let LocalTransformBuffer::Owned(m) = self {
+            recycler.recycle_raw_buffer(m.data);
+        }
+    }
+
+    fn allocate_if_needed(
+        &mut self,
+        storage: ModularStorage,
+        recycler: &BufferRecycler,
+    ) -> Result<()> {
         if let LocalTransformBuffer::Placeholder(c) = self {
             *self = LocalTransformBuffer::Owned(ModularChannel::new_with_shift(
                 c.size,
+                storage,
                 c.shift,
                 c.bit_depth,
+                recycler,
             )?);
         }
         Ok(())
@@ -73,15 +85,38 @@ pub fn meta_apply_local_transforms<'a, 'b>(
     channels_in: Vec<&'a mut ModularChannel>,
     buffer_storage: &'b mut Vec<LocalTransformBuffer<'a>>,
     header: &GroupHeader,
+    storage: ModularStorage,
+    recycler: &BufferRecycler,
+    level5_limits: bool,
 ) -> Result<(Vec<&'b mut ModularChannel>, Vec<TransformStep>)> {
     let mut transform_steps = vec![];
 
     // (buffer id, channel info)
     let mut channels: Vec<_> = channels_in
         .iter()
-        .map(|x| x.channel_info())
+        .map(|x| x.channel_info(storage))
         .enumerate()
         .collect();
+
+    let max_transforms = max_modular_transforms(level5_limits);
+    if header.transforms.len() > max_transforms {
+        return Err(Error::level_limit(
+            level5_limits,
+            "modular transforms",
+            header.transforms.len() as u64,
+            max_transforms as u64,
+        ));
+    }
+
+    let max_channels = max_channels(level5_limits);
+    if channels.len() > max_channels {
+        return Err(Error::level_limit(
+            level5_limits,
+            "modular channels",
+            channels.len() as u64,
+            max_channels as u64,
+        ));
+    }
 
     debug!(?channels, "initial channels");
 
@@ -89,12 +124,13 @@ pub fn meta_apply_local_transforms<'a, 'b>(
     buffer_storage.extend(channels_in.into_iter().map(LocalTransformBuffer::Borrowed));
 
     #[allow(unused_variables)]
-    let mut add_transform_buffer = |info, description| {
+    let mut add_transform_buffer = |info: ChannelInfo, description| {
         trace!(description, ?info, "adding channel buffer");
-        buffer_storage.push(LocalTransformBuffer::Placeholder(info));
+        buffer_storage.push(LocalTransformBuffer::Placeholder(info.as_allocated()));
         buffer_storage.len() - 1
     };
 
+    let mut cumulative_palette_samples = 0;
     // Apply transforms to the channel list.
     for transform in &header.transforms {
         meta_apply_single_transform(
@@ -103,7 +139,19 @@ pub fn meta_apply_local_transforms<'a, 'b>(
             &mut channels,
             &mut transform_steps,
             &mut add_transform_buffer,
+            &mut cumulative_palette_samples,
+            // Reasonable upper bound.
+            1 << 26,
+            level5_limits,
         )?;
+        if channels.len() > max_channels {
+            return Err(Error::level_limit(
+                level5_limits,
+                "modular channels",
+                channels.len() as u64,
+                max_channels as u64,
+            ));
+        }
     }
 
     debug!(?channels, ?buffer_storage, "channels after transforms");
@@ -113,7 +161,7 @@ pub fn meta_apply_local_transforms<'a, 'b>(
     // if necessary.
     if !channels.iter().map(|x| x.0).is_sorted() {
         let mut buf_new_position: Vec<_> = channels.iter().map(|x| x.0).collect();
-        buf_new_position.sort();
+        buf_new_position.sort_unstable();
         let buf_tmp: Vec<_> = channels
             .iter()
             .map(|x| {
@@ -189,9 +237,10 @@ pub fn meta_apply_local_transforms<'a, 'b>(
         } = ts
         {
             for c in 0..3 {
-                assert_eq!(
-                    buffer_storage[buf_in[c]].channel_info(),
-                    buffer_storage[buf_out[c]].channel_info()
+                assert!(
+                    buffer_storage[buf_in[c]]
+                        .channel_info(storage)
+                        .is_equivalent(&buffer_storage[buf_out[c]].channel_info(storage))
                 );
                 assert!(matches!(
                     buffer_storage[buf_in[c]],
@@ -206,7 +255,7 @@ pub fn meta_apply_local_transforms<'a, 'b>(
 
     // Allocate all the coded channels if they aren't yet.
     for (buf, _) in channels.iter() {
-        buffer_storage[*buf].allocate_if_needed()?;
+        buffer_storage[*buf].allocate_if_needed(storage, recycler)?;
     }
 
     debug!(?channels, ?buffer_storage, "allocated buffers");
@@ -233,7 +282,13 @@ pub fn meta_apply_local_transforms<'a, 'b>(
 impl TransformStep {
     // Marks that one dependency of this transform is ready, and potentially runs the transform,
     // returning the new buffers that are now ready.
-    pub fn local_apply(&self, buffers: &mut [LocalTransformBuffer]) -> Result<()> {
+    pub fn local_apply(
+        &self,
+        buffers: &mut [LocalTransformBuffer],
+        scratch_space: &mut ScratchSpace,
+        storage: ModularStorage,
+        recycler: &BufferRecycler,
+    ) -> Result<()> {
         match self {
             TransformStep::Rct {
                 buf_in,
@@ -242,9 +297,10 @@ impl TransformStep {
                 perm,
             } => {
                 for i in 0..3 {
-                    assert_eq!(
-                        buffers[buf_in[i]].channel_info(),
-                        buffers[buf_out[i]].channel_info()
+                    assert!(
+                        buffers[buf_in[i]]
+                            .channel_info(storage)
+                            .is_equivalent(&buffers[buf_out[i]].channel_info(storage))
                     );
                 }
                 let [mut a, mut b, mut c] = [
@@ -254,7 +310,7 @@ impl TransformStep {
                 ];
                 {
                     let mut bufs = [a.borrow_mut(), b.borrow_mut(), c.borrow_mut()];
-                    super::rct::do_rct_step(&mut bufs, *op, *perm);
+                    super::rct::do_rct_step(&mut bufs, storage, *op, *perm);
                 }
                 buffers[buf_out[0]] = a;
                 buffers[buf_out[1]] = b;
@@ -264,33 +320,46 @@ impl TransformStep {
                 buf_in,
                 buf_pal,
                 buf_out,
-                num_colors,
                 num_deltas,
                 predictor,
                 wp_header,
             } => {
                 for b in buf_out.iter() {
                     assert_eq!(
-                        buffers[*b].channel_info().size,
-                        buffers[*buf_in].channel_info().size
+                        buffers[*b].channel_info(storage).size,
+                        buffers[*buf_in].channel_info(storage).size
                     );
-                    buffers[*b].allocate_if_needed()?;
+                    buffers[*b].allocate_if_needed(storage, recycler)?;
                 }
                 let mut img_in = buffers[*buf_in].take();
                 let mut img_pal = buffers[*buf_pal].take();
                 let mut out_bufs: Vec<_> = buf_out.iter().map(|x| buffers[*x].take()).collect();
                 {
                     let mut bufs: Vec<_> = out_bufs.iter_mut().map(|x| x.borrow_mut()).collect();
-                    super::palette::do_palette_step_general(
-                        img_in.borrow_mut(),
-                        img_pal.borrow_mut(),
-                        &mut bufs,
-                        *num_colors,
-                        *num_deltas,
-                        *predictor,
+                    let in_chan: &ModularChannel = img_in.borrow_mut();
+                    PaletteStep {
+                        buf_in: std::slice::from_ref(&in_chan),
+                        buf_pal: img_pal.borrow_mut(),
+                        buf_out: &mut bufs,
+                        num_deltas: *num_deltas,
+                        predictor: *predictor,
                         wp_header,
-                    );
+                        grid_xsize: 1,
+                        buf_left: None,
+                        buf_top: None,
+                        buf_topleft: None,
+                        prev_aux: None,
+                        aux_out: &mut [],
+                        storage,
+                        is_partial: false,
+                    }
+                    .run(
+                        &mut scratch_space.palette_row_scratch,
+                        &mut scratch_space.tree_scratch.wp_scratch,
+                    )?;
                 }
+                img_in.recycle(recycler);
+                img_pal.recycle(recycler);
                 for (pos, buf) in buf_out.iter().zip(out_bufs) {
                     buffers[*pos] = buf;
                 }
@@ -298,55 +367,50 @@ impl TransformStep {
             TransformStep::HSqueeze {
                 buf_in, buf_out, ..
             } => {
-                buffers[*buf_out].allocate_if_needed()?;
+                buffers[*buf_out].allocate_if_needed(storage, recycler)?;
                 let mut out_buf = buffers[*buf_out].take();
                 let mut in_avg = buffers[buf_in[0]].take();
                 let mut in_res = buffers[buf_in[1]].take();
                 {
                     let mut bufs: Vec<_> = vec![out_buf.borrow_mut()];
-                    let in_avg = &in_avg.borrow_mut().data;
-                    let in_res = &in_res.borrow_mut().data;
+                    let in_avg_guard = in_avg.borrow_mut();
+                    let in_res_guard = in_res.borrow_mut();
                     super::squeeze::do_hsqueeze_step(
-                        &in_avg.get_rect(Rect {
-                            size: in_avg.size(),
-                            origin: (0, 0),
-                        }),
-                        &in_res.get_rect(Rect {
-                            size: in_res.size(),
-                            origin: (0, 0),
-                        }),
-                        &None,
+                        &in_avg_guard.data.as_rect(),
+                        &in_res_guard.data.as_rect(),
+                        None,
                         None,
                         &mut bufs,
+                        storage,
+                        &mut scratch_space.hsqueeze_i16_scratch,
                     );
                 }
+                in_avg.recycle(recycler);
+                in_res.recycle(recycler);
                 buffers[*buf_out] = out_buf;
             }
             TransformStep::VSqueeze {
                 buf_in, buf_out, ..
             } => {
-                buffers[*buf_out].allocate_if_needed()?;
+                buffers[*buf_out].allocate_if_needed(storage, recycler)?;
                 let mut out_buf = buffers[*buf_out].take();
                 let mut in_avg = buffers[buf_in[0]].take();
                 let mut in_res = buffers[buf_in[1]].take();
                 {
                     let mut bufs: Vec<_> = vec![out_buf.borrow_mut()];
-                    let in_avg = &in_avg.borrow_mut().data;
-                    let in_res = &in_res.borrow_mut().data;
+                    let in_avg_guard = in_avg.borrow_mut();
+                    let in_res_guard = in_res.borrow_mut();
                     super::squeeze::do_vsqueeze_step(
-                        &in_avg.get_rect(Rect {
-                            size: in_avg.size(),
-                            origin: (0, 0),
-                        }),
-                        &in_res.get_rect(Rect {
-                            size: in_res.size(),
-                            origin: (0, 0),
-                        }),
-                        &None,
+                        &in_avg_guard.data.as_rect(),
+                        &in_res_guard.data.as_rect(),
+                        None,
                         None,
                         &mut bufs,
+                        storage,
                     );
                 }
+                in_avg.recycle(recycler);
+                in_res.recycle(recycler);
                 buffers[*buf_out] = out_buf;
             }
             TransformStep::Output { .. } => {

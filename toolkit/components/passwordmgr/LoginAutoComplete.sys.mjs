@@ -158,17 +158,26 @@ class LoginAutocompleteItem extends AutocompleteItem {
       secondaryAction: lazy.removeRecordsEnabled
         ? {
             type: "menupopup",
-            label: lazy.l10n.formatValueSync("autocomplete-more-actions2", {
-              entry: username,
-            }),
+            label: lazy.l10n.formatValueSync(
+              "autocomplete-more-options-for-entry",
+              { entry: username }
+            ),
+            tooltip: lazy.l10n.formatValueSync("autocomplete-more-options"),
             actions: [
               {
                 label: lazy.l10n.formatValueSync("autocomplete-edit-password"),
+                type: "edit",
+                fillMessageName: "PasswordManager:OpenPreferences",
+                fillMessageData: {
+                  loginGuid: login.guid,
+                  entryPoint: "Autocomplete",
+                },
               },
               {
                 label: lazy.l10n.formatValueSync(
                   "autocomplete-delete-password"
                 ),
+                type: "delete",
                 fillMessageName: "PasswordManager:DeleteLogin",
                 fillMessageData: {
                   loginGuid: login.guid,

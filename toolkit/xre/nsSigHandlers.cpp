@@ -19,6 +19,7 @@
 #  include "nsDebug.h"
 #  include "nsString.h"
 #  include "nsXULAppAPI.h"
+#  include "nsCharSeparatedTokenizer.h"
 
 #  if defined(LINUX)
 #    include <sys/time.h>
@@ -173,21 +174,57 @@ static bool IsCrashyGtkMessage(const nsACString& aMessage) {
     // https://gitlab.gnome.org/GNOME/gtk/-/blob/gtk-3-24/gdk/wayland/gdkeventsource.c#L205
     return true;
   }
+  if (aMessage.Contains("received an X Window System error"_ns)) {
+    // https://gitlab.gnome.org/GNOME/gtk/-/blob/gtk-3-24/gdk/x11/gdkdisplay-x11.c#L2746
+    return true;
+  }
   return false;
 }
 
+// Reduce GDK's nine-line X error report to the two lines that identify the
+// failure: "The error was '...'" and the "(Details: ...)" line with the serial,
+// error, request and minor codes. Returns false for any other message, leaving
+// aSummary alone, so callers can report it verbatim.
+static bool SummarizeXErrorMessage(const nsACString& aMessage,
+                                   nsACString& aSummary) {
+  if (!aMessage.Contains("received an X Window System error"_ns)) {
+    return false;
+  }
+  nsAutoCString summary;
+  for (const auto& line : aMessage.Split('\n')) {
+    nsAutoCString candidate(line);
+    candidate.CompressWhitespace();
+    if (StringBeginsWith(candidate, "The error was "_ns) ||
+        StringBeginsWith(candidate, "(Details: "_ns)) {
+      if (!summary.IsEmpty()) {
+        summary.Append(' ');
+      }
+      summary.Append(candidate);
+    }
+  }
+  if (summary.IsEmpty()) {
+    return false;
+  }
+  aSummary.Assign(summary);
+  return true;
+}
+
 static void HandleGLibMessage(GLogLevelFlags aLogLevel,
-                              const nsDependentCString& aMessage) {
+                              const nsCString& aMessage) {
   if (MOZ_UNLIKELY(IsCrashyGtkMessage(aMessage))) {
+    nsAutoCString reason;
+    if (!SummarizeXErrorMessage(aMessage, reason)) {
+      reason.Assign(aMessage);
+    }
 #    ifdef MOZ_WAYLAND
     MOZ_CRASH_UNSAFE_PRINTF(
         "(%s) %s Proxy: %s",
-        mozilla::widget::GetDesktopEnvironmentIdentifier().get(),
-        strdup(aMessage.get()), WaylandProxy::GetState());
+        mozilla::widget::GetDesktopEnvironmentIdentifier().get(), reason.get(),
+        WaylandProxy::GetState());
 #    else
     MOZ_CRASH_UNSAFE_PRINTF(
         "(%s) %s", mozilla::widget::GetDesktopEnvironmentIdentifier().get(),
-        strdup(aMessage.get()));
+        reason.get());
 #    endif
   }
 
@@ -195,6 +232,13 @@ static void HandleGLibMessage(GLogLevelFlags aLogLevel,
       (G_LOG_LEVEL_ERROR | G_LOG_FLAG_FATAL | G_LOG_FLAG_RECURSION)) {
     NS_DebugBreak(NS_DEBUG_ASSERTION, aMessage.get(), "glib assertion",
                   __FILE__, __LINE__);
+    // GLib aborts on G_LOG_LEVEL_ERROR right after the writer returns, and
+    // that abort leaves no crash reason. Crash here so the message is kept.
+    if (aLogLevel & G_LOG_LEVEL_ERROR) {
+      MOZ_CRASH_UNSAFE_PRINTF(
+          "(%s) %s", mozilla::widget::GetDesktopEnvironmentIdentifier().get(),
+          aMessage.get());
+    }
   } else if (aLogLevel & (G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING)) {
     NS_DebugBreak(NS_DEBUG_WARNING, aMessage.get(), "glib warning", __FILE__,
                   __LINE__);
@@ -214,9 +258,14 @@ GLogWriterOutput glib_log_writer_func(GLogLevelFlags flags,
   static const GLogWriterFunc sLogWriterDefault =
       (GLogWriterFunc)dlsym(RTLD_DEFAULT, "g_log_writer_default");
   for (gsize i = 0; i < n_fields; ++i) {
-    if (!strcmp(fields[i].key, "MESSAGE") && fields[i].length < 0) {
-      HandleGLibMessage(flags,
-                        nsDependentCString((const char*)fields[i].value));
+    if (!strcmp(fields[i].key, "MESSAGE") && fields[i].value) {
+      const char* value = (const char*)fields[i].value;
+      // A negative length means the value is NUL-terminated.
+      if (fields[i].length < 0) {
+        HandleGLibMessage(flags, nsDependentCString(value));
+      } else {
+        HandleGLibMessage(flags, nsCString(value, fields[i].length));
+      }
       break;
     }
   }

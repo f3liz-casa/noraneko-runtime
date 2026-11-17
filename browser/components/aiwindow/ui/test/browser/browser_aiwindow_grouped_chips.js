@@ -139,7 +139,7 @@ add_task(async function test_grouped_chips_single_chip() {
     );
     Assert.ok(!info.hasGroupedChips, "A single chip should not be grouped");
   } finally {
-    mockEngineManager.rejectAllRequests();
+    await mockEngineManager.rejectAllRequests();
     await BrowserTestUtils.closeWindow(win);
     restoreSignIn();
     mockEngineManager.cleanupMocks();
@@ -163,7 +163,7 @@ add_task(async function test_grouped_chips_two_chips() {
     );
     Assert.ok(!info.hasGroupedChips, "Two chips should not be grouped");
   } finally {
-    mockEngineManager.rejectAllRequests();
+    await mockEngineManager.rejectAllRequests();
     await BrowserTestUtils.closeWindow(win);
     restoreSignIn();
     mockEngineManager.cleanupMocks();
@@ -190,7 +190,240 @@ add_task(async function test_grouped_chips_three_chips_group() {
       "Grouped chips should not render individual ai-website-chip elements"
     );
   } finally {
-    mockEngineManager.rejectAllRequests();
+    await mockEngineManager.rejectAllRequests();
+    await BrowserTestUtils.closeWindow(win);
+    restoreSignIn();
+    mockEngineManager.cleanupMocks();
+  }
+});
+
+/**
+ * Adds the given context mentions to the smartbar, submits, and lets the mock
+ * engine finish the turn.
+ *
+ * @param {MozBrowser} browser
+ * @param {MockEngineManager} mockEngineManager
+ * @param {object[]} mentions - Context mentions to add
+ */
+async function sendMessageWithMentions(browser, mockEngineManager, mentions) {
+  const smartbar = BrowserTestUtils.querySelectorDeep(
+    browser.contentDocument,
+    "#ai-window-smartbar"
+  );
+
+  for (const mention of mentions) {
+    smartbar.addContextMention(mention);
+  }
+
+  await typeInSmartbar(browser, "summarize these");
+  await submitSmartbar(browser);
+  await mockEngineManager.respondTo({
+    purpose: "chat",
+    response: "Hello from mock.",
+  });
+}
+
+const TRIP_PLANNING_GROUP = {
+  type: "tabGroup",
+  groupId: "group-1",
+  label: "Trip planning",
+  color: "blue",
+};
+
+add_task(async function test_tab_group_chip_renders_as_single_chip() {
+  const restoreSignIn = skipSignIn();
+  const mockEngineManager = new MockEngineManager();
+  const win = await openAIWindow();
+  const browser = win.gBrowser.selectedBrowser;
+
+  try {
+    await sendMessageWithMentions(browser, mockEngineManager, [
+      TRIP_PLANNING_GROUP,
+    ]);
+
+    const info = await getBubbleChipInfo(browser);
+    Assert.equal(
+      info.websiteChipCount,
+      1,
+      "A referenced tab group renders as a single chip in the submitted message"
+    );
+    Assert.ok(!info.hasGroupedChips, "A single group chip is not grouped");
+
+    const aiChatBrowser = await getAIChatBrowser(browser);
+    const groupChip = await spawnBounded(
+      aiChatBrowser,
+      [],
+      async () => {
+        const contentEl = content.document.querySelector("ai-chat-content");
+        const container = [
+          ...contentEl.shadowRoot.querySelectorAll(
+            ".chat-bubble-user website-chip-container"
+          ),
+        ].at(-1);
+        const chip = container.shadowRoot.querySelector("ai-website-chip");
+        await chip.updateComplete;
+        const node = chip.shadowRoot.querySelector("tab-group-icon");
+
+        const probe = content.document.createElement("div");
+        probe.style.backgroundColor = "var(--tab-group-blue)";
+        content.document.body.appendChild(probe);
+        const expectedColor = content.getComputedStyle(probe).backgroundColor;
+        probe.remove();
+
+        return {
+          initial: node?.shadowRoot.textContent.trim(),
+          color: node && content.getComputedStyle(node).backgroundColor,
+          expectedColor,
+          label: chip.shadowRoot
+            .querySelector(".chip-label")
+            ?.textContent.trim(),
+        };
+      },
+      "group chip icon"
+    );
+
+    Assert.equal(groupChip.label, "Trip planning", "The chip shows the label");
+    Assert.equal(groupChip.initial, "T", "With the group's initial");
+    Assert.equal(
+      groupChip.color,
+      groupChip.expectedColor,
+      "And the group's color, resolved rather than transparent"
+    );
+    Assert.notEqual(
+      groupChip.color,
+      "rgba(0, 0, 0, 0)",
+      "The group color resolves"
+    );
+  } finally {
+    await mockEngineManager.rejectAllRequests();
+    await BrowserTestUtils.closeWindow(win);
+    restoreSignIn();
+    mockEngineManager.cleanupMocks();
+  }
+});
+
+add_task(async function test_tab_group_and_tab_chips_group_together() {
+  const restoreSignIn = skipSignIn();
+  const mockEngineManager = new MockEngineManager();
+  const win = await openAIWindow();
+  const browser = win.gBrowser.selectedBrowser;
+
+  try {
+    await sendMessageWithMentions(browser, mockEngineManager, [
+      TRIP_PLANNING_GROUP,
+      { type: "tab", url: CHIPS[0].url, label: CHIPS[0].label },
+      { type: "tab", url: CHIPS[1].url, label: CHIPS[1].label },
+    ]);
+
+    const info = await getBubbleChipInfo(browser);
+    Assert.ok(
+      info.hasGroupedChips,
+      "A tab group and tabs collapse into the grouped chip summary"
+    );
+
+    const aiChatBrowser = await getAIChatBrowser(browser);
+    const stack = await spawnBounded(
+      aiChatBrowser,
+      [],
+      async () => {
+        const contentEl = content.document.querySelector("ai-chat-content");
+        const container = [
+          ...contentEl.shadowRoot.querySelectorAll(
+            ".chat-bubble-user website-chip-container"
+          ),
+        ].at(-1);
+        const grouped = container.shadowRoot.querySelector(
+          "ai-grouped-chip-container"
+        );
+        await grouped.updateComplete;
+        const stackedIcon = grouped.shadowRoot.querySelector(
+          ".grouped-chips__stacked-icon"
+        );
+        const probe = content.document.createElement("div");
+        probe.style.backgroundColor = "var(--tab-group-blue)";
+        content.document.body.appendChild(probe);
+        const expectedColor = content.getComputedStyle(probe).backgroundColor;
+        probe.remove();
+
+        return {
+          stackedIcons: grouped.shadowRoot.querySelectorAll(
+            ".grouped-chips__stacked-icon"
+          ).length,
+          favicons: grouped.shadowRoot.querySelectorAll(
+            ".grouped-chips__favicon"
+          ).length,
+          stackedIconColor:
+            content.getComputedStyle(stackedIcon).backgroundColor,
+          expectedColor,
+        };
+      },
+      "grouped chip stack"
+    );
+
+    Assert.equal(
+      stack.stackedIcons,
+      1,
+      "The group contributes an icon to the stack"
+    );
+    Assert.equal(stack.favicons, 2, "And the two tabs contribute favicons");
+    Assert.equal(
+      stack.stackedIconColor,
+      stack.expectedColor,
+      "The stacked icon paints the group color"
+    );
+  } finally {
+    await mockEngineManager.rejectAllRequests();
+    await BrowserTestUtils.closeWindow(win);
+    restoreSignIn();
+    mockEngineManager.cleanupMocks();
+  }
+});
+
+add_task(async function test_tab_group_chip_click_opens_group() {
+  const restoreSignIn = skipSignIn();
+  const mockEngineManager = new MockEngineManager();
+  const win = await openAIWindow();
+  const browser = win.gBrowser.selectedBrowser;
+  const tabs = CHIPS.slice(0, 2).map(chip =>
+    BrowserTestUtils.addTab(win.gBrowser, chip.url)
+  );
+  const group = win.gBrowser.addTabGroup(tabs, {
+    label: TRIP_PLANNING_GROUP.label,
+    color: TRIP_PLANNING_GROUP.color,
+  });
+  group.collapsed = true;
+
+  try {
+    await sendMessageWithMentions(browser, mockEngineManager, [
+      { ...TRIP_PLANNING_GROUP, groupId: group.id },
+    ]);
+    await getBubbleChipInfo(browser);
+
+    const aiChatBrowser = await getAIChatBrowser(browser);
+    await spawnBounded(
+      aiChatBrowser,
+      [],
+      async () => {
+        const contentEl = content.document.querySelector("ai-chat-content");
+        const container = [
+          ...contentEl.shadowRoot.querySelectorAll(
+            ".chat-bubble-user website-chip-container"
+          ),
+        ].at(-1);
+        const chip = container.shadowRoot.querySelector("ai-website-chip");
+        await chip.updateComplete;
+        chip.shadowRoot.querySelector("button.chip").click();
+      },
+      "click group chip"
+    );
+
+    await TestUtils.waitForCondition(
+      () => win.gBrowser.selectedTab == tabs[0],
+      "Clicking the chip selects the group's first tab"
+    );
+    Assert.ok(!group.collapsed, "Clicking the chip expands the group");
+  } finally {
+    await mockEngineManager.rejectAllRequests();
     await BrowserTestUtils.closeWindow(win);
     restoreSignIn();
     mockEngineManager.cleanupMocks();
@@ -351,6 +584,60 @@ add_task(async function test_grouped_chips_open_dispatches_open_link() {
     Assert.ok(
       !panelList.hasAttribute("open"),
       "Selecting an item should close the panel"
+    );
+  } finally {
+    BrowserTestUtils.removeTab(tab);
+  }
+});
+
+add_task(async function test_grouped_chips_tab_group_row_opens_group() {
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    GROUPED_CHIPS_PAGE
+  );
+  const browser = tab.linkedBrowser;
+  const contentWin = browser.contentWindow;
+  const contentDoc = browser.contentDocument;
+
+  try {
+    await contentWin.customElements.whenDefined("ai-grouped-chip-container");
+    const grouped = contentDoc.createElement("ai-grouped-chip-container");
+    grouped.chips = [TRIP_PLANNING_GROUP, ...CHIPS.slice(0, 2)];
+    contentDoc.body.appendChild(grouped);
+    await grouped.updateComplete;
+
+    const trigger = grouped.shadowRoot.querySelector("#grouped-chips-trigger");
+    const panel = grouped.shadowRoot.querySelector("smartwindow-panel-list");
+    const panelList = BrowserTestUtils.querySelectorDeep(
+      grouped.shadowRoot,
+      "panel-list"
+    );
+
+    const shownPromise = BrowserTestUtils.waitForEvent(
+      panelList,
+      "shown",
+      false,
+      null,
+      true
+    );
+    trigger.click();
+    await shownPromise;
+    await grouped.updateComplete;
+
+    const openTabGroupPromise = BrowserTestUtils.waitForEvent(
+      contentDoc,
+      "AIChatContent:OpenTabGroup",
+      false,
+      null,
+      true
+    );
+    panel.shadowRoot.querySelector("panel-item").click();
+
+    const openTabGroupEvent = await openTabGroupPromise;
+    Assert.equal(
+      openTabGroupEvent.detail.groupId,
+      TRIP_PLANNING_GROUP.groupId,
+      "Selecting a tab group row should request its tab group"
     );
   } finally {
     BrowserTestUtils.removeTab(tab);

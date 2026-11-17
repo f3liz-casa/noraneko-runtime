@@ -71,6 +71,7 @@ Atomics.h:
     - Atomic
   functions:
     - cpu_pause
+    - AtomicRefCountDecrement
 
 Attributes.h:
   macros:
@@ -1008,3 +1009,7 @@ WrappingOperations.h:
 XorShift128PlusRNG.h:
   types:
     - XorShift128PlusRNG
+
+MaybeFmt.h:
+  types:
+    - Maybe

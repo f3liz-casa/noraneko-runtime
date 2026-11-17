@@ -689,6 +689,7 @@ export class MegalistAlpha extends MozLitElement {
       <moz-input-search
         data-l10n-id="contextual-manager-filter-input"
         data-l10n-attrs="placeholder, aria-label"
+        .value=${this.searchText}
         @MozInputSearch:search=${e => this.#onSearchQuery(e)}
       ></moz-input-search>
     `;
@@ -944,15 +945,9 @@ export class MegalistAlpha extends MozLitElement {
         class="container sidebar-panel"
         aria-labelledby="sidebar-menu-cpm-header"
       >
-        <sidebar-panel-header
-          data-l10n-id="sidebar-menu-cpm-header"
-          data-l10n-attrs="heading"
-          view="viewCPMSidebar"
-        >
-          ${when(!this.shouldShowPrimaryPasswordAuth && showToolbar, () =>
-            this.renderToolbar()
-          )}
-        </sidebar-panel-header>
+        ${when(!this.shouldShowPrimaryPasswordAuth && showToolbar, () =>
+          this.renderToolbar()
+        )}
         <div class="sidebar-panel-scrollable-content">
           ${!this.shouldShowPrimaryPasswordAuth
             ? this.renderAuthenticatedView()

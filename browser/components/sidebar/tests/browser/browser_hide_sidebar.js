@@ -7,30 +7,42 @@
 // hidden and each panel's header (the sidebar-panel-header Lit element) renders
 // a dropdown switcher in place of the title. The toolbar button toggles the
 // panel (rather than the launcher) and preserves the last opened panel.
-
-const VIEW_TO_TAG = new Map([
-  ["viewHistorySidebar", "sidebar-history"],
-  ["viewBookmarksSidebar", "sidebar-bookmarks"],
-  ["viewTabsSidebar", "sidebar-syncedtabs"],
-]);
-
-async function getPanelHeader(view) {
-  const { browser } = SidebarController;
-  if (browser.contentDocument.readyState != "complete") {
-    await BrowserTestUtils.waitForEvent(browser, "load", true);
-  }
-  const panel = browser.contentDocument.querySelector(VIEW_TO_TAG.get(view));
-  await panel.updateComplete;
-  const header = panel.shadowRoot.querySelector("sidebar-panel-header");
+async function getPanelHeader() {
+  const header = SidebarController.panelHeader;
   await header.updateComplete;
   return header;
 }
 
-async function getPanelSwitcher(view) {
-  const header = await getPanelHeader(view);
+async function getPanelSwitcher() {
+  const header = await getPanelHeader();
   const switcher = header.shadowRoot.querySelector("sidebar-panel-switcher");
   await switcher.updateComplete;
   return switcher;
+}
+
+async function loadSidebarExtension(title) {
+  const extension = ExtensionTestUtils.loadExtension({
+    ...extData,
+    manifest: {
+      ...extData.manifest,
+      sidebar_action: {
+        ...extData.manifest.sidebar_action,
+        default_title: title,
+      },
+    },
+  });
+  await extension.startup();
+  await extension.awaitMessage("sidebar");
+  await SidebarController.waitUntilStable();
+  return extension;
+}
+
+// The command ID of an extension panel is derived from the extension ID, so
+// look it up rather than deriving it here.
+function getExtensionView(extension) {
+  return SidebarController.getExtensions().find(
+    ext => ext.extensionId === extension.id
+  )?.view;
 }
 
 add_setup(async () => {
@@ -70,7 +82,7 @@ add_task(async function test_launcher_hidden_and_panel_shown() {
   );
 
   info("The panel header shows the switcher dropdown in place of the title.");
-  const header = await getPanelHeader("viewHistorySidebar");
+  const header = await getPanelHeader();
   const switcher = header.shadowRoot.querySelector("sidebar-panel-switcher");
   const title = header.shadowRoot.querySelector(".sidebar-panel-title");
   Assert.ok(BrowserTestUtils.isVisible(switcher), "Switcher is visible");
@@ -156,7 +168,7 @@ add_task(async function test_switcher_dropdown_switches_panel() {
   await SidebarController.show("viewHistorySidebar");
   await SidebarController.waitUntilStable();
 
-  const switcher = await getPanelSwitcher("viewHistorySidebar");
+  const switcher = await getPanelSwitcher();
   const switcherButton = switcher.shadowRoot.querySelector(".switcher-button");
   const panelList = switcher.shadowRoot.querySelector("panel-list");
 
@@ -221,7 +233,7 @@ add_task(async function test_switcher_label_for_tool_missing_from_pref() {
   await SidebarController.show("viewBookmarksSidebar");
   await SidebarController.waitUntilStable();
 
-  const switcher = await getPanelSwitcher("viewBookmarksSidebar");
+  const switcher = await getPanelSwitcher();
   const labelEl = switcher.shadowRoot.querySelector(".switcher-label");
   await BrowserTestUtils.waitForMutationCondition(
     labelEl,
@@ -249,6 +261,81 @@ add_task(async function test_switcher_label_for_tool_missing_from_pref() {
   await SpecialPowers.popPrefEnv();
 });
 
+add_task(async function test_switcher_label_for_extension_panel() {
+  info("Install an extension with a sidebar panel, which opens its panel.");
+  const firstExtension = await loadSidebarExtension("First Extension");
+  Assert.equal(
+    SidebarController.currentID,
+    getExtensionView(firstExtension),
+    "The extension panel is open"
+  );
+
+  const switcher = await getPanelSwitcher();
+  const labelEl = switcher.shadowRoot.querySelector(".switcher-label");
+  await BrowserTestUtils.waitForMutationCondition(
+    labelEl,
+    { childList: true, characterData: true, subtree: true },
+    () => !!switcher.label
+  );
+  Assert.equal(
+    switcher.label,
+    "First Extension",
+    "Switcher is labelled with the extension name"
+  );
+  Assert.equal(
+    labelEl.textContent.trim(),
+    "First Extension",
+    "Switcher button renders the extension name"
+  );
+
+  info("Open the panel switcher dropdown.");
+  const switcherButton = switcher.shadowRoot.querySelector(".switcher-button");
+  const panelList = switcher.shadowRoot.querySelector("panel-list");
+  await SimpleTest.promiseFocus(window);
+  const shown = BrowserTestUtils.waitForEvent(panelList, "shown");
+  switcherButton.click();
+  await shown;
+  await switcher.updateComplete;
+
+  const items = [...switcher.shadowRoot.querySelectorAll("panel-item")];
+  const checkedItem = items.find(item => item.hasAttribute("checked"));
+  Assert.equal(
+    checkedItem?.textContent.trim(),
+    "First Extension",
+    "The extension panel is checked in the switcher"
+  );
+  panelList.hide();
+
+  info("Install a second extension, which replaces the open panel.");
+  const secondExtension = await loadSidebarExtension("Second Extension");
+  Assert.equal(
+    SidebarController.currentID,
+    getExtensionView(secondExtension),
+    "The second extension panel is open"
+  );
+  Assert.equal(
+    await getPanelSwitcher(),
+    switcher,
+    "Extension panels share the same switcher element"
+  );
+  await BrowserTestUtils.waitForMutationCondition(
+    labelEl,
+    { childList: true, characterData: true, subtree: true },
+    () => switcher.label == "Second Extension"
+  );
+  Assert.equal(
+    labelEl.textContent.trim(),
+    "Second Extension",
+    "Switcher button renders the newly opened extension's name"
+  );
+
+  await secondExtension.unload();
+  await firstExtension.unload();
+  await SidebarController.waitUntilStable();
+  SidebarTestUtils.closePanel(window);
+  await SidebarController.waitUntilStable();
+});
+
 add_task(async function test_close_button_preserves_panel() {
   info("Open the bookmarks panel.");
   await SidebarController.show("viewBookmarksSidebar");
@@ -256,7 +343,7 @@ add_task(async function test_close_button_preserves_panel() {
   Assert.ok(SidebarController.isOpen, "Panel is open");
 
   info("Close the panel using the header close button.");
-  const header = await getPanelHeader("viewBookmarksSidebar");
+  const header = await getPanelHeader();
   header.closeButton.click();
   await SidebarController.waitUntilStable();
   Assert.ok(!SidebarController.isOpen, "Panel is closed via the close button");

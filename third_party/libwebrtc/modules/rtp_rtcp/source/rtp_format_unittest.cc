@@ -255,11 +255,11 @@ TEST(RtpPacketizerTest, RejectsHugeSize) {
   limits.max_payload_len = 1200;
   RTPVideoHeader video_header;
   video_header.frame_type = VideoFrameType::kVideoFrameKey;
-  const uint8_t kPayload[40'000'000] = {};
+  const std::vector<uint8_t> payload(40'000'000);
 
   std::unique_ptr<RtpPacketizer> packetizer =
       RtpPacketizer::Create(RtpPacketizer::PacketizationFormat::kGeneric,
-                            kPayload, limits, video_header);
+                            payload, limits, video_header);
 
   ASSERT_THAT(packetizer, NotNull());
   EXPECT_EQ(packetizer->NumPackets(), 0u);
@@ -310,6 +310,34 @@ TEST(RtpPacketizerSplitAboutEqually, CanPutSinglePayloadByteInOnePacket) {
   limits.single_packet_reduction_len = 10;
 
   EXPECT_THAT(RtpPacketizer::SplitAboutEqually(1, limits), ElementsAre(1));
+}
+
+TEST(RtpPacketizerPayloadSizeLimits, SanitizeClampsNegativeValues) {
+  RtpPacketizer::PayloadSizeLimits limits;
+  limits.max_payload_len = -50;
+  limits.single_packet_reduction_len = -10;
+  limits.first_packet_reduction_len = -20;
+  limits.last_packet_reduction_len = -5;
+
+  RtpPacketizer::PayloadSizeLimits sanitized = limits.Sanitize();
+  EXPECT_EQ(sanitized.max_payload_len, 0);
+  EXPECT_EQ(sanitized.single_packet_reduction_len, 0);
+  EXPECT_EQ(sanitized.first_packet_reduction_len, 0);
+  EXPECT_EQ(sanitized.last_packet_reduction_len, 0);
+}
+
+TEST(RtpPacketizerPayloadSizeLimits, SanitizeClampsExcessiveReductions) {
+  RtpPacketizer::PayloadSizeLimits limits;
+  limits.max_payload_len = 100;
+  limits.single_packet_reduction_len = 150;
+  limits.first_packet_reduction_len = 200;
+  limits.last_packet_reduction_len = 101;
+
+  RtpPacketizer::PayloadSizeLimits sanitized = limits.Sanitize();
+  EXPECT_EQ(sanitized.max_payload_len, 100);
+  EXPECT_EQ(sanitized.single_packet_reduction_len, 100);
+  EXPECT_EQ(sanitized.first_packet_reduction_len, 100);
+  EXPECT_EQ(sanitized.last_packet_reduction_len, 100);
 }
 
 }  // namespace

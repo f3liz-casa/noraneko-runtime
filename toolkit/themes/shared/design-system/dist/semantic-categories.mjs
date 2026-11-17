@@ -97,44 +97,6 @@ export const tokensTable = {
     },
     {
       value: {
-        light: "color-mix(in srgb, currentColor 12%, transparent)",
-        dark: "color-mix(in srgb, currentColor 17%, transparent)",
-        nativeTheme: "color-mix(in srgb, currentColor 17%, transparent)",
-        default:
-          "light-dark(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 17%, transparent))",
-        platform: {
-          default: "color-mix(in srgb, currentColor 17%, transparent)",
-          browserTheme: {
-            light: "color-mix(in srgb, currentColor 12%, transparent)",
-            dark: "color-mix(in srgb, currentColor 17%, transparent)",
-            default:
-              "light-dark(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 17%, transparent))",
-          },
-        },
-      },
-      name: "--background-color-dimmed",
-    },
-    {
-      value: {
-        light: "color-mix(in srgb, currentColor 20%, transparent)",
-        dark: "color-mix(in srgb, currentColor 14%, transparent)",
-        nativeTheme: "color-mix(in srgb, currentColor 30%, transparent)",
-        default:
-          "light-dark(color-mix(in srgb, currentColor 20%, transparent), color-mix(in srgb, currentColor 14%, transparent))",
-        platform: {
-          default: "color-mix(in srgb, currentColor 30%, transparent)",
-          browserTheme: {
-            light: "color-mix(in srgb, currentColor 20%, transparent)",
-            dark: "color-mix(in srgb, currentColor 14%, transparent)",
-            default:
-              "light-dark(color-mix(in srgb, currentColor 20%, transparent), color-mix(in srgb, currentColor 14%, transparent))",
-          },
-        },
-      },
-      name: "--background-color-dimmed-further",
-    },
-    {
-      value: {
         forcedColors: "ButtonFace",
         brand: { default: "color-mix(in srgb, currentColor 7%, transparent)" },
         nativeTheme: "color-mix(in srgb, currentColor 13%, transparent)",
@@ -274,15 +236,7 @@ export const tokensTable = {
       name: "--button-background-color-ghost",
     },
     {
-      value: {
-        default: "var(--button-background-color-active)",
-        nativeTheme: "color-mix(in srgb, currentColor 30%, transparent)",
-        forcedColors: "var(--button-background-color-active)",
-        platform: {
-          default: "color-mix(in srgb, currentColor 30%, transparent)",
-          browserTheme: { default: "var(--button-background-color-active)" },
-        },
-      },
+      value: "var(--button-background-color-active)",
       name: "--button-background-color-ghost-active",
     },
     {
@@ -293,15 +247,7 @@ export const tokensTable = {
       name: "--button-background-color-ghost-disabled",
     },
     {
-      value: {
-        default: "var(--button-background-color-hover)",
-        nativeTheme: "color-mix(in srgb, currentColor 17%, transparent)",
-        forcedColors: "var(--button-background-color-hover)",
-        platform: {
-          default: "color-mix(in srgb, currentColor 17%, transparent)",
-          browserTheme: { default: "var(--button-background-color-hover)" },
-        },
-      },
+      value: "var(--button-background-color-hover)",
       name: "--button-background-color-ghost-hover",
     },
     {
@@ -329,13 +275,16 @@ export const tokensTable = {
       name: "--button-background-color-muted-selected",
     },
     {
-      value: "var(--button-background-color-ghost)",
+      value: {
+        default: "var(--button-background-color-ghost)",
+        forcedColors: "Menu",
+      },
       name: "--button-background-color-menu",
     },
     {
       value: {
         default: "var(--button-background-color-ghost-active)",
-        forcedColors: "var(--button-background-color-primary)",
+        forcedColors: "var(--button-background-color-menu-hover)",
       },
       name: "--button-background-color-menu-active",
     },
@@ -346,7 +295,7 @@ export const tokensTable = {
     {
       value: {
         default: "var(--button-background-color-ghost-hover)",
-        forcedColors: "var(--button-background-color-primary)",
+        forcedColors: "-moz-menuhover",
       },
       name: "--button-background-color-menu-hover",
     },
@@ -374,10 +323,7 @@ export const tokensTable = {
       name: "--button-background-color-toolbar-active",
     },
     {
-      value: {
-        default: "var(--toolbarbutton-background-color)",
-        forcedColors: "var(--button-background-color-disabled)",
-      },
+      value: "var(--toolbarbutton-background-color-disabled)",
       name: "--button-background-color-toolbar-disabled",
     },
     {
@@ -406,6 +352,10 @@ export const tokensTable = {
       name: "--card-header-background-color-active",
     },
     {
+      value: "var(--popup-background-color)",
+      name: "--dialog-background-color",
+    },
+    {
       value: {
         nativeTheme: "Field",
         platform: {
@@ -417,11 +367,11 @@ export const tokensTable = {
           },
         },
       },
-      name: "--input-text-background-color",
+      name: "--input-background-color",
     },
     {
-      value: "var(--button-background-color-disabled)",
-      name: "--input-text-background-color-disabled",
+      value: { default: "var(--button-background-color-disabled)" },
+      name: "--input-background-color-disabled",
     },
     {
       value: {
@@ -442,12 +392,23 @@ export const tokensTable = {
       name: "--panel-background-color",
     },
     {
-      value: "var(--background-color-dimmed)",
-      name: "--panel-background-color-dimmed",
-    },
-    {
-      value: "var(--background-color-dimmed-further)",
-      name: "--panel-background-color-dimmed-further",
+      value: {
+        light: "color-mix(in srgb, currentColor 12%, transparent)",
+        dark: "color-mix(in srgb, currentColor 17%, transparent)",
+        nativeTheme: "color-mix(in srgb, currentColor 17%, transparent)",
+        default:
+          "light-dark(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 17%, transparent))",
+        platform: {
+          default: "color-mix(in srgb, currentColor 17%, transparent)",
+          browserTheme: {
+            light: "color-mix(in srgb, currentColor 12%, transparent)",
+            dark: "color-mix(in srgb, currentColor 17%, transparent)",
+            default:
+              "light-dark(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 17%, transparent))",
+          },
+        },
+      },
+      name: "--panel-footer-background-color",
     },
     { value: "var(--background-color-box)", name: "--popup-background-color" },
     {
@@ -600,6 +561,13 @@ export const tokensTable = {
         },
       },
       name: "--toolbarbutton-background-color-active",
+    },
+    {
+      value: {
+        default: "var(--toolbarbutton-background-color)",
+        forcedColors: "var(--button-background-color-disabled)",
+      },
+      name: "--toolbarbutton-background-color-disabled",
     },
     {
       value: {
@@ -767,6 +735,10 @@ export const tokensTable = {
       name: "--toggle-background-color-active",
     },
     {
+      value: { forcedColors: "var(--button-background-color-disabled)" },
+      name: "--toggle-background-color-disabled",
+    },
+    {
       value: "var(--color-accent-primary)",
       name: "--toggle-background-color-pressed",
     },
@@ -777,6 +749,12 @@ export const tokensTable = {
     {
       value: "var(--color-accent-primary-active)",
       name: "--toggle-background-color-pressed-active",
+    },
+    {
+      value: {
+        forcedColors: "var(--button-background-color-primary-disabled)",
+      },
+      name: "--toggle-background-color-pressed-disabled",
     },
     {
       value: {
@@ -800,11 +778,19 @@ export const tokensTable = {
       name: "--toggle-dot-background-color-active",
     },
     {
+      value: { forcedColors: "var(--button-text-color-disabled)" },
+      name: "--toggle-dot-background-color-disabled",
+    },
+    {
       value: {
         default: "var(--background-color-canvas)",
         forcedColors: "var(--button-background-color)",
       },
       name: "--toggle-dot-background-color-on-pressed",
+    },
+    {
+      value: { forcedColors: "var(--button-text-color-primary-disabled)" },
+      name: "--toggle-dot-background-color-on-pressed-disabled",
     },
     {
       value: "var(--background-color-box)",
@@ -846,18 +832,6 @@ export const tokensTable = {
         },
       },
       name: "--tab-background-color-selected",
-    },
-    {
-      value: { default: "var(--button-background-color-ghost)" },
-      name: "--tab-close-button-background-color",
-    },
-    {
-      value: { default: "var(--button-background-color-ghost-hover)" },
-      name: "--tab-close-button-background-color-hover",
-    },
-    {
-      value: { default: "var(--button-background-color-ghost-active)" },
-      name: "--tab-close-button-background-color-active",
     },
     {
       value: "var(--toolbar-field-background-color)",
@@ -908,18 +882,19 @@ export const tokensTable = {
     },
     {
       value: {
-        nativeTheme: "var(--background-color-dimmed)",
+        nativeTheme: "var(--background-color-list-item-hover)",
         light: "rgb(240, 240, 244)",
-        dark: "var(--background-color-dimmed)",
+        dark: "var(--background-color-list-item-hover)",
+        prefersContrast: "color-mix(in srgb, currentColor 20%, transparent)",
         default:
-          "light-dark(rgb(240, 240, 244), var(--background-color-dimmed))",
+          "light-dark(rgb(240, 240, 244), var(--background-color-list-item-hover))",
         platform: {
-          default: "var(--background-color-dimmed)",
+          default: "var(--background-color-list-item-hover)",
           browserTheme: {
             light: "rgb(240, 240, 244)",
-            dark: "var(--background-color-dimmed)",
+            dark: "var(--background-color-list-item-hover)",
             default:
-              "light-dark(rgb(240, 240, 244), var(--background-color-dimmed))",
+              "light-dark(rgb(240, 240, 244), var(--background-color-list-item-hover))",
           },
         },
       },
@@ -930,6 +905,7 @@ export const tokensTable = {
         nativeTheme: "SelectedItem",
         light: "#e0e0e6",
         dark: "rgb(43, 42, 51)",
+        prefersContrast: "var(--background-color-list-item-hover)",
         default: "light-dark(#e0e0e6, rgb(43, 42, 51))",
         platform: {
           default: "SelectedItem",
@@ -943,12 +919,41 @@ export const tokensTable = {
       name: "--urlbarview-background-color-selected",
     },
     {
-      value:
-        "color-mix(in srgb, var(--urlbarview-background-color-hover) 50%, transparent)",
+      value: {
+        nativeTheme: "color-mix(in srgb, currentColor 8.5%, transparent)",
+        light: "color-mix(in srgb, var(--color-gray-20) 50%, transparent)",
+        dark: "color-mix(in srgb, currentColor 8.5%, transparent)",
+        default:
+          "light-dark(color-mix(in srgb, var(--color-gray-20) 50%, transparent), color-mix(in srgb, currentColor 8.5%, transparent))",
+        platform: {
+          default: "color-mix(in srgb, currentColor 8.5%, transparent)",
+          browserTheme: {
+            light: "color-mix(in srgb, var(--color-gray-20) 50%, transparent)",
+            dark: "color-mix(in srgb, currentColor 8.5%, transparent)",
+            default:
+              "light-dark(color-mix(in srgb, var(--color-gray-20) 50%, transparent), color-mix(in srgb, currentColor 8.5%, transparent))",
+          },
+        },
+      },
       name: "--urlbarview-action-button-background-color",
     },
     {
-      value: "var(--urlbarview-background-color-hover)",
+      value: {
+        nativeTheme: "color-mix(in srgb, currentColor 17%, transparent)",
+        light: "var(--color-gray-20)",
+        dark: "color-mix(in srgb, currentColor 17%, transparent)",
+        default:
+          "light-dark(var(--color-gray-20), color-mix(in srgb, currentColor 17%, transparent))",
+        platform: {
+          default: "color-mix(in srgb, currentColor 17%, transparent)",
+          browserTheme: {
+            light: "var(--color-gray-20)",
+            dark: "color-mix(in srgb, currentColor 17%, transparent)",
+            default:
+              "light-dark(var(--color-gray-20), color-mix(in srgb, currentColor 17%, transparent))",
+          },
+        },
+      },
       name: "--urlbarview-action-button-background-color-hover",
     },
   ],
@@ -973,14 +978,7 @@ export const tokensTable = {
     },
     {
       value: {
-        brand: {
-          light: "var(--color-gray-30)",
-          dark: "var(--color-gray-70)",
-          default: "light-dark(var(--color-gray-30), var(--color-gray-70))",
-        },
-        platform: {
-          default: "color-mix(in srgb, currentColor 24%, transparent)",
-        },
+        default: "color-mix(in srgb, currentColor 24%, transparent)",
         prefersContrast: "currentColor",
         forcedColors: "ButtonText",
       },
@@ -1245,33 +1243,17 @@ export const tokensTable = {
       },
       name: "--card-header-border-color-active",
     },
+    { value: "var(--popup-border-color)", name: "--dialog-border-color" },
     {
       value: { default: "var(--border-color-deemphasized)" },
       name: "--info-bar-border-color",
     },
     { value: "var(--border-color-interactive)", name: "--input-border-color" },
-    { value: "var(--border-color)", name: "--input-text-border-color" },
     {
       value: "var(--border-color-interactive-disabled)",
-      name: "--input-text-border-color-disabled",
+      name: "--input-border-color-disabled",
     },
-    {
-      value: {
-        light: "rgb(240, 240, 244)",
-        dark: "rgb(82, 82, 94)",
-        nativeTheme: "var(--border-color-deemphasized)",
-        default: "light-dark(rgb(240, 240, 244), rgb(82, 82, 94))",
-        platform: {
-          default: "var(--border-color-deemphasized)",
-          browserTheme: {
-            light: "rgb(240, 240, 244)",
-            dark: "rgb(82, 82, 94)",
-            default: "light-dark(rgb(240, 240, 244), rgb(82, 82, 94))",
-          },
-        },
-      },
-      name: "--panel-border-color",
-    },
+    { value: "var(--popup-border-color)", name: "--panel-border-color" },
     {
       value: {
         light: "rgb(240, 240, 244)",
@@ -1423,6 +1405,10 @@ export const tokensTable = {
       name: "--toggle-border-color-active",
     },
     {
+      value: { forcedColors: "var(--border-color-interactive-disabled)" },
+      name: "--toggle-border-color-disabled",
+    },
+    {
       value: "var(--border-color-interactive)",
       name: "--visual-picker-item-border-color",
     },
@@ -1435,10 +1421,13 @@ export const tokensTable = {
       value: "var(--toolbarbutton-outline-color-hover)",
       name: "--tab-border-color-hover",
     },
+    { value: { default: "unset" }, name: "--tab-border-color-accent" },
     {
       value: "var(--toolbarbutton-outline-color-selected)",
       name: "--tab-border-color-selected",
     },
+    { value: "unset", name: "--tab-border-color-selected-leading" },
+    { value: "unset", name: "--tab-border-color-selected-trailing" },
     {
       value: "var(--tab-border-color)",
       name: "--tab-close-button-border-color",
@@ -1464,6 +1453,8 @@ export const tokensTable = {
     { value: "4px", name: "--border-radius-small" },
     { value: "8px", name: "--border-radius-medium" },
     { value: "16px", name: "--border-radius-large" },
+    { value: "0", name: "--border-radius-xlarge" },
+    { value: "0", name: "--border-radius-xxlarge" },
     { value: "var(--border-radius-medium)", name: "--button-border-radius" },
     { value: "var(--border-radius-large)", name: "--card-border-radius" },
     {
@@ -1474,19 +1465,18 @@ export const tokensTable = {
       value: "var(--border-radius-medium)",
       name: "--card-cover-image-border-radius",
     },
+    { value: "var(--popup-border-radius)", name: "--dialog-border-radius" },
+    { value: "var(--border-radius-medium)", name: "--input-border-radius" },
     {
-      value: "var(--border-radius-medium)",
-      name: "--input-text-border-radius",
-    },
-    {
-      value: { default: "var(--input-text-border-radius)" },
+      value: { default: "var(--input-border-radius)" },
       name: "--input-search-border-radius",
     },
+    { value: "var(--border-radius-small)", name: "--link-border-radius-focus" },
     {
       value: "var(--border-radius-small)",
       name: "--panel-menuitem-border-radius",
     },
-    { value: "var(--border-radius-medium)", name: "--panel-border-radius" },
+    { value: "var(--popup-border-radius)", name: "--panel-border-radius" },
     { value: "var(--border-radius-medium)", name: "--popup-border-radius" },
     {
       value: "var(--button-border-radius)",
@@ -1511,8 +1501,24 @@ export const tokensTable = {
       name: "--message-bar-border-radius",
     },
     {
-      value: "var(--border-radius-circle)",
+      value: { default: "var(--border-radius-circle)" },
       name: "--message-bar-icon-container-border-radius",
+    },
+    {
+      value: { default: "var(--message-bar-icon-container-border-radius)" },
+      name: "--message-bar-icon-container-border-radius-start-start",
+    },
+    {
+      value: { default: "var(--message-bar-icon-container-border-radius)" },
+      name: "--message-bar-icon-container-border-radius-start-end",
+    },
+    {
+      value: { default: "var(--message-bar-icon-container-border-radius)" },
+      name: "--message-bar-icon-container-border-radius-end-start",
+    },
+    {
+      value: { default: "var(--message-bar-icon-container-border-radius)" },
+      name: "--message-bar-icon-container-border-radius-end-end",
     },
     {
       value: "var(--button-border-radius)",
@@ -1616,6 +1622,7 @@ export const tokensTable = {
     },
     { value: "var(--box-shadow-level-2)", name: "--card-box-shadow" },
     { value: "var(--box-shadow-level-4)", name: "--card-box-shadow-hover" },
+    { value: "var(--popup-box-shadow)", name: "--dialog-box-shadow" },
     {
       value: "0 0 var(--panel-box-shadow-margin) hsla(0, 0%, 0%, 0.2)",
       name: "--panel-box-shadow",
@@ -1629,14 +1636,25 @@ export const tokensTable = {
   ],
   color: [
     { value: "#fbfbfe", name: "--color-gray-0" },
+    { value: "unset", name: "--color-gray-10" },
+    { value: "unset", name: "--color-gray-15" },
     { value: "#f0f0f4", name: "--color-gray-20" },
+    { value: "unset", name: "--color-gray-25" },
     { value: "#bac2ca", name: "--color-gray-30" },
+    { value: "unset", name: "--color-gray-35" },
+    { value: "unset", name: "--color-gray-40" },
+    { value: "unset", name: "--color-gray-45" },
     { value: "#bfbfc9", name: "--color-gray-50" },
+    { value: "unset", name: "--color-gray-55" },
     { value: "#8f8f9d", name: "--color-gray-60" },
+    { value: "unset", name: "--color-gray-65" },
     { value: "#5b5b66", name: "--color-gray-70" },
+    { value: "unset", name: "--color-gray-75" },
     { value: "#23222b", name: "--color-gray-80" },
+    { value: "unset", name: "--color-gray-85" },
     { value: "#1c1b22", name: "--color-gray-90" },
     { value: "#15141a", name: "--color-gray-100" },
+    { value: "unset", name: "--color-gray-05" },
     { value: "oklch(97% 0.05 15)", name: "--color-red-0" },
     { value: "oklch(90% 0.1 15)", name: "--color-red-10" },
     { value: "oklch(83% 0.14 15)", name: "--color-red-20" },
@@ -1765,6 +1783,16 @@ export const tokensTable = {
     { value: "oklch(0 0 0 / 70%)", name: "--color-black-alpha-70" },
     { value: "oklch(0 0 0 / 80%)", name: "--color-black-alpha-80" },
     { value: "oklch(0 0 0 / 90%)", name: "--color-black-alpha-90" },
+    { value: "unset", name: "--color-violet-desaturated-0" },
+    { value: "unset", name: "--color-violet-desaturated-10" },
+    { value: "unset", name: "--color-violet-desaturated-20" },
+    { value: "unset", name: "--color-violet-desaturated-30" },
+    { value: "unset", name: "--color-violet-desaturated-40" },
+    { value: "unset", name: "--color-violet-desaturated-50" },
+    { value: "unset", name: "--color-violet-desaturated-60" },
+    { value: "unset", name: "--color-violet-desaturated-70" },
+    { value: "unset", name: "--color-violet-desaturated-80" },
+    { value: "unset", name: "--color-violet-desaturated-90" },
     {
       value: {
         light: "var(--color-blue-60)",
@@ -1943,6 +1971,13 @@ export const tokensTable = {
       },
       name: "--toolbarbutton-outline-color-selected",
     },
+    {
+      value: {
+        default: "var(--toolbarbutton-outline-color)",
+        forcedColors: "var(--button-border-color-disabled)",
+      },
+      name: "--toolbarbutton-outline-color-disabled",
+    },
   ],
   "outline-offset": [
     {
@@ -1968,7 +2003,13 @@ export const tokensTable = {
       name: "--font-size-root",
     },
     {
-      value: { brand: { default: "0.867rem" }, platform: { default: "unset" } },
+      value: {
+        brand: { default: "0.867rem" },
+        platform: {
+          default: "1rem",
+          comment: "macOS 11px, Windows 12px, Linux overridden to >= 11px",
+        },
+      },
       name: "--font-size-small",
     },
     { value: "1.133rem", name: "--font-size-large" },
@@ -2031,7 +2072,7 @@ export const tokensTable = {
     { value: "160px", name: "--card-cover-image-height-default" },
     { value: "var(--size-item-small)", name: "--checkbox-size" },
     { value: "var(--size-item-small)", name: "--input-height" },
-    { value: "var(--button-min-height)", name: "--input-text-min-height" },
+    { value: "var(--button-min-height)", name: "--input-min-height" },
     { value: "var(--size-item-small)", name: "--input-width" },
     {
       value: { brand: { default: "664px" } },
@@ -2040,6 +2081,7 @@ export const tokensTable = {
     { value: "initial", name: "--panel-width" },
     { value: "14px", name: "--toolbarbutton-badge-min-width" },
     { value: "20px", name: "--toolbarbutton-badge-max-width" },
+    { value: "14px", name: "--toolbarbutton-badge-size" },
     { value: "var(--size-item-medium)", name: "--input-color-swatch-size" },
     {
       value: "var(--size-item-large)",
@@ -2072,8 +2114,8 @@ export const tokensTable = {
         "calc(var(--toggle-width) - 2 * var(--toggle-dot-margin) - 2px - var(--toggle-dot-width))",
       name: "--toggle-dot-transform-x",
     },
+    { value: "40px", name: "--tab-background-width-pinned-expanded" },
     { value: "1.7", name: "--tab-label-line-height" },
-    { value: "40px", name: "--tab-pinned-expanded-background-width" },
     { value: "var(--icon-size)", name: "--urlbarview-favicon-size" },
     { value: "var(--size-item-large)", name: "--urlbarview-row-min-height" },
   ],
@@ -2111,10 +2153,8 @@ export const tokensTable = {
     { value: "var(--space-small)", name: "--card-gap-compact" },
     { value: "var(--space-small)", name: "--card-gap-article" },
     { value: "var(--space-small)", name: "--checkbox-margin-inline" },
-    { value: "4px", name: "--info-bar-margin-block-start" },
-    { value: { default: "4px" }, name: "--info-bar-margin-block-end" },
-    { value: "4px", name: "--info-bar-margin-inline" },
-    { value: "var(--space-medium)", name: "--input-folder-gap" },
+    { value: "var(--space-large)", name: "--dialog-padding" },
+    { value: { default: "4px" }, name: "--info-bar-margin" },
     { value: { brand: { default: "64px" } }, name: "--page-space-block-start" },
     {
       value: "0 var(--panel-menuitem-margin-inline)",
@@ -2161,14 +2201,23 @@ export const tokensTable = {
       value: "var(--space-medium)",
       name: "--input-color-space-padding-inline",
     },
+    { value: "var(--space-medium)", name: "--input-folder-gap" },
     {
       value: "var(--space-xsmall) var(--space-large)",
       name: "--message-bar-actions-button-padding",
     },
     { value: "var(--space-small)", name: "--message-bar-actions-gap" },
+    {
+      value: { default: "0px" },
+      name: "--message-bar-close-margin-inline-end",
+    },
+    {
+      value: { default: "0px" },
+      name: "--message-bar-close-margin-block-start",
+    },
     { value: "var(--space-small)", name: "--message-bar-container-gap" },
     {
-      value: "var(--space-small)",
+      value: { default: "var(--space-small)" },
       name: "--message-bar-container-padding-block",
     },
     {
@@ -2179,6 +2228,8 @@ export const tokensTable = {
       value: "var(--space-small) var(--space-medium)",
       name: "--message-bar-content-gap",
     },
+    { value: { default: "0" }, name: "--message-bar-content-padding-block" },
+    { value: { default: "0" }, name: "--message-bar-content-padding-inline" },
     {
       value: { default: "var(--space-small)" },
       name: "--message-bar-icon-container-margin-block-start",
@@ -2189,8 +2240,8 @@ export const tokensTable = {
     },
     { value: { default: "0px" }, name: "--message-bar-icon-container-padding" },
     {
-      value: { default: "0px" },
-      name: "--message-bar-icon-container-padding-offset",
+      value: { default: "var(--message-bar-icon-container-padding)" },
+      name: "--message-bar-icon-container-padding-block-start",
     },
     {
       value: "var(--space-xsmall)",
@@ -2254,22 +2305,26 @@ export const tokensTable = {
       value: { default: "0px" },
       name: "--panel-item-button-padding-inline-start-offset",
     },
-    { value: "4px", name: "--tab-margin-block" },
-    { value: "5.5px", name: "--tab-icon-end-margin" },
-    { value: "8px", name: "--tab-inline-padding" },
-    { value: "var(--space-medium)", name: "--tab-inner-inline-margin" },
-    { value: "2px", name: "--tab-overflow-clip-margin" },
     {
-      value: "var(--space-small)",
-      name: "--tab-pinned-container-margin-inline-expanded",
+      value: { default: "var(--panel-padding-block)" },
+      name: "--panel-list-padding-block",
     },
+    { value: "6px", name: "--tab-close-button-padding" },
+    {
+      value: { default: "var(--space-small)" },
+      name: "--tab-container-margin-inline-pinned-expanded",
+    },
+    { value: "5.5px", name: "--tab-icon-margin-inline-end" },
+    { value: "4px", name: "--tab-margin-block" },
+    { value: "2px", name: "--tab-margin-block-vertical" },
+    { value: "var(--space-medium)", name: "--tab-margin-inline-inner" },
     {
       value: "var(--space-xsmall)",
-      name: "--tab-pinned-margin-inline-expanded",
+      name: "--tab-margin-inline-pinned-expanded",
     },
-    { value: "2px", name: "--tab-vertical-block-margin" },
-    { value: "var(--space-medium)", name: "--tab-vertical-inline-padding" },
-    { value: "6px", name: "--tab-close-button-padding" },
+    { value: "2px", name: "--tab-margin-overflow-clip" },
+    { value: "8px", name: "--tab-padding-inline" },
+    { value: "var(--space-medium)", name: "--tab-padding-inline-vertical" },
     { value: "5px", name: "--urlbar-margin-inline" },
     { value: "4px", name: "--urlbar-padding-block" },
     { value: "var(--space-small)", name: "--urlbarview-row-padding-block" },
@@ -2429,7 +2484,7 @@ export const tokensTable = {
       name: "--button-text-color-ghost-hover",
     },
     {
-      value: "var(--button-text-color-ghost-active)",
+      value: { default: "var(--button-text-color-ghost-active)" },
       name: "--button-text-color-ghost-selected",
     },
     { value: "var(--button-text-color)", name: "--button-text-color-muted" },
@@ -2457,24 +2512,30 @@ export const tokensTable = {
       name: "--button-text-color-hover",
     },
     {
-      value: "var(--button-text-color-ghost)",
+      value: {
+        default: "var(--button-text-color-ghost)",
+        forcedColors: "MenuText",
+      },
       name: "--button-text-color-menu",
     },
     {
       value: {
         default: "var(--button-text-color-ghost-active)",
-        forcedColors: "var(--button-text-color-primary)",
+        forcedColors: "var(--button-text-color-menu-hover)",
       },
       name: "--button-text-color-menu-active",
     },
     {
-      value: "var(--button-text-color-ghost-disabled)",
+      value: {
+        default: "var(--button-text-color-ghost-disabled)",
+        forcedColors: "var(--button-text-color-disabled)",
+      },
       name: "--button-text-color-menu-disabled",
     },
     {
       value: {
         default: "var(--button-text-color-ghost-hover)",
-        forcedColors: "var(--button-text-color-primary)",
+        forcedColors: "-moz-menuhovertext",
       },
       name: "--button-text-color-menu-hover",
     },
@@ -2630,6 +2691,7 @@ export const tokensTable = {
       value: { forcedColors: "VisitedText", default: "var(--link-color)" },
       name: "--link-color-visited",
     },
+    { value: "inherit", name: "--panel-footer-text-color" },
     {
       value: {
         light: "var(--color-black)",
@@ -2807,6 +2869,9 @@ export const tokensTable = {
       name: "--input-color-text-color-hover",
     },
     { value: "var(--text-color)", name: "--message-bar-text-color" },
+    { value: "var(--text-color)", name: "--message-bar-text-color-warning" },
+    { value: "var(--text-color)", name: "--message-bar-text-color-success" },
+    { value: "var(--text-color)", name: "--message-bar-text-color-critical" },
     {
       value: "var(--button-text-color-ghost)",
       name: "--page-nav-button-text-color",
@@ -2883,26 +2948,18 @@ export const tokensTable = {
       },
       name: "--tab-text-color-selected",
     },
+    { value: { default: "inherit" }, name: "--urlbar-box-text-color" },
     {
-      value: { default: "var(--button-text-color-ghost)" },
-      name: "--tab-close-button-text-color",
-    },
-    {
-      value: { default: "var(--button-text-color-ghost-hover)" },
-      name: "--tab-close-button-text-color-hover",
-    },
-    {
-      value: { default: "var(--button-text-color-ghost-active)" },
-      name: "--tab-close-button-text-color-active",
-    },
-    { value: "inherit", name: "--urlbar-box-text-color" },
-    {
-      value: "var(--urlbar-box-text-color)",
+      value: { default: "var(--urlbar-box-text-color)" },
       name: "--urlbar-box-text-color-hover",
     },
     {
-      value: "var(--urlbar-box-text-color)",
+      value: { default: "var(--urlbar-box-text-color)" },
       name: "--urlbar-box-text-color-active",
+    },
+    {
+      value: "var(--urlbar-box-text-color)",
+      name: "--urlbar-box-text-color-focus",
     },
     {
       value: {
@@ -2921,6 +2978,7 @@ export const tokensTable = {
       },
       name: "--urlbarview-text-color-action",
     },
+    { value: "currentColor", name: "--urlbarview-text-color-hover" },
     {
       value: {
         nativeTheme: "color-mix(in srgb, currentColor 73%, transparent)",
@@ -2940,6 +2998,7 @@ export const tokensTable = {
         light: "rgb(21, 20, 26)",
         dark: "rgb(251, 251, 254)",
         nativeTheme: "SelectedItemText",
+        prefersContrast: "var(--text-color-list-item-hover)",
         default: "light-dark(rgb(21, 20, 26), rgb(251, 251, 254))",
         platform: {
           default: "SelectedItemText",
@@ -2963,8 +3022,8 @@ export const tokensTable = {
       name: "--card-border",
     },
     {
-      value: "var(--border-width) solid var(--input-text-border-color)",
-      name: "--input-text-border",
+      value: "var(--border-width) solid var(--input-border-color)",
+      name: "--input-border",
     },
     {
       value: "var(--box-border-width) solid var(--box-border-color)",
@@ -2992,6 +3051,19 @@ export const tokensTable = {
     { value: "center", name: "--button-content-alignment" },
     { value: "cover", name: "--card-cover-image-object-fit-default" },
     { value: "center", name: "--card-cover-image-object-position-default" },
+    { value: { default: "unset" }, name: "--toolbox-background-gradient" },
+    {
+      value: { default: "unset" },
+      name: "--toolbox-background-gradient-leading",
+    },
+    {
+      value: { default: "unset" },
+      name: "--toolbox-background-gradient-trailing",
+    },
+    {
+      value: { default: "center" },
+      name: "--message-bar-icon-container-align-items",
+    },
     {
       value: {
         light: "var(--color-blue-50)",
@@ -3373,6 +3445,7 @@ export const tokensTable = {
       },
       name: "--icon-color",
     },
+    { value: "unset", name: "--icon-color-accent-primary-desaturated" },
     {
       value: {
         light: "var(--color-blue-60)",
@@ -3414,6 +3487,7 @@ export const tokensTable = {
         light: "var(--color-gray-70)",
         dark: "var(--color-gray-0)",
         nativeTheme: "currentColor",
+        forcedColors: "var(--button-text-color)",
         default: "light-dark(var(--color-gray-70), var(--color-gray-0))",
         platform: {
           default: "currentColor",
@@ -3425,6 +3499,27 @@ export const tokensTable = {
         },
       },
       name: "--toolbarbutton-icon-fill",
+    },
+    {
+      value: {
+        default: "var(--toolbarbutton-icon-fill)",
+        forcedColors: "var(--button-text-color-ghost-hover)",
+      },
+      name: "--toolbarbutton-icon-fill-hover",
+    },
+    {
+      value: {
+        default: "var(--toolbarbutton-icon-fill)",
+        forcedColors: "var(--button-text-color-ghost-active)",
+      },
+      name: "--toolbarbutton-icon-fill-active",
+    },
+    {
+      value: {
+        default: "var(--toolbarbutton-icon-fill)",
+        forcedColors: "var(--button-text-color-disabled)",
+      },
+      name: "--toolbarbutton-icon-fill-disabled",
     },
     {
       value: {
@@ -3468,7 +3563,10 @@ export const tokensTable = {
     },
     { value: "var(--button-icon-fill)", name: "--select-icon-fill" },
     { value: "currentColor", name: "--panel-item-fill" },
-    { value: { default: "var(--color-blue-50)" }, name: "--tab-loading-fill" },
+    {
+      value: { default: "var(--color-blue-50)" },
+      name: "--tab-icon-fill-loading",
+    },
     {
       value: {
         default: "0.72",
@@ -3486,7 +3584,7 @@ export const tokensTable = {
     },
     {
       value: "var(--button-opacity-disabled)",
-      name: "--input-text-opacity-disabled",
+      name: "--input-opacity-disabled",
     },
     {
       value: { default: "0.6", prefersContrast: "1" },
@@ -3500,6 +3598,7 @@ export const tokensTable = {
       value: {
         default: "var(--button-opacity-disabled)",
         prefersContrast: "0.3",
+        forcedColors: "var(--button-opacity-disabled)",
       },
       name: "--toolbarbutton-opacity-disabled",
     },
@@ -3520,8 +3619,11 @@ export const tokensTable = {
     { value: "24px", name: "--icon-size-large" },
     { value: "32px", name: "--icon-size-xlarge" },
     { value: "var(--size-item-xlarge)", name: "--icon-size-xxlarge" },
-    { value: "var(--icon-size-xsmall)", name: "--input-text-icon-size" },
-    { value: "var(--input-text-icon-size)", name: "--input-search-icon-size" },
+    { value: "var(--icon-size-xsmall)", name: "--input-icon-size" },
+    {
+      value: { default: "var(--input-icon-size)" },
+      name: "--input-search-icon-size",
+    },
     { value: "var(--icon-size)", name: "--box-icon-size" },
     { value: "var(--icon-size-xsmall)", name: "--breadcrumb-icon-size" },
     { value: "var(--icon-size)", name: "--message-bar-icon-size" },
@@ -3586,38 +3688,6 @@ export const variableLookupTable = {
     platform: { default: "color-mix(in srgb, currentColor 20%, transparent)" },
     prefersContrast: "SelectedItem",
   },
-  "background-color-dimmed": {
-    light: "color-mix(in srgb, currentColor 12%, transparent)",
-    dark: "color-mix(in srgb, currentColor 17%, transparent)",
-    nativeTheme: "color-mix(in srgb, currentColor 17%, transparent)",
-    default:
-      "light-dark(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 17%, transparent))",
-    platform: {
-      default: "color-mix(in srgb, currentColor 17%, transparent)",
-      browserTheme: {
-        light: "color-mix(in srgb, currentColor 12%, transparent)",
-        dark: "color-mix(in srgb, currentColor 17%, transparent)",
-        default:
-          "light-dark(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 17%, transparent))",
-      },
-    },
-  },
-  "background-color-dimmed-further": {
-    light: "color-mix(in srgb, currentColor 20%, transparent)",
-    dark: "color-mix(in srgb, currentColor 14%, transparent)",
-    nativeTheme: "color-mix(in srgb, currentColor 30%, transparent)",
-    default:
-      "light-dark(color-mix(in srgb, currentColor 20%, transparent), color-mix(in srgb, currentColor 14%, transparent))",
-    platform: {
-      default: "color-mix(in srgb, currentColor 30%, transparent)",
-      browserTheme: {
-        light: "color-mix(in srgb, currentColor 20%, transparent)",
-        dark: "color-mix(in srgb, currentColor 14%, transparent)",
-        default:
-          "light-dark(color-mix(in srgb, currentColor 20%, transparent), color-mix(in srgb, currentColor 14%, transparent))",
-      },
-    },
-  },
   "border-color": {
     brand: {
       light: "var(--color-gray-50)",
@@ -3632,12 +3702,7 @@ export const variableLookupTable = {
     prefersContrast: "CanvasText",
   },
   "border-color-deemphasized": {
-    brand: {
-      light: "var(--color-gray-30)",
-      dark: "var(--color-gray-70)",
-      default: "light-dark(var(--color-gray-30), var(--color-gray-70))",
-    },
-    platform: { default: "color-mix(in srgb, currentColor 24%, transparent)" },
+    default: "color-mix(in srgb, currentColor 24%, transparent)",
     prefersContrast: "currentColor",
     forcedColors: "ButtonText",
   },
@@ -3680,6 +3745,8 @@ export const variableLookupTable = {
   "border-radius-small": "4px",
   "border-radius-medium": "8px",
   "border-radius-large": "16px",
+  "border-radius-xlarge": "0",
+  "border-radius-xxlarge": "0",
   "border-width": "1px",
   "box-shadow-level-1":
     "0 0 1px var(--box-shadow-color-darker-layer-1), 0 1px 2px var(--box-shadow-color-darker-layer-2)",
@@ -3710,14 +3777,25 @@ export const variableLookupTable = {
     default: "light-dark(rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.2))",
   },
   "color-gray-0": "#fbfbfe",
+  "color-gray-10": "unset",
+  "color-gray-15": "unset",
   "color-gray-20": "#f0f0f4",
+  "color-gray-25": "unset",
   "color-gray-30": "#bac2ca",
+  "color-gray-35": "unset",
+  "color-gray-40": "unset",
+  "color-gray-45": "unset",
   "color-gray-50": "#bfbfc9",
+  "color-gray-55": "unset",
   "color-gray-60": "#8f8f9d",
+  "color-gray-65": "unset",
   "color-gray-70": "#5b5b66",
+  "color-gray-75": "unset",
   "color-gray-80": "#23222b",
+  "color-gray-85": "unset",
   "color-gray-90": "#1c1b22",
   "color-gray-100": "#15141a",
+  "color-gray-05": "unset",
   "color-red-0": "oklch(97% 0.05 15)",
   "color-red-10": "oklch(90% 0.1 15)",
   "color-red-20": "oklch(83% 0.14 15)",
@@ -3846,6 +3924,16 @@ export const variableLookupTable = {
   "color-black-alpha-70": "oklch(0 0 0 / 70%)",
   "color-black-alpha-80": "oklch(0 0 0 / 80%)",
   "color-black-alpha-90": "oklch(0 0 0 / 90%)",
+  "color-violet-desaturated-0": "unset",
+  "color-violet-desaturated-10": "unset",
+  "color-violet-desaturated-20": "unset",
+  "color-violet-desaturated-30": "unset",
+  "color-violet-desaturated-40": "unset",
+  "color-violet-desaturated-50": "unset",
+  "color-violet-desaturated-60": "unset",
+  "color-violet-desaturated-70": "unset",
+  "color-violet-desaturated-80": "unset",
+  "color-violet-desaturated-90": "unset",
   "color-accent-primary": {
     light: "var(--color-blue-60)",
     dark: "var(--color-cyan-30)",
@@ -3936,7 +4024,10 @@ export const variableLookupTable = {
   },
   "font-size-small": {
     brand: { default: "0.867rem" },
-    platform: { default: "unset" },
+    platform: {
+      default: "1rem",
+      comment: "macOS 11px, Windows 12px, Linux overridden to >= 11px",
+    },
   },
   "font-size-large": "1.133rem",
   "font-size-xlarge": "1.467rem",
@@ -4106,28 +4197,13 @@ export const variableLookupTable = {
       browserTheme: { default: "transparent" },
     },
   },
-  "button-background-color-ghost-active": {
-    default: "var(--button-background-color-active)",
-    nativeTheme: "color-mix(in srgb, currentColor 30%, transparent)",
-    forcedColors: "var(--button-background-color-active)",
-    platform: {
-      default: "color-mix(in srgb, currentColor 30%, transparent)",
-      browserTheme: { default: "var(--button-background-color-active)" },
-    },
-  },
+  "button-background-color-ghost-active":
+    "var(--button-background-color-active)",
   "button-background-color-ghost-disabled": {
     default: "var(--button-background-color-ghost)",
     brand: { forcedColors: "var(--button-background-color-disabled)" },
   },
-  "button-background-color-ghost-hover": {
-    default: "var(--button-background-color-hover)",
-    nativeTheme: "color-mix(in srgb, currentColor 17%, transparent)",
-    forcedColors: "var(--button-background-color-hover)",
-    platform: {
-      default: "color-mix(in srgb, currentColor 17%, transparent)",
-      browserTheme: { default: "var(--button-background-color-hover)" },
-    },
-  },
+  "button-background-color-ghost-hover": "var(--button-background-color-hover)",
   "button-background-color-ghost-selected":
     "var(--button-background-color-ghost-active)",
   "button-background-color-muted": "var(--button-background-color)",
@@ -4138,16 +4214,19 @@ export const variableLookupTable = {
     "var(--button-background-color-disabled)",
   "button-background-color-muted-selected":
     "var(--button-background-color-muted-active)",
-  "button-background-color-menu": "var(--button-background-color-ghost)",
+  "button-background-color-menu": {
+    default: "var(--button-background-color-ghost)",
+    forcedColors: "Menu",
+  },
   "button-background-color-menu-active": {
     default: "var(--button-background-color-ghost-active)",
-    forcedColors: "var(--button-background-color-primary)",
+    forcedColors: "var(--button-background-color-menu-hover)",
   },
   "button-background-color-menu-disabled":
     "var(--button-background-color-ghost-disabled)",
   "button-background-color-menu-hover": {
     default: "var(--button-background-color-ghost-hover)",
-    forcedColors: "var(--button-background-color-primary)",
+    forcedColors: "-moz-menuhover",
   },
   "button-background-color-menu-selected": {
     default: "var(--button-background-color-ghost-selected)",
@@ -4159,10 +4238,8 @@ export const variableLookupTable = {
     "var(--toolbarbutton-background-color-hover)",
   "button-background-color-toolbar-active":
     "var(--toolbarbutton-background-color-active)",
-  "button-background-color-toolbar-disabled": {
-    default: "var(--toolbarbutton-background-color)",
-    forcedColors: "var(--button-background-color-disabled)",
-  },
+  "button-background-color-toolbar-disabled":
+    "var(--toolbarbutton-background-color-disabled)",
   "button-background-color-toolbar-selected":
     "var(--button-background-color-ghost-active)",
   "button-badge-background-color": "var(--color-accent-attention)",
@@ -4357,7 +4434,9 @@ export const variableLookupTable = {
     prefersContrast: "var(--button-text-color-hover)",
     forcedColors: "var(--button-text-color-hover)",
   },
-  "button-text-color-ghost-selected": "var(--button-text-color-ghost-active)",
+  "button-text-color-ghost-selected": {
+    default: "var(--button-text-color-ghost-active)",
+  },
   "button-text-color-muted": "var(--button-text-color)",
   "button-text-color-muted-active": "var(--button-text-color-active)",
   "button-text-color-muted-hover": "var(--button-text-color-hover)",
@@ -4367,15 +4446,21 @@ export const variableLookupTable = {
     default: "var(--button-text-color)",
     forcedColors: "SelectedItem",
   },
-  "button-text-color-menu": "var(--button-text-color-ghost)",
+  "button-text-color-menu": {
+    default: "var(--button-text-color-ghost)",
+    forcedColors: "MenuText",
+  },
   "button-text-color-menu-active": {
     default: "var(--button-text-color-ghost-active)",
-    forcedColors: "var(--button-text-color-primary)",
+    forcedColors: "var(--button-text-color-menu-hover)",
   },
-  "button-text-color-menu-disabled": "var(--button-text-color-ghost-disabled)",
+  "button-text-color-menu-disabled": {
+    default: "var(--button-text-color-ghost-disabled)",
+    forcedColors: "var(--button-text-color-disabled)",
+  },
   "button-text-color-menu-hover": {
     default: "var(--button-text-color-ghost-hover)",
-    forcedColors: "var(--button-text-color-primary)",
+    forcedColors: "-moz-menuhovertext",
   },
   "button-text-color-menu-selected": {
     default: "var(--button-text-color-ghost-selected)",
@@ -4483,12 +4568,18 @@ export const variableLookupTable = {
   "card-header-text-color-active": "var(--button-text-color-active)",
   "checkbox-margin-inline": "var(--space-small)",
   "checkbox-size": "var(--size-item-small)",
+  "dialog-background-color": "var(--popup-background-color)",
+  "dialog-border-radius": "var(--popup-border-radius)",
+  "dialog-border-color": "var(--popup-border-color)",
+  "dialog-box-shadow": "var(--popup-box-shadow)",
+  "dialog-padding": "var(--space-large)",
   "icon-color": {
     light: "var(--color-gray-70)",
     dark: "var(--color-gray-0)",
     prefersContrast: "var(--text-color)",
     default: "light-dark(var(--color-gray-70), var(--color-gray-0))",
   },
+  "icon-color-accent-primary-desaturated": "unset",
   "icon-color-information": {
     light: "var(--color-blue-60)",
     dark: "var(--color-blue-20)",
@@ -4521,13 +4612,8 @@ export const variableLookupTable = {
   "icon-size-xlarge": "32px",
   "icon-size-xxlarge": "var(--size-item-xlarge)",
   "info-bar-border-color": { default: "var(--border-color-deemphasized)" },
-  "info-bar-margin-block-start": "4px",
-  "info-bar-margin-block-end": { default: "4px" },
-  "info-bar-margin-inline": "4px",
-  "input-border-color": "var(--border-color-interactive)",
-  "input-folder-gap": "var(--space-medium)",
-  "input-height": "var(--size-item-small)",
-  "input-text-background-color": {
+  "info-bar-margin": { default: "4px" },
+  "input-background-color": {
     nativeTheme: "Field",
     platform: {
       default: "Field",
@@ -4538,14 +4624,19 @@ export const variableLookupTable = {
       },
     },
   },
-  "input-text-background-color-disabled":
-    "var(--button-background-color-disabled)",
-  "input-text-border":
-    "var(--border-width) solid var(--input-text-border-color)",
-  "input-text-border-color": "var(--border-color)",
-  "input-text-border-color-disabled":
-    "var(--border-color-interactive-disabled)",
-  "input-text-border-radius": "var(--border-radius-medium)",
+  "input-background-color-disabled": {
+    default: "var(--button-background-color-disabled)",
+  },
+  "input-border": "var(--border-width) solid var(--input-border-color)",
+  "input-border-color": "var(--border-color-interactive)",
+  "input-border-color-disabled": "var(--border-color-interactive-disabled)",
+  "input-border-radius": "var(--border-radius-medium)",
+  "input-height": "var(--size-item-small)",
+  "input-icon-size": "var(--icon-size-xsmall)",
+  "input-min-height": "var(--button-min-height)",
+  "input-opacity-disabled": "var(--button-opacity-disabled)",
+  "input-search-border-radius": { default: "var(--input-border-radius)" },
+  "input-search-icon-size": { default: "var(--input-icon-size)" },
   "input-text-color": {
     brand: { default: "var(--text-color)" },
     nativeTheme: "FieldText",
@@ -4562,12 +4653,8 @@ export const variableLookupTable = {
     default: "var(--input-text-color)",
     forcedColors: "GrayText",
   },
-  "input-text-icon-size": "var(--icon-size-xsmall)",
-  "input-text-min-height": "var(--button-min-height)",
-  "input-text-opacity-disabled": "var(--button-opacity-disabled)",
-  "input-search-border-radius": { default: "var(--input-text-border-radius)" },
-  "input-search-icon-size": "var(--input-text-icon-size)",
   "input-width": "var(--size-item-small)",
+  "link-border-radius-focus": "var(--border-radius-small)",
   "link-color": {
     forcedColors: "LinkText",
     default: "var(--color-accent-primary)",
@@ -4626,26 +4713,27 @@ export const variableLookupTable = {
       },
     },
   },
-  "panel-background-color-dimmed": "var(--background-color-dimmed)",
-  "panel-background-color-dimmed-further":
-    "var(--background-color-dimmed-further)",
-  "panel-border-color": {
-    light: "rgb(240, 240, 244)",
-    dark: "rgb(82, 82, 94)",
-    nativeTheme: "var(--border-color-deemphasized)",
-    default: "light-dark(rgb(240, 240, 244), rgb(82, 82, 94))",
+  "panel-border-color": "var(--popup-border-color)",
+  "panel-border-radius": "var(--popup-border-radius)",
+  "panel-box-shadow": "0 0 var(--panel-box-shadow-margin) hsla(0, 0%, 0%, 0.2)",
+  "panel-box-shadow-margin": "4px",
+  "panel-footer-background-color": {
+    light: "color-mix(in srgb, currentColor 12%, transparent)",
+    dark: "color-mix(in srgb, currentColor 17%, transparent)",
+    nativeTheme: "color-mix(in srgb, currentColor 17%, transparent)",
+    default:
+      "light-dark(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 17%, transparent))",
     platform: {
-      default: "var(--border-color-deemphasized)",
+      default: "color-mix(in srgb, currentColor 17%, transparent)",
       browserTheme: {
-        light: "rgb(240, 240, 244)",
-        dark: "rgb(82, 82, 94)",
-        default: "light-dark(rgb(240, 240, 244), rgb(82, 82, 94))",
+        light: "color-mix(in srgb, currentColor 12%, transparent)",
+        dark: "color-mix(in srgb, currentColor 17%, transparent)",
+        default:
+          "light-dark(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 17%, transparent))",
       },
     },
   },
-  "panel-border-radius": "var(--border-radius-medium)",
-  "panel-box-shadow": "0 0 var(--panel-box-shadow-margin) hsla(0, 0%, 0%, 0.2)",
-  "panel-box-shadow-margin": "4px",
+  "panel-footer-text-color": "inherit",
   "panel-padding": "16px",
   "panel-padding-block": "4px",
   "panel-separator-color": {
@@ -4874,6 +4962,7 @@ export const variableLookupTable = {
   "toolbarbutton-badge-max-width": "20px",
   "toolbarbutton-badge-padding-inline": "2px",
   "toolbarbutton-badge-padding-block-end": "1px",
+  "toolbarbutton-badge-size": "14px",
   "toolbarbutton-padding-outer": "2px",
   "toolbarbutton-padding-outer-narrow": "1px",
   "toolbarbutton-padding-inner": "8px",
@@ -4885,6 +4974,7 @@ export const variableLookupTable = {
     light: "var(--color-gray-70)",
     dark: "var(--color-gray-0)",
     nativeTheme: "currentColor",
+    forcedColors: "var(--button-text-color)",
     default: "light-dark(var(--color-gray-70), var(--color-gray-0))",
     platform: {
       default: "currentColor",
@@ -4894,6 +4984,18 @@ export const variableLookupTable = {
         default: "light-dark(var(--color-gray-70), var(--color-gray-0))",
       },
     },
+  },
+  "toolbarbutton-icon-fill-hover": {
+    default: "var(--toolbarbutton-icon-fill)",
+    forcedColors: "var(--button-text-color-ghost-hover)",
+  },
+  "toolbarbutton-icon-fill-active": {
+    default: "var(--toolbarbutton-icon-fill)",
+    forcedColors: "var(--button-text-color-ghost-active)",
+  },
+  "toolbarbutton-icon-fill-disabled": {
+    default: "var(--toolbarbutton-icon-fill)",
+    forcedColors: "var(--button-text-color-disabled)",
   },
   "toolbarbutton-icon-fill-attention": {
     light: "var(--color-blue-60)",
@@ -4926,6 +5028,7 @@ export const variableLookupTable = {
   "toolbarbutton-opacity-disabled": {
     default: "var(--button-opacity-disabled)",
     prefersContrast: "0.3",
+    forcedColors: "var(--button-opacity-disabled)",
   },
   "toolbarbutton-border-radius": "var(--button-border-radius)",
   "toolbarbutton-background-color": {
@@ -4954,6 +5057,10 @@ export const variableLookupTable = {
       },
     },
   },
+  "toolbarbutton-background-color-disabled": {
+    default: "var(--toolbarbutton-background-color)",
+    forcedColors: "var(--button-background-color-disabled)",
+  },
   "toolbarbutton-outline":
     "var(--border-width) solid var(--toolbarbutton-outline-color)",
   "toolbarbutton-outline-color": {
@@ -4973,6 +5080,10 @@ export const variableLookupTable = {
   "toolbarbutton-outline-color-selected": {
     default: "var(--toolbarbutton-outline-color-active)",
     forcedColors: "SelectedItem",
+  },
+  "toolbarbutton-outline-color-disabled": {
+    default: "var(--toolbarbutton-outline-color)",
+    forcedColors: "var(--button-border-color-disabled)",
   },
   "toolbarbutton-outline-offset": "calc(-1 * var(--border-width))",
   "toolbarseparator-color": "var(--text-color-deemphasized)",
@@ -4998,6 +5109,9 @@ export const variableLookupTable = {
       browserTheme: { default: "var(--toolbox-background-color)" },
     },
   },
+  "toolbox-background-gradient": { default: "unset" },
+  "toolbox-background-gradient-leading": { default: "unset" },
+  "toolbox-background-gradient-trailing": { default: "unset" },
   "toolbox-text-color": {
     light: "var(--color-gray-100)",
     dark: "var(--color-gray-0)",
@@ -5095,6 +5209,7 @@ export const variableLookupTable = {
   "input-color-text-color": "var(--button-text-color)",
   "input-color-text-color-active": "var(--button-text-color-active)",
   "input-color-text-color-hover": "var(--button-text-color-hover)",
+  "input-folder-gap": "var(--space-medium)",
   "message-bar-actions-button-padding":
     "var(--space-xsmall) var(--space-large)",
   "message-bar-actions-gap": "var(--space-small)",
@@ -5108,13 +5223,17 @@ export const variableLookupTable = {
   },
   "message-bar-border-radius": "var(--border-radius-medium)",
   "message-bar-border-width": "var(--border-width)",
+  "message-bar-close-margin-inline-end": { default: "0px" },
+  "message-bar-close-margin-block-start": { default: "0px" },
   "message-bar-container-gap": "var(--space-small)",
   "message-bar-container-min-height": "var(--size-item-large)",
-  "message-bar-container-padding-block": "var(--space-small)",
+  "message-bar-container-padding-block": { default: "var(--space-small)" },
   "message-bar-container-padding-inline": {
     default: "var(--space-medium) var(--space-small)",
   },
   "message-bar-content-gap": "var(--space-small) var(--space-medium)",
+  "message-bar-content-padding-block": { default: "0" },
+  "message-bar-content-padding-inline": { default: "0" },
   "message-bar-icon-background-color": "var(--background-color-information)",
   "message-bar-icon-background-color-warning":
     "var(--background-color-warning)",
@@ -5123,19 +5242,39 @@ export const variableLookupTable = {
   "message-bar-icon-background-color-critical":
     "var(--background-color-critical)",
   "message-bar-icon-color": "var(--icon-color-information)",
+  "message-bar-icon-container-align-items": { default: "center" },
   "message-bar-icon-container-border": { default: "none" },
   "message-bar-icon-container-border-color": "transparent",
-  "message-bar-icon-container-border-radius": "var(--border-radius-circle)",
+  "message-bar-icon-container-border-radius": {
+    default: "var(--border-radius-circle)",
+  },
+  "message-bar-icon-container-border-radius-start-start": {
+    default: "var(--message-bar-icon-container-border-radius)",
+  },
+  "message-bar-icon-container-border-radius-start-end": {
+    default: "var(--message-bar-icon-container-border-radius)",
+  },
+  "message-bar-icon-container-border-radius-end-start": {
+    default: "var(--message-bar-icon-container-border-radius)",
+  },
+  "message-bar-icon-container-border-radius-end-end": {
+    default: "var(--message-bar-icon-container-border-radius)",
+  },
   "message-bar-icon-container-height": { default: "min-content" },
   "message-bar-icon-container-margin-block-start": {
     default: "var(--space-small)",
   },
   "message-bar-icon-container-margin-block-start-offset": { default: "2px" },
   "message-bar-icon-container-padding": { default: "0px" },
-  "message-bar-icon-container-padding-offset": { default: "0px" },
+  "message-bar-icon-container-padding-block-start": {
+    default: "var(--message-bar-icon-container-padding)",
+  },
   "message-bar-icon-size": "var(--icon-size)",
   "message-bar-message-margin-inline-end": "var(--space-xsmall)",
   "message-bar-text-color": "var(--text-color)",
+  "message-bar-text-color-warning": "var(--text-color)",
+  "message-bar-text-color-success": "var(--text-color)",
+  "message-bar-text-color-critical": "var(--text-color)",
   "message-bar-text-container-gap": "var(--space-xsmall) var(--space-small)",
   "message-bar-text-container-padding-block": {
     default:
@@ -5237,10 +5376,16 @@ export const variableLookupTable = {
   "toggle-background-color": "var(--button-background-color)",
   "toggle-background-color-hover": "var(--button-background-color-hover)",
   "toggle-background-color-active": "var(--button-background-color-active)",
+  "toggle-background-color-disabled": {
+    forcedColors: "var(--button-background-color-disabled)",
+  },
   "toggle-background-color-pressed": "var(--color-accent-primary)",
   "toggle-background-color-pressed-hover": "var(--color-accent-primary-hover)",
   "toggle-background-color-pressed-active":
     "var(--color-accent-primary-active)",
+  "toggle-background-color-pressed-disabled": {
+    forcedColors: "var(--button-background-color-primary-disabled)",
+  },
   "toggle-border-color": {
     light: "var(--color-gray-70)",
     dark: "var(--border-color-interactive)",
@@ -5256,6 +5401,9 @@ export const variableLookupTable = {
   "toggle-border-color-active": {
     default: "var(--toggle-border-color)",
     forcedColors: "var(--border-color-interactive-active)",
+  },
+  "toggle-border-color-disabled": {
+    forcedColors: "var(--border-color-interactive-disabled)",
   },
   "toggle-border-radius": "var(--border-radius-circle)",
   "toggle-border-width": "var(--border-width)",
@@ -5273,9 +5421,15 @@ export const variableLookupTable = {
     default: "var(--toggle-dot-background-color)",
     forcedColors: "var(--color-accent-primary-active)",
   },
+  "toggle-dot-background-color-disabled": {
+    forcedColors: "var(--button-text-color-disabled)",
+  },
   "toggle-dot-background-color-on-pressed": {
     default: "var(--background-color-canvas)",
     forcedColors: "var(--button-background-color)",
+  },
+  "toggle-dot-background-color-on-pressed-disabled": {
+    forcedColors: "var(--button-text-color-primary-disabled)",
   },
   "toggle-dot-margin": "1px",
   "toggle-dot-height":
@@ -5303,14 +5457,8 @@ export const variableLookupTable = {
   "panel-list-border-color": { default: "var(--border-color-deemphasized)" },
   "panel-list-border-radius": "var(--panel-border-radius)",
   "panel-list-box-shadow": { default: "var(--popup-box-shadow)" },
+  "panel-list-padding-block": { default: "var(--panel-padding-block)" },
   "panel-list-text-color": "var(--text-color)",
-  "tab-margin-block": "4px",
-  "tab-border": "var(--border-width) solid var(--tab-border-color)",
-  "tab-border-radius": "var(--toolbarbutton-border-radius)",
-  "tab-border-color": "var(--toolbarbutton-outline-color)",
-  "tab-border-color-hover": "var(--toolbarbutton-outline-color-hover)",
-  "tab-border-color-selected": "var(--toolbarbutton-outline-color-selected)",
-  "tab-box-shadow-selected": "var(--box-shadow-level-1)",
   "tab-attention-dot-color": "var(--color-accent-attention)",
   "tab-background-color": {
     default: "transparent",
@@ -5340,6 +5488,40 @@ export const variableLookupTable = {
       },
     },
   },
+  "tab-background-width-pinned-expanded": "40px",
+  "tab-border": "var(--border-width) solid var(--tab-border-color)",
+  "tab-border-radius": "var(--toolbarbutton-border-radius)",
+  "tab-border-color": "var(--toolbarbutton-outline-color)",
+  "tab-border-color-hover": "var(--toolbarbutton-outline-color-hover)",
+  "tab-border-color-accent": { default: "unset" },
+  "tab-border-color-selected": "var(--toolbarbutton-outline-color-selected)",
+  "tab-border-color-selected-leading": "unset",
+  "tab-border-color-selected-trailing": "unset",
+  "tab-box-shadow-selected": "var(--box-shadow-level-1)",
+  "tab-close-button-padding": "6px",
+  "tab-close-button-border-color": "var(--tab-border-color)",
+  "tab-close-button-border-color-hover": {
+    default: "var(--tab-border-color)",
+    prefersContrast: "var(--button-border-color-hover)",
+  },
+  "tab-close-button-border-color-active": {
+    default: "var(--tab-border-color)",
+    prefersContrast: "var(--button-border-color-active)",
+  },
+  "tab-container-margin-inline-pinned-expanded": {
+    default: "var(--space-small)",
+  },
+  "tab-icon-fill-loading": { default: "var(--color-blue-50)" },
+  "tab-icon-margin-inline-end": "5.5px",
+  "tab-label-line-height": "1.7",
+  "tab-margin-block": "4px",
+  "tab-margin-block-vertical": "2px",
+  "tab-margin-inline-inner": "var(--space-medium)",
+  "tab-margin-inline-pinned-expanded": "var(--space-xsmall)",
+  "tab-margin-overflow-clip": "2px",
+  "tab-outline-offset": "calc(-1 * var(--border-width))",
+  "tab-padding-inline": "8px",
+  "tab-padding-inline-vertical": "var(--space-medium)",
   "tab-text-color": {
     default: "var(--toolbox-text-color-current)",
     forcedColors: "var(--button-text-color)",
@@ -5362,44 +5544,6 @@ export const variableLookupTable = {
         default: "light-dark(rgb(21, 20, 26), var(--color-white))",
       },
     },
-  },
-  "tab-icon-end-margin": "5.5px",
-  "tab-inline-padding": "8px",
-  "tab-inner-inline-margin": "var(--space-medium)",
-  "tab-label-line-height": "1.7",
-  "tab-loading-fill": { default: "var(--color-blue-50)" },
-  "tab-outline-offset": "calc(-1 * var(--border-width))",
-  "tab-overflow-clip-margin": "2px",
-  "tab-pinned-container-margin-inline-expanded": "var(--space-small)",
-  "tab-pinned-expanded-background-width": "40px",
-  "tab-pinned-margin-inline-expanded": "var(--space-xsmall)",
-  "tab-vertical-block-margin": "2px",
-  "tab-vertical-inline-padding": "var(--space-medium)",
-  "tab-close-button-padding": "6px",
-  "tab-close-button-background-color": {
-    default: "var(--button-background-color-ghost)",
-  },
-  "tab-close-button-background-color-hover": {
-    default: "var(--button-background-color-ghost-hover)",
-  },
-  "tab-close-button-background-color-active": {
-    default: "var(--button-background-color-ghost-active)",
-  },
-  "tab-close-button-border-color": "var(--tab-border-color)",
-  "tab-close-button-border-color-hover": {
-    default: "var(--tab-border-color)",
-    prefersContrast: "var(--button-border-color-hover)",
-  },
-  "tab-close-button-border-color-active": {
-    default: "var(--tab-border-color)",
-    prefersContrast: "var(--button-border-color-active)",
-  },
-  "tab-close-button-text-color": { default: "var(--button-text-color-ghost)" },
-  "tab-close-button-text-color-hover": {
-    default: "var(--button-text-color-ghost-hover)",
-  },
-  "tab-close-button-text-color-active": {
-    default: "var(--button-text-color-ghost-active)",
   },
   "tab-group-blue": {
     light: "var(--color-blue-50)",
@@ -5665,9 +5809,10 @@ export const variableLookupTable = {
     default:
       "light-dark(var(--button-background-color), color-mix(in srgb, currentColor 16%, transparent))",
   },
-  "urlbar-box-text-color": "inherit",
-  "urlbar-box-text-color-hover": "var(--urlbar-box-text-color)",
-  "urlbar-box-text-color-active": "var(--urlbar-box-text-color)",
+  "urlbar-box-text-color": { default: "inherit" },
+  "urlbar-box-text-color-hover": { default: "var(--urlbar-box-text-color)" },
+  "urlbar-box-text-color-active": { default: "var(--urlbar-box-text-color)" },
+  "urlbar-box-text-color-focus": "var(--urlbar-box-text-color)",
   "urlbar-icon-fill-opacity": {
     default: "0.72",
     nativeTheme: "0.9",
@@ -5677,17 +5822,19 @@ export const variableLookupTable = {
   "urlbar-margin-inline": "5px",
   "urlbar-padding-block": "4px",
   "urlbarview-background-color-hover": {
-    nativeTheme: "var(--background-color-dimmed)",
+    nativeTheme: "var(--background-color-list-item-hover)",
     light: "rgb(240, 240, 244)",
-    dark: "var(--background-color-dimmed)",
-    default: "light-dark(rgb(240, 240, 244), var(--background-color-dimmed))",
+    dark: "var(--background-color-list-item-hover)",
+    prefersContrast: "color-mix(in srgb, currentColor 20%, transparent)",
+    default:
+      "light-dark(rgb(240, 240, 244), var(--background-color-list-item-hover))",
     platform: {
-      default: "var(--background-color-dimmed)",
+      default: "var(--background-color-list-item-hover)",
       browserTheme: {
         light: "rgb(240, 240, 244)",
-        dark: "var(--background-color-dimmed)",
+        dark: "var(--background-color-list-item-hover)",
         default:
-          "light-dark(rgb(240, 240, 244), var(--background-color-dimmed))",
+          "light-dark(rgb(240, 240, 244), var(--background-color-list-item-hover))",
       },
     },
   },
@@ -5695,6 +5842,7 @@ export const variableLookupTable = {
     nativeTheme: "SelectedItem",
     light: "#e0e0e6",
     dark: "rgb(43, 42, 51)",
+    prefersContrast: "var(--background-color-list-item-hover)",
     default: "light-dark(#e0e0e6, rgb(43, 42, 51))",
     platform: {
       default: "SelectedItem",
@@ -5721,10 +5869,38 @@ export const variableLookupTable = {
       },
     },
   },
-  "urlbarview-action-button-background-color":
-    "color-mix(in srgb, var(--urlbarview-background-color-hover) 50%, transparent)",
-  "urlbarview-action-button-background-color-hover":
-    "var(--urlbarview-background-color-hover)",
+  "urlbarview-action-button-background-color": {
+    nativeTheme: "color-mix(in srgb, currentColor 8.5%, transparent)",
+    light: "color-mix(in srgb, var(--color-gray-20) 50%, transparent)",
+    dark: "color-mix(in srgb, currentColor 8.5%, transparent)",
+    default:
+      "light-dark(color-mix(in srgb, var(--color-gray-20) 50%, transparent), color-mix(in srgb, currentColor 8.5%, transparent))",
+    platform: {
+      default: "color-mix(in srgb, currentColor 8.5%, transparent)",
+      browserTheme: {
+        light: "color-mix(in srgb, var(--color-gray-20) 50%, transparent)",
+        dark: "color-mix(in srgb, currentColor 8.5%, transparent)",
+        default:
+          "light-dark(color-mix(in srgb, var(--color-gray-20) 50%, transparent), color-mix(in srgb, currentColor 8.5%, transparent))",
+      },
+    },
+  },
+  "urlbarview-action-button-background-color-hover": {
+    nativeTheme: "color-mix(in srgb, currentColor 17%, transparent)",
+    light: "var(--color-gray-20)",
+    dark: "color-mix(in srgb, currentColor 17%, transparent)",
+    default:
+      "light-dark(var(--color-gray-20), color-mix(in srgb, currentColor 17%, transparent))",
+    platform: {
+      default: "color-mix(in srgb, currentColor 17%, transparent)",
+      browserTheme: {
+        light: "var(--color-gray-20)",
+        dark: "color-mix(in srgb, currentColor 17%, transparent)",
+        default:
+          "light-dark(var(--color-gray-20), color-mix(in srgb, currentColor 17%, transparent))",
+      },
+    },
+  },
   "urlbarview-favicon-size": "var(--icon-size)",
   "urlbarview-row-min-height": "var(--size-item-large)",
   "urlbarview-row-padding-block": "var(--space-small)",
@@ -5742,6 +5918,7 @@ export const variableLookupTable = {
       },
     },
   },
+  "urlbarview-text-color-hover": "currentColor",
   "urlbarview-text-color-secondary": {
     nativeTheme: "color-mix(in srgb, currentColor 73%, transparent)",
     default: "color-mix(in srgb, currentColor 73%, transparent)",
@@ -5757,6 +5934,7 @@ export const variableLookupTable = {
     light: "rgb(21, 20, 26)",
     dark: "rgb(251, 251, 254)",
     nativeTheme: "SelectedItemText",
+    prefersContrast: "var(--text-color-list-item-hover)",
     default: "light-dark(rgb(21, 20, 26), rgb(251, 251, 254))",
     platform: {
       default: "SelectedItemText",

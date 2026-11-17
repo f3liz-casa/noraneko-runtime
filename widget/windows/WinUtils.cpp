@@ -629,6 +629,15 @@ uint16_t WinUtils::GetMouseInputSource() {
 /* static */
 uint16_t WinUtils::GetMousePointerID() {
   LPARAM lParamExtraInfo = ::GetMessageExtraInfo();
+
+  // The low bits of the extra info are only a tablet cursor ID when the
+  // tablet signature is present. Otherwise, they may contain unrelated data
+  // (e.g. changing values from tablet drivers with Windows Ink disabled),
+  // which must not be used as the pointer ID. Fall back to the mouse ID.
+  if ((lParamExtraInfo & TABLET_INK_SIGNATURE) != TABLET_INK_CHECK) {
+    return 0;
+  }
+
   return lParamExtraInfo & TABLET_INK_ID_MASK;
 }
 
@@ -762,7 +771,7 @@ static nsresult CacheFavicon(
     }
 
     RefPtr<DrawTarget> dt = Factory::CreateDrawTargetForData(
-        BackendType::CAIRO, map.mData, dataSurface->GetSize(), map.mStride,
+        BackendType::SKIA, map.mData, dataSurface->GetSize(), map.mStride,
         dataSurface->GetFormat());
     if (!dt) {
       gfxWarning() << "CreateDrawTargetForData failed in CacheFavicon";

@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <memory>
 #include <regex>
 #include <string>
 #include <vector>
@@ -41,6 +42,7 @@
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/layers/BuildConstants.h"
 #include "mozilla/layers/TextureForwarder.h"  // for LayersIPCChannel
+#include "nsCharSeparatedTokenizer.h"
 #include "nsPrintfCString.h"
 #include "nsThreadUtils.h"
 #include "prenv.h"
@@ -93,6 +95,7 @@ static const char* const sExtensionNames[] = {
     "GL_APPLE_vertex_array_object",
     "GL_ARB_ES2_compatibility",
     "GL_ARB_ES3_compatibility",
+    "GL_ARB_clip_control",
     "GL_ARB_color_buffer_float",
     "GL_ARB_compatibility",
     "GL_ARB_copy_buffer",
@@ -111,6 +114,7 @@ static const char* const sExtensionNames[] = {
     "GL_ARB_map_buffer_range",
     "GL_ARB_occlusion_query2",
     "GL_ARB_pixel_buffer_object",
+    "GL_ARB_polygon_offset_clamp",
     "GL_ARB_provoking_vertex",
     "GL_ARB_robust_buffer_access_behavior",
     "GL_ARB_robustness",
@@ -122,6 +126,7 @@ static const char* const sExtensionNames[] = {
     "GL_ARB_texture_compression_bptc",
     "GL_ARB_texture_compression_rgtc",
     "GL_ARB_texture_float",
+    "GL_ARB_texture_mirror_clamp_to_edge",
     "GL_ARB_texture_non_power_of_two",
     "GL_ARB_texture_rectangle",
     "GL_ARB_texture_rg",
@@ -135,6 +140,7 @@ static const char* const sExtensionNames[] = {
     "GL_CHROMIUM_color_buffer_float_rgba",
     "GL_EXT_bgra",
     "GL_EXT_blend_minmax",
+    "GL_EXT_clip_control",
     "GL_EXT_color_buffer_float",
     "GL_EXT_color_buffer_half_float",
     "GL_EXT_copy_texture",
@@ -154,6 +160,7 @@ static const char* const sExtensionNames[] = {
     "GL_EXT_multisampled_render_to_texture",
     "GL_EXT_occlusion_query_boolean",
     "GL_EXT_packed_depth_stencil",
+    "GL_EXT_polygon_offset_clamp",
     "GL_EXT_provoking_vertex",
     "GL_EXT_read_format_bgra",
     "GL_EXT_robustness",
@@ -167,6 +174,7 @@ static const char* const sExtensionNames[] = {
     "GL_EXT_texture_compression_s3tc_srgb",
     "GL_EXT_texture_filter_anisotropic",
     "GL_EXT_texture_format_BGRA8888",
+    "GL_EXT_texture_mirror_clamp_to_edge",
     "GL_EXT_texture_norm16",
     "GL_EXT_texture_sRGB",
     "GL_EXT_texture_storage",
@@ -530,7 +538,7 @@ bool GLContext::InitImpl() {
   }
 
   const std::string versionStr = versionRawStr;
-  if (versionStr.find("OpenGL ES") == 0) {
+  if (versionStr.starts_with("OpenGL ES")) {
     mProfile = ContextProfile::OpenGLES;
   }
 
@@ -682,6 +690,7 @@ bool GLContext::InitImpl() {
       "Gallium 0.4 on llvmpipe",
       "Microsoft Basic Render Driver",
       "Samsung Xclipse",
+      "AMD Radeon HD GFX10",
       "Unknown"};
 
   mRenderer = GLRenderer::Other;
@@ -1546,6 +1555,21 @@ void GLContext::LoadMoreSymbols(const SymbolLoader& loader) {
     fnLoadForFeature(symbols, GLFeature::provoking_vertex);
   }
 
+  if (IsSupported(GLFeature::polygon_offset_clamp)) {
+    const SymLoadStruct symbols[] = {
+        {(PRFuncPtr*)&mSymbols.fPolygonOffsetClamp,
+         {{"glPolygonOffsetClamp", "glPolygonOffsetClampEXT"}}},
+        END_SYMBOLS};
+    fnLoadForFeature(symbols, GLFeature::polygon_offset_clamp);
+  }
+
+  if (IsSupported(GLFeature::clip_control)) {
+    const SymLoadStruct symbols[] = {{(PRFuncPtr*)&mSymbols.fClipControl,
+                                      {{"glClipControl", "glClipControlEXT"}}},
+                                     END_SYMBOLS};
+    fnLoadForFeature(symbols, GLFeature::clip_control);
+  }
+
   if (IsExtensionSupported(EXT_semaphore)) {
     const SymLoadStruct symbols[] = {
         {(PRFuncPtr*)&mSymbols.fDeleteSemaphoresEXT,
@@ -2215,7 +2239,7 @@ bool GLContext::IsValidOwningThread() const {
 
 GLBlitHelper* GLContext::BlitHelper() {
   if (!mBlitHelper) {
-    mBlitHelper.reset(new GLBlitHelper(this));
+    mBlitHelper = std::make_unique<GLBlitHelper>(this);
   }
 
   return mBlitHelper.get();
@@ -2693,7 +2717,7 @@ void GLContext::BeforeGLCall_Debug(const char* const funcName) const {
   }
 
   MOZ_ASSERT(!mDebugErrorScope);
-  mDebugErrorScope.reset(new LocalErrorScope(*this));
+  mDebugErrorScope = std::make_unique<LocalErrorScope>(*this);
 }
 
 void GLContext::AfterGLCall_Debug(const char* const funcName) const {

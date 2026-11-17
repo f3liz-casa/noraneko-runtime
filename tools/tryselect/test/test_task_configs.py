@@ -2,13 +2,23 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import contextlib
 import inspect
+import os
+import sys
 from argparse import ArgumentParser
 from textwrap import dedent
 
 import mozunit
 import pytest
-from tryselect.task_config import Pernosco, PushDate, all_task_configs
+from tryselect import push, task_config
+from tryselect.task_config import (
+    NON_COMPILED_SUFFIXES,
+    Artifact,
+    Pernosco,
+    PushDate,
+    all_task_configs,
+)
 
 TC_URL = "https://taskcluster.example.com"
 TH_URL = "https://treeherder.mozilla.org"
@@ -255,6 +265,198 @@ def test_pushdate():
     }
 
 
+@pytest.mark.parametrize(
+    "changed_files,answer,expected",
+    [
+        (
+            ["foo.js", "bar/baz.ts", "qux.toml"],
+            "y",
+            {"try_task_config": {"use-artifact-builds": True, "disable-pgo": True}},
+        ),
+        (
+            ["foo.jsx", "bar.mjs", "baz.cjs", "qux.tsx", "quux.json"],
+            "",
+            {"try_task_config": {"use-artifact-builds": True, "disable-pgo": True}},
+        ),
+        (
+            [
+                "browser/foo.css",
+                "browser/foo.scss",
+                "browser/icon.ico",
+                "browser/icon.png",
+                "browser/icon.svg",
+                "browser/jar.mn",
+                "browser/moz.build",
+                "browser/test.html.headers",
+                "browser/test.png^headers^",
+            ],
+            "y",
+            {"try_task_config": {"use-artifact-builds": True, "disable-pgo": True}},
+        ),
+        (["foo.js", "bar/baz.ts", "qux.toml"], "n", None),
+        ([], "y", None),
+        (["foo.js", "bar.cpp"], "y", None),
+    ],
+)
+def test_artifact_non_compiled_patch_prompt(mocker, changed_files, answer, expected):
+    push.vcs.get_outgoing_files.return_value = changed_files
+    mocker.patch.object(Artifact, "is_artifact_build", return_value=False)
+    mock_prompt = mocker.patch.object(
+        task_config, "prompt_with_timeout", return_value=answer
+    )
+
+    parser = ArgumentParser()
+    cfg = Artifact()
+    cfg.add_arguments(parser)
+    args = parser.parse_args([])
+
+    assert cfg.get_parameters(**vars(args)) == expected
+
+    is_eligible = bool(changed_files) and all(
+        f.endswith(NON_COMPILED_SUFFIXES) for f in changed_files
+    )
+    assert mock_prompt.called is is_eligible
+
+
+def test_artifact_non_compiled_patch_prompt_reprompts_on_invalid_answer(mocker):
+    push.vcs.get_outgoing_files.return_value = ["foo.js"]
+    mocker.patch.object(Artifact, "is_artifact_build", return_value=False)
+    mock_prompt = mocker.patch.object(
+        task_config, "prompt_with_timeout", side_effect=["maybe", "y"]
+    )
+
+    parser = ArgumentParser()
+    cfg = Artifact()
+    cfg.add_arguments(parser)
+    args = parser.parse_args([])
+
+    params = cfg.get_parameters(**vars(args))
+    assert params == {
+        "try_task_config": {"use-artifact-builds": True, "disable-pgo": True}
+    }
+    assert mock_prompt.call_count == 2
+
+
+def test_artifact_non_compiled_patch_prompt_unanswered(mocker):
+    # An unanswered prompt must not block the push, and must not silently turn
+    # on artifact builds either.
+    push.vcs.get_outgoing_files.return_value = ["foo.js"]
+    mocker.patch.object(Artifact, "is_artifact_build", return_value=False)
+    mock_prompt = mocker.patch.object(
+        task_config, "prompt_with_timeout", return_value=None
+    )
+
+    parser = ArgumentParser()
+    cfg = Artifact()
+    cfg.add_arguments(parser)
+    args = parser.parse_args([])
+
+    assert cfg.get_parameters(**vars(args)) is None
+    assert mock_prompt.call_count == 1
+
+
+def test_artifact_non_compiled_patch_vcs_failure(mocker):
+    # A VCS failure shouldn't block the push, we just don't prompt.
+    push.vcs.get_outgoing_files.side_effect = Exception("hg failed")
+    mocker.patch.object(Artifact, "is_artifact_build", return_value=False)
+    mock_prompt = mocker.patch.object(task_config, "prompt_with_timeout")
+
+    parser = ArgumentParser()
+    cfg = Artifact()
+    cfg.add_arguments(parser)
+    args = parser.parse_args([])
+
+    assert cfg.get_parameters(**vars(args)) is None
+    mock_prompt.assert_not_called()
+
+
+def test_artifact_configured_build_skips_prompt(mocker):
+    # A build already configured with artifact builds is handled by the
+    # pre-existing silent check, so it shouldn't also trigger the prompt.
+    push.vcs.get_outgoing_files.return_value = ["foo.cpp"]
+    mocker.patch.object(Artifact, "is_artifact_build", return_value=True)
+    mock_prompt = mocker.patch.object(task_config, "prompt_with_timeout")
+
+    parser = ArgumentParser()
+    cfg = Artifact()
+    cfg.add_arguments(parser)
+    args = parser.parse_args([])
+
+    params = cfg.get_parameters(**vars(args))
+    assert params == {
+        "try_task_config": {"use-artifact-builds": True, "disable-pgo": True}
+    }
+    mock_prompt.assert_not_called()
+
+
+def test_artifact_explicit_flag_skips_prompt(mocker):
+    push.vcs.get_outgoing_files.return_value = ["foo.js"]
+    mock_prompt = mocker.patch.object(task_config, "prompt_with_timeout")
+
+    parser = ArgumentParser()
+    cfg = Artifact()
+    cfg.add_arguments(parser)
+    args = parser.parse_args(["--artifact"])
+
+    params = cfg.get_parameters(**vars(args))
+    assert params == {
+        "try_task_config": {"use-artifact-builds": True, "disable-pgo": True}
+    }
+    mock_prompt.assert_not_called()
+
+
+class FakeStdin:
+    """A stdin replacement backed by a pipe, so prompts can be answered."""
+
+    def __init__(self, answer=None, isatty=True):
+        self._read_fd, self._write_fd = os.pipe()
+        if answer is not None:
+            os.write(self._write_fd, answer.encode("utf-8"))
+        self._file = os.fdopen(self._read_fd)
+        self._isatty = isatty
+
+    def isatty(self):
+        return self._isatty
+
+    def fileno(self):
+        return self._file.fileno()
+
+    def readline(self):
+        return self._file.readline()
+
+    def close(self):
+        self._file.close()
+        os.close(self._write_fd)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="exercises the select() based code path"
+)
+@pytest.mark.parametrize(
+    "answer,expected",
+    [("y\n", "y"), ("  N \n", "N"), ("\n", "")],
+)
+def test_prompt_with_timeout_answered(mocker, answer, expected):
+    with contextlib.closing(FakeStdin(answer)) as stdin:
+        mocker.patch.object(sys, "stdin", stdin)
+        assert task_config.prompt_with_timeout("Answer? ", 30) == expected
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="exercises the select() based code path"
+)
+def test_prompt_with_timeout_unanswered(mocker):
+    with contextlib.closing(FakeStdin()) as stdin:
+        mocker.patch.object(sys, "stdin", stdin)
+        assert task_config.prompt_with_timeout("Answer? ", 0.01) is None
+
+
+def test_prompt_with_timeout_not_interactive(mocker):
+    with contextlib.closing(FakeStdin("y\n", isatty=False)) as stdin:
+        mocker.patch.object(sys, "stdin", stdin)
+        assert task_config.prompt_with_timeout("Answer? ", 30) is None
+
+
 def test_extensions(mocker):
     parser = ArgumentParser()
     cfg = all_task_configs["extensions"]()
@@ -405,6 +607,65 @@ def test_exisiting_tasks_rev(responses):
 
     params = cfg.get_parameters(**vars(args))
     assert params == {"existing_tasks": label_to_taskid}
+
+
+def test_use_indexed_tasks(responses):
+    parser = ArgumentParser()
+    cfg = all_task_configs["existing-tasks"]()
+    cfg.add_arguments(parser)
+
+    args = parser.parse_args([
+        "--use-indexed-tasks",
+        "task-foo=gecko.v2.foo.latest",
+        "--use-indexed-tasks",
+        "task-bar=gecko.v2.bar.latest",
+    ])
+
+    for index_path, task_id in (
+        ("gecko.v2.foo.latest", "123"),
+        ("gecko.v2.bar.latest", "456"),
+    ):
+        responses.add(
+            responses.GET,
+            f"{TC_URL}/api/index/v1/task/{index_path}",
+            json={"taskId": task_id},
+        )
+
+    params = cfg.get_parameters(**vars(args))
+    assert params == {"existing_tasks": {"task-foo": "123", "task-bar": "456"}}
+
+
+def test_use_indexed_tasks_overrides_use_existing_tasks(mocker):
+    parser = ArgumentParser()
+    cfg = all_task_configs["existing-tasks"]()
+    cfg.add_arguments(parser)
+
+    args = parser.parse_args([
+        "--use-existing-tasks",
+        "task-id=abc",
+        "--use-indexed-tasks",
+        "task-foo=gecko.v2.foo.latest",
+    ])
+
+    mocker.patch(
+        "taskgraph.util.taskcluster.get_artifact",
+        return_value={"task-foo": "123", "task-bar": "456"},
+    )
+    mocker.patch("taskgraph.util.taskcluster.find_task_id", return_value="789")
+
+    params = cfg.get_parameters(**vars(args))
+    assert params == {"existing_tasks": {"task-foo": "789", "task-bar": "456"}}
+
+
+@pytest.mark.parametrize("label_and_index", ["task-foo", "=gecko.v2.foo", "task-foo="])
+def test_use_indexed_tasks_invalid(label_and_index):
+    parser = ArgumentParser()
+    cfg = all_task_configs["existing-tasks"]()
+    cfg.add_arguments(parser)
+
+    args = parser.parse_args(["--use-indexed-tasks", label_and_index])
+    with pytest.raises(SystemExit):
+        cfg.get_parameters(**vars(args))
 
 
 if __name__ == "__main__":

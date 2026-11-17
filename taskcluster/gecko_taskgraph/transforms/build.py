@@ -8,6 +8,7 @@ kind.
 
 import copy
 import logging
+import re
 
 from mozbuild.artifact_builds import JOB_CHOICES as ARTIFACT_JOBS
 from mozilla_taskgraph.util.attributes import release_level
@@ -117,26 +118,19 @@ def update_channel(config, jobs):
         yield job
 
 
-@transforms.add
-def mozconfig(config, jobs):
-    for job in jobs:
-        resolve_keyed_by(
-            job,
-            "run.mozconfig-variant",
-            item_name=job["name"],
-            **{
-                "release-type": config.params["release_type"],
-            },
-        )
-        mozconfig_variant = job["run"].pop("mozconfig-variant", None)
-        if mozconfig_variant:
-            job["run"].setdefault("extra-config", {})["mozconfig_variant"] = (
-                mozconfig_variant
-            )
-        yield job
-
-
 UNIFY_JOB_SCRIPT = "taskcluster/scripts/misc/unify.sh"
+
+# Toolchains that are only needed to compile or link, which artifact builds
+# don't do. Binaries such as the ONNX runtime come from the build the
+# artifacts are taken from.
+COMPILE_TOOLCHAINS = re.compile(
+    r"^(?:linux64|win64)-(?:clang(?:-.*)?|cctools-port|rust(?:-.*)?|cbindgen"
+    r"|dump_syms|nasm|pkgconf|sccache|winchecksec)$"
+    r"|^(?:sysroot|onnxruntime|dxc|winappsdk)-.*$"
+    r"|^(?:macosx64-sdk|vs)$"
+)
+# Likewise for fetches.
+COMPILE_FETCHES = {"windows-rs"}
 
 
 def _use_artifact(config):
@@ -199,6 +193,7 @@ def collapse_unified_builds(config, jobs):
             job.pop("dependencies")
             job["run"] = copy.deepcopy(x64["run"])
             job["fetches"] = copy.deepcopy(x64["fetches"])
+            job["mozconfig"] = copy.deepcopy(x64["mozconfig"])
             job["worker"]["env"].update(copy.deepcopy(x64["worker"]["env"]))
             job["worker"]["max-run-time"] = x64["worker"]["max-run-time"]
 
@@ -217,6 +212,18 @@ def use_artifact(config, jobs):
             job["treeherder"]["symbol"] = add_suffix(job["treeherder"]["symbol"], "a")
             job["worker"]["env"]["USE_ARTIFACT"] = "1"
             job["attributes"]["artifact-build"] = True
+            # Artifact builds don't compile anything.
+            job["use-sccache"] = False
+            toolchains = job.get("fetches", {}).get("toolchain")
+            if toolchains:
+                job["fetches"]["toolchain"] = [
+                    t for t in toolchains if not COMPILE_TOOLCHAINS.match(t)
+                ]
+            fetches = job.get("fetches", {}).get("fetch")
+            if fetches:
+                job["fetches"]["fetch"] = [
+                    f for f in fetches if f not in COMPILE_FETCHES
+                ]
         yield job
 
 
@@ -287,6 +294,34 @@ def enable_full_crashsymbols(config, jobs):
         else:
             logger.debug("Disabling full symbol generation for %s", job["name"])
             job["attributes"].pop("enable-full-crashsymbols", None)
+        yield job
+
+
+@transforms.add
+def disable_clang_plugins(config, jobs):
+    all_jobs = list(jobs)
+    opt_jobs_platform = {}
+    dbg_build_platforms = set()
+    for job in all_jobs:
+        try:
+            build_platform, build_type = job["name"].split("/")
+        except ValueError:
+            continue
+
+        if build_type == "debug":
+            dbg_build_platforms.add(build_platform)
+
+        if build_type == "opt":
+            opt_jobs_platform[id(job)] = build_platform
+
+    for job in all_jobs:
+        build_platform = opt_jobs_platform.get(id(job), None)
+        # Disable clang plugins for opt configuration when we have a fallback
+        # debug configuration that supposedly have similar coverage.
+        # This saves build time while not reducing coverage too much.
+        if build_platform in dbg_build_platforms:
+            worker_env = job["worker"]["env"]
+            worker_env["DISABLE_CLANG_PLUGIN"] = "1"
         yield job
 
 

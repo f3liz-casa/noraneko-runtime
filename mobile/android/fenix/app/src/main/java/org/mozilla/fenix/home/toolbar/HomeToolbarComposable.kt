@@ -15,6 +15,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +44,7 @@ import mozilla.components.compose.browser.toolbar.store.ToolbarGravity.Bottom
 import mozilla.components.compose.browser.toolbar.store.ToolbarGravity.Top
 import mozilla.components.compose.browser.toolbar.ui.BrowserToolbarQuery
 import mozilla.components.lib.state.ext.observeAsComposableState
+import mozilla.components.support.ktx.util.URLStringUtils
 import org.mozilla.fenix.R
 import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
 import org.mozilla.fenix.components.AppStore
@@ -49,7 +52,7 @@ import org.mozilla.fenix.components.appstate.AppAction.SearchAction.SearchEnded
 import org.mozilla.fenix.components.appstate.AppAction.SearchAction.SearchStarted
 import org.mozilla.fenix.components.appstate.VoiceSearchAction.VoiceInputRequested
 import org.mozilla.fenix.components.metrics.MetricsUtils
-import org.mozilla.fenix.components.toolbar.ToolbarPosition.BOTTOM
+import org.mozilla.fenix.components.toolbar.TopDividerColumn
 import org.mozilla.fenix.theme.FirefoxTheme
 import org.mozilla.fenix.utils.Settings
 import org.mozilla.fenix.wallpapers.WallpaperTheme
@@ -147,8 +150,15 @@ internal class HomeToolbarComposable(
 
     @Composable
     private fun ToolbarContent(wallpaperTextColor: Color?) {
-        val shouldShowTabStrip: Boolean = remember { settings.isTabStripEnabled }
-        val isAddressBarVisible = remember { addressBarVisibility }
+        val shouldUseBottomToolbar = remember { settings.shouldUseBottomToolbar }
+        val shouldShowTabStrip = remember {
+            if (shouldUseBottomToolbar) {
+                settings.shouldShowTabStripAtBottom
+            } else {
+                settings.shouldShowTabStripAtTop
+            }
+        }
+        val isTabStripAtBottom = remember { shouldUseBottomToolbar && settings.shouldShowTabStripAtBottom }
 
         Column(
             modifier =
@@ -157,51 +167,65 @@ internal class HomeToolbarComposable(
                     testTag = context.resources.getResourceName(R.id.composable_toolbar)
                 }
         ) {
-            if (shouldShowTabStrip) {
-                tabStripContent()
-            }
-
-            if (settings.shouldUseBottomToolbar) {
+            if (shouldUseBottomToolbar) {
                 searchSuggestionsContent(Modifier.weight(1f))
             }
 
-            Box {
-                if (settings.enableHomepageSearchBar) {
-                    BrowserSimpleToolbar(toolbarStore, appStore)
+            TopDividerColumn(showDivider = isTabStripAtBottom, modifier = Modifier.fillMaxWidth()) {
+                if (shouldShowTabStrip) {
+                    tabStripContent()
                 }
 
-                this@Column.AnimatedVisibility(
-                    visible = isAddressBarVisible.value || appStore.state.searchState.isSearchActive,
-                    enter =
-                        fadeIn(
-                            animationSpec =
-                                tween(
-                                    durationMillis = 250,
-                                    easing = Easing { fraction -> fraction * fraction },
-                                )
-                        ),
-                    exit =
-                        fadeOut(
-                            animationSpec =
-                                tween(
-                                    durationMillis = 250,
-                                    easing = Easing { fraction -> 1f - (1f - fraction) * (1f - fraction) },
-                                )
-                        ),
-                ) {
-                    BrowserToolbar(
-                        store = toolbarStore,
-                        browserActionsColor = wallpaperTextColor,
-                    )
+                AddressBar(wallpaperTextColor = wallpaperTextColor)
+
+                if (shouldUseBottomToolbar) {
+                    navigationBarContent?.invoke()
                 }
             }
 
-            if (settings.toolbarPosition == BOTTOM) {
-                navigationBarContent?.invoke()
-            }
-
-            if (!settings.shouldUseBottomToolbar) {
+            if (!shouldUseBottomToolbar) {
                 searchSuggestionsContent(Modifier.weight(1f))
+            }
+        }
+    }
+
+    @Composable
+    private fun ColumnScope.AddressBar(wallpaperTextColor: Color?) {
+        val isAddressBarVisible = remember { addressBarVisibility }
+        val hasBottomStrip = remember {
+            settings.shouldUseBottomToolbar &&
+                (settings.shouldShowTabStripAtBottom || settings.shouldShowTabGroupsStrip)
+        }
+
+        Box {
+            if (settings.enableHomepageSearchBar) {
+                BrowserSimpleToolbar(toolbarStore, appStore)
+            }
+
+            this@AddressBar.AnimatedVisibility(
+                visible = isAddressBarVisible.value || appStore.state.searchState.isSearchActive,
+                enter =
+                    fadeIn(
+                        animationSpec =
+                            tween(
+                                durationMillis = 250,
+                                easing = Easing { fraction -> fraction * fraction },
+                            )
+                    ),
+                exit =
+                    fadeOut(
+                        animationSpec =
+                            tween(
+                                durationMillis = 250,
+                                easing = Easing { fraction -> 1f - (1f - fraction) * (1f - fraction) },
+                            )
+                    ),
+            ) {
+                BrowserToolbar(
+                    store = toolbarStore,
+                    browserActionsColor = wallpaperTextColor,
+                    showDivider = !hasBottomStrip,
+                )
             }
         }
     }
@@ -258,7 +282,7 @@ internal class HomeToolbarComposable(
             browserStore.state.findTab(directToSearchConfig.sessionId)?.let {
                 toolbarStore.dispatch(
                     SearchQueryUpdated(
-                        query = BrowserToolbarQuery(it.getUrl() ?: ""),
+                        query = BrowserToolbarQuery(URLStringUtils.toLosslessEditableUrl(it.getUrl().orEmpty())),
                         isQueryPrefilled = true,
                     )
                 )

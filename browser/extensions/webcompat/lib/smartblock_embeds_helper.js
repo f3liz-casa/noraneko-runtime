@@ -80,7 +80,8 @@ const embedHelperLib = (() => {
    * @param {object} SHIM_INFO - Information about the shim wrapped in an object.
    */
   async function createShimPlaceholders(embedContainers, SHIM_INFO) {
-    const { shimId, embedSelector, embedLogoURL, isTestShim } = SHIM_INFO;
+    const { shimId, embedSelector, embedLogoURL, isTestShim, fillContainer } =
+      SHIM_INFO;
 
     // Check if we should show embed content in placeholders.
     // This requires the Sanitizer API (setHTML), available in Firefox 148+.
@@ -193,6 +194,20 @@ const embedHelperLib = (() => {
         descriptionString;
       shadowRoot.getElementById("smartblock-placeholder-button").textContent =
         buttonString;
+
+      if (fillContainer) {
+        // Embeds like video players reserve a large fixed area in the page, so
+        // stretch the placeholder over it rather than leaving it in a corner.
+        placeholderDiv.style.height = "100%";
+        const wrapperStyle = shadowRoot.getElementById(
+          "smartblock-placeholder-wrapper"
+        ).style;
+        wrapperStyle.boxSizing = "border-box";
+        wrapperStyle.width = "100%";
+        wrapperStyle.height = "100%";
+        wrapperStyle.maxWidth = "none";
+        wrapperStyle.maxHeight = "none";
+      }
 
       // Wait for user to opt-in.
       shadowRoot
@@ -341,24 +356,34 @@ const embedHelperLib = (() => {
           `;
         });
 
-        // Add explanatory header
-        const explanationDiv = document.createElement("div");
-        explanationDiv.textContent = contentHeaderString;
-        explanationDiv.style.cssText = `
-          font-size: 12px;
-          font-weight: 600;
-          color: light-dark(rgb(91, 91, 102), rgb(191, 191, 201));
-          margin-bottom: 8px;
-        `;
-        safeContentContainer.appendChild(explanationDiv);
-        safeContentContainer.appendChild(contentDiv);
+        // skip the content section in the case that there is no content.
+        let hasSanitizedContent = !!contentDiv.textContent.trim().length;
+        if (!hasSanitizedContent) {
+          hasSanitizedContent = contentDiv.querySelector("a[href]") !== null;
+        }
 
-        // Create a wrapper to hold both the placeholder and safe content
-        const wrapperDiv = document.createElement("div");
-        wrapperDiv.appendChild(placeholderDiv);
-        wrapperDiv.appendChild(safeContentContainer);
+        if (hasSanitizedContent) {
+          // Add explanatory header
+          const explanationDiv = document.createElement("div");
+          explanationDiv.textContent = contentHeaderString;
+          explanationDiv.style.cssText = `
+            font-size: 12px;
+            font-weight: 600;
+            color: light-dark(rgb(91, 91, 102), rgb(191, 191, 201));
+            margin-bottom: 8px;
+          `;
+          safeContentContainer.appendChild(explanationDiv);
+          safeContentContainer.appendChild(contentDiv);
 
-        replacementElement = wrapperDiv;
+          // Create a wrapper to hold both the placeholder and safe content
+          const wrapperDiv = document.createElement("div");
+          wrapperDiv.appendChild(placeholderDiv);
+          wrapperDiv.appendChild(safeContentContainer);
+
+          replacementElement = wrapperDiv;
+        } else {
+          replacementElement = placeholderDiv;
+        }
       } else {
         // Sanitizer API not available, just use the placeholder without embed content
         replacementElement = placeholderDiv;
@@ -371,8 +396,6 @@ const embedHelperLib = (() => {
 
       // Replace the original container with our replacement element
       originalContainer.replaceWith(replacementElement);
-
-      sendMessageToAddon("smartblockEmbedReplaced", shimId);
     });
 
     if (isTestShim) {

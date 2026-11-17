@@ -9,10 +9,10 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   CustomizableUI:
     "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
-  IPPExceptionsManager:
-    "moz-src:///toolkit/components/ipprotection/IPPExceptionsManager.sys.mjs",
   IPPPrincipalRules:
-    "moz-src:///toolkit/components/ipprotection/IPPExceptionsManager.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPPSiteRuleManager.sys.mjs",
+  IPPSiteRuleManager:
+    "moz-src:///toolkit/components/ipprotection/IPPSiteRuleManager.sys.mjs",
   IPPProxyManager:
     "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs",
   IPProtectionService:
@@ -38,13 +38,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "siteExceptionsHintsPref",
-  "browser.ipProtection.siteExceptionsHintsEnabled",
-  true
-);
-
 /**
  * IPProtectionToolbarButton manages the IP Protection toolbar button
  * for a single browser window.
@@ -60,10 +53,17 @@ export class IPProtectionToolbarButton {
   #progressListener = null;
   #widgetId = null;
   #previousIsExcluded = null;
+  #previousIsIncluded = null;
   #visitedExcludedSites = new Set();
+  #visitedIncludedSites = new Set();
+  // Origin of an included site navigated to while the proxy was activating,
+  // so the hint can be shown once the connection is active.
+  #pendingIncludedSiteOrigin = null;
 
-  static CONFIRMATION_HINT_MESSAGE_ID =
+  static EXCLUDED_CONFIRMATION_HINT_MESSAGE_ID =
     "confirmation-hint-ipprotection-navigated-to-excluded-site";
+  static INCLUDED_CONFIRMATION_HINT_MESSAGE_ID =
+    "confirmation-hint-ipprotection-navigated-to-included-site";
 
   // Non-default icon states rendered as always-painted overlay layers in the
   // toolbar so switching states never triggers a fresh image decode
@@ -111,17 +111,6 @@ export class IPProtectionToolbarButton {
   }
 
   /**
-   * Gets the value of the pref
-   * browser.ipProtection.siteExceptionsHintsEnabled.
-   *
-   * @returns {boolean}
-   *  True if confirmation hints for site exceptions are enabled, false otherwise.
-   */
-  get isExceptionsHintsEnabled() {
-    return lazy.siteExceptionsHintsPref;
-  }
-
-  /**
    * Gets the toolbaritem for this window.
    *
    * @returns {XULElement|null}
@@ -150,8 +139,12 @@ export class IPProtectionToolbarButton {
       "IPPProxyManager:StateChanged",
       this.handleEvent
     );
-    lazy.IPPExceptionsManager.addEventListener(
-      "IPPExceptionsManager:ExclusionChanged",
+    lazy.IPPProxyManager.addEventListener(
+      "IPPProxyManager:ModeChanged",
+      this.handleEvent
+    );
+    lazy.IPPSiteRuleManager.addEventListener(
+      "SiteRuleManager:RuleChanged",
       this.handleEvent
     );
 
@@ -197,7 +190,10 @@ export class IPProtectionToolbarButton {
         const isReload =
           aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_RELOAD;
 
-        this.updateState(null, { showConfirmationHint: !isReload });
+        this.updateState(null, {
+          showConfirmationHint: !isReload,
+          isNavigation: true,
+        });
       },
     };
 
@@ -214,23 +210,27 @@ export class IPProtectionToolbarButton {
     if (
       event.type !== "IPProtectionService:StateChanged" &&
       event.type !== "IPPProxyManager:StateChanged" &&
-      event.type !== "IPPExceptionsManager:ExclusionChanged" &&
+      event.type !== "IPPProxyManager:ModeChanged" &&
+      event.type !== "SiteRuleManager:RuleChanged" &&
       event.type !== "TabSelect"
     ) {
       return;
     }
 
-    let exclusionChanged =
-      event.type === "IPPExceptionsManager:ExclusionChanged";
+    let ruleChanged = event.type === "SiteRuleManager:RuleChanged";
 
     if (
       event.type === "IPPProxyManager:StateChanged" &&
       lazy.IPPProxyManager.state !== lazy.IPPProxyStates.ACTIVE
     ) {
       this.#visitedExcludedSites.clear();
+      this.#visitedIncludedSites.clear();
     }
 
-    this.updateState(null, { showConfirmationHint: !exclusionChanged });
+    this.updateState(null, {
+      showConfirmationHint: !ruleChanged,
+      isNavigation: event.type === "TabSelect",
+    });
   }
 
   /**
@@ -253,7 +253,10 @@ export class IPProtectionToolbarButton {
    * @param {object} [options]
    *  Optional options object
    * @param {boolean} [options.showConfirmationHint=true]
-   *  Whether to show confirmation hints for navigation to excluded sites
+   *  Whether to show confirmation hints for navigation to excluded or
+   *  included sites
+   * @param {boolean} [options.isNavigation=false]
+   *  Whether the update is caused by a location change or tab switch
    * @param {string} [options.error=undefined]
    *  Error type to show.
    */
@@ -278,14 +281,19 @@ export class IPProtectionToolbarButton {
     // excluded.
     let isExcluded =
       !!principal &&
-      lazy.IPPExceptionsManager.canManage(principal) &&
-      lazy.IPPExceptionsManager.getPrincipalRule(principal) ===
+      lazy.IPPSiteRuleManager.canManage(principal) &&
+      lazy.IPPSiteRuleManager.getRule(principal) ===
         lazy.IPPPrincipalRules.EXCLUDED;
-    //TODO: Add hasInclusion function to exceptions manager, replace false with commented out call to hasInclusion - Bug 2066802
     let isIncluded =
-      !!principal && lazy.IPPExceptionsManager.canManage(principal) && false;
-    //  lazy.IPPExceptionsManager.hasInclusion(principal);
-    let isActive = lazy.IPPProxyManager.state === lazy.IPPProxyStates.ACTIVE;
+      !!principal &&
+      lazy.IPPSiteRuleManager.canManage(principal) &&
+      lazy.IPPSiteRuleManager.getRule(principal) ===
+        lazy.IPPPrincipalRules.INCLUDED;
+    let isActive = lazy.IPPProxyManager.isDefaultModeActive;
+    let isProxyActive =
+      lazy.IPPProxyManager.state === lazy.IPPProxyStates.ACTIVE;
+    let isProxyActivating =
+      lazy.IPPProxyManager.state === lazy.IPPProxyStates.ACTIVATING;
     let isPaused = lazy.IPPProxyManager.state === lazy.IPPProxyStates.PAUSED;
 
     // Show error icon when proxy manager is in ERROR state.
@@ -302,8 +310,12 @@ export class IPProtectionToolbarButton {
     if (showConfirmationHint) {
       this.updateConfirmationHint(win.ConfirmationHint, toolbaritem, {
         isActive,
+        isProxyActive,
+        isProxyActivating,
+        isNavigation: !!options.isNavigation,
         isError,
         isExcluded,
+        isIncluded,
       });
     }
 
@@ -312,6 +324,7 @@ export class IPProtectionToolbarButton {
     // the previous state if not a null principal.
     if (principal && !principal.isNullPrincipal) {
       this.#previousIsExcluded = isExcluded;
+      this.#previousIsIncluded = isIncluded;
     }
 
     this.updateIconStatus(toolbaritem, {
@@ -357,11 +370,14 @@ export class IPProtectionToolbarButton {
   }
 
   /**
-   * Shows a confirmation hint after navigating from a
-   * protected site to an excluded site while the VPN is on.
-   * Ignore the message if there is an error, if the VPN is off,
-   * or if we already showed the message for a site during the
-   * VPN session.
+   * Shows a confirmation hint after navigating to a site with a site rule:
+   * - from a protected site to an excluded site while the VPN is on.
+   * - from an unprotected site to an included site while the VPN is off
+   *   and the proxy is connected for included sites only. If the proxy is
+   *   still activating during a navigation, the hint is deferred until it is
+   *   active.
+   * Ignore the message if there is an error, or if we already showed the
+   * message for a site during the VPN session.
    *
    * @param {object} confirmationHint
    *  The current window's confirmation hint instance
@@ -373,40 +389,70 @@ export class IPProtectionToolbarButton {
   updateConfirmationHint(
     confirmationHint,
     toolbaritem,
-    status = { isActive: false, isError: false, isExcluded: false }
+    status = {
+      isActive: false,
+      isProxyActive: false,
+      isProxyActivating: false,
+      isNavigation: false,
+      isError: false,
+      isExcluded: false,
+      isIncluded: false,
+    }
   ) {
-    if (!confirmationHint) {
+    let siteOrigin = getSitePrincipal(this.gBrowser)?.origin;
+    let isPendingIncludedSite =
+      !!siteOrigin && this.#pendingIncludedSiteOrigin === siteOrigin;
+    this.#pendingIncludedSiteOrigin = null;
+
+    if (!confirmationHint || status.isError || !siteOrigin) {
       return;
     }
 
-    let exceptionsPrefsEnabled =
-      this.isExceptionsFeatureEnabled && this.isExceptionsHintsEnabled;
-
-    const canShowConfirmationHint =
-      exceptionsPrefsEnabled &&
-      !status.isError &&
+    let messageId;
+    let visitedSites;
+    let hideCheckmark;
+    if (
+      this.isExceptionsFeatureEnabled &&
       status.isActive &&
       status.isExcluded &&
-      !this.#previousIsExcluded;
-
-    if (!canShowConfirmationHint) {
-      return;
-    }
-
-    let siteOrigin = getSitePrincipal(this.gBrowser)?.origin;
-    if (!siteOrigin || this.#visitedExcludedSites.has(siteOrigin)) {
-      return;
-    }
-
-    this.#visitedExcludedSites.add(siteOrigin);
-    confirmationHint.show(
-      toolbaritem,
-      IPProtectionToolbarButton.CONFIRMATION_HINT_MESSAGE_ID,
-      {
-        position: "bottomright topright", // panel anchor, message anchor
-        hideCheckmark: true,
+      !this.#previousIsExcluded
+    ) {
+      messageId =
+        IPProtectionToolbarButton.EXCLUDED_CONFIRMATION_HINT_MESSAGE_ID;
+      visitedSites = this.#visitedExcludedSites;
+      hideCheckmark = true;
+    } else if (
+      this.isInclusionsFeatureEnabled &&
+      !status.isActive &&
+      status.isIncluded &&
+      (!this.#previousIsIncluded || isPendingIncludedSite)
+    ) {
+      if (status.isProxyActivating) {
+        if (status.isNavigation || isPendingIncludedSite) {
+          this.#pendingIncludedSiteOrigin = siteOrigin;
+        }
+        return;
       }
-    );
+      if (!status.isProxyActive) {
+        return;
+      }
+      messageId =
+        IPProtectionToolbarButton.INCLUDED_CONFIRMATION_HINT_MESSAGE_ID;
+      visitedSites = this.#visitedIncludedSites;
+      hideCheckmark = false;
+    } else {
+      return;
+    }
+
+    if (visitedSites.has(siteOrigin)) {
+      return;
+    }
+
+    visitedSites.add(siteOrigin);
+    confirmationHint.show(toolbaritem, messageId, {
+      position: "bottomright topright", // panel anchor, message anchor
+      hideCheckmark,
+    });
   }
 
   /**
@@ -531,8 +577,12 @@ export class IPProtectionToolbarButton {
       "IPPProxyManager:StateChanged",
       this.handleEvent
     );
-    lazy.IPPExceptionsManager.removeEventListener(
-      "IPPExceptionsManager:ExclusionChanged",
+    lazy.IPPProxyManager.removeEventListener(
+      "IPPProxyManager:ModeChanged",
+      this.handleEvent
+    );
+    lazy.IPPSiteRuleManager.removeEventListener(
+      "SiteRuleManager:RuleChanged",
       this.handleEvent
     );
   }

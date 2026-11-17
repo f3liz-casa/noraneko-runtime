@@ -5,18 +5,25 @@
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
+});
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
   "shortcutsDelay",
   "browser.ml.chat.shortcuts.longPress"
 );
-
-ChromeUtils.defineESModuleGetters(lazy, {
-  ReaderMode: "moz-src:///toolkit/components/reader/ReaderMode.sys.mjs",
-});
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "shortcutsDebounce",
+  "browser.ml.chat.shortcuts.debounce",
+  200
+);
 
 // Events to register after shortcuts are shown
 const HIDE_EVENTS = ["pagehide", "resize", "scroll"];
+
+const DRAG_THRESHOLD_PX = 3;
 
 /**
  * JSWindowActor to detect content page events to send GenAI related data.
@@ -25,7 +32,8 @@ export class GenAIChild extends JSWindowActorChild {
   mouseUpTimeout = null;
   downSelection = null;
   downTimeStamp = 0;
-  debounceDelay = 200;
+  downX = 0;
+  downY = 0;
   pendingHide = false;
   #compositionActive = false;
 
@@ -68,6 +76,8 @@ export class GenAIChild extends JSWindowActorChild {
       case "mousedown":
         this.downSelection = this.getSelectionInfo().selection;
         this.downTimeStamp = event.timeStamp;
+        this.downX = event.pageX;
+        this.downY = event.pageY;
         sendHide();
         break;
       case "mouseup": {
@@ -87,7 +97,13 @@ export class GenAIChild extends JSWindowActorChild {
           this.contentWindow.clearTimeout(this.mouseUpTimeout);
         }
 
-        const { screenX, screenY } = event;
+        const { screenX, screenY, pageX, pageY, detail } = event;
+        // A page can select text itself on click, so only a drag or a double
+        // or triple click counts as the user making the selection.
+        const userSelected =
+          detail >= 2 ||
+          Math.abs(pageX - this.downX) + Math.abs(pageY - this.downY) >
+            DRAG_THRESHOLD_PX;
 
         this.mouseUpTimeout = this.contentWindow.setTimeout(() => {
           if (this.#isDestroyed) {
@@ -100,7 +116,8 @@ export class GenAIChild extends JSWindowActorChild {
           // Only send a message if there's a new selection or a long press
           if (
             (selectionInfo.selection &&
-              selectionInfo.selection !== this.downSelection) ||
+              selectionInfo.selection !== this.downSelection &&
+              userSelected) ||
             delay > lazy.shortcutsDelay
           ) {
             this.sendAsyncMessage("GenAI:ShowShortcuts", {
@@ -109,13 +126,19 @@ export class GenAIChild extends JSWindowActorChild {
               delay,
               screenXDevPx: screenX * this.contentWindow.devicePixelRatio,
               screenYDevPx: screenY * this.contentWindow.devicePixelRatio,
+              // For the search action's loadSearch call, mirroring how the
+              // context menu derives its own triggeringPrincipal/policyContainer.
+              principal: this.document.nodePrincipal,
+              policyContainer: lazy.E10SUtils.serializePolicyContainer(
+                this.document.policyContainer
+              ),
             });
             this.registerHideEvents();
           }
 
           // Clear the timeout reference after execution
           this.mouseUpTimeout = null;
-        }, this.debounceDelay);
+        }, lazy.shortcutsDebounce);
 
         break;
       }
@@ -153,18 +176,23 @@ export class GenAIChild extends JSWindowActorChild {
    */
   getSelectionInfo() {
     // Handle regular selection outside of inputs
-    const { activeElement } = this.document;
-    const selection = this.contentWindow.getSelection()?.toString().trim();
+    const contentSelection = this.contentWindow.getSelection();
+    const selection = contentSelection?.toString().trim();
     if (selection) {
-      return {
-        inputType: activeElement.closest("[contenteditable]")
-          ? "contenteditable"
-          : "",
-        selection,
-      };
+      const anchor = contentSelection.anchorNode;
+      const anchorElement =
+        anchor.nodeType === Node.ELEMENT_NODE ? anchor : anchor.parentElement;
+      let inputType = "";
+      let host;
+      if (anchorElement?.closest("[contenteditable]")) {
+        inputType = "contenteditable";
+        host = anchorElement.getRootNode().host?.localName;
+      }
+      return { inputType, host, selection };
     }
 
     // Selection within input elements
+    const { activeElement } = this.document;
     const { selectionStart, value } = activeElement;
     if (selectionStart != null && value != null) {
       return {
@@ -184,8 +212,6 @@ export class GenAIChild extends JSWindowActorChild {
    */
   async receiveMessage({ name, data }) {
     switch (name) {
-      case "GetReadableText":
-        return this.getContentText();
       case "AutoSubmit":
         return await this.autoSubmitClick(data);
       default:
@@ -290,24 +316,6 @@ export class GenAIChild extends JSWindowActorChild {
       // Disconnect once things stabilize
       win.setTimeout(() => observer.disconnect(), 2000);
     }
-  }
-
-  /**
-   * Get readable article text or whole innerText from the content side.
-   *
-   * @returns {string} text from the page
-   */
-  async getContentText() {
-    const win = this.browsingContext?.window;
-    const doc = win?.document;
-    const article = await lazy.ReaderMode.parseDocument(doc);
-    return {
-      readerMode: !!article?.textContent,
-      selection: (article?.textContent || doc?.body?.innerText || "")
-        .trim()
-        // Replace duplicate whitespace with either a single newline or space
-        .replace(/(\s*\n\s*)|\s{2,}/g, (_, newline) => (newline ? "\n" : " ")),
-    };
   }
 
   didDestroy() {

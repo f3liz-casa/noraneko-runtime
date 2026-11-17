@@ -9,10 +9,11 @@ internal plumbing.
 
 ## Where to register
 
-A tab event is dispatched on the tab element and a tab group event on the
-`<tab-group>` element, both bubbling. Either reaches `gBrowser.tabContainer` —
-the `<tabs is="tabbrowser-tabs">` element, which contains the pinned strip, the
-scrollable strip and the groups — and from there the window.
+A tab event is dispatched on the tab element, `<tab is="tabbrowser-tab">`, and a
+tab group event on the `<tab-group>` element, both bubbling. Either reaches
+`gBrowser.tabContainer` — the `<tabs is="tabbrowser-tabs">` element, which
+contains the pinned strip, the scrollable strip and the groups — and from there
+the window.
 
 ```js
 gBrowser.tabContainer.addEventListener("TabOpen", event => {
@@ -25,11 +26,11 @@ Three things a registration gets wrong:
 
 - **`gBrowser.addEventListener()` hears almost none of them.** `gBrowser`
   forwards `addEventListener`, `removeEventListener` and `dispatchEvent` to
-  `gBrowser.tabpanels`, which is in the content area and not on the path from a
-  tab to the window.
-- **`TabSwitched`, `TabSwitchDone` and `TabMultiSelect` are dispatched on
-  `gBrowser.tabpanels`**, so they reach the window but never `tabContainer`.
-  They are the three `gBrowser.addEventListener()` does hear, which is how
+  `gBrowser.tabpanels`, the `<tabpanels>` element that holds the browsers. It
+  sits in the content area, not on the path from a tab to the window.
+- **`TabSwitched` and `TabSwitchDone` are dispatched on `gBrowser.tabpanels`**,
+  so they reach the window but never `tabContainer`. They are the two
+  `gBrowser.addEventListener()` does hear, which is how
   `BrowserTestUtils.switchTab` waits for a switch.
 
 ```{mermaid}
@@ -42,10 +43,10 @@ config:
     wrappingWidth: 400
 ---
 flowchart TD
-    tab["tab<br/>most Tab* events"]
-    group["tab-group<br/>the tab group events"]
-    container["gBrowser.tabContainer"]
-    panels["gBrowser.tabpanels<br/>TabMultiSelect"]
+    tab["<b>&lt;tab&gt;</b><br/>most Tab* events"]
+    group["<b>&lt;tab-group&gt;</b><br/>the tab group events"]
+    container["<b>&lt;tabs&gt;</b><br/>TabMultiSelect"]
+    panels["<b>&lt;tabpanels&gt;</b><br/>TabSwitched, TabSwitchDone"]
     win["window"]
 
     tab --> container
@@ -53,14 +54,16 @@ flowchart TD
     container --> win
     panels --> win
 
-    classDef offstrip fill:#fef3c7,stroke:#92400e;
+    classDef offstrip fill:#fef3c7,stroke:#92400e,color:#1a1a1a;
+    classDef sink fill:#e5e7eb,stroke:#4b5563,color:#1a1a1a;
     class panels offstrip;
+    class win sink;
 ```
 
 `window.addEventListener()` therefore catches every event below except
 `TabSwapPictureInPicture`, which does not bubble and is internal anyway, so it is
 the safe default; `tabContainer` is the narrower target and what most in-tree
-consumers use, at the cost of the three above. Read `event.target`
+consumers use, at the cost of the two above. Read `event.target`
 for the tab or group the event is about rather than assuming
 `gBrowser.selectedTab`.
 
@@ -97,7 +100,7 @@ config:
     wrappingWidth: 400
 ---
 flowchart TD
-    ins(["TabBrowserInserted"])
+    ins(["TabBrowserInserted<br/><i>a lazy tab gets this later</i>"])
     open(["TabOpen"])
     live["the tab is open"]
     pin(["TabPinned"])
@@ -106,7 +109,7 @@ flowchart TD
     close(["TabClose"])
     ungrouped(["TabUngrouped"])
 
-    ins -- "eager tab; a lazy one<br/>gets this later" --> open
+    ins --> open
     open --> live
     live -- "if opened pinned" --> pin
     live -- "if opened in the foreground" --> sel
@@ -171,19 +174,19 @@ rather than the browser's. It covers neither `pinned`, which has `TabPinned` and
 
 | Event | Target | `detail` | Fires when |
 | --- | --- | --- | --- |
-| `TabOpen` | tab | `fromExternal`, `adoptedTab` when the tab came from another window, plus whatever the caller passed as `addTab`'s `eventDetail` | A tab has been created and the tabbrowser is in a consistent enough state for a listener to open or close tabs of its own. |
-| `TabBrowserInserted` | tab | `insertedOnTabCreation` | The tab's browser has been injected into `tabpanels` and wired to a progress listener. |
-| `TabBrowserDiscarded` | tab | — | The tab's browser has been destroyed and replaced with lazy substitutes. |
-| `BeforeTabRemotenessChange` / `TabRemotenessChange` | tab | — | Either side of swapping the tab's browser for one in a different content process. |
-| `TabClose` | tab | `adoptedBy`, `skipSessionStore`, `metricsContext` | The tab is committed to closing, before any teardown. `adoptedBy` is the tab in another window taking it over. |
-| `TabSelect` | tab | `previousTab` | The tab became the selected one. Suppressed while the tabbrowser is in preview mode. |
-| `TabSwitchDone` | `tabpanels` | — | The switcher has finished and torn itself down, which is later than `TabSelect` — that fires when the selection changes, this when the switch is visually over. Almost every consumer is a test waiting for a switch to settle; the one in product is `tab-hover-preview.mjs`, re-enabling the tab transitions it suppressed for the duration. `Tabbrowser` dispatches it itself only when e10s is disabled, in which case there is no `TabSwitched`. |
-| `TabAttrModified` | tab | `changed` | One of the tab's state attributes changed; see above. |
-| `TabPinned` / `TabUnpinned` | tab | `metricsContext` | The tab was pinned or unpinned. |
-| `TabShow` / `TabHide` | tab | — | The tab's `hidden` attribute changed, through `showTab` and `hideTab` or a session restore. A collapsed group's tabs are not hidden in this sense: they count as invisible through `tab.visible` without either event firing. |
-| `TabMove` | tab | `previousTabState`, `currentTabState`, `metricsContext` | The tab's index, group or split view changed. Each state carries `tabIndex`, `elementIndex` for a visible tab, and `tabGroupId` and `splitViewId` where they apply. |
-| `TabMultiSelect` | `tabpanels` | — | A batch of multi-select changes finished with something worth reporting. |
-| `TabFindInitialized` | tab | — | A findbar was created for the tab. |
+| `TabOpen` | `<tab>` | `fromExternal`, `adoptedTab` when the tab came from another window, plus whatever the caller passed as `addTab`'s `eventDetail` | A tab has been created and the tabbrowser is in a consistent enough state for a listener to open or close tabs of its own. |
+| `TabBrowserInserted` | `<tab>` | `insertedOnTabCreation` | The tab's browser has been injected into `tabpanels` and wired to a progress listener. |
+| `TabBrowserDiscarded` | `<tab>` | — | The tab's browser has been destroyed and replaced with lazy substitutes. |
+| `BeforeTabRemotenessChange` / `TabRemotenessChange` | `<tab>` | — | Either side of swapping the tab's browser for one in a different content process. |
+| `TabClose` | `<tab>` | `adoptedBy`, `skipSessionStore`, `inMultiselection`, `metricsContext` | The tab is committed to closing, before any teardown. `adoptedBy` is the tab in another window taking it over. `inMultiselection` is true when the tab closes as one of a set of tabs closed together, which Session Restore reopens together. |
+| `TabSelect` | `<tab>` | `previousTab`, `previousTabInAdoptedSplitView` | The tab became the selected one. Suppressed while the tabbrowser is in preview mode. `previousTabInAdoptedSplitView` is true when the previous tab is leaving for another window as part of a split view moved there as a whole. |
+| `TabSwitchDone` | `<tabpanels>` | — | The switcher has finished and torn itself down, which is later than `TabSelect` — that fires when the selection changes, this when the switch is visually over. Almost every consumer is a test waiting for a switch to settle; the one in product is `tab-hover-preview.mjs`, re-enabling the tab transitions it suppressed for the duration. `Tabbrowser` dispatches it itself only when e10s is disabled, in which case there is no `TabSwitched`. |
+| `TabAttrModified` | `<tab>` | `changed` | One of the tab's state attributes changed; see above. |
+| `TabPinned` / `TabUnpinned` | `<tab>` | `metricsContext` | The tab was pinned or unpinned. |
+| `TabShow` / `TabHide` | `<tab>` | — | The tab's `hidden` attribute changed, through `showTab` and `hideTab` or a session restore. A collapsed group's tabs are not hidden in this sense: they count as invisible through `tab.visible` without either event firing. |
+| `TabMove` | `<tab>` | `previousTabState`, `currentTabState`, `metricsContext`, `adoptingSplitView` | The tab's index, group or split view changed. Each state carries `tabIndex`, `elementIndex` for a visible tab, and `tabGroupId` and `splitViewId` where they apply. `adoptingSplitView` is true while a split view moves to another window as a whole: its tabs join a new split view there, and when it was the last thing in the old window, the tab still in the old split view is moved out of it as that window closes. Each of these changes `splitViewId`, though the split view keeps its id across windows. |
+| `TabMultiSelect` | `<tabs>` | — | A batch of multi-select changes finished with something worth reporting. It is dispatched on the strip itself rather than on any one tab, since it reports the selection as a whole. |
+| `TabFindInitialized` | `<tab>` | — | A findbar was created for the tab. |
 
 ## Tab groups
 
@@ -217,7 +220,7 @@ and exists for an ASRouter onboarding trigger.
 
 | Event | `detail` | Fires when |
 | --- | --- | --- |
-| `TabGroupCreate` | `isAdoptingGroup` when the group came from another window | The group element initialized. Once per element, so a group moved between windows produces a second one. |
+| `TabGroupCreate` | `adopting`, true when the group came from another window | The group element initialized. Once per element, so a group moved between windows produces a second one. |
 | `TabGrouped` / `TabUngrouped` | the tab | A tab joined or left the group. |
 | `TabGroupCollapse` / `TabGroupExpand` | — | The group's `collapsed` state changed, before the animation. |
 | `TabGroupUpdate` | — | The group's label or color changed to a different value. |
@@ -225,7 +228,7 @@ and exists for an ASRouter onboarding trigger.
 | `TabGroupUngroup` | `metricsContext` | `ungroupTabs` is about to move every tab out of the group. |
 | `TabGroupSaved` | `metricsContext` | The group has been handed to session store as a saved group. |
 | `TabGroupRemoveRequested` | `skipSessionStore`, `metricsContext` | `removeTabGroup` is about to close the group's tabs, while they are still members, which is what lets session store record them. |
-| `TabGroupRemoved` | — | The group's last tab left, just before the element removes itself. |
+| `TabGroupRemoved` | `adopting`, true when the group is moving to another window | The group's last tab left, just before the element removes itself. |
 
 ## Events that are internal plumbing
 
@@ -236,8 +239,8 @@ instead of leaving them all as one category.
 
 | Events | Who listens |
 | --- | --- |
-| `TabHoverStart`, `TabHoverEnd`, `TabGroupLabelHoverStart`, `TabGroupLabelHoverEnd`, `TabNoteIconHoverStart`, `TabNoteIconHoverEnd` | The strip talking to itself: the tab and group elements dispatch them and `tabs.js` drives the hover preview panel from them. |
-| `TabAnimationEnd`, `TabGroupAnimationComplete` | `tabs.js` and the drag-and-drop code, and directly by name in a dozen strip tests -- `TabGroupAnimationComplete` also through `TabGroupTestUtils`. Waiting for an animation to finish is the only reason to reach for either. |
+| `TabHoverStart`, `TabHoverEnd`, `TabGroupLabelHoverStart`, `TabGroupLabelHoverEnd`, `TabNoteIconHoverStart`, `TabNoteIconHoverEnd` | The strip talking to itself: the tab and group elements dispatch them and `tabs.mjs` drives the hover preview panel from them. |
+| `TabAnimationEnd`, `TabGroupAnimationComplete` | `tabs.mjs` and the drag-and-drop code, and directly by name in a dozen strip tests -- `TabGroupAnimationComplete` also through `TabGroupTestUtils`. Waiting for an animation to finish is the only reason to reach for either. |
 | `TabPreviewUpdated`, `TabPreviewThumbnailUpdated`, `TabGroupPreviewUpdated`, `TabNotePreviewUpdated` | `tab-hover-preview.mjs` and `browser_tab_preview.js`. A repaint has no other observer, which is what they exist for. |
 | `TabSwitched` | `BrowserTestUtils.switchTab`, and nothing else -- so a test waits on it through the helper without ever naming it. It carries the tab as `detail.tab` and fires when the switcher has its layers ready, earlier than `TabSwitchDone` rather than superseded by it; the helper falls back to `TabSwitchDone` when the window is hidden, since a hidden browser dispatches no `TabSwitched` ([Bug 1977993](https://bugzilla.mozilla.org/show_bug.cgi?id=1977993)). |
 | `TabSwapPictureInPicture` | `PictureInPicture.sys.mjs`, and nothing else. A private channel rather than a vocabulary: it does not bubble, that consumer registers on the tab element, and the `detail` is the tab receiving the state while the target is the tab losing it. |

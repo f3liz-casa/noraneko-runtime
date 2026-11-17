@@ -10,7 +10,7 @@ use std::io::BufReader;
 use std::io::Write;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{atomic, Arc, Mutex, RwLock};
 use std::{fs, mem};
 
 use chrono::{DateTime, FixedOffset, Utc};
@@ -111,6 +111,9 @@ pub struct EventDatabase {
     event_store_files: RwLock<HashMap<String, Arc<File>>>,
     /// A lock to be held when doing operations on the filesystem
     file_lock: Mutex<()>,
+    /// How many "events" pings have been submitted,
+    /// as estimated from how often the "events" store is snapshotted and cleared.
+    events_pings_submitted: atomic::AtomicUsize,
 }
 
 impl MallocSizeOf for EventDatabase {
@@ -144,6 +147,7 @@ impl EventDatabase {
             event_stores: RwLock::new(HashMap::new()),
             event_store_files: RwLock::new(HashMap::new()),
             file_lock: Mutex::new(()),
+            events_pings_submitted: atomic::AtomicUsize::new(0),
         })
     }
 
@@ -232,7 +236,13 @@ impl EventDatabase {
                         EventSessionContext::OutOfSession,
                     );
                 }
-                has_events_events && glean.submit_ping_by_name("events", Some("startup"))
+                if has_events_events && glean.submit_ping_by_name("events", Some("startup")) {
+                    self.events_pings_submitted
+                        .fetch_sub(1, atomic::Ordering::Relaxed);
+                    true
+                } else {
+                    false
+                }
             }
             Err(err) => {
                 log::warn!("Error loading events from disk: {}", err);
@@ -351,11 +361,28 @@ impl EventDatabase {
                 let event_json = serde_json::to_string(&event).unwrap(); // safe unwrap, event can always be serialized
                 store.push(event);
                 self.write_event_to_disk(store_name, &event_json);
-                if store_name == "events" && store.len() == glean.get_max_events() {
-                    submit_max_capacity_event_ping = true;
+                if store_name == "events" {
+                    if store.len() == glean.get_max_events() {
+                        submit_max_capacity_event_ping = true;
+                    }
+                    let factor = glean.get_events_ping_acceleration_factor();
+                    let events_pings_submitted =
+                        self.events_pings_submitted.load(atomic::Ordering::Relaxed);
+                    if factor > events_pings_submitted {
+                        // The early "events" ping acceleration formula is y = ax^2.
+                        let a = glean.get_max_events() / factor.saturating_mul(factor);
+                        let x = events_pings_submitted + 1; // We want the y for the next ping.
+                        let y = a.saturating_mul(x.saturating_mul(x));
+                        // It is possible to apply an acceleration factor at runtime that would
+                        // decrease y below store.len(). Submit a ping on the next event in that case.
+                        if store.len() >= y {
+                            submit_max_capacity_event_ping = true;
+                        }
+                    }
                 }
             }
         }
+
         if submit_max_capacity_event_ping {
             glean.submit_ping_by_name("events", Some("max_capacity"));
             true
@@ -675,6 +702,11 @@ impl EventDatabase {
             }
         }
 
+        if clear_store && store_name == "events" {
+            self.events_pings_submitted
+                .fetch_add(1, atomic::Ordering::Relaxed);
+        }
+
         result
     }
 
@@ -688,6 +720,26 @@ impl EventDatabase {
         let _lock = self.file_lock.lock().unwrap();
         std::fs::remove_dir_all(&self.path)?;
         create_dir_all(&self.path)?;
+
+        Ok(())
+    }
+
+    /// Clears all stored events, both in memory and on-disk.
+    pub fn clear_for_ping(&self, ping: &str) -> Result<()> {
+        log::debug!("Clearing event storage for ping {ping}");
+
+        // safe unwrap, only error case is poisoning
+        let _lock = self.file_lock.lock().unwrap();
+
+        // safe unwrap, only error case is poisoning
+        self.event_stores.write().unwrap().remove(ping);
+        if let Some(ping_file) = self.event_store_files.write().unwrap().remove(ping) {
+            // We're the last owner, dropping it here ensures we're closing it.
+            debug_assert_eq!(1, Arc::strong_count(&ping_file));
+            drop(ping_file);
+            let file_path = self.path.join(ping);
+            std::fs::remove_file(file_path)?;
+        }
 
         Ok(())
     }

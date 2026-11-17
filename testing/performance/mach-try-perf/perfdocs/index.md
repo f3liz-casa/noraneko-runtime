@@ -1,5 +1,11 @@
 # Mach Try Perf
 
+```{toctree}
+:titlesonly: true
+
+standard-workflow
+```
+
 ```{contents}
 :depth: 2
 :local: true
@@ -123,7 +129,7 @@ task configuration arguments:
 
 ## Workflow
 
-Below, you'll find an overview of the features available in `./mach try perf`. If you'd like to learn more about how to use this tool to enhance your development process, see the {ref}`Standard Workflow with Mach Try Perf` page.
+Below, you'll find an overview of the features available in `./mach try perf`. If you'd like to learn more about how to use this tool to enhance your development process, see the {doc}`standard-workflow` page.
 
 ## Standard Usage
 

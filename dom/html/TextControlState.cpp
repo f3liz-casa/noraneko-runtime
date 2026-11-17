@@ -743,6 +743,8 @@ void TextInputListener::OnSelectionChange(Selection& aSelection,
     return;
   }
 
+  RefPtr<TextControlElement> txtCtrlElement = mTxtCtrlElement;
+
   // Fire the select event
   // The specs don't exactly say when we should fire the select event.
   // IE: Whenever you add/remove a character to/from the selection. Also
@@ -765,12 +767,13 @@ void TextInputListener::OnSelectionChange(Selection& aSelection,
   if (!collapsed && (aReason & (nsISelectionListener::MOUSEUP_REASON |
                                 nsISelectionListener::KEYPRESS_REASON |
                                 nsISelectionListener::SELECTALL_REASON))) {
-    if (nsCOMPtr<nsIContent> content = mTxtCtrlElement) {
-      if (auto* frame = content->GetPrimaryFrame()) {
+    if (txtCtrlElement) {
+      if (auto* frame = txtCtrlElement->GetPrimaryFrame()) {
         RefPtr<PresShell> presShell = frame->PresShell();
         nsEventStatus status = nsEventStatus_eIgnore;
         WidgetEvent event(true, eFormSelect);
-        presShell->HandleEventWithTarget(&event, frame, content, &status);
+        presShell->HandleEventWithTarget(&event, frame, txtCtrlElement,
+                                         &status);
       }
     }
   }
@@ -782,7 +785,7 @@ void TextInputListener::OnSelectionChange(Selection& aSelection,
 
   mSelectionWasCollapsed = collapsed;
 
-  if (nsFocusManager::GetFocusedElementStatic() != mTxtCtrlElement) {
+  if (nsFocusManager::GetFocusedElementStatic() != txtCtrlElement) {
     return;
   }
 
@@ -965,6 +968,10 @@ TextInputListener::HandleEvent(Event* aEvent) {
 }
 
 nsresult TextInputListener::OnEditActionHandled(TextEditor& aTextEditor) {
+  // UpdateTextInputCommands may run script
+  const RefPtr<TextControlElement> kungFuDeathGrip(mTxtCtrlElement);
+  (void)kungFuDeathGrip;
+
   // Update the undo / redo menus
   //
   size_t numUndoItems = aTextEditor.NumberOfUndoItems();
@@ -1279,8 +1286,10 @@ static constexpr size_t kMaxCountOfCacheToReuse = 25;
 static AutoTArray<void*, kMaxCountOfCacheToReuse>* sReleasedInstances = nullptr;
 static bool sHasShutDown = false;
 
-TextControlState::TextControlState(TextControlElement* aOwningElement)
+TextControlState::TextControlState(TextControlElement* aOwningElement,
+                                   const nsAString& aInitialValue)
     : mTextCtrlElement(aOwningElement),
+      mValue(aInitialValue),
       mEverInited(false),
       mEditorInitialized(false),
       mSelectionCached(true)
@@ -1293,15 +1302,14 @@ TextControlState::TextControlState(TextControlElement* aOwningElement)
 }
 
 TextControlState* TextControlState::Construct(
-    TextControlElement* aOwningElement) {
+    TextControlElement* aOwningElement, const nsAString& aInitialValue) {
   void* mem;
   if (sReleasedInstances && !sReleasedInstances->IsEmpty()) {
     mem = sReleasedInstances->PopLastElement();
   } else {
     mem = moz_xmalloc(sizeof(TextControlState));
   }
-
-  return new (mem) TextControlState(aOwningElement);
+  return new (mem) TextControlState(aOwningElement, aInitialValue);
 }
 
 TextControlState::~TextControlState() {

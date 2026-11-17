@@ -8,7 +8,7 @@
 # documentation and how to modify this file.
 repo: mozilla-central
 created_at: '2021-10-14T12:50:40.073465'
-updated_at: '2026-09-08T16:24:19.337520+00:00'
+updated_at: '2026-10-19T23:26:51.625727+00:00'
 export:
   path: ./docs/mots/index.md
   format: md
@@ -22,6 +22,14 @@ aliases:
   - &TLMC
     nick: TLMC
 people:
+  - &007
+    bmo_id: 689628
+    name: Noah Bond
+    nick: '007'
+  - &acottner
+    bmo_id: 736702
+    name: Alex Cottner
+    nick: acottner
   - &adw
     bmo_id: 334927
     name: Drew Willcoxon
@@ -411,6 +419,10 @@ people:
     bmo_id: 149052
     name: Florian Quèze
     nick: florian
+  - &flozia
+    bmo_id: 708037
+    name: Florian Zia
+    nick: flozia
   - &fredwang
     bmo_id: 739410
     name: Frédéric Wang Nélar
@@ -427,6 +439,10 @@ people:
     bmo_id: 697145
     name: Gabriel Bustamante
     nick: gabriel
+  - &gbeckley
+    bmo_id: 693496
+    name: Graham Beckley
+    nick: gbeckley
   - &gcp
     bmo_id: 151147
     name: Gian-Carlo Pascutto
@@ -502,6 +518,10 @@ people:
     bmo_id: 5490
     name: Henri Sivonen
     nick: hsivonen
+  - &hsohaney
+    bmo_id: 726750
+    name: Harshit Sohaney
+    nick: hsohaney
   - &iain
     bmo_id: 623993
     name: Iain Ireland
@@ -550,6 +570,10 @@ people:
     bmo_id: 580382
     name: Julien Cristau
     nick: jcristau
+  - &jdelorenzo
+    bmo_id: 779362
+    name: Julie De Lorenzo
+    nick: jdelorenzo
   - &jdescottes
     bmo_id: 559949
     name: Julian Descottes
@@ -741,6 +765,10 @@ people:
     bmo_id: 582393
     name: Dzmitry Malyshau
     nick: kvark
+  - &leplatrem
+    bmo_id: 526079
+    name: Mathieu Leplatre
+    nick: leplatrem
   - &lina
     bmo_id: 506322
     name: Lina Butler
@@ -901,6 +929,10 @@ people:
     bmo_id: 557153
     name: Nicolas Chevobbe
     nick: nchevobbe
+  - &ngrato
+    bmo_id: 705149
+    name: Nick Grato
+    nick: ngrato
   - &nical
     bmo_id: 438998
     name: Nicolas Silva
@@ -945,6 +977,10 @@ people:
     bmo_id: 694341
     name: Olivia Hall
     nick: olivia
+  - &omarg
+    bmo_id: 779361
+    name: Omar Gonzalez
+    nick: omarg
   - &overholt
     bmo_id: 442218
     name: Andrew Overholt
@@ -1505,7 +1541,7 @@ modules:
         - Mitchell Hentges
         - *andi
       group: dev-builds
-      url: '{ref}`Build System`'
+      url: '{doc}`/build/buildsystem/index`'
       components:
         - Core::Build Config
       review_group: firefox-build-system-reviewers
@@ -1523,9 +1559,13 @@ modules:
           group: dev-builds
           components:
             - Core::Build Config
+          owners_emeritus:
+            - *nalexander
         owners:
+          - *ahochheiden
+        peers:
           - *nalexander
-        peers: []
+          - *tcampbell
         machine_name: core_build_config_fennec
 
       - name: 'Core: Build Config - Taskgraph'
@@ -1555,6 +1595,29 @@ modules:
           - *jmaher
         machine_name: core_build_config_taskgraph
     machine_name: core_build_config
+
+  - name: 'Core: Canvas (Graphics submodule)'
+    description: Canvas2D and WebGL implementation
+    includes:
+      - dom/canvas/**/*
+    meta:
+      group: dev-platform
+      url: <https://wiki.mozilla.org/Platform/GFX/Moz2D>
+      components:
+        - 'Core::Graphics: Canvas2D'
+        - 'Core::Graphics: CanvasWebGL'
+      review_group: gfx-reviewers
+      owners_emeritus:
+        - *jgilbert
+    owners:
+      - *lsalzman
+    peers:
+      - *ahale
+      - *nical
+      - *nrishel
+      - *aosmond
+      - *jfkthame
+    machine_name: core_canvas_graphics_submodule
 
   - name: 'Core: Code Analysis and Debugging Tools'
     description: Tools for debugging Mozilla code or for analyzing speed, memory use,
@@ -1647,9 +1710,10 @@ modules:
         - Aria Beingessner
         - Kris Wright
       group: dev-platform
-      url: '{ref}`Crash Reporter`'
+      url: '{doc}`/toolkit/crashreporter/crashreporter/index`'
       components:
         - Toolkit::Crash Reporting
+      review_group: crashreporting-reviewers
     owners:
       - *gsvelto
     peers:
@@ -1797,7 +1861,7 @@ modules:
         - Core::DOM
         - 'Core::DOM: Core & HTML'
         - Core::XSLT
-      review_group: dom-core
+      review_group: dom-reviewers
     owners:
       - *mccr8
     peers:
@@ -1859,7 +1923,7 @@ modules:
       owners_emeritus:
         - Ehsan Akhgari
       group: dev-platform
-      url: '{ref}`Editor`'
+      url: '{doc}`/editor/index`'
       components:
         - 'Core::DOM: Editor'
     owners:
@@ -2078,7 +2142,7 @@ modules:
         - Jungshik Shin
         - Simon Montagu
       group: dev-i18n
-      url: '{ref}`Internationalization`'
+      url: '{doc}`/intl/index`'
       components:
         - Core::Internationalization
       review_group: platform-i18n-reviewers
@@ -2370,6 +2434,9 @@ modules:
         owners:
           - *Mardak
         peers:
+          - *flozia
+          - *ngrato
+          - *omarg
           - *pdahiya
 
       - machine_name: core_machine_learning_models
@@ -2385,12 +2452,26 @@ modules:
           - *rrando
           - *tetchart
 
+      - machine_name: core_machine_learning_multiline_editor
+        name: 'Machine Learning: Multiline Editor'
+        includes:
+          - browser/components/multilineeditor/
+        meta:
+          components:
+            - 'Core::Machine Learning: Frontend'
+          review_group: ai-frontend-reviewers
+        owners:
+          - *flozia
+        peers:
+          - *mak
+
       - machine_name: core_machine_learning_platform
         name: 'Machine Learning: Platform'
         includes:
           - toolkit/components/aboutinference/
           - toolkit/components/ml/
           - toolkit/components/pageextractor/
+          - taskcluster/kinds/toolchain-symbols-upload/kind.yml
         meta:
           components:
             - 'Core::Machine Learning: On Device'
@@ -2524,8 +2605,10 @@ modules:
       components:
         - Core::Graphics
       review_group: gfx-reviewers
+      owners_emeritus:
+        - *basschouten
     owners:
-      - *basschouten
+      - *lsalzman
     peers:
       - *jrmuizel
       - *jwatt
@@ -2605,7 +2688,7 @@ modules:
         - Jason Duell
         - Junior Hsu
       group: dev-tech-network
-      url: '{ref}`Networking`'
+      url: '{doc}`/networking/index`'
       components:
         - Core::Networking
         - 'Core::Networking: Cache'
@@ -2666,10 +2749,11 @@ modules:
       components:
         - 'Core::DOM: Notifications'
         - Toolkit::Alerts Service
+      peers_emeritus:
+        - *nalexander
     owners:
       - *saschanaz
     peers:
-      - *nalexander
       - *nrishel
     machine_name: core_notifications
 
@@ -2681,7 +2765,7 @@ modules:
       owners_emeritus:
         - Wan-Teh Chang
       group: dev-tech-nspr
-      url: '{ref}`NSPR`'
+      url: '{doc}`/nspr/index`'
       components:
         - NSPR
     owners:
@@ -2924,7 +3008,7 @@ modules:
         - Franziskus Kiefer
         - Kevin Jacobs
       group: dev-tech-crypto
-      url: '{ref}`Network Security Services (NSS)`'
+      url: '{doc}`/security/nss/index`'
       components:
         - NSS
         - JSS
@@ -3098,6 +3182,22 @@ modules:
       - *birtles
     machine_name: core_svg
 
+  - name: 'Core: SWGL (Graphics submodule)'
+    description: Software rasterizer used as a fallback backend for WebRender
+    includes:
+      - gfx/wr/swgl/**/*
+    meta:
+      group: dev-platform
+      components:
+        - 'Core::Graphics: WebRender'
+      review_group: gfx-reviewers
+    owners:
+      - *lsalzman
+    peers:
+      - *gw
+      - *nical
+    machine_name: core_swgl_graphics_submodule
+
   - name: 'Core: UA String'
     description: User Agent String
     includes:
@@ -3164,7 +3264,7 @@ modules:
       # TODO: "the display list and layer related methods on nsIFrame and its subclasses"
     meta:
       group: dev-platform
-      url: '{ref}`Style system (CSS) & Layout`'
+      url: '{doc}`/layout/index`'
       components:
         - 'Core::Layout: Web Painting'
       owners_emeritus:
@@ -3216,7 +3316,7 @@ modules:
       - dom/webidl/WebGPU.webidl
       - dom/webgpu/**/*
       - gfx/wgpu_bindings/**/*
-      - taskcluster/kinds/toolchain-dxc-upload/kind.yml
+      - taskcluster/kinds/toolchain-symbols-upload/kind.yml
       - taskcluster/kinds/toolchain/dxc.yml
       - third_party/rust/naga/**/*
       - third_party/rust/wgpu-*/**/*
@@ -3522,7 +3622,7 @@ modules:
         - Simon Giesecke
         - *KrisWright
       group: dev-platform
-      url: '{ref}`XPCOM`'
+      url: '{doc}`/xpcom/index`'
       components:
         - Core::XPCOM
         - Toolkit::IOUtils and PathUtils
@@ -3564,7 +3664,6 @@ modules:
       runtime type description files from .idl interface description files.
     includes:
       - xpcom/idl-parser/**/*
-      - xpcom/xpidl/**/*
     meta:
       owners_emeritus:
         - Kyle Huey
@@ -3572,7 +3671,7 @@ modules:
         - Mike Shaver
         - Josh 'timeless' Soref
       group: dev-tech-xpcom
-      url: '{ref}`XPIDL`'
+      url: '{doc}`/xpcom/xpidl`'
       review_group: xpcom-reviewers
     owners:
       - *nika
@@ -3809,6 +3908,7 @@ modules:
         description: Desktop clients for our experiments and off-train deployments
           systems.
         includes:
+          - browser/components/nimbus/**/*
           - toolkit/components/normandy/**/*
           - toolkit/components/nimbus/**/*
         meta:
@@ -4016,21 +4116,24 @@ modules:
       - machine_name: firefox_pip
         name: Picture-in-Picture
         description: A component that allows video elements to be pulled out into
-          an always-on-top window.
+          an always-on-top window. This also includes the Mini Window feature for
+          extracting some or all of a webpage into an always-on-top window.
         includes:
           - toolkit/components/pictureinpicture
+          - browser/components/miniwindow
           - browser/extensions/pictureinpicture
         meta:
           owners_emeritus:
             - *micah
             - *molly
+            - *mconley
           review_group: pip-reviewers
         excludes: []
         owners:
-          - *mconley
+          - *kpatenio
         peers:
           - *niklas
-          - *kpatenio
+          - *hsohaney
 
       - name: Profile Migration
         description: Migrating data from other browsers.
@@ -4200,11 +4303,12 @@ modules:
           review_group: browser-installer-reviewers
           owners_emeritus:
             - Molly Howell
+          peers_emeritus:
+            - *agashlin
+            - *nalexander
         owners:
           - *cdupuis
-        peers:
-          - *agashlin
-          - *nalexander
+        peers: []
         machine_name: windows_installer
     machine_name: desktop_firefox
 
@@ -4310,6 +4414,28 @@ modules:
           - *zombie
           - *tcampbell
           - *jonalmeida
+      - machine_name: fenix_tabs
+        name: Fenix - Tabs
+        description: Submodule for the tabs code in Firefox for Android.
+        includes:
+          - mobile/android/android-components/components/browser/tabstray/**/*
+          - mobile/android/android-components/components/compose/tabstray/**/*
+          - mobile/android/android-components/components/concept/tabstray/**/*
+          - mobile/android/android-components/components/feature/tabs/**/*
+          - mobile/android/android-components/components/feature/tabgroups-storage/**/*
+          - mobile/android/android-components/components/feature/tabdata-coordinator/**/*
+          - mobile/android/fenix/app/src/*/java/org/mozilla/fenix/tabstray/**/*
+          - mobile/android/fenix/app/src/*/java/org/mozilla/fenix/tabgroups/**/*
+          - mobile/android/fenix/app/src/*/java/org/mozilla/fenix/components/tabs/**/*
+        meta:
+          components:
+            - 'Firefox for Android :: Tabs'
+          review_group: android-tabs-reviewers
+        owners:
+          - *007
+        peers:
+          - *calu
+          - *jdelorenzo
 
   - machine_name: focus_android
     name: Focus for Android
@@ -4370,6 +4496,29 @@ modules:
         - Tom Prince
       components:
         - 'Release Engineering :: Applications: MozharnessCore'
+
+  - machine_name: platform_geolocation
+    name: 'Core: Platform Geolocation'
+    description: Platform-specific geolocation layer
+    includes:
+      - dom/system/*ocationProvider*
+      - dom/system/windows/location/**/*
+      - dom/system/windows/*WindowsUtils*
+      - dom/system/mac/*LocationProvider*
+      - dom/system/linux/*LocationProvider*
+      - toolkit/components/geolocation/*
+    excludes: []
+    owners:
+      - *handyman
+    peers:
+      - *thinker
+      - *spohl
+      - *saschanaz
+      - *jjaschke
+    meta:
+      components:
+        - 'Toolkit :: Geolocation Provider'
+      review_group: geoprovider-reviewers
 
   - machine_name: python_usage
     name: Python usage, tools, and style
@@ -4499,6 +4648,24 @@ modules:
           - *jdescottes
           - *jgraham
           - *Sasha
+
+  - machine_name: remote_settings
+    name: Remote Settings
+    description: Remote Settings client
+    includes:
+      - services/settings/**/*
+    excludes: []
+    owners:
+      - *acottner
+      - *gbeckley
+      - *leplatrem
+    peers: []
+    meta:
+      owners_emeritus: []
+      url: https://firefox-source-docs.mozilla.org/services/settings/
+      components:
+        - 'Firefox :: Remote Settings Client'
+      review_group: remote-settings-reviewers
 
   - machine_name: sync
     name: Sync
@@ -4656,7 +4823,7 @@ modules:
         - 'Testing :: Performance'
         - 'Testing :: mozperftest'
         - 'Testing :: Condprofile'
-      url: '{ref}`Performance Testing`'
+      url: '{doc}`/testing/perfdocs/index`'
       review_group: perftest-reviewers
   - machine_name: testing_reftest
     name: Reftest (+ jsreftest + crashtest)
@@ -4764,7 +4931,7 @@ modules:
           owners_emeritus:
             - Georg Fritzsche
           group: fx-data-dev
-          url: '{ref}`Telemetry`'
+          url: '{doc}`/toolkit/components/telemetry/index`'
           peers_emeritus:
             - *perrymcmanis
           review_group: toolkit-telemetry-reviewers-rotation
@@ -4909,5 +5076,5 @@ modules:
         - Ryan Tilder
       group: dev-platform
 hashes:
-  config: 69bde0cdf6c276324fec624ba24eb478776f7f76
-  export: 19e7bf3cb5b7ad587a0456981c724895c4921d2b
+  config: 0fa1edd1eb9e634b8f3b5cd772db6bf9be49af8f
+  export: 0a1dc9b3b63a79c423de97a6d3fb023bdd50a70f

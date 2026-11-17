@@ -90,6 +90,7 @@ treeherder:
         'DTbc': 'DevTools remote debugging backward compatibility tests'
         'Fetch': 'Fetch and store content'
         'Fxfn': 'Firefox functional tests'
+        'gv-junit': 'GeckoView junit tests'
         'l10n-bump': 'L10n Bumper'
         'M': 'Mochitests'
         'M-f': 'Mochitest failures'
@@ -163,10 +164,11 @@ treeherder:
         'TLA64': 'Toolchain builds for Linux AArch64'
         'TM': 'Toolchain builds for OSX'
         'TMA64': 'Toolchain builds for OSX Aarch64'
-        'TMW': 'Toolchain builds for Windows MinGW'
         'TW32': 'Toolchain builds for Windows 32-bits'
         'TW64': 'Toolchain builds for Windows 64-bits'
         'TWA64': 'Toolchain builds for Windows AArch64'
+        'TWM': 'Toolchain builds for Windows MinGW'
+        'WASI': 'Toolchain builds for WASI'
         'WMC32': 'MinGW-Clang builds for Windows 32-bits'
         'WMC64': 'MinGW-Clang builds for Windows 64-bits'
         'Searchfox': 'Searchfox builds'
@@ -203,6 +205,7 @@ treeherder:
         'Wgpu': 'WebGPU standalone'
         'cpp': 'C/C++ checks'
         'pedantic': 'pedantic checks'
+        'legal': 'Licensing and legal checks'
         'text': 'Check on texts'
         'misc': 'Misc checks'
         'js': 'JavaScript checks'
@@ -216,6 +219,7 @@ treeherder:
         'SS': 'Shadow scheduler'
         'Sentry': 'Sentry synchronization'
         'test-info': 'Test manifest skip/fail information'
+        'testrail': 'TestRail release milestone creation'
         'condprof': 'Conditioned Profile Builder'
         'doc': 'Documentation'
         'perftest': 'Performance tests'
@@ -256,6 +260,7 @@ treeherder:
         'fenix-nightly': 'Fenix nightly-related tasks'
         'fenix-nightly-nobp': 'Fenix nightly builds without baseline profiles'
         'fenix-nightlySim': 'Nightly-related tasks that run on each github push'
+        'fenix-nightlyAsReleaseSim': 'Fenix nightly-as-release performance tasks (nightly built against release-milestone GeckoView)'
         'fenix-release': 'Fenix production-related tasks'
 
         # This list is based on mobile/android/android-components/.buildconfig.yml except the exceptions down below
@@ -286,6 +291,7 @@ treeherder:
         'compose-base': 'compose-base'
         'concept-bookmarks-parser': 'concept-bookmarks-parser'
         'compose-cfr': 'compose-cfr'
+        'compose-draggable': 'compose-draggable'
         'concept-engine': 'concept-engine'
         'concept-fetch': 'concept-fetch'
         'concept-llm': 'concept-llm'
@@ -335,6 +341,7 @@ treeherder:
         'feature-summarize': 'feature-summarize'
         'feature-syncedtabs': 'feature-syncedtabs'
         'feature-tab-collections': 'feature-tab-collections'
+        'feature-tabgroups-storage': 'feature-tabgroups-storage'
         'feature-tabs': 'feature-tabs'
         'feature-toolbar': 'feature-toolbar'
         'feature-top-sites': 'feature-top-sites'
@@ -422,6 +429,7 @@ treeherder:
         'lib-fetch-httpurlconnecti': 'lib-fetch-httpurlconnection'
         'feature-webcompat-reporte': 'feature-webcompat-reporter'
         'feature-protection-dashbo': 'feature-protection-dashboard'
+        'feature-tabdata-coordinat': 'feature-tabdata-coordinator'
 
         # Groups aren't generated off buildconfig.yml:
         'samples-browser': 'samples-browser'
@@ -582,13 +590,21 @@ partner-urls:
                             staging: 'git@github.com:mozilla-partners/staging-mozilla-EME-free-manifest.git'
 
 
-# Beta and ESR are integration branches, so by default their tasks run at the
-# same priority as autoland. Release managers landing an uplift they intend to
-# ship set the "SHIPPING" flag in Lando, which adds "SHIPPING" to the commit
-# message and raises the priority to get results as quickly as possible.
 task-priority:
     by-project:
-        'mozilla-release': 'highest'
+        # Release is an integration branch with relatively few commits that
+        # do not need to be tested urgently, so by default their tasks run at
+        # low priority. Release managers landing an uplift they intend to ship
+        # set the "SHIPPING" flag in Lando, which adds "SHIPPING" to the
+        # commit message and raises the priority to get results as quickly as
+        # possible.
+        'mozilla-release':
+            by-shipping:
+                'true': 'highest'
+                'default': 'low'
+        # Beta and ESR are the same as Release, except even when they are
+        # flagged for SHIPPING they are still slightly lower priority than
+        # it.
         'mozilla-esr.*':
             by-shipping:
                 'true': 'very-high'
@@ -597,8 +613,13 @@ task-priority:
             by-shipping:
                 'true': 'very-high'
                 'default': 'low'
-        'mozilla-central': 'medium'
-        'autoland': 'low'
+        # mozilla-central builds are in the critical path to shipping Nightly,
+        # so we treat it as a relatively high priority.
+        'mozilla-central': 'high'
+        # autoland is a critical bottleneck for getting new work into Nightly,
+        # so it is treated as a higher priority than non-shipping pushes to
+        # release branches
+        'autoland': 'medium'
         'default': 'very-low'
 
 taskgraph:
@@ -610,7 +631,7 @@ taskgraph:
 
 workers:
     aliases:
-        b-linux(|-docker(|-x?large|-updatebot)-amd|-medium|-aarch64|-xlarge|-kvm):
+        b-linux(|-docker(|-x?large|-updatebot)-amd|-medium|-aarch64|-x?large|-kvm):
             provisioner: '{trust-domain}-{level}'
             implementation: docker-worker
             os: linux
@@ -741,30 +762,6 @@ workers:
                 by-release-level:
                     staging: '{trust-domain}-1-pushmsix'
                     production: '{trust-domain}-3-pushmsix'
-        tree:
-            provisioner: scriptworker-k8s
-            implementation: treescript
-            os: linux
-            worker-type:
-                by-project:
-                    # Autoland is treated specially here because any treescript
-                    # tasks that run on it must be done on level 3 workers
-                    # (so they can actually push changes). On other projects
-                    # `release-level` would handle this just fine, but
-                    # `autoland` is considered a "staging" release level for
-                    # historical reasons.
-                    # https://bugzilla.mozilla.org/show_bug.cgi?id=1960918
-                    # seeks to improve this situation.
-                    autoland: '{trust-domain}-3-tree'
-                    default:
-                        by-release-level:
-                            production: '{trust-domain}-3-tree'
-                            staging: '{trust-domain}-1-tree'
-        tree-dev:
-            provisioner: scriptworker-k8s
-            implementation: treescript
-            os: linux
-            worker-type: '{trust-domain}-1-tree-dev'
         lando:
             provisioner: scriptworker-k8s
             implementation: landoscript
@@ -804,7 +801,7 @@ workers:
             implementation: docker-worker
             os: linux
             worker-type: 't-linux-docker-kvm'
-        t-linux-(talos|netperf)(-1804|-2404)?:
+        t-linux-(talos|netperf)-2404:
             provisioner: releng-hardware
             implementation: generic-worker
             os: linux
@@ -850,6 +847,11 @@ workers:
             os: macosx
             worker-type: 'gecko-{alias}'
         t-osx-1500-m-vms:
+            provisioner: releng-hardware
+            implementation: generic-worker
+            os: macosx
+            worker-type: 'gecko-{alias}'
+        t-osx-2700-m4:
             provisioner: releng-hardware
             implementation: generic-worker
             os: macosx

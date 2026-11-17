@@ -130,6 +130,11 @@ class TextInputHandler;
 // to create its "frame view".
 + (Class)frameViewClassForStyleMask:(NSUInteger)styleMask;
 
+// Sanitizes a style mask before AppKit stores it. NSWindow clears the
+// non-activating panel bit here; NSPanel keeps it. Both -initWithContentRect:
+// and -setStyleMask: go through it.
++ (NSUInteger)_validateStyleMask:(NSUInteger)aStyleMask;
+
 @end
 
 @interface PopupWindow : BaseWindow <NSPopoverDelegate> {
@@ -317,6 +322,8 @@ class nsCocoaWindow final : public nsIWidget {
   void DispatchAPZWheelInputEvent(mozilla::InputData& aEvent);
   nsEventStatus DispatchAPZInputEvent(mozilla::InputData& aEvent);
 
+  void PerformHapticFeedback(mozilla::HapticFeedbackType aType) override;
+
   void DispatchDoubleTapGesture(mozilla::TimeStamp aEventTimeStamp,
                                 LayoutDeviceIntPoint aScreenPosition,
                                 mozilla::Modifiers aModifiers);
@@ -443,6 +450,8 @@ class nsCocoaWindow final : public nsIWidget {
   void PostHandleKeyEvent(mozilla::WidgetKeyboardEvent* aEvent) override;
   nsresult ActivateNativeMenuItemAt(const nsAString& indexString) override;
   nsresult ForceUpdateNativeMenuAt(const nsAString& indexString) override;
+  nsresult GetNativeMenuItemKeyEquivalent(const nsAString& aElementId,
+                                          nsAString& aResult) override;
   [[nodiscard]] nsresult GetSelectionAsPlaintext(nsAString& aResult) override;
   TextEventDispatcherListener* GetNativeTextEventDispatcherListener() override;
   [[nodiscard]] nsresult AttachNativeKeyEvent(
@@ -478,7 +487,7 @@ class nsCocoaWindow final : public nsIWidget {
   NSWindow* GetCocoaWindow() { return [[mWindow retain] autorelease]; }
 
   void SetMenuBar(RefPtr<nsMenuBarX>&& aMenuBar);
-  nsMenuBarX* GetMenuBar();
+  already_AddRefed<nsMenuBarX> GetMenuBar();
 
   void SetInputContext(const InputContext& aContext,
                        const InputContextAction& aAction) override;
@@ -497,6 +506,7 @@ class nsCocoaWindow final : public nsIWidget {
   void CocoaWindowWillEnterFullscreen(bool aFullscreen);
   void CocoaWindowDidEnterFullscreen(bool aFullscreen);
   void CocoaWindowDidResize();
+  void SaveRestoredBounds();
   void CocoaSendToplevelActivateEvents();
   void CocoaSendToplevelDeactivateEvents();
 

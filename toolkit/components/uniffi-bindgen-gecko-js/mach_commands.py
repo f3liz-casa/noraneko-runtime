@@ -63,9 +63,8 @@ def build_uniffi_targets(command_context):
             mach_path,
             "build",
             "--no-completion-messages",
-            "pre-export",
-            "export",
-            "recurse_uniffi-target",
+            "rust-prereqs",
+            "uniffi-target",
         ],
         env=env,
         cwd=command_context.topsrcdir,
@@ -108,7 +107,7 @@ def build_uniffi_targets(command_context):
     # Read the staticlib, not the cdylib: bindgen extracts the `UNIFFI_META_*`
     # statics from the archive.
     # Like "$uniffi_objdir/aarch64-apple-darwin/release-megazord/libmegazord.a".
-    megazord_build_kind = get_rust_build_kind(substs, megazord=True)
+    megazord_build_kind = get_rust_build_kind(substs, profile_suffix="megazord")
     megazord_path = mozpath.join(
         uniffi_objdir,
         substs["RUST_TARGET"],
@@ -129,6 +128,7 @@ COMPONENT_MAPPING = {
     "mozilla/appservices/adsclient": "components/ads-client",
     "mozilla/appservices/autofill": "components/autofill",
     "mozilla/appservices/crashtest": "components/crashtest",
+    "mozilla/appservices/db_crypto": "components/db-crypto",
     "mozilla/appservices/errorsupport": "components/errorsupport",
     "mozilla/appservices/fxaclient": "components/fxaclient",
     "mozilla/appservices/init_rust_components": "components/init_rust_components",

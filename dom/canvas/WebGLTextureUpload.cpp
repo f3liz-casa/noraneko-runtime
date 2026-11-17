@@ -15,7 +15,6 @@
 #include "TexUnpackBlob.h"
 #include "WebGLBuffer.h"
 #include "WebGLContext.h"
-#include "WebGLContextUtils.h"
 #include "WebGLFormats.h"
 #include "WebGLFramebuffer.h"
 #include "WebGLTexelConversions.h"
@@ -937,6 +936,7 @@ void WebGLTexture::TexStorage(TexTarget target, uint32_t levels,
         "DoTexStorage(0x%04x, %i, 0x%04x, %i,%i,%i) -> 0x%04x", target.get(),
         levels, sizedFormat, size.x, size.y, size.z, error);
     gfxCriticalError() << "Unexpected error from driver: " << call.get();
+    Truncate();
     return;
   }
 
@@ -1365,6 +1365,7 @@ void WebGLTexture::CompressedTexImage(bool sub, GLenum imageTarget,
     }
     gfxCriticalError() << "Unexpected error " << gfx::hexa(error)
                        << " from driver: " << call.get();
+    Truncate();
     return;
   }
 

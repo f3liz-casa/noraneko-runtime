@@ -20,7 +20,18 @@ ChromeUtils.defineESModuleGetters(lazy, {
  */
 export class SuggestBackendMerino extends SuggestBackend {
   get enablingPreferences() {
-    return ["quickSuggestOnlineAvailable", "quicksuggest.online.enabled"];
+    return [
+      "quickSuggestOnlineAvailable",
+
+      // This pref corresponds to the online checkbox in the Suggest settings
+      // UI.
+      "quicksuggest.online.enabled",
+
+      // This pref corresponds to the "Suggestions from Firefox" checkbox in the
+      // Suggest settings UI. The online checkbox is nested underneath that
+      // checkbox, so gate the backend on its pref.
+      "suggest.quicksuggest.all",
+    ];
   }
 
   /**
@@ -39,7 +50,12 @@ export class SuggestBackendMerino extends SuggestBackend {
   }
 
   async query(searchString, { queryContext }) {
-    if (!searchString || !queryContext.allowRemoteResults()) {
+    // Per product requirements, at least two characters must be typed to fetch
+    // suggestions from Merino.
+    if (
+      searchString.trimEnd().length < 2 ||
+      !queryContext.allowRemoteResults()
+    ) {
       return [];
     }
 

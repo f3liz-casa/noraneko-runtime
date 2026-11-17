@@ -16,6 +16,8 @@
   <string name="feedback_erase2">已清除瀏覽紀錄</string>
   <!-- "Snackbar" shown after the user has pressed the 'erase' button at the end of a custom tab browsing session -->
   <string name="feedback_erase_custom_tab">已清除分頁瀏覽紀錄。</string>
+  <!-- Content description for the button that opens the menu. -->
+  <string name="content_description_menu">選單</string>
   <!-- Menu item: Share the currently visible page -->
   <string name="menu_share">分享…</string>
   <!--
@@ -47,7 +49,7 @@
     See https://github.com/mozilla-mobile/focus-android/issues/2106
     %1$s will be replaced by the app name (e.g. Firefox Focus)
   -->
-  <string name="menu_custom_tab_branding">Powered by %1$s</string>
+  <string name="menu_custom_tab_branding">由 %1$s 提供</string>
   <!--
     This is the title of a dialog that shows all the share targets (apps or contacts) when
     sharing an URL.
@@ -91,7 +93,7 @@
     Focus is hard coded since we can't use variables in this context.
     Do not translate or transliterate Focus.
   -->
-  <string name="text_selection_search_action_focus" tools:ignore="BrandUsage">使用 Focus 搜尋</string>
+  <string name="text_selection_search_action_focus" tools:ignore="BrandUsage,UnusedResources">使用 Focus 搜尋</string>
   <!--
     This is the label of an action we offer when the user selects text in other third-party apps.
     Klar is hard coded since we can't use variables in this context.

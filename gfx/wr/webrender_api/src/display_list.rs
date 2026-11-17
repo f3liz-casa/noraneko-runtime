@@ -20,14 +20,15 @@ use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use crate::display_item as di;
 use crate::{APZScrollGeneration, HasScrollLinkedEffect, PipelineId, PropertyBinding};
 use crate::gradient_builder::GradientBuilder;
-use crate::color::ColorF;
+use crate::color::{ColorF, ColorU};
 use crate::font::{FontInstanceKey, GlyphInstance, GlyphOptions};
 use crate::image::{ColorDepth, ImageKey};
-use crate::key_types::EdgeMask;
-use crate::key_types::GradientStopKey;
+use crate::interned_prims::{RectangleKey, RectanglePrim};
+use crate::interning::{self, DlDelta};
+use crate::key_types::{EdgeMask, GradientStopKey, PrimKeyCommonData, StretchSizeKey};
 use crate::prim_geometry::{
-    apply_gradient_local_clip, optimize_linear_gradient, optimize_radial_gradient,
-    resolve_tile_size, simplify_repeated_primitive,
+    apply_gradient_local_clip, image_stretch_size, optimize_linear_gradient,
+    optimize_radial_gradient, resolve_tile_size, simplify_repeated_primitive,
 };
 use crate::units::*;
 
@@ -35,6 +36,30 @@ use crate::units::*;
 // We don't want to push a long text-run. If a text-run is too long, split it into several parts.
 // This needs to be set to (renderer::MAX_VERTEX_TEXTURE_WIDTH - VECS_PER_TEXT_RUN) * 2
 pub const MAX_TEXT_RUN_LENGTH: usize = 2040;
+
+/// Whether an item of this colour draws anything. Tested on the quantized
+/// colour, which is what the scene builder's primitive data holds, so this
+/// is the same predicate it applies.
+fn color_is_visible(color: ColorF) -> bool {
+    ColorU::from(color).a > 0
+}
+
+/// A rectangle with an animated colour is taken to be visible, since the
+/// binding resolves at frame time.
+fn rect_is_visible(color: &PropertyBinding<ColorF>) -> bool {
+    match *color {
+        PropertyBinding::Value(color) => color_is_visible(color),
+        PropertyBinding::Binding(..) => true,
+    }
+}
+
+/// The common properties of a shadow copy: clip rect translated by the shadow
+/// offset, clip chain dropped. See `DisplayListBuilder::shadow_copy_of_item`.
+fn shadow_copy_common(mut common: di::CommonItemProperties, offset: LayoutVector2D) -> di::CommonItemProperties {
+    common.clip_rect = common.clip_rect.translate(offset);
+    common.clip_chain_id = di::ClipChainId::INVALID;
+    common
+}
 
 // See ROOT_REFERENCE_FRAME_SPATIAL_ID and ROOT_SCROLL_NODE_SPATIAL_ID
 // TODO(mrobinson): It would be a good idea to eliminate the root scroll frame which is only
@@ -124,6 +149,11 @@ pub struct DisplayListPayload {
 
     /// Serde encoded SpatialTreeItem structs
     pub spatial_tree: Vec<u8>,
+
+    /// The build's interner delta, encoded only when the list has to cross a
+    /// process boundary. Empty in process, where `BuiltDisplayList::delta`
+    /// carries it directly; see `BuiltDisplayList::into_data`.
+    pub interner_delta: Vec<u8>,
 }
 
 impl DisplayListPayload {
@@ -131,6 +161,7 @@ impl DisplayListPayload {
         DisplayListPayload {
             items_data: Vec::new(),
             spatial_tree: Vec::new(),
+            interner_delta: Vec::new(),
         }
     }
 
@@ -156,7 +187,8 @@ impl DisplayListPayload {
 
     fn size_in_bytes(&self) -> usize {
         self.items_data.len() +
-        self.spatial_tree.len()
+        self.spatial_tree.len() +
+        self.interner_delta.len()
     }
 
     #[cfg(feature = "serialize")]
@@ -174,7 +206,8 @@ impl DisplayListPayload {
 impl MallocSizeOf for DisplayListPayload {
     fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
         self.items_data.size_of(ops) +
-        self.spatial_tree.size_of(ops)
+        self.spatial_tree.size_of(ops) +
+        self.interner_delta.size_of(ops)
     }
 }
 
@@ -183,6 +216,10 @@ impl MallocSizeOf for DisplayListPayload {
 pub struct BuiltDisplayList {
     payload: DisplayListPayload,
     descriptor: BuiltDisplayListDescriptor,
+    /// What this build did to the builder's interners. The receiver has to
+    /// apply it to its stores before it can resolve any handle in `payload`,
+    /// including ones minted by earlier builds that this list still references.
+    delta: DlDelta,
 }
 
 impl MallocSizeOf for BuiltDisplayList {
@@ -326,7 +363,6 @@ impl<'de> Deserialize<'de> for BuiltDisplayList {
                 Debug::HitTest(v) => Real::HitTest(v),
                 Debug::Line(v) => Real::Line(v),
                 Debug::Image(v) => Real::Image(v),
-                Debug::RepeatingImage(v) => Real::RepeatingImage(v),
                 Debug::YuvImage(v) => Real::YuvImage(v),
                 Debug::Border(v) => Real::Border(v),
                 Debug::BoxShadow(v) => Real::BoxShadow(v),
@@ -355,7 +391,13 @@ impl<'de> Deserialize<'de> for BuiltDisplayList {
             payload: DisplayListPayload {
                 items_data,
                 spatial_tree,
+                interner_delta: Vec::new(),
             },
+            // A capture records one build's delta, but the list can reference
+            // handles interned by earlier builds, so replaying needs the store
+            // contents rather than a delta. Empty until captures carry the
+            // stores.
+            delta: DlDelta::default(),
         })
     }
 }
@@ -495,18 +537,45 @@ pub struct AuxIter<'a, T> {
 }
 
 impl BuiltDisplayList {
+    /// Reconstruct a list from the buffers it was sent as. The inverse of
+    /// `into_data`, and the only path that decodes the interner delta.
     pub fn from_data(
         payload: DisplayListPayload,
         descriptor: BuiltDisplayListDescriptor,
     ) -> Self {
+        let delta = if payload.interner_delta.is_empty() {
+            DlDelta::default()
+        } else {
+            bincode::deserialize(&payload.interner_delta)
+                .expect("corrupt display list interner delta")
+        };
+
         BuiltDisplayList {
             payload,
             descriptor,
+            delta,
         }
     }
 
-    pub fn into_data(self) -> (DisplayListPayload, BuiltDisplayListDescriptor) {
+    /// Take the list apart into the buffers that cross a process boundary.
+    ///
+    /// The interner delta is encoded here rather than in `end`, so that a
+    /// consumer in the same process (wrench, and the parent-side pipelines) is
+    /// handed `delta` directly and pays nothing for a round trip it does not
+    /// need. A delta that asks for nothing is still encoded: it carries the
+    /// build number, and builds have to stay contiguous for the receiver to
+    /// tell an idle build from a lost one. Dropping it would make the next
+    /// non-empty delta look out of sequence.
+    pub fn into_data(mut self) -> (DisplayListPayload, BuiltDisplayListDescriptor) {
+        self.payload.interner_delta = bincode::serialize(&self.delta)
+            .expect("failed to encode display list interner delta");
+
         (self.payload, self.descriptor)
+    }
+
+    /// This build's interner delta. See the field.
+    pub fn delta(&self) -> &DlDelta {
+        &self.delta
     }
 
     pub fn items_data(&self) -> &[u8] {
@@ -616,7 +685,6 @@ impl BuiltDisplayList {
                 Real::HitTest(v) => Debug::HitTest(v),
                 Real::Line(v) => Debug::Line(v),
                 Real::Image(v) => Debug::Image(v),
-                Real::RepeatingImage(v) => Debug::RepeatingImage(v),
                 Real::YuvImage(v) => Debug::YuvImage(v),
                 Real::Border(v) => Debug::Border(v),
                 Real::BoxShadow(v) => Debug::BoxShadow(v),
@@ -892,10 +960,12 @@ impl<'a, T: Copy + peek_poke::Peek> ::std::iter::ExactSizeIterator for AuxIter<'
 #[derive(Clone, Debug)]
 pub struct SaveState {
     dl_items_len: usize,
+    spatial_tree_len: usize,
     next_clip_index: usize,
     next_spatial_index: usize,
     next_clip_chain_id: u64,
     shadow_capture_len: usize,
+    shadow_capture_keys_len: usize,
     pending_shadows_len: usize,
     raster_space_stack_len: usize,
 }
@@ -1082,6 +1152,10 @@ pub struct DisplayListBuilder {
     /// rather than reallocated. A scope is open exactly when `pending_shadows`
     /// is non-empty.
     shadow_capture: Vec<u8>,
+    /// What each interned primitive in `shadow_capture` was built from, in
+    /// capture order. Its item carries only the handle, so the desugar interns
+    /// each shadow copy from here.
+    shadow_capture_keys: Vec<CapturedPrim>,
     /// The shadows declared by `push_shadow` in the current scope, in order.
     /// Held as typed descriptors (not captured markers) and consumed by
     /// `pop_all_shadows`, which desugars them into blur stacking contexts.
@@ -1090,6 +1164,11 @@ pub struct DisplayListBuilder {
     /// `Screen` base. Resolving here rather than in the scene builder means one
     /// stack instead of two that have to agree.
     raster_space_stack: Vec<di::RasterSpace>,
+    /// Everything the `push_*` functions intern. Deliberately *not* cleared
+    /// by `reset`: retaining it across builds is what lets an unchanged item
+    /// keep its handle and stay off the wire entirely. See
+    /// [`crate::interning`].
+    interners: interning::DlInterners,
 }
 
 /// A shadow declared by `push_shadow`, awaiting desugaring at `pop_all_shadows`.
@@ -1098,6 +1177,21 @@ struct PendingShadow {
     space_and_clip: di::SpaceAndClipInfo,
     shadow: di::Shadow,
     should_inflate: bool,
+}
+
+/// A primitive captured in a shadow scope, as its key was built: the item
+/// carries only the handle, so this is what a copy in the shadow's colour is
+/// interned from.
+struct CapturedPrim {
+    common: di::CommonItemProperties,
+    bounds: LayoutRect,
+    key: CapturedKey,
+}
+
+/// The kind-specific part of a captured primitive's key, minus the colour,
+/// which the copy takes from the shadow.
+enum CapturedKey {
+    Rectangle { transformed_aa_edges: EdgeMask },
 }
 
 #[repr(C)]
@@ -1112,6 +1206,15 @@ impl DisplayListCapacity {
             items_size: 0,
             spatial_tree_size: 0,
         }
+    }
+}
+
+/// Anti-aliased primitives resolve their axis-aligned edges in the shader too.
+fn aligned_aa_edges(flags: di::PrimitiveFlags) -> EdgeMask {
+    if flags.contains(di::PrimitiveFlags::ANTIALISED) {
+        EdgeMask::all()
+    } else {
+        EdgeMask::empty()
     }
 }
 
@@ -1135,8 +1238,10 @@ impl DisplayListBuilder {
             off_grid_coords: 0,
             glyph_scratch: Vec::new(),
             shadow_capture: Vec::new(),
+            shadow_capture_keys: Vec::new(),
             pending_shadows: Vec::new(),
             raster_space_stack: vec![di::RasterSpace::Screen],
+            interners: interning::DlInterners::default(),
         }
     }
 
@@ -1153,10 +1258,13 @@ impl DisplayListBuilder {
         self.last_scroll_offset = None;
         self.off_grid_coords = 0;
         self.shadow_capture.clear();
+        self.shadow_capture_keys.clear();
         self.pending_shadows.clear();
 
         self.raster_space_stack.clear();
         self.raster_space_stack.push(di::RasterSpace::Screen);
+
+        // `interners` is intentionally left alone - see its declaration.
     }
 
     /// Saves the current display list state, so it may be `restore()`'d.
@@ -1171,10 +1279,12 @@ impl DisplayListBuilder {
 
         self.save_state = Some(SaveState {
             dl_items_len: self.payload.items_data.len(),
+            spatial_tree_len: self.payload.spatial_tree.len(),
             next_clip_index: self.next_clip_index,
             next_spatial_index: self.next_spatial_index,
             next_clip_chain_id: self.next_clip_chain_id,
             shadow_capture_len: self.shadow_capture.len(),
+            shadow_capture_keys_len: self.shadow_capture_keys.len(),
             pending_shadows_len: self.pending_shadows.len(),
             raster_space_stack_len: self.raster_space_stack.len(),
         });
@@ -1185,6 +1295,10 @@ impl DisplayListBuilder {
         let state = self.save_state.take().expect("No save to restore DisplayListBuilder from");
 
         self.payload.items_data.truncate(state.dl_items_len);
+        // Spatial nodes (reference frames, scroll and sticky frames) defined
+        // since the save live in their own buffer and their ids are about to be
+        // reused, so they have to go as well.
+        self.payload.spatial_tree.truncate(state.spatial_tree_len);
         self.next_clip_index = state.next_clip_index;
         self.next_spatial_index = state.next_spatial_index;
         self.next_clip_chain_id = state.next_clip_chain_id;
@@ -1195,6 +1309,7 @@ impl DisplayListBuilder {
         // machinery kept this state in `items_data`, which the truncate above
         // already handled).
         self.shadow_capture.truncate(state.shadow_capture_len);
+        self.shadow_capture_keys.truncate(state.shadow_capture_keys_len);
         self.pending_shadows.truncate(state.pending_shadows_len);
 
         // Stacking contexts opened since the save go away with their items.
@@ -1370,14 +1485,7 @@ impl DisplayListBuilder {
         bounds: LayoutRect,
         color: ColorF,
     ) {
-        let (common, offset) = self.normalize_common(common);
-        let item = di::DisplayItem::Rectangle(di::RectangleDisplayItem {
-            common,
-            color: PropertyBinding::Value(color),
-            bounds: self.shift_rect(bounds, offset),
-            transformed_aa_edges: EdgeMask::all(),
-        });
-        self.push_item(&item);
+        self.push_rect_with_animation(common, bounds, PropertyBinding::Value(color));
     }
 
     pub fn push_rect_with_animation(
@@ -1387,13 +1495,79 @@ impl DisplayListBuilder {
         color: PropertyBinding<ColorF>,
     ) {
         let (common, offset) = self.normalize_common(common);
-        let item = di::DisplayItem::Rectangle(di::RectangleDisplayItem {
-            common,
-            color,
-            bounds: self.shift_rect(bounds, offset),
-            transformed_aa_edges: EdgeMask::all(),
-        });
-        self.push_item(&item);
+        let bounds = self.shift_rect(bounds, offset);
+        self.push_rect_prim(&common, bounds, color, EdgeMask::all());
+    }
+
+    /// Record a rectangle whose `common` and `bounds` are already normalised.
+    /// Every rectangle item goes through here, so this is the one place the
+    /// visibility test lives and the one place a rectangle is interned.
+    fn push_rect_prim(
+        &mut self,
+        common: &di::CommonItemProperties,
+        bounds: LayoutRect,
+        color: PropertyBinding<ColorF>,
+        transformed_aa_edges: EdgeMask,
+    ) {
+        // A fully transparent rectangle draws nothing, so it is neither
+        // interned nor recorded. Two exceptions still record it, with no
+        // handle: inside a shadow scope so `pop_all_shadows` can copy it in
+        // the shadow's colour (the original re-emission drops it again by that
+        // missing handle), and a checkerboard background so the scene builder
+        // can mark a tile cache barrier off the flag.
+        let visible = rect_is_visible(&color);
+        if !visible
+            && self.pending_shadows.is_empty()
+            && !common.flags.contains(di::PrimitiveFlags::CHECKERBOARD_BACKGROUND)
+        {
+            return;
+        }
+
+        let rect = if visible {
+            self.intern_rect(color, bounds, common, transformed_aa_edges)
+        } else {
+            interning::Handle::INVALID
+        };
+
+        self.capture_prim(common, bounds, CapturedKey::Rectangle { transformed_aa_edges });
+
+        self.push_item(&di::DisplayItem::Rectangle(di::RectangleDisplayItem {
+            spatial_id: common.spatial_id,
+            clip_chain_id: common.clip_chain_id,
+            rect,
+        }));
+    }
+
+    /// Inside a shadow scope, record what a primitive's key was built from, so
+    /// `pop_all_shadows` can intern its copies. Call before pushing the item.
+    fn capture_prim(&mut self, common: &di::CommonItemProperties, bounds: LayoutRect, key: CapturedKey) {
+        if !self.pending_shadows.is_empty() {
+            self.shadow_capture_keys.push(CapturedPrim { common: *common, bounds, key });
+        }
+    }
+
+    /// The key holds what the scene builder used to derive from the item:
+    /// the aligned mask comes from the item's flags, and the transformed mask
+    /// is the item's own.
+    fn intern_rect(
+        &mut self,
+        color: PropertyBinding<ColorF>,
+        bounds: LayoutRect,
+        common: &di::CommonItemProperties,
+        transformed_aa_edges: EdgeMask,
+    ) -> interning::Handle<RectangleKey> {
+        let key = RectangleKey::new(
+            PrimKeyCommonData {
+                flags: common.flags,
+                aligned_aa_edges: aligned_aa_edges(common.flags),
+                transformed_aa_edges,
+                prim_rect: bounds.into(),
+                local_clip_rect: common.clip_rect.into(),
+            },
+            RectanglePrim { color: color.into() },
+        );
+
+        self.interners.intern(&key)
     }
 
     pub fn push_hit_test(
@@ -1423,6 +1597,11 @@ impl DisplayListBuilder {
         color: &ColorF,
         style: di::LineStyle,
     ) {
+        // Same shadow-scope exception as `push_text`.
+        if !color_is_visible(*color) && self.pending_shadows.is_empty() {
+            return;
+        }
+
         let (common, offset) = self.normalize_common(common);
         let area = self.shift_rect(*area, offset);
 
@@ -1447,17 +1626,16 @@ impl DisplayListBuilder {
         key: ImageKey,
         color: ColorF,
     ) {
-        let (common, offset) = self.normalize_common(common);
-        let item = di::DisplayItem::Image(di::ImageDisplayItem {
+        self.push_image_prim(
             common,
-            bounds: self.shift_rect(bounds, offset),
-            image_key: key,
+            bounds,
+            StretchSizeKey::fills_prim(),
+            LayoutSize::zero(),
             image_rendering,
             alpha_type,
+            key,
             color,
-        });
-
-        self.push_item(&item);
+        );
     }
 
     pub fn push_repeating_image(
@@ -1471,13 +1649,37 @@ impl DisplayListBuilder {
         key: ImageKey,
         color: ColorF,
     ) {
+        self.push_image_prim(
+            common,
+            bounds,
+            image_stretch_size(&bounds, stretch_size),
+            tile_spacing,
+            image_rendering,
+            alpha_type,
+            key,
+            color,
+        );
+    }
+
+    /// The one item both image pushes produce.
+    fn push_image_prim(
+        &mut self,
+        common: &di::CommonItemProperties,
+        bounds: LayoutRect,
+        stretch_size: StretchSizeKey,
+        tile_spacing: LayoutSize,
+        image_rendering: di::ImageRendering,
+        alpha_type: di::AlphaType,
+        key: ImageKey,
+        color: ColorF,
+    ) {
         let (common, offset) = self.normalize_common(common);
-        let item = di::DisplayItem::RepeatingImage(di::RepeatingImageDisplayItem {
+        let item = di::DisplayItem::Image(di::ImageDisplayItem {
             common,
             bounds: self.shift_rect(bounds, offset),
-            image_key: key,
             stretch_size,
             tile_spacing,
+            image_key: key,
             image_rendering,
             alpha_type,
             color,
@@ -1519,6 +1721,15 @@ impl DisplayListBuilder {
         color: ColorF,
         glyph_options: Option<GlyphOptions>,
     ) {
+        // Fully transparent text draws nothing. The exception is a shadow
+        // scope: an invisible original can still cast a visible shadow (CSS
+        // `color: transparent` with a `text-shadow`), so the item is still
+        // captured for `pop_all_shadows` to copy; the original re-emission
+        // there drops it.
+        if !color_is_visible(color) && self.pending_shadows.is_empty() {
+            return;
+        }
+
         let (common, offset) = self.normalize_common(common);
         let item = di::DisplayItem::Text(di::TextDisplayItem {
             common,
@@ -1567,39 +1778,42 @@ impl DisplayListBuilder {
     /// pushed strictly one at a time. Handing them back removes that hazard.
     pub fn create_gradient(
         &mut self,
-        start_point: LayoutPoint,
-        end_point: LayoutPoint,
+        start_point: LayoutVector2D,
+        end_point: LayoutVector2D,
         stops: Vec<di::GradientStop>,
         extend_mode: di::ExtendMode,
+        alpha_mode: di::AlphaMode,
     ) -> (di::Gradient, Vec<di::GradientStop>) {
         let mut builder = GradientBuilder::with_stops(stops);
-        let gradient = builder.gradient(start_point, end_point, extend_mode);
+        let gradient = builder.gradient(start_point, end_point, extend_mode, alpha_mode);
         (gradient, builder.into_stops())
     }
 
     /// See [`create_gradient`](#method.create_gradient).
     pub fn create_radial_gradient(
         &mut self,
-        center: LayoutPoint,
+        center: LayoutVector2D,
         radius: LayoutSize,
         stops: Vec<di::GradientStop>,
         extend_mode: di::ExtendMode,
+        alpha_mode: di::AlphaMode,
     ) -> (di::RadialGradient, Vec<di::GradientStop>) {
         let mut builder = GradientBuilder::with_stops(stops);
-        let gradient = builder.radial_gradient(center, radius, extend_mode);
+        let gradient = builder.radial_gradient(center, radius, extend_mode, alpha_mode);
         (gradient, builder.into_stops())
     }
 
     /// See [`create_gradient`](#method.create_gradient).
     pub fn create_conic_gradient(
         &mut self,
-        center: LayoutPoint,
+        center: LayoutVector2D,
         angle: f32,
         stops: Vec<di::GradientStop>,
         extend_mode: di::ExtendMode,
+        alpha_mode: di::AlphaMode,
     ) -> (di::ConicGradient, Vec<di::GradientStop>) {
         let mut builder = GradientBuilder::with_stops(stops);
-        let gradient = builder.conic_gradient(center, angle, extend_mode);
+        let gradient = builder.conic_gradient(center, angle, extend_mode, alpha_mode);
         (gradient, builder.into_stops())
     }
 
@@ -1816,6 +2030,7 @@ impl DisplayListBuilder {
                         mode: ClipMode::ClipOut,
                     },
                     0.0,
+                    false,
                 ));
 
                 (shadow_rect, shadow_radius, shadow_inset)
@@ -1831,6 +2046,7 @@ impl DisplayListBuilder {
                             mode: ClipMode::ClipOut,
                         },
                         spread_radius,
+                        false,
                     ));
                 }
 
@@ -1848,6 +2064,7 @@ impl DisplayListBuilder {
                 mode: ClipMode::Clip,
             },
             0.0,
+            false,
         ));
 
         // Chain the shaping clips on top of the item's own clip chain.
@@ -1900,8 +2117,8 @@ impl DisplayListBuilder {
 
         let mut tile_size = resolve_tile_size(&bounds, tile_size);
 
-        let mut start = gradient.start_point;
-        let mut end = gradient.end_point;
+        let mut start = gradient.start;
+        let mut end = gradient.end;
         // The simplification and clip pass. The fast-path two-stop segment
         // decomposition is not done here: it happens at prepare time, so
         // segments tile against the snapped prim rect (see
@@ -1925,8 +2142,8 @@ impl DisplayListBuilder {
             common,
             bounds,
             gradient: di::Gradient {
-                start_point: start,
-                end_point: end,
+                start,
+                end,
                 ..gradient
             },
             tile_size,
@@ -1983,14 +2200,16 @@ impl DisplayListBuilder {
             gradient.extend_mode,
             &stop_keys,
             &mut |solid_rect, color, aa_mask| {
-                // Pushed before the gradient, and unconditionally: a gradient
-                // that optimizes away entirely is all margin.
-                self.push_item(&di::DisplayItem::Rectangle(di::RectangleDisplayItem {
-                    common,
-                    bounds: *solid_rect,
-                    color: PropertyBinding::Value(color.into()),
-                    transformed_aa_edges: aa_mask,
-                }));
+                // Pushed before the gradient, and whether or not the gradient
+                // itself survives the empty-tile reject below: a gradient that
+                // optimizes away entirely is all margin. A transparent margin
+                // is dropped like any other transparent rectangle.
+                self.push_rect_prim(
+                    &common,
+                    *solid_rect,
+                    PropertyBinding::Value(color.into()),
+                    aa_mask,
+                );
             },
         );
 
@@ -2152,6 +2371,35 @@ impl DisplayListBuilder {
         flags: di::StackingContextFlags,
         snapshot: Option<di::SnapshotInfo>
     ) {
+        self.push_stacking_context_impl(
+            spatial_id,
+            prim_flags,
+            clip_chain_id,
+            transform_style,
+            mix_blend_mode,
+            filters,
+            filter_datas,
+            raster_space,
+            flags,
+            snapshot,
+            LayoutVector2D::zero(),
+        );
+    }
+
+    fn push_stacking_context_impl(
+        &mut self,
+        spatial_id: di::SpatialId,
+        prim_flags: di::PrimitiveFlags,
+        clip_chain_id: Option<di::ClipChainId>,
+        transform_style: di::TransformStyle,
+        mix_blend_mode: di::MixBlendMode,
+        filters: &[di::FilterOp],
+        filter_datas: &[di::FilterData],
+        raster_space: di::RasterSpace,
+        flags: di::StackingContextFlags,
+        snapshot: Option<di::SnapshotInfo>,
+        shadow_offset: LayoutVector2D,
+    ) {
         self.push_filters(filters, filter_datas, spatial_id);
 
         // Resolve this context's raster space against its parent: a `Screen`
@@ -2179,6 +2427,7 @@ impl DisplayListBuilder {
                 clip_chain_id,
                 raster_space: resolved_raster_space,
                 flags,
+                shadow_offset,
             },
         });
 
@@ -2342,6 +2591,20 @@ impl DisplayListBuilder {
         offset
     }
 
+    /// The accumulated external scroll offset for `spatial_id`, in this list's
+    /// pixels: what `normalize_rect` adds to an item to move it from the
+    /// pre-scrolled coordinates it was authored in to the scroll-invariant ones
+    /// it is snapped in. Lets an embedder that predicts that snapping use the
+    /// same accumulation rather than re-derive it.
+    pub fn accumulated_scroll_offset_px(
+        &mut self,
+        spatial_id: di::SpatialId,
+    ) -> LayoutVector2D {
+        let offset = self.accumulated_scroll_offset(spatial_id);
+        let grid = self.au_grid;
+        LayoutVector2D::new(grid.from_au(offset.x as f64), grid.from_au(offset.y as f64))
+    }
+
     /// Record the accumulated external scroll offset for a freshly-defined
     /// spatial node.
     fn record_scroll_offset(&mut self, spatial_id: di::SpatialId, offset: AuOffset) {
@@ -2484,12 +2747,32 @@ impl DisplayListBuilder {
         spatial_id: di::SpatialId,
         clip_rect: LayoutRect,
     ) -> di::ClipId {
+        self.define_clip_rect_impl(spatial_id, clip_rect, false)
+    }
+
+    /// As `define_clip_rect`, but the clip is not snapped to the device pixel
+    /// grid (see `RectClipDisplayItem::anti_aliased`).
+    pub fn define_anti_aliased_clip_rect(
+        &mut self,
+        spatial_id: di::SpatialId,
+        clip_rect: LayoutRect,
+    ) -> di::ClipId {
+        self.define_clip_rect_impl(spatial_id, clip_rect, true)
+    }
+
+    fn define_clip_rect_impl(
+        &mut self,
+        spatial_id: di::SpatialId,
+        clip_rect: LayoutRect,
+        anti_aliased: bool,
+    ) -> di::ClipId {
         let id = self.generate_clip_index();
 
         let item = di::DisplayItem::RectClip(di::RectClipDisplayItem {
             id,
             spatial_id,
             clip_rect: self.normalize_rect(clip_rect, spatial_id),
+            anti_aliased,
         });
 
         self.push_item(&item);
@@ -2501,7 +2784,17 @@ impl DisplayListBuilder {
         spatial_id: di::SpatialId,
         clip: di::ComplexClipRegion,
     ) -> di::ClipId {
-        self.define_clip_rounded_rect_impl(spatial_id, clip, 0.0)
+        self.define_clip_rounded_rect_impl(spatial_id, clip, 0.0, false)
+    }
+
+    /// As `define_clip_rounded_rect`, but the clip is not snapped to the device
+    /// pixel grid (see `RectClipDisplayItem::anti_aliased`).
+    pub fn define_anti_aliased_clip_rounded_rect(
+        &mut self,
+        spatial_id: di::SpatialId,
+        clip: di::ComplexClipRegion,
+    ) -> di::ClipId {
+        self.define_clip_rounded_rect_impl(spatial_id, clip, 0.0, true)
     }
 
     /// As `define_clip_rounded_rect`, but with a `snap_outset` for the internal
@@ -2511,6 +2804,7 @@ impl DisplayListBuilder {
         spatial_id: di::SpatialId,
         mut clip: di::ComplexClipRegion,
         snap_outset: f32,
+        anti_aliased: bool,
     ) -> di::ClipId {
         let id = self.generate_clip_index();
 
@@ -2521,6 +2815,7 @@ impl DisplayListBuilder {
             spatial_id,
             clip,
             snap_outset,
+            anti_aliased,
         });
 
         self.push_item(&item);
@@ -2621,6 +2916,9 @@ impl DisplayListBuilder {
         struct DrawEntry {
             item: di::DisplayItem,
             glyphs: Vec<GlyphInstance>,
+            /// What an interned primitive's key was built from, which its item
+            /// does not carry.
+            key: Option<CapturedPrim>,
         }
         enum Parsed {
             // A clip / clip-chain definition. Re-emitted verbatim (preserving
@@ -2642,6 +2940,7 @@ impl DisplayListBuilder {
         let shadows = mem::take(&mut self.pending_shadows);
         let mut captured = mem::take(&mut self.shadow_capture);
         ensure_red_zone::<di::DisplayItem>(&mut captured);
+        let mut captured_keys = mem::take(&mut self.shadow_capture_keys).into_iter();
 
         let mut parsed: Vec<Parsed> = Vec::new();
         {
@@ -2661,6 +2960,14 @@ impl DisplayListBuilder {
                         glyphs: match draw {
                             di::DisplayItem::Text(..) => item.glyphs().iter().collect(),
                             _ => Vec::new(),
+                        },
+                        // One entry per captured interned primitive, in capture
+                        // order.
+                        key: match draw {
+                            di::DisplayItem::Rectangle(..) => Some(
+                                captured_keys.next().expect("rectangle item without its captured key"),
+                            ),
+                            _ => None,
                         },
                     }),
                 });
@@ -2707,7 +3014,9 @@ impl DisplayListBuilder {
             let sc_clip = shadow.space_and_clip.clip_chain_id;
             let sc_clip = (sc_clip != di::ClipChainId::INVALID).then_some(sc_clip);
 
-            self.push_stacking_context(
+            // The scene builder snaps the copies relative to the original
+            // content using `shadow_offset` (bug 2076646).
+            self.push_stacking_context_impl(
                 shadow.space_and_clip.spatial_id,
                 di::PrimitiveFlags::default(),
                 sc_clip,
@@ -2718,10 +3027,31 @@ impl DisplayListBuilder {
                 di::RasterSpace::Screen,
                 di::StackingContextFlags::empty(),
                 None,
+                s.offset,
             );
+
+            // A transparent shadow colour makes every text, rectangle and
+            // line copy invisible; images and borders take it as a tint and
+            // still draw.
+            let copies_visible = color_is_visible(s.color);
 
             for p in &parsed {
                 if let Parsed::Draw(entry) = p {
+                    if !copies_visible
+                        && matches!(
+                            entry.item,
+                            di::DisplayItem::Text(..)
+                                | di::DisplayItem::Rectangle(..)
+                                | di::DisplayItem::Line(..)
+                        )
+                    {
+                        continue;
+                    }
+                    if let Some(ref captured) = entry.key {
+                        let copy = self.intern_shadow_copy(captured, s.offset, s.color);
+                        self.push_item(&copy);
+                        continue;
+                    }
                     if let Some(copy) = Self::shadow_copy_of_item(
                         &entry.item,
                         s.offset,
@@ -2740,8 +3070,20 @@ impl DisplayListBuilder {
         }
 
         // 3. The original (unshadowed) content, drawn on top of the shadows.
+        //    An invisible original was captured only so it could cast a shadow;
+        //    a rectangle's says so by carrying no handle.
         for p in &parsed {
             if let Parsed::Draw(entry) = p {
+                let visible = match entry.item {
+                    di::DisplayItem::Text(ref info) => color_is_visible(info.color),
+                    di::DisplayItem::Rectangle(ref info) => info.rect != interning::Handle::INVALID,
+                    di::DisplayItem::Line(ref info) => color_is_visible(info.color),
+                    _ => true,
+                };
+                if !visible {
+                    continue;
+                }
+
                 self.push_item(&entry.item);
                 if matches!(entry.item, di::DisplayItem::Text(..)) {
                     self.push_iter(&entry.glyphs);
@@ -2749,10 +3091,39 @@ impl DisplayListBuilder {
             }
         }
 
+        debug_assert!(captured_keys.next().is_none(), "captured key without its item");
         captured.clear();
         self.shadow_capture = captured;
         // `pending_shadows` was emptied by the take above and is left empty,
         // which closes the shadow scope.
+    }
+
+    /// Intern the shadow copy of a captured primitive: geometry translated by
+    /// `offset`, clip chain dropped and colour replaced by `color`, as
+    /// `shadow_copy_of_item` does for the items that still carry their fields.
+    fn intern_shadow_copy(
+        &mut self,
+        captured: &CapturedPrim,
+        offset: LayoutVector2D,
+        color: ColorF,
+    ) -> di::DisplayItem {
+        let common = shadow_copy_common(captured.common, offset);
+        let bounds = captured.bounds.translate(offset);
+        match captured.key {
+            CapturedKey::Rectangle { transformed_aa_edges } => {
+                let rect = self.intern_rect(
+                    PropertyBinding::Value(color),
+                    bounds,
+                    &common,
+                    transformed_aa_edges,
+                );
+                di::DisplayItem::Rectangle(di::RectangleDisplayItem {
+                    spatial_id: common.spatial_id,
+                    clip_chain_id: common.clip_chain_id,
+                    rect,
+                })
+            }
+        }
     }
 
     /// Produce the shadow copy of a shadowable display item: geometry
@@ -2776,19 +3147,11 @@ impl DisplayListBuilder {
         // blur picture, so the copy inside must be unclipped, matching the old
         // scene builder (which rasterized the shadowed primitives unclipped and
         // clipped the composited picture).
-        let shift = |mut common: di::CommonItemProperties| -> di::CommonItemProperties {
-            common.clip_rect = common.clip_rect.translate(offset);
-            common.clip_chain_id = di::ClipChainId::INVALID;
-            common
-        };
+        let shift = |common| shadow_copy_common(common, offset);
 
         Some(match item {
-            Rectangle(info) => Rectangle(di::RectangleDisplayItem {
-                common: shift(info.common),
-                bounds: info.bounds.translate(offset),
-                color: PropertyBinding::Value(color),
-                transformed_aa_edges: info.transformed_aa_edges,
-            }),
+            // Interned from its captured key, see `intern_shadow_copy`.
+            Rectangle(..) => unreachable!("rectangle shadow copies are interned from their captured key"),
             Text(info) => Text(di::TextDisplayItem {
                 common: shift(info.common),
                 bounds: info.bounds.translate(offset),
@@ -2839,6 +3202,7 @@ impl DisplayListBuilder {
         self.builder_start_time = zeitstempel::now();
         self.reset();
         self.au_grid = AuGrid::new(au_per_dev_px);
+        self.interners.begin_build();
     }
 
     pub fn end(&mut self) -> (PipelineId, BuiltDisplayList) {
@@ -2871,6 +3235,10 @@ impl DisplayListBuilder {
         );
         let end_time = zeitstempel::now();
 
+        // Close the build on every interner: collect stale entries and take the
+        // delta the receiver needs. Must happen exactly once per build.
+        let delta = self.interners.end_build();
+
         self.state = BuildState::Idle;
 
         (
@@ -2886,8 +3254,186 @@ impl DisplayListBuilder {
                     off_grid_coords: self.off_grid_coords,
                 },
                 payload,
+                delta,
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod rectangle_interning_tests {
+    use super::*;
+
+    const BOUNDS: LayoutRect = LayoutRect {
+        min: LayoutPoint::new(0.0, 0.0),
+        max: LayoutPoint::new(100.0, 50.0),
+    };
+
+    fn common() -> di::CommonItemProperties {
+        let pipeline_id = PipelineId::dummy();
+        di::CommonItemProperties {
+            clip_rect: LayoutRect::from_size(LayoutSize::new(1000.0, 1000.0)),
+            clip_chain_id: di::ClipChainId::INVALID,
+            spatial_id: di::SpatialId::root_scroll_node(pipeline_id),
+            flags: di::PrimitiveFlags::default(),
+        }
+    }
+
+    fn rect_items(dl: &BuiltDisplayList) -> Vec<di::RectangleDisplayItem> {
+        let mut items = Vec::new();
+        let mut iter = dl.iter();
+        while let Some(item) = iter.next() {
+            if let di::DisplayItem::Rectangle(info) = item.item() {
+                items.push(*info);
+            }
+        }
+        items
+    }
+
+    fn push_shadow(builder: &mut DisplayListBuilder, color: ColorF) {
+        let space_and_clip = di::SpaceAndClipInfo {
+            spatial_id: di::SpatialId::root_scroll_node(PipelineId::dummy()),
+            clip_chain_id: di::ClipChainId::INVALID,
+        };
+        builder.push_shadow(
+            &space_and_clip,
+            di::Shadow {
+                offset: LayoutVector2D::new(4.0, 4.0),
+                color,
+                blur_radius: 0.0,
+            },
+            true,
+        );
+    }
+
+    #[test]
+    fn identical_rects_intern_once() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        builder.push_rect(&common(), BOUNDS, ColorF::BLACK);
+        builder.push_rect(&common(), BOUNDS, ColorF::BLACK);
+        builder.push_rect(&common(), BOUNDS, ColorF::WHITE);
+
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().rectangles.adds.len(), 2, "colour is part of the key");
+        let items = rect_items(&dl);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].rect, items[1].rect);
+        assert_ne!(items[0].rect, items[2].rect);
+    }
+
+    #[test]
+    fn a_retained_builder_sends_no_adds_for_unchanged_rects() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+        builder.push_rect(&common(), BOUNDS, ColorF::BLACK);
+        let (_, first) = builder.end();
+
+        builder.begin(60.0);
+        builder.push_rect(&common(), BOUNDS, ColorF::BLACK);
+        let (_, second) = builder.end();
+
+        assert_eq!(first.delta().rectangles.adds.len(), 1);
+        assert!(second.delta().rectangles.is_empty(), "the second build re-sent the entry");
+        assert_eq!(rect_items(&first)[0].rect, rect_items(&second)[0].rect);
+    }
+
+    #[test]
+    fn a_transparent_rect_is_dropped_at_record_time() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        builder.push_rect(&common(), BOUNDS, ColorF::TRANSPARENT);
+
+        let (_, dl) = builder.end();
+        assert!(dl.delta().rectangles.is_empty());
+        assert!(rect_items(&dl).is_empty());
+    }
+
+    #[test]
+    fn a_transparent_checkerboard_is_recorded_without_a_handle() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        let mut c = common();
+        c.flags |= di::PrimitiveFlags::CHECKERBOARD_BACKGROUND;
+        builder.push_rect(&c, BOUNDS, ColorF::TRANSPARENT);
+
+        // The scene builder still needs the item for its tile cache barrier,
+        // but there is nothing to draw and so nothing to intern.
+        let (_, dl) = builder.end();
+        assert!(dl.delta().rectangles.is_empty());
+        let items = rect_items(&dl);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].rect, interning::Handle::INVALID);
+    }
+
+    #[test]
+    fn an_animated_colour_is_always_visible() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        // Transparent now, but bound to a property that may animate it in.
+        let binding = PropertyBinding::Binding(
+            crate::PropertyBindingKey::new(7),
+            ColorF::TRANSPARENT,
+        );
+        builder.push_rect_with_animation(&common(), BOUNDS, binding);
+
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().rectangles.adds.len(), 1);
+        assert_eq!(rect_items(&dl).len(), 1);
+    }
+
+    #[test]
+    fn a_transparent_rect_still_casts_a_shadow() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        let red = ColorF::new(1.0, 0.0, 0.0, 1.0);
+        push_shadow(&mut builder, red);
+        builder.push_rect(&common(), BOUNDS, ColorF::TRANSPARENT);
+        builder.pop_all_shadows();
+
+        // Only the shadow copy survives: the original was captured for the
+        // copy's sake, carries no handle, and is not re-emitted.
+        let (_, dl) = builder.end();
+        let adds = &dl.delta().rectangles.adds;
+        assert_eq!(adds.len(), 1);
+        assert_eq!(adds[0].key.kind.color, PropertyBinding::Value(red.into()));
+        let items = rect_items(&dl);
+        assert_eq!(items.len(), 1);
+        assert_ne!(items[0].rect, interning::Handle::INVALID);
+    }
+
+    #[test]
+    fn a_shadowed_rect_interns_its_copy_separately() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        push_shadow(&mut builder, ColorF::new(1.0, 0.0, 0.0, 1.0));
+        builder.push_rect(&common(), BOUNDS, ColorF::BLACK);
+        builder.pop_all_shadows();
+
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().rectangles.adds.len(), 2);
+        let items = rect_items(&dl);
+        assert_eq!(items.len(), 2);
+        assert_ne!(items[0].rect, items[1].rect);
+    }
+
+    #[test]
+    fn the_aa_edge_mask_is_part_of_the_key() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        let c = common();
+        builder.push_rect_prim(&c, BOUNDS, PropertyBinding::Value(ColorF::BLACK), EdgeMask::all());
+        builder.push_rect_prim(&c, BOUNDS, PropertyBinding::Value(ColorF::BLACK), EdgeMask::LEFT);
+
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().rectangles.adds.len(), 2);
     }
 }
 

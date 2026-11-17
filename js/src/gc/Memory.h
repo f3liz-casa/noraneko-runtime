@@ -45,16 +45,32 @@ enum class StallAndRetry : bool {
   Yes = true,
 };
 
+// Whether a virtual memory allocation should also acquire physical memory. An
+// uncommitted allocation needs MarkPagesInUseHard before accessing memory; its
+// pages can be released to the operating system (uncommitted) via
+// MarkPagesUnusedHard.
+enum class Commit : bool {
+  No = false,
+  Yes = true,
+};
+
 // Allocate or deallocate pages from the system with the given alignment.
 // Pages will be read/write-able.
 void* MapAlignedPages(size_t length, size_t alignment,
-                      StallAndRetry stallAndRetry = StallAndRetry::No);
+                      StallAndRetry stallAndRetry = StallAndRetry::No,
+                      Commit commit = Commit::Yes);
 void UnmapPages(void* region, size_t length);
 
 // Map the region below the current stack pointer as a stack, down to the
 // allowed JS stack depth, so that heap allocations will never intersect with
 // the space that the stack may expand into. (Only on Linux fuzzing builds.)
 void MapStack(size_t stackSize);
+
+// Like MapAlignedPages, but the returned region is also usable as a call stack.
+// Some systems (notably OpenBSD) terminate the process if the stack pointer
+// points into memory that was not mapped with MAP_STACK.
+void* MapAlignedPagesAsStack(size_t length, size_t alignment,
+                             StallAndRetry stallAndRetry = StallAndRetry::No);
 
 // We only decommit unused pages if the system page size is the same as the
 // hardcoded page size for the build.

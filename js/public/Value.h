@@ -112,10 +112,12 @@ class JS_PUBLIC_API Value;
 // Tag values are carefully ordered to support a set of micro-optimizations. In
 // particular:
 //
-// 1. Object is the highest tag, to simplify isPrimitive checks. (See
-//    ValueUpperExclPrimitiveTag)
+// 1. The shifted String, Symbol and Object tags are each a contiguous run of
+//    set bits, which AArch64 encodes as a logical immediate, so boxing,
+//    unboxing and tag tests for these GC things need no instruction to
+//    materialize the tag.
 // 2. Numbers (Double and Int32) are the lowest tags, to simplify isNumber
-//    checks. (See ValueUpperInclNumberTag)
+//    checks. (See ValueUpperInclNumberTag and ValueUpperExclShiftedNumberTag)
 // 3. Non-GC tags are ordered before GC-tags, to simplify isGCThing checks. (See
 //    ValueLowerInclGCThingTag)
 // 4. The tags for Object and Null differ by a single flipped bit, to simplify
@@ -137,6 +139,13 @@ class JS_PUBLIC_API Value;
 //    left to allocate new tags.)
 //
 //    * But see JS_NONCANONICAL_HARDWARE_NAN below.
+// 6. The low two bits of the String, Object and BigInt tags are their
+//    JS::TraceKind, and those of the PrivateGCThing and Symbol tags are both
+//    0b11, so Value::traceKind needs a single branch. (See Value::traceKind)
+// 7. Every non-GC, non-Double type has an even type code, so on PUNBOX64 its
+//    shifted tag occupies only the top 16 bits: AArch64 materializes the tag,
+//    or a Value with a small payload, without a movk for bits 32-47. The odd
+//    type codes below the GC things are unused so that these can be even.
 //
 // [1]:
 // https://wingolog.org/archives/2011/05/18/value-representation-in-javascript-implementations#969f63bbe4eb912778c9da85feb0f5763e7a7862
@@ -157,16 +166,16 @@ class JS_PUBLIC_API Value;
 
 enum JSValueType : uint8_t {
   JSVAL_TYPE_DOUBLE = 0x00,
-  JSVAL_TYPE_INT32 = 0x01,
-  JSVAL_TYPE_BOOLEAN = 0x02,
-  JSVAL_TYPE_UNDEFINED = 0x03,
+  JSVAL_TYPE_INT32 = 0x02,
   JSVAL_TYPE_NULL = 0x04,
-  JSVAL_TYPE_MAGIC = 0x05,
-  JSVAL_TYPE_STRING = 0x06,
-  JSVAL_TYPE_SYMBOL = 0x07,
-  JSVAL_TYPE_PRIVATE_GCTHING = 0x08,
-  JSVAL_TYPE_BIGINT = 0x09,
+  JSVAL_TYPE_UNDEFINED = 0x06,
+  JSVAL_TYPE_BOOLEAN = 0x08,
+  JSVAL_TYPE_MAGIC = 0x0a,
+  JSVAL_TYPE_PRIVATE_GCTHING = 0x0b,
   JSVAL_TYPE_OBJECT = 0x0c,
+  JSVAL_TYPE_BIGINT = 0x0d,
+  JSVAL_TYPE_STRING = 0x0e,
+  JSVAL_TYPE_SYMBOL = 0x0f,
 
   // This type never appears in a Value; it's only an out-of-band value.
   JSVAL_TYPE_UNKNOWN = 0x20
@@ -268,9 +277,8 @@ constexpr bool ValueIsDouble(uint64_t bits) {
   return uint32_t(bits >> JSVAL_TAG_SHIFT) <= uint32_t(JSVAL_TAG_CLEAR);
 }
 
-constexpr JSValueTag ValueUpperExclPrimitiveTag = JSVAL_TAG_OBJECT;
 constexpr JSValueTag ValueUpperInclNumberTag = JSVAL_TAG_INT32;
-constexpr JSValueTag ValueLowerInclGCThingTag = JSVAL_TAG_STRING;
+constexpr JSValueTag ValueLowerInclGCThingTag = JSVAL_TAG_PRIVATE_GCTHING;
 
 #elif defined(JS_PUNBOX64)
 
@@ -298,13 +306,13 @@ constexpr uint64_t ValueTypeToShiftedTag(JSValueType type) {
 #  define JSVAL_TYPE_TO_SHIFTED_TAG(type) \
     (JS::detail::ValueTypeToShiftedTag(type))
 
-constexpr JSValueTag ValueUpperExclPrimitiveTag = JSVAL_TAG_OBJECT;
 constexpr JSValueTag ValueUpperInclNumberTag = JSVAL_TAG_INT32;
-constexpr JSValueTag ValueLowerInclGCThingTag = JSVAL_TAG_STRING;
+constexpr JSValueTag ValueLowerInclGCThingTag = JSVAL_TAG_PRIVATE_GCTHING;
 
-constexpr uint64_t ValueUpperExclShiftedPrimitiveTag = JSVAL_SHIFTED_TAG_OBJECT;
-constexpr uint64_t ValueUpperExclShiftedNumberTag = JSVAL_SHIFTED_TAG_BOOLEAN;
-constexpr uint64_t ValueLowerInclShiftedGCThingTag = JSVAL_SHIFTED_TAG_STRING;
+constexpr uint64_t ValueUpperExclShiftedNumberTag =
+    uint64_t(JSVAL_TAG_INT32 + 1) << JSVAL_TAG_SHIFT;
+constexpr uint64_t ValueLowerInclShiftedGCThingTag =
+    JSVAL_SHIFTED_TAG_PRIVATE_GCTHING;
 
 // JSVAL_TYPE_OBJECT and JSVAL_TYPE_NULL differ by one bit. We can use this to
 // implement toObjectOrNull more efficiently.
@@ -331,6 +339,15 @@ constexpr bool ValueTypeIsGCThing(JSValueType type) {
 #define JSVAL_TYPE_TO_TAG(type) (JS::detail::ValueTypeToTag(type))
 
 enum JSWhyMagic {
+  /**
+   * uninitialized lexical bindings that produce ReferenceError on touch.
+   *
+   * Kept first so its payload is zero: the JITs materialize this Value at
+   * every TDZ check and lexical slot initialization, and a zero payload takes
+   * one instruction fewer on ARM64.
+   */
+  JS_UNINITIALIZED_LEXICAL,
+
   /** a hole in a native object's elements */
   JS_ELEMENTS_HOLE,
 
@@ -357,9 +374,6 @@ enum JSWhyMagic {
 
   /** optimized out slot */
   JS_OPTIMIZED_OUT,
-
-  /** uninitialized lexical bindings that produce ReferenceError on touch. */
-  JS_UNINITIALIZED_LEXICAL,
 
   /** arguments object can't be created because environment is dead. */
   JS_MISSING_ARGUMENTS,
@@ -685,7 +699,7 @@ class Value {
 
   template <typename T>
   void setNumber(const T t) {
-    static_assert(std::is_integral<T>::value, "must be integral type");
+    static_assert(std::is_integral_v<T>, "must be integral type");
     MOZ_ASSERT(isNumberRepresentable(t), "value creation would be lossy");
 
     if constexpr (std::numeric_limits<T>::is_signed) {
@@ -831,22 +845,9 @@ class Value {
 
   bool isBigInt() const { return toTag() == JSVAL_TAG_BIGINT; }
 
-  bool isObject() const {
-#if defined(JS_NUNBOX32)
-    return toTag() == JSVAL_TAG_OBJECT;
-#elif defined(JS_PUNBOX64)
-    MOZ_ASSERT((asBits_ >> JSVAL_TAG_SHIFT) <= JSVAL_TAG_OBJECT);
-    return asBits_ >= JSVAL_SHIFTED_TAG_OBJECT;
-#endif
-  }
+  bool isObject() const { return toTag() == JSVAL_TAG_OBJECT; }
 
-  bool isPrimitive() const {
-#if defined(JS_NUNBOX32)
-    return uint32_t(toTag()) < uint32_t(detail::ValueUpperExclPrimitiveTag);
-#elif defined(JS_PUNBOX64)
-    return asBits_ < detail::ValueUpperExclShiftedPrimitiveTag;
-#endif
-  }
+  bool isPrimitive() const { return !isObject(); }
 
   bool isObjectOrNull() const { return isObject() || isNull(); }
 
@@ -899,12 +900,12 @@ class Value {
                   "Value type tags must correspond with JS::TraceKinds.");
     static_assert((JSVAL_TAG_BIGINT & 0x03) == size_t(JS::TraceKind::BigInt),
                   "Value type tags must correspond with JS::TraceKinds.");
-    static_assert(JSVAL_TAG_SYMBOL + 1 == JSVAL_TAG_PRIVATE_GCTHING,
-                  "Symbol and PrivateGCThing tags should be adjacent to allow "
-                  "checking for them with a single branch");
+    static_assert((JSVAL_TAG_SYMBOL & 0x03) == 0x03 &&
+                      (JSVAL_TAG_PRIVATE_GCTHING & 0x03) == 0x03,
+                  "Symbol and PrivateGCThing tags should share their low bits "
+                  "to allow checking for them with a single branch");
     JSValueTag tag = toTag();
-    if (MOZ_UNLIKELY(tag == JSVAL_TAG_SYMBOL ||
-                     tag == JSVAL_TAG_PRIVATE_GCTHING)) {
+    if (MOZ_UNLIKELY((tag & 0x03) == 0x03)) {
       return JS::GCThingTraceKind(toGCThing());
     }
     return JS::TraceKind(tag & 0x03);
@@ -1016,7 +1017,7 @@ class Value {
     }
 
     JSValueType type = extractNonDoubleType();
-    MOZ_ASSERT(type <= JSVAL_TYPE_OBJECT);
+    MOZ_ASSERT(type <= JSVAL_TYPE_SYMBOL);
     return JS::ValueType(type);
   }
 
@@ -1464,7 +1465,8 @@ auto MapGCThingTyped(const JS::Value& val, F&& f) {
     }
     case JS::ValueType::PrivateGCThing: {
       MOZ_ASSERT(gc::IsCellPointerValid(val.toGCThing()));
-      return mozilla::Some(MapGCThingTyped(val.toGCCellPtr(), std::move(f)));
+      return mozilla::Some(
+          MapGCThingTyped(val.toGCCellPtr(), std::forward<F>(f)));
     }
     case JS::ValueType::Double:
     case JS::ValueType::Int32:

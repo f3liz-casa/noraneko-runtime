@@ -687,7 +687,7 @@ RefPtr<Element> nsMenuBarX::HideItem(mozilla::dom::Document* aDocument,
   RefPtr<Element> menuElement = aDocument->GetElementById(aID);
   if (menuElement) {
     menuElement->SetAttr(kNameSpaceID_None, nsGkAtoms::hidden, u"true"_ns,
-                         false);
+                         false, dom::IsKnownNewAttr::No);
   }
   return menuElement;
 }
@@ -1369,8 +1369,7 @@ void nsMenuBarX::CreateApplicationMenu(nsMenuX* aMenu) {
       nsCOMPtr<nsIAppStartup> appStartup =
           mozilla::components::AppStartup::Service();
       if (appStartup) {
-        bool userAllowedQuit = true;
-        appStartup->Quit(nsIAppStartup::eAttemptQuit, 0, &userAllowedQuit);
+        appStartup->Quit(nsIAppStartup::eAttemptQuit, 0);
       }
     }
     return;

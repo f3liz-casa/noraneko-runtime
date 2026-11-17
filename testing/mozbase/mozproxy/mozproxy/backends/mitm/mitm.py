@@ -12,6 +12,11 @@ import time
 import mozinfo
 from mozprocess import ProcessHandler
 
+try:
+    import resource
+except ImportError:
+    resource = None
+
 from mozproxy.backends.base import Playback
 from mozproxy.recordings import RecordingFile
 from mozproxy.utils import (
@@ -27,6 +32,12 @@ mitm_folder = os.path.dirname(os.path.realpath(__file__))
 
 # maximal allowed runtime of a mitmproxy command
 MITMDUMP_COMMAND_TIMEOUT = 30
+# Direct playback needs multiple --mode listen specs (mitmproxy >= 9).
+DIRECT_PLAYBACK_VERSIONS = ("11.0.0", "12.2.1")
+# Direct playback keeps one server-side socket per browser connection, and
+# the macOS default soft limit of 256 open files is exhausted by a single
+# page. mitmdump inherits the limit from us, so raise it before spawning.
+MITMPROXY_NOFILE_LIMIT = 10240
 
 # maximal wait for mitmproxy to write its CA certificate
 MITMPROXY_CERT_TIMEOUT = 60
@@ -43,6 +54,11 @@ class Mitmproxy(Playback):
             "127.0.0.1" if "localhost" in self.config["host"] else self.config["host"]
         )
         self.port = None
+        self.http_port = None
+        self.https_port = None
+        self.playback_mode = config.get("playback_mode", "proxy")
+        if self.playback_mode not in ("proxy", "direct"):
+            raise ValueError(f"Unsupported playback mode: {self.playback_mode}")
         self.mitmproxy_proc = None
         self.mitmdump_path = None
         self.mitmdump_path_dir = None
@@ -94,6 +110,17 @@ class Mitmproxy(Playback):
                 "Please provide a valid playback version"
             )
             raise Exception("playback_version not specified!")
+
+        if (
+            self.playback_mode == "direct"
+            and self.config["playback_version"] not in DIRECT_PLAYBACK_VERSIONS
+        ):
+            supported_versions = ", ".join(DIRECT_PLAYBACK_VERSIONS)
+            raise ValueError(
+                f"Direct playback does not support mitmproxy "
+                f"{self.config['playback_version']}; supported versions: "
+                f"{supported_versions}"
+            )
 
         # mozproxy_dir is where we will download all mitmproxy required files
         # when running locally it comes from obj_path via mozharness/mach
@@ -342,7 +369,13 @@ class Mitmproxy(Playback):
         """Startup mitmproxy and replay the specified flow file"""
         if self.mitmproxy_proc is not None:
             raise Exception("Proxy already started.")
-        self.port = get_available_port()
+        if self.playback_mode == "direct":
+            self.http_port = get_available_port()
+            self.https_port = get_available_port()
+            while self.https_port == self.http_port:
+                self.https_port = get_available_port()
+        else:
+            self.port = get_available_port()
 
         LOG.info(f"mitmdump path: {mitmdump_path}")
         LOG.info(f"browser path: {browser_path}")
@@ -356,13 +389,20 @@ class Mitmproxy(Playback):
             # Generate mitmproxy verbose logs
             command.extend(["-v"])
 
-        # add proxy host and port options
-        command.extend([
-            "--listen-host",
-            self.host,
-            "--listen-port",
-            str(self.port),
-        ])
+        command.extend(["--listen-host", self.host])
+        if self.playback_mode == "direct":
+            command.extend([
+                "--mode",
+                f"reverse:http://example.invalid@{self.http_port}",
+                "--mode",
+                f"reverse:https://example.invalid@{self.https_port}",
+                "--set",
+                "keep_host_header=true",
+                "--set",
+                "upstream_cert=false",
+            ])
+        else:
+            command.extend(["--listen-port", str(self.port)])
 
         # record mode
         if self.record_mode:
@@ -500,6 +540,9 @@ class Mitmproxy(Playback):
             else:
                 raise Exception("Mitmproxy version is unknown!")
 
+            if self.playback_mode == "direct":
+                command.extend(["--set", "alt_server_replay_ignore_port=true"])
+
         else:
             raise Exception(
                 "Mitmproxy can't start playback! Playback settings missing."
@@ -520,22 +563,32 @@ class Mitmproxy(Playback):
         LOG.info(f"mitmproxy log file: {mitmproxy_log_path}")
         # to turn off mitmproxy log output, use these params for Popen:
         # Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
-        self.mitmproxy_proc = ProcessHandler(
-            command,
-            logfile=mitmproxy_log_path,
-            env=env,
-            storeOutput=False,
-        )
-        self.mitmproxy_proc.run()
+        previous_limit = self._raise_nofile_limit()
+        try:
+            self.mitmproxy_proc = ProcessHandler(
+                command,
+                logfile=mitmproxy_log_path,
+                env=env,
+                storeOutput=False,
+            )
+            self.mitmproxy_proc.run()
+        finally:
+            self._restore_nofile_limit(previous_limit)
 
         end_time = time.time() + MITMDUMP_COMMAND_TIMEOUT
 
+        ports = (
+            [self.http_port, self.https_port]
+            if self.playback_mode == "direct"
+            else [self.port]
+        )
         ready = False
         while time.time() < end_time:
-            ready = self.check_proxy(host=self.host, port=self.port)
+            ready = all(self.check_proxy(host=self.host, port=port) for port in ports)
             if ready:
+                listening = ", ".join(f"{self.host}:{port}" for port in ports)
                 LOG.info(
-                    f"Mitmproxy playback successfully started on {self.host}:{self.port} as pid {self.mitmproxy_proc.pid}"
+                    f"Mitmproxy playback successfully started on {listening} as pid {self.mitmproxy_proc.pid}"
                 )
                 return
             time.sleep(0.25)
@@ -544,6 +597,37 @@ class Mitmproxy(Playback):
         LOG.error("Aborting: Mitmproxy process did not startup")
         self.stop_mitmproxy_playback()
         sys.exit(1)  # XXX why do we need to do that? a raise is not enough?
+
+    def _raise_nofile_limit(self):
+        """Raise the open file soft limit so that the spawned mitmdump inherits
+        it. Returns the previous limits, or None if nothing changed."""
+        if resource is None or self.playback_mode != "direct":
+            return None
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft >= MITMPROXY_NOFILE_LIMIT:
+            return None
+        new_soft = MITMPROXY_NOFILE_LIMIT
+        if hard != resource.RLIM_INFINITY:
+            new_soft = min(new_soft, hard)
+        if new_soft <= soft:
+            return None
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+        except (ValueError, OSError) as e:
+            LOG.warning(f"Could not raise RLIMIT_NOFILE from {soft} to {new_soft}: {e}")
+            return None
+        LOG.info(
+            f"Raised RLIMIT_NOFILE soft limit from {soft} to {new_soft} for mitmproxy"
+        )
+        return (soft, hard)
+
+    def _restore_nofile_limit(self, previous_limit):
+        if previous_limit is None or resource is None:
+            return
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, previous_limit)
+        except (ValueError, OSError) as e:
+            LOG.warning(f"Could not restore RLIMIT_NOFILE to {previous_limit}: {e}")
 
     def stop_mitmproxy_playback(self):
         """Stop the mitproxy server playback"""

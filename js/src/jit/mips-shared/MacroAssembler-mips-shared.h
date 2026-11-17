@@ -103,9 +103,10 @@ class MacroAssemblerMIPSShared : public Assembler {
   void ma_load_unaligned(Register dest, const Address& address,
                          LoadStoreSize size = SizeWord,
                          LoadStoreExtension extension = SignExtend);
-  void ma_load_unaligned(const wasm::MemoryAccessDesc& access, Register dest,
-                         const BaseIndex& src, Register temp,
-                         LoadStoreSize size, LoadStoreExtension extension);
+  FaultingCodeRange ma_load_unaligned(const wasm::MemoryAccessDesc& access,
+                                      Register dest, const BaseIndex& src,
+                                      Register temp, LoadStoreSize size,
+                                      LoadStoreExtension extension);
 
   // store
   FaultingCodeRange ma_store(Register data, const BaseIndex& dest,
@@ -117,9 +118,10 @@ class MacroAssemblerMIPSShared : public Assembler {
                           LoadStoreSize size = SizeWord);
   void ma_store_unaligned(Register data, const BaseIndex& dest,
                           LoadStoreSize size = SizeWord);
-  void ma_store_unaligned(const wasm::MemoryAccessDesc& access, Register data,
-                          const BaseIndex& dest, Register temp,
-                          LoadStoreSize size, LoadStoreExtension extension);
+  FaultingCodeRange ma_store_unaligned(const wasm::MemoryAccessDesc& access,
+                                       Register data, const BaseIndex& dest,
+                                       Register temp, LoadStoreSize size,
+                                       LoadStoreExtension extension);
 
   // arithmetic based ops
   // add
@@ -231,18 +233,24 @@ class MacroAssemblerMIPSShared : public Assembler {
 
   void outOfLineWasmTruncateToInt32Check(
       FloatRegister input, Register output, MIRType fromType, TruncFlags flags,
-      Label* rejoin, const wasm::TrapSiteDesc& trapSiteDesc);
+      Label* rejoin, const wasm::TrapSiteDesc& trapSiteDesc,
+      wasm::StackMap* stackMapForTraps,
+      wasm::StackMapRegistry* stackMapRegistry);
   void outOfLineWasmTruncateToInt64Check(
       FloatRegister input, Register64 output, MIRType fromType,
-      TruncFlags flags, Label* rejoin, const wasm::TrapSiteDesc& trapSiteDesc);
+      TruncFlags flags, Label* rejoin, const wasm::TrapSiteDesc& trapSiteDesc,
+      wasm::StackMap* stackMapForTraps,
+      wasm::StackMapRegistry* stackMapRegistry);
 
  protected:
-  void wasmLoadImpl(const wasm::MemoryAccessDesc& access, Register memoryBase,
-                    Register ptr, Register ptrScratch, AnyRegister output,
-                    Register tmp);
-  void wasmStoreImpl(const wasm::MemoryAccessDesc& access, AnyRegister value,
-                     Register memoryBase, Register ptr, Register ptrScratch,
-                     Register tmp);
+  FaultingCodeRange wasmLoadImpl(const wasm::MemoryAccessDesc& access,
+                                 Register memoryBase, Register ptr,
+                                 Register ptrScratch, AnyRegister output,
+                                 Register tmp);
+  FaultingCodeRange wasmStoreImpl(const wasm::MemoryAccessDesc& access,
+                                  AnyRegister value, Register memoryBase,
+                                  Register ptr, Register ptrScratch,
+                                  Register tmp);
 };
 
 }  // namespace jit

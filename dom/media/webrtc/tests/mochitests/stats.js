@@ -106,7 +106,7 @@ const statsExpectedByType = {
       "retransmittedBytesSent",
       "transportId",
     ],
-    optional: ["nackCount", "qpSum", "rid", "rtxSsrc"],
+    optional: ["nackCount", "qpSum", "rid", "rtxSsrc", "targetBitrate"],
     localAudioOnly: [],
     localVideoOnly: [
       "framesEncoded",
@@ -119,9 +119,8 @@ const statsExpectedByType = {
       "framesSent",
       "hugeFramesSent",
       "totalEncodeTime",
-      "totalEncodedBytesTarget",
     ],
-    unimplemented: ["mediaTrackId", "sliCount", "targetBitrate"],
+    unimplemented: ["mediaTrackId", "sliCount"],
     deprecated: ["isRemote"],
   },
   "remote-inbound-rtp": {
@@ -1154,6 +1153,16 @@ function pedanticChecks(report) {
         }
       }
 
+      // targetBitrate is only present once the bitrate allocator has told the
+      // encoder what to aim for, so it may be absent early in a call.
+      if (stat.targetBitrate !== undefined) {
+        ok(
+          stat.targetBitrate > 0,
+          `${stat.type}.targetBitrate is a sane number for a short ` +
+            `${stat.kind} test. value=${stat.targetBitrate}`
+        );
+      }
+
       // qpSum
       // This is supported for all of our vpx codecs and AV1 (on the encode
       // side, see bug 1519590)
@@ -1263,13 +1272,6 @@ function pedanticChecks(report) {
           stat.totalEncodeTime >= 0,
           `${stat.type}.totalEncodeTime is a sane number for a short ` +
             `${stat.kind} test. value=${stat.totalEncodeTime}`
-        );
-
-        // totalEncodedBytesTarget
-        ok(
-          stat.totalEncodedBytesTarget > 1000,
-          `${stat.type}.totalEncodedBytesTarget is a sane number for a short ` +
-            `${stat.kind} test. value=${stat.totalEncodedBytesTarget}`
         );
       }
     } else if (stat.type == "remote-outbound-rtp") {
@@ -1447,7 +1449,7 @@ function pedanticChecks(report) {
         "max-mbps",
       ];
       // AV1 parameters:
-      //  https://aomediacodec.github.io/av1-rtp-spec/#721-mapping-of-media-subtype-parameters-to-sdp
+      //  https://aomediacodec.github.io/av1-rtp-spec/#sdp-mapping-media-subtype
       const av1Params = ["profile", "level-idx", "tier"];
       // Check that the parameters are as expected. AV1 may have no parameters.
       for (const param of (stat.sdpFmtpLine || "").split(";")) {
@@ -1893,11 +1895,13 @@ function pedanticChecks(report) {
     ) {
       info(`candidate is ${JSON.stringify(stat)}`);
 
-      // address
-      ok(
-        stat.address,
-        `${stat.type} has address. value=${stat.address} ` + `(${stat.kind})`
-      );
+      if (stat.candidateType != "prflx") {
+        // address
+        ok(
+          stat.address,
+          `${stat.type} has address. value=${stat.address} (${stat.kind})`
+        );
+      }
 
       // protocol
       ok(

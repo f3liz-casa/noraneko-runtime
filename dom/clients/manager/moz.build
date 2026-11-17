@@ -13,6 +13,7 @@ EXPORTS.mozilla.dom += [
     "ClientManagerService.h",
     "ClientOpenWindowUtils.h",
     "ClientOpPromise.h",
+    "ClientPrincipalUtils.h",
     "ClientSource.h",
     "ClientState.h",
     "ClientThing.h",
@@ -67,3 +68,19 @@ MOCHITEST_MANIFESTS += []
 BROWSER_CHROME_MANIFESTS += []
 
 XPCSHELL_TESTS_MANIFESTS += []
+
+SOURCE_HEADERS += [
+    "ClientHandleChild.h",
+    "ClientHandleOpChild.h",
+    "ClientHandleOpParent.h",
+    "ClientManagerChild.h",
+    "ClientManagerOpChild.h",
+    "ClientManagerOpParent.h",
+    "ClientManagerParent.h",
+    "ClientNavigateOpChild.h",
+    "ClientNavigateOpParent.h",
+    "ClientSourceChild.h",
+    "ClientSourceOpChild.h",
+    "ClientSourceOpParent.h",
+    "ClientSourceParent.h",
+]

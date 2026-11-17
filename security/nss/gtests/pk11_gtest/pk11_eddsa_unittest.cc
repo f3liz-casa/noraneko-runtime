@@ -32,7 +32,12 @@ static const Pkcs11SignatureTestParams kEddsaVectors[] = {
     {DataBuffer(kEd25519Pkcs8_3, sizeof(kEd25519Pkcs8_3)),
      DataBuffer(kEd25519Spki_3, sizeof(kEd25519Spki_3)),
      DataBuffer(kEd25519Message_3, sizeof(kEd25519Message_3)),
-     DataBuffer(kEd25519Signature_3, sizeof(kEd25519Signature_3))}};
+     DataBuffer(kEd25519Signature_3, sizeof(kEd25519Signature_3))},
+
+    {DataBuffer(kEd25519Pkcs8_4, sizeof(kEd25519Pkcs8_4)),
+     DataBuffer(kEd25519Spki_4, sizeof(kEd25519Spki_4)),
+     DataBuffer(kEd25519Message_4, sizeof(kEd25519Message_4)),
+     DataBuffer(kEd25519Signature_4, sizeof(kEd25519Signature_4))}};
 
 class Pkcs11EddsaTest
     : public Pk11SignatureTest,
@@ -105,7 +110,7 @@ INSTANTIATE_TEST_SUITE_P(EddsaRound, Pkcs11EddsaRoundtripTest,
 class Pkcs11EddsaWycheproofTest : public ::testing::Test {
  protected:
   void Run(const std::string& name) {
-    WycheproofHeader(name, "EDDSA", "eddsa_verify_schema.json",
+    WycheproofHeader(name, "EDDSA", "eddsa_verify_schema_v1.json",
                      [this](JsonReader& r) { RunGroup(r); });
   }
 
@@ -120,9 +125,10 @@ class Pkcs11EddsaWycheproofTest : public ::testing::Test {
         break;
       }
 
-      if (n == "jwk" || n == "key" || n == "keyPem") {
+      if (n == "publicKey" || n == "publicKeyJwk" || n == "publicKeyPem" ||
+          n == "source") {
         r.SkipValue();
-      } else if (n == "keyDer") {
+      } else if (n == "publicKeyDer") {
         public_key = r.ReadHex();
       } else if (n == "type") {
         ASSERT_EQ("EddsaVerify", r.ReadString());
@@ -172,6 +178,6 @@ class Pkcs11EddsaWycheproofTest : public ::testing::Test {
   };
 };
 
-TEST_F(Pkcs11EddsaWycheproofTest, Ed25519) { Run("eddsa"); }
+TEST_F(Pkcs11EddsaWycheproofTest, Ed25519) { Run("ed25519"); }
 
 }  // namespace nss_test

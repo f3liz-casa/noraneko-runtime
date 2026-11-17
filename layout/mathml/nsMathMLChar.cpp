@@ -35,6 +35,9 @@
 #include "nsNetUtil.h"
 #include "nsPresContext.h"
 #include "nsUnicharUtils.h"
+#ifdef ACCESSIBILITY
+#  include "mozilla/a11y/PdfStructTreeBuilder.h"
+#endif
 
 using namespace mozilla;
 using namespace mozilla::gfx;
@@ -656,7 +659,7 @@ bool nsMathMLChar::SetFontFamily(nsPresContext* aPresContext,
     font.family.families = familyList;
     const nsStyleFont* styleFont = mComputedStyle->StyleFont();
     nsFontMetrics::Params params;
-    params.language = styleFont->mLanguage;
+    params.language = styleFont->GetLangAtom();
     params.explicitLanguage = styleFont->mExplicitLanguage;
     params.userFontSet = aPresContext->GetUserFontSet();
     params.textPerf = aPresContext->GetTextPerfMetrics();
@@ -1188,7 +1191,7 @@ nsresult nsMathMLChar::StretchInternal(
 
   const nsStyleFont* styleFont = mComputedStyle->StyleFont();
   nsFontMetrics::Params params;
-  params.language = styleFont->mLanguage;
+  params.language = styleFont->GetLangAtom();
   params.explicitLanguage = styleFont->mExplicitLanguage;
   params.userFontSet = presContext->GetUserFontSet();
   params.textPerf = presContext->GetTextPerfMetrics();
@@ -1548,9 +1551,10 @@ class nsDisplayMathMLCharForeground final : public nsPaintedDisplayItem {
  public:
   nsDisplayMathMLCharForeground(nsDisplayListBuilder* aBuilder,
                                 nsIFrame* aFrame, nsMathMLChar* aChar,
-                                const bool aIsSelected)
+                                const bool aIsArtifact, const bool aIsSelected)
       : nsPaintedDisplayItem(aBuilder, aFrame),
         mChar(aChar),
+        mIsArtifact(aIsArtifact),
         mIsSelected(aIsSelected) {
     MOZ_COUNT_CTOR(nsDisplayMathMLCharForeground);
   }
@@ -1574,6 +1578,14 @@ class nsDisplayMathMLCharForeground final : public nsPaintedDisplayItem {
 
   virtual void Paint(nsDisplayListBuilder* aBuilder,
                      gfxContext* aCtx) override {
+#ifdef ACCESSIBILITY
+    if (mIsArtifact) {
+      // This character is implicitly drawn due to the MathML element; e.g. a
+      // square root sign.
+      aCtx->GetDrawTarget()->AccessibleId(
+          0, a11y::PdfStructTreeBuilder::SpecialId::OtherArtifact);
+    }
+#endif
     imgDrawingParams imgParams(aBuilder->GetImageDecodeFlags());
     mChar->PaintForeground(mFrame, *aCtx, imgParams, ToReferenceFrame(),
                            mIsSelected);
@@ -1589,6 +1601,9 @@ class nsDisplayMathMLCharForeground final : public nsPaintedDisplayItem {
 
  private:
   nsMathMLChar* mChar;
+  // Whether mChar is drawn implicitly due to the MathML element. See
+  // nsMathMLChar::Display.
+  bool mIsArtifact;
   bool mIsSelected;
 };
 
@@ -1638,7 +1653,7 @@ void nsDisplayMathMLCharDebug::Paint(nsDisplayListBuilder* aBuilder,
 
 void nsMathMLChar::Display(nsDisplayListBuilder* aBuilder, nsIFrame* aForFrame,
                            const nsDisplayListSet& aLists, uint32_t aIndex,
-                           const nsRect* aSelectedRect) {
+                           bool aIsArtifact, const nsRect* aSelectedRect) {
   ComputedStyle* computedStyle = mComputedStyle;
   if (!computedStyle->StyleVisibility()->IsVisible()) {
     return;
@@ -1651,7 +1666,7 @@ void nsMathMLChar::Display(nsDisplayListBuilder* aBuilder, nsIFrame* aForFrame,
         aBuilder, aForFrame, *aSelectedRect);
   }
   aLists.Content()->AppendNewToTopWithIndex<nsDisplayMathMLCharForeground>(
-      aBuilder, aForFrame, aIndex, this, isSelected);
+      aBuilder, aForFrame, aIndex, this, aIsArtifact, isSelected);
 }
 
 void nsMathMLChar::ApplyTransforms(gfxContext* aThebesContext,
@@ -1708,12 +1723,11 @@ void nsMathMLChar::PaintForeground(nsIFrame* aForFrame,
       // draw a single glyph (base size or size variant)
       // XXXfredw verify if mGlyphs[0] is non-null to workaround bug 973322.
       if (mGlyphs[0]) {
-        mGlyphs[0]->Draw(Range(mGlyphs[0].get()),
-                         gfx::Point(0.0, mUnscaledAscent),
-                         gfxTextRun::DrawParams(
-                             &aRenderingContext,
-                             aForFrame->PresContext()->FontPaletteCache()),
-                         aImgParams);
+        mGlyphs[0]->Draw(
+            Range(mGlyphs[0].get()), gfx::Point(0.0, mUnscaledAscent),
+            gfxTextRun::DrawParams(&aRenderingContext,
+                                   presContext->GetFontPaletteValueSet()),
+            aImgParams);
       }
       break;
     case DrawingMethod::Parts: {
@@ -1838,7 +1852,7 @@ nsresult nsMathMLChar::PaintVertically(nsPresContext* aPresContext,
   unionRect.Inflate(oneDevPixel);
 
   gfxTextRun::DrawParams params(aThebesContext,
-                                aPresContext->FontPaletteCache());
+                                aPresContext->GetFontPaletteValueSet());
 
   /////////////////////////////////////
   // draw top, middle, bottom
@@ -2006,7 +2020,7 @@ nsresult nsMathMLChar::PaintHorizontally(nsPresContext* aPresContext,
   unionRect.Inflate(oneDevPixel);
 
   gfxTextRun::DrawParams params(aThebesContext,
-                                aPresContext->FontPaletteCache());
+                                aPresContext->GetFontPaletteValueSet());
 
   ///////////////////////////
   // draw left, middle, right

@@ -899,7 +899,11 @@ export class ExtensionData {
    * Note: These fields are only available and meant to be used on Extension
    * instances, declared here because methods from this class reference them.
    */
-  /** @type {object} TODO: move to the Extension class, bug 1871094. */
+  /**
+   * TODO: move to the Extension class, bug 1871094.
+   *
+   * @type {object}
+   */
   addonData;
   /** @type {nsIURI} */
   baseURI;
@@ -2151,6 +2155,20 @@ export class ExtensionData {
           cssPaths: options.css || [],
           cssOrigin: options.css_origin,
         });
+      }
+
+      if (manifest.builtin_widget && !isPrivileged) {
+        if (this.temporarilyInstalled) {
+          this.manifestError(
+            `Using 'builtin_widget' requires a privileged add-on. ` +
+              PRIVILEGED_ADDONS_DEVDOCS_MESSAGE
+          );
+        } else {
+          this.manifestWarning(
+            `Ignoring 'builtin_widget': requires a privileged add-on.`
+          );
+        }
+        manifest.builtin_widget = null;
       }
 
       if (manifest.experiment_apis) {

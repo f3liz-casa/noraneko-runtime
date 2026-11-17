@@ -37,6 +37,7 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Navigation.h"
+#include "mozilla/dom/NavigationUtils.h"
 #include "mozilla/dom/RemoteWebProgressRequest.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/glean/DocshellMetrics.h"
@@ -45,9 +46,11 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/ProcessPriorityManager.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "nsIScriptSecurityManager.h"
 #include "nsIWebNavigation.h"
 #include "nsDocShellLoadTypes.h"
 #include "base/process.h"
@@ -1309,11 +1312,38 @@ nsSHistory::EvictAllDocumentViewers() {
   return NS_OK;
 }
 
+// Returns the target entry for the old document's pageswap activation, or null
+// for a cross-origin traversal. For a traversal to a document in BFCache, the
+// origin check is the only relevant step of
+// https://drafts.csswg.org/css-view-transitions-2/#navigation-can-trigger-a-cross-document-view-transition
+static const mozilla::dom::SessionHistoryInfo* TraversalViewTransitionTarget(
+    SessionHistoryEntry* aCurrent, SessionHistoryEntry* aTarget) {
+  if (!StaticPrefs::dom_viewTransitions_cross_document_enabled() || !aCurrent ||
+      !aTarget) {
+    return nullptr;
+  }
+  nsCOMPtr<nsIURI> fromURI = aCurrent->Info().GetResultPrincipalURI();
+  if (!fromURI) {
+    fromURI = aCurrent->Info().GetURI();
+  }
+  nsCOMPtr<nsIURI> toURI = aTarget->Info().GetResultPrincipalURI();
+  if (!toURI) {
+    toURI = aTarget->Info().GetURI();
+  }
+  nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
+  if (ssm && fromURI && toURI &&
+      NS_SUCCEEDED(ssm->CheckSameOriginURI(fromURI, toURI, false, false))) {
+    return &aTarget->Info();
+  }
+  return nullptr;
+}
+
 MOZ_CAN_RUN_SCRIPT
 static void FinishRestore(CanonicalBrowsingContext* aBrowsingContext,
                           nsDocShellLoadState* aLoadState,
                           SessionHistoryEntry* aEntry,
-                          nsFrameLoader* aFrameLoader, bool aCanSave) {
+                          nsFrameLoader* aFrameLoader, bool aCanSave,
+                          bool aPageSwapFired = false) {
   MOZ_ASSERT(aEntry);
   MOZ_ASSERT(aFrameLoader);
 
@@ -1363,9 +1393,17 @@ static void FinishRestore(CanonicalBrowsingContext* aBrowsingContext,
       // and the active session history entry.
       aBrowsingContext->SynchronizeLayoutHistoryState();
 
+      const SessionHistoryInfo* targetInfo =
+          TraversalViewTransitionTarget(currentSHEntry, aEntry);
       if (aCanSave) {
         currentSHEntry->SetFrameLoader(currentFrameLoader);
-        aBrowsingContext->DeactivateDocuments();
+        aBrowsingContext->DeactivateDocuments(targetInfo,
+                                              NavigationType::Traverse);
+      } else {
+        // The old document can't enter BFCache, so it only fires pageswap.
+        aBrowsingContext->DeactivateDocuments(targetInfo,
+                                              NavigationType::Traverse,
+                                              /* aForUnload = */ true);
       }
     }
 
@@ -1398,7 +1436,8 @@ static void FinishRestore(CanonicalBrowsingContext* aBrowsingContext,
     // browser.navigation.requireUserInteraction is still
     // disabled everywhere.
 
-    frameLoaderOwner->RestoreFrameLoaderFromBFCache(aFrameLoader);
+    bool layersChanged =
+        frameLoaderOwner->RestoreFrameLoaderFromBFCache(aFrameLoader);
     // EvictOutOfRangeDocumentViewers is called here explicitly to
     // possibly evict the now in the bfcache document.
     // HistoryCommitIndexAndLength might not have evicted that before the
@@ -1412,6 +1451,10 @@ static void FinishRestore(CanonicalBrowsingContext* aBrowsingContext,
     }
 
     loadingBC->ReactivateDocuments(aEntry, currentSHEntry);
+
+    if (layersChanged) {
+      frameLoaderOwner->DispatchLayerTreeEvent();
+    }
 
     // We need to call this after we've restored the page from BFCache (see
     // ReactivateDocuments above), so that the page is not frozen anymore and
@@ -1427,12 +1470,69 @@ static void FinishRestore(CanonicalBrowsingContext* aBrowsingContext,
 
   aFrameLoader->Destroy();
 
-  // Fall back to do a normal load.
+  // Fall back to do a normal load. The old document can have fired pageswap
+  // for this traversal already.
+  aLoadState->SetPageSwapFired(aPageSwapFired);
   aBrowsingContext->LoadURI(aLoadState, false);
 
   glean::bfcache::page_restored
       .EnumGet(glean::bfcache::PageRestoredLabel::eFalse)
       .Add();
+}
+
+// For a same-origin traversal from a document that opted in with
+// @view-transition, lets the old document fire pageswap and capture its
+// outbound view transition before FinishRestore deactivates it. Other
+// traversals run FinishRestore right away.
+MOZ_CAN_RUN_SCRIPT
+static void FinishRestoreMaybeDeferred(
+    CanonicalBrowsingContext* aBrowsingContext, nsDocShellLoadState* aLoadState,
+    SessionHistoryEntry* aEntry, nsFrameLoader* aFrameLoader, bool aCanSave) {
+  RefPtr<SessionHistoryEntry> currentSHEntry =
+      aBrowsingContext->GetActiveSessionHistoryEntry();
+  const SessionHistoryInfo* targetInfo =
+      TraversalViewTransitionTarget(currentSHEntry, aEntry);
+  WindowGlobalParent* wgp = aBrowsingContext->GetCurrentWindowGlobal();
+  RefPtr<ContentParent> contentParent =
+      targetInfo && wgp && wgp->MayHaveViewTransitionOptIn()
+          ? aBrowsingContext->GetContentParent()
+          : nullptr;
+  if (!contentParent) {
+    FinishRestore(aBrowsingContext, aLoadState, aEntry, aFrameLoader, aCanSave);
+    return;
+  }
+
+  RefPtr<CanonicalBrowsingContext> bc = aBrowsingContext;
+  RefPtr<nsDocShellLoadState> loadState = aLoadState;
+  RefPtr<SessionHistoryEntry> entry = aEntry;
+  RefPtr<nsFrameLoader> frameLoader = aFrameLoader;
+  // The restored document adopts the captured snapshots, so tell the
+  // capturing process which tab it lives in.
+  BrowserParent* targetBrowser = aFrameLoader->GetBrowserParent();
+  const TabId snapshotTargetTab =
+      targetBrowser ? targetBrowser->GetTabId() : TabId(0);
+  contentParent
+      ->SendBeginOutboundCrossDocumentViewTransition(
+          aBrowsingContext, Some(*targetInfo), NavigationType::Traverse,
+          snapshotTargetTab)
+      ->Then(GetMainThreadSerialEventTarget(), __func__,
+             [bc, loadState, entry, frameLoader,
+              aCanSave](const ContentParent::
+                            BeginOutboundCrossDocumentViewTransitionPromise::
+                                ResolveOrRejectValue&)
+                 MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
+                   // Script ran during the round trip and can have replaced
+                   // or discarded bc.
+                   if (bc->IsReplaced() || bc->IsDiscarded()) {
+                     return;
+                   }
+                   // The pageswap handler ran in between and can have made
+                   // the page ineligible for BFCache.
+                   FinishRestore(
+                       bc, loadState, entry, frameLoader,
+                       aCanSave && bc->AllowedInBFCache(Nothing(), nullptr),
+                       /* aPageSwapFired = */ true);
+                 });
 }
 
 MOZ_CAN_RUN_SCRIPT
@@ -1474,9 +1574,10 @@ static bool MaybeLoadBFCache(const nsSHistory::LoadEntryResult& aLoadEntry) {
                   MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
                     bool allow = aResult == nsIDocumentViewer::eContinue;
                     if (allow && !canonicalBC->IsReplaced()) {
-                      FinishRestore(canonicalBC, loadState, she, frameLoader,
-                                    canSave && canonicalBC->AllowedInBFCache(
-                                                   Nothing(), nullptr));
+                      FinishRestoreMaybeDeferred(
+                          canonicalBC, loadState, she, frameLoader,
+                          canSave && canonicalBC->AllowedInBFCache(Nothing(),
+                                                                   nullptr));
                     } else if (currentFrameLoader
                                    ->GetMaybePendingBrowsingContext()) {
                       nsISHistory* shistory =
@@ -1494,7 +1595,8 @@ static bool MaybeLoadBFCache(const nsSHistory::LoadEntryResult& aLoadEntry) {
     }
 
     if (!canonicalBC->IsReplaced()) {
-      FinishRestore(canonicalBC, loadState, she, frameLoader, canSave);
+      FinishRestoreMaybeDeferred(canonicalBC, loadState, she, frameLoader,
+                                 canSave);
     }
     return true;
   }
@@ -1755,20 +1857,6 @@ nsresult nsSHistory::Reload(uint32_t aReloadFlags,
                             nsTArray<LoadEntryResult>& aLoadResults) {
   MOZ_ASSERT(aLoadResults.IsEmpty());
 
-  uint32_t loadType;
-  if (aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_PROXY &&
-      aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE) {
-    loadType = LOAD_RELOAD_BYPASS_PROXY_AND_CACHE;
-  } else if (aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_PROXY) {
-    loadType = LOAD_RELOAD_BYPASS_PROXY;
-  } else if (aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE) {
-    loadType = LOAD_RELOAD_BYPASS_CACHE;
-  } else if (aReloadFlags & nsIWebNavigation::LOAD_FLAGS_CHARSET_CHANGE) {
-    loadType = LOAD_RELOAD_CHARSET_CHANGE;
-  } else {
-    loadType = LOAD_RELOAD_NORMAL;
-  }
-
   // We are reloading. Send Reload notifications.
   // nsDocShellLoadFlagType is not public, where as nsIWebNavigation
   // is public. So send the reload notifications with the
@@ -1778,6 +1866,13 @@ nsresult nsSHistory::Reload(uint32_t aReloadFlags,
   if (!canNavigate) {
     return NS_OK;
   }
+
+  if (mIndex < 0) {
+    // We can't reload if we don't have entries, see bug 2074418.
+    return NS_ERROR_FAILURE;
+  }
+
+  uint32_t loadType = PrepareReloadEntry(mEntries[mIndex], aReloadFlags);
 
   nsresult rv =
       LoadEntry(/* aSourceBrowsingContext */ nullptr, mIndex, loadType,
@@ -2251,6 +2346,28 @@ void nsSHistory::RemoveEntries(nsTArray<nsID>& aIDs, int32_t aStartIndex,
   }
 }
 
+uint32_t nsSHistory::PrepareReloadEntry(nsISHEntry* aEntry,
+                                        uint32_t aReloadFlags) {
+  uint32_t loadType;
+  if (aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_PROXY &&
+      aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE) {
+    loadType = LOAD_RELOAD_BYPASS_PROXY_AND_CACHE;
+  } else if (aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_PROXY) {
+    loadType = LOAD_RELOAD_BYPASS_PROXY;
+  } else if (aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE) {
+    loadType = LOAD_RELOAD_BYPASS_CACHE;
+  } else if (aReloadFlags & nsIWebNavigation::LOAD_FLAGS_CHARSET_CHANGE) {
+    loadType = LOAD_RELOAD_CHARSET_CHANGE;
+  } else {
+    loadType = LOAD_RELOAD_NORMAL;
+  }
+  aEntry->SetLoadType(loadType);
+  if (IsForceReloadType(loadType)) {
+    RemoveFrameEntries(aEntry);
+  }
+  return loadType;
+}
+
 void nsSHistory::RemoveFrameEntries(nsISHEntry* aEntry) {
   auto* entry = aEntry->GetAsSessionHistoryEntry();
   int32_t count = entry->GetChildCount();
@@ -2263,6 +2380,10 @@ void nsSHistory::RemoveFrameEntries(nsISHEntry* aEntry) {
     }
   }
   RemoveEntries(ids, mIndex);
+  if (MOZ_UNLIKELY(mIndex < 0)) {
+    // With max_entries=0, aEntry isn't reachable from mEntries.
+    RemoveFromSessionHistoryEntry(entry, ids);
+  }
 }
 
 void nsSHistory::RemoveDynEntries(int32_t aIndex, nsISHEntry* aEntry) {

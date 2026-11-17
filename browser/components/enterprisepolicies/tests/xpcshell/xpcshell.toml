@@ -25,6 +25,8 @@ support-files = [
 
 ["test_clear_blocked_cookies.js"]
 
+["test_clear_on_shutdown.js"]
+
 ["test_containers.js"]
 
 ["test_defaultbrowsercheck.js"]
@@ -35,15 +37,28 @@ support-files = [
 
 ["test_extensions.js"]
 
+["test_extensions_uninstall.js"]
+
 ["test_extensionsettings.js"]
 
 ["test_extensionsettings_blocked_permissions.js"]
 
 ["test_extensionsettings_install_without_url.js"]
 
+["test_extensionsettings_private_browsing.js"]
+
+["test_extensionsettings_runtime_blocked_hosts.js"]
+
+["test_extensionsettings_update_url.js"]
+
 ["test_import_enterprise_roots.js"]
 
 ["test_local_network_access.js"]
+
+["test_macos_policy_sources.js"]
+run-if = [
+  "os == 'mac'",
+]
 
 ["test_macos_policy_validation.js"]
 
@@ -82,6 +97,8 @@ support-files = ["config_popups_cookies_addons.json"]
 ["test_simple_pref_policies.js"]
 
 ["test_sitepolicies.js"]
+
+["test_sitepolicies_container.js"]
 
 ["test_sorted_alphabetically.js"]
 

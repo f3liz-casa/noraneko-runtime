@@ -2223,6 +2223,10 @@ class MWasmBinarySimd128 : public MBinaryInstruction,
 
   // Checks if pmaddubsw operation is supported.
   bool canPmaddubsw();
+
+  // Checks if a not-equal of an and against zero can be one test-bits
+  // operation.
+  bool canTestBits();
 #endif
 
   wasm::SimdOp simdOp() const { return simdOp_; }
@@ -2289,6 +2293,13 @@ class MWasmReplaceLaneSimd128 : public MBinaryInstruction,
            ins->toWasmReplaceLaneSimd128()->simdOp() == simdOp_ &&
            ins->toWasmReplaceLaneSimd128()->laneIndex() == laneIndex_;
   }
+
+#ifdef ENABLE_JIT_SIMD
+  MDefinition* foldsTo(TempAllocator& alloc) override;
+
+  // Checks if a lane can be moved directly between vectors.
+  bool canMoveLane();
+#endif
 
   uint32_t laneIndex() const { return laneIndex_; }
   wasm::SimdOp simdOp() const { return simdOp_; }

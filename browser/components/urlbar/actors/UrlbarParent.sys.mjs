@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { UrlbarShared } from "chrome://browser/content/urlbar/UrlbarShared.mjs";
+import { UrlbarContentUtils } from "chrome://browser/content/urlbar/UrlbarContentUtils.mjs";
 
 const lazy = {};
 
@@ -49,6 +50,12 @@ export class UrlbarParent extends JSWindowActorParent {
    *   The actor message, with `name` and `data`.
    */
   receiveMessage(message) {
+    if (message.name == "GetContainers") {
+      // The containers belong to the realm, not to an input, so this message
+      // takes no instanceId and needs no controller.
+      return UrlbarContentUtils.getContainers();
+    }
+
     // The sender may be a content process (about:newtab), so treat the payload
     // as untrusted: every message carries a numeric instanceId, and only known
     // names and live controllers are acted on below.
@@ -134,6 +141,9 @@ export class UrlbarParent extends JSWindowActorParent {
       case "RecordZeroPrefix":
         controller.recordZeroPrefix(message.data.kind);
         break;
+      case "RecordCanonization":
+        controller.recordCanonization();
+        break;
       case "CheckKeywordURIFixup":
         controller.checkKeywordURIFixup(
           message.data.searchString,
@@ -190,11 +200,6 @@ export class UrlbarParent extends JSWindowActorParent {
       case "ClearLastQueryContextCache":
         controller.clearLastQueryContextCache();
         break;
-      // onBeforeSelection/onSelection drop their second argument (the selected
-      // DOM element), which can't cross the boundary. Only
-      // UrlbarProviderQuickSuggestContextualOptIn reads it, and it isn't active
-      // on the message path. Bug 2052166 removes the parameter with that
-      // provider.
       case "OnBeforeSelection":
         controller.onBeforeSelection(
           this.#resultFromWire(controller, message.data.result)
@@ -219,7 +224,8 @@ export class UrlbarParent extends JSWindowActorParent {
           message.data.searchTerms,
           message.data.where,
           message.data.inBackground,
-          message.data.browserId
+          message.data.browserId,
+          message.data.tracksBounce
         );
         break;
       case "OpenSearchForm":
@@ -231,7 +237,10 @@ export class UrlbarParent extends JSWindowActorParent {
         );
         break;
       case "OpenPreferences":
-        controller.openPreferences(message.data.paneID);
+        controller.openPreferences(message.data.paneID, message.data.extraArgs);
+        break;
+      case "OpenContainerCreationPanel":
+        controller.openContainerCreationPanel(message.data.entrypoint);
         break;
     }
     return undefined;

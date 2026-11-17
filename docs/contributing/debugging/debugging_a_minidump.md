@@ -27,7 +27,7 @@ Windows debugging tools. Each minidump includes the following data.
 
 Minidumps are not available to everyone. For details on how to gain
 access and where to find minidump files for crash reports, consult the
-{ref}`crash report documentation <Understanding Crash Reports>`
+{doc}`crash report documentation <understanding_crash_reports>`
 
 ## Using rust-minidump's tooling
 
@@ -45,9 +45,9 @@ minidump-stackwalk.
 
 ## Using the MS Visual Studio debugger
 
-1. Set up the debugger to {ref}`use the Mozilla symbol
-   server <Using The Mozilla Symbol Server>` and
-   {ref}`source server <Using The Mozilla Source Server>`.
+1. Set up the debugger to {doc}`use the Mozilla symbol
+   server </toolkit/crashreporter/crashreporter/Using_the_Mozilla_symbol_server>` and
+   {doc}`source server </taskcluster/using-the-mozilla-source-server>`.
 2. Double-click on the minidump file to open it in the debugger.
 3. When it loads, click the green icon in the visual studio debugger
    toolbar that looks like a play button.
@@ -129,8 +129,8 @@ build Breakpad, the binary will be at
 `src/tools/linux/md2core/minidump-2-core`. Running the binary with the
 path to a Linux minidump will generate a core file on stdout which can
 then be loaded in gdb as usual. You will need to manually download the
-matching Firefox binaries, but then you can use the {ref}`GDB Python
-script <Downloading symbols on Linux / Mac OS X>` to download symbols.
+matching Firefox binaries, but then you can use the GDB Python script for the
+Mozilla symbol server to download symbols.
 
 The `minidump-2-core` source does not currently handle processing
 minidumps from a different CPU architecture than the system it was

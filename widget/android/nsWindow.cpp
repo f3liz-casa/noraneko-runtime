@@ -60,6 +60,7 @@
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/MouseEventBinding.h"
+#include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/DataSurfaceHelpers.h"
 #include "mozilla/gfx/Logging.h"
@@ -76,8 +77,8 @@
 #include "mozilla/java/SessionAccessibilityWrappers.h"
 #include "mozilla/java/SurfaceControlManagerWrappers.h"
 #include "mozilla/jni/NativesInlines.h"
+#include "mozilla/layers/APZBridge.h"
 #include "mozilla/layers/APZEventState.h"
-#include "mozilla/layers/APZInputBridge.h"
 #include "mozilla/layers/APZThreadUtils.h"
 #include "mozilla/layers/AndroidHardwareBuffer.h"
 #include "mozilla/layers/CompositorBridgeChild.h"
@@ -373,7 +374,7 @@ class NPZCSupport final
     }
 
     if (controller) {
-      controller->InputBridge()->SetLongTapEnabled(aIsLongpressEnabled);
+      controller->Bridge()->SetLongTapEnabled(aIsLongpressEnabled);
     }
   }
 
@@ -412,7 +413,7 @@ class NPZCSupport final
         // to do?
         WheelDeltaAdjustmentStrategy::eNone);
 
-    APZEventResult result = controller->InputBridge()->ReceiveInputEvent(input);
+    APZEventResult result = controller->Bridge()->ReceiveInputEvent(input);
     if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
       return INPUT_RESULT_IGNORED;
     }
@@ -625,7 +626,7 @@ class NPZCSupport final
         ConvertButtons(buttons), origin, nsWindow::GetEventTimeStamp(aTime),
         nsWindow::GetModifiers(aMetaState));
 
-    APZEventResult result = controller->InputBridge()->ReceiveInputEvent(input);
+    APZEventResult result = controller->Bridge()->ReceiveInputEvent(input);
     if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
       return INPUT_RESULT_IGNORED;
     }
@@ -941,7 +942,7 @@ class NPZCSupport final
         mouseType, MouseInput::NONE, MouseEvent_Binding::MOZ_SOURCE_MOUSE, 0,
         origin, nsWindow::GetEventTimeStamp(aTime), nsWindow::GetModifiers(0));
 
-    APZEventResult result = controller->InputBridge()->ReceiveInputEvent(input);
+    APZEventResult result = controller->Bridge()->ReceiveInputEvent(input);
     if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
       return;
     }
@@ -995,7 +996,7 @@ class NPZCSupport final
       return;
     }
 
-    APZInputBridge::InputBlockCallback callback;
+    APZBridge::InputBlockCallback callback;
     if (aReturnResult) {
       callback = [aReturnResult = java::GeckoResult::GlobalRef(aReturnResult)](
                      uint64_t aInputBlockId,
@@ -1003,8 +1004,8 @@ class NPZCSupport final
         aReturnResult->Complete(ConvertAPZHandledResult(aHandledResult));
       };
     }
-    APZEventResult result = controller->InputBridge()->ReceiveInputEvent(
-        aInput, std::move(callback));
+    APZEventResult result =
+        controller->Bridge()->ReceiveInputEvent(aInput, std::move(callback));
 
     if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
       if (aReturnResult) {
@@ -1572,14 +1573,6 @@ class LayerViewSupport final
     }
   }
 
-  void SetMaxToolbarHeight(int32_t aHeight) {
-    MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
-
-    if (mUiCompositorControllerChild) {
-      mUiCompositorControllerChild->SetMaxToolbarHeight(aHeight);
-    }
-  }
-
   void SetFixedBottomOffset(int32_t aOffset) {
     if (auto acc{mWindow.Access()}) {
       nsWindow* gkWindow = acc->GetNsWindow();
@@ -1817,6 +1810,11 @@ class LayerViewSupport final
     gkWindow->UpdateSafeAreaInsets(safeAreaInsets);
   }
 };
+
+GeckoViewSupport::GeckoViewSupport(
+    nsWindow* aWindow, const java::GeckoSession::Window::LocalRef& aInstance,
+    nsPIDOMWindowOuter* aDOMWindow)
+    : mWindow(aWindow), mGeckoViewWindow(aInstance), mDOMWindow(aDOMWindow) {}
 
 GeckoViewSupport::~GeckoViewSupport() {
   if (mWindow) {
@@ -2204,6 +2202,466 @@ void GeckoViewSupport::PerformHapticFeedback(int32_t aEffect) {
     return;
   }
   window->PerformHapticFeedback(aEffect);
+}
+
+class FullPageScreenshot final {
+ public:
+  NS_INLINE_DECL_REFCOUNTING(FullPageScreenshot)
+
+  // Tile size in CSS pixels.
+  // The number initially is taken from desktop
+  // (where it was chosen empirically as
+  // the most performant, see Bug 1854953),
+  // and then confirmed empirically (in a similar fashion)
+  // to also be the sweet spot between speed and
+  // memory pressure on Android.
+  static constexpr int32_t kTileSize = 1024;
+
+  FullPageScreenshot(java::GeckoResult::GlobalRef&& aResult,
+                     RefPtr<dom::WindowGlobalParent>&& aWgp,
+                     java::sdk::Bitmap::GlobalRef&& aBitmap,
+                     const gfx::IntRect& aFullRect, float aScale)
+      : mResult(std::move(aResult)),
+        mWgp(std::move(aWgp)),
+        mBitmap(std::move(aBitmap)),
+        mFullRect(aFullRect),
+        mScale(aScale) {}
+
+  void Start() {
+    MOZ_ASSERT(NS_IsMainThread());
+
+    if (!mBitmap) {
+      Reject("Failed to start screenshot capture - no target bitmap");
+      return;
+    }
+
+    mSnapshotSize = int32_t(kTileSize * mScale);
+    if (mSnapshotSize <= 0) {
+      Reject("Failed to start screenshot capture - invalid tile size");
+      return;
+    }
+
+    /**
+     * Note: It is up to the caller to pre-fill the bitmap,
+     * so the device pixels left uncovered by a tile
+     * show the background rather than remain transparent.
+     */
+
+    // (CSS pixels)
+    for (int32_t y = mFullRect.Y(); y < mFullRect.YMost(); y += kTileSize) {
+      for (int32_t x = mFullRect.X(); x < mFullRect.XMost(); x += kTileSize) {
+        mTiles.AppendElement(
+            gfx::IntRect(x, y, std::min(kTileSize, mFullRect.XMost() - x),
+                         std::min(kTileSize, mFullRect.YMost() - y)));
+      }
+    }
+
+    CaptureTile(0);
+  }
+
+ private:
+  ~FullPageScreenshot() = default;
+
+  void Reject(const char* aMsg) {
+    mResult->CompleteExceptionally(
+        java::sdk::IllegalStateException::New(aMsg).Cast<jni::Throwable>());
+    GVS_LOG("%s", aMsg);
+  }
+
+  void CaptureTile(size_t aIndex) {
+    if (aIndex >= mTiles.Length()) {
+      mResult->Complete(mBitmap);
+      return;
+    }
+
+    const gfx::IntRect tile = mTiles[aIndex];
+    gfx::CrossProcessPaint::Start(
+        mWgp, Some(tile), mScale, NS_RGB(255, 255, 255),
+        gfx::CrossProcessPaintFlags::UseHighQualityScaling)
+        ->Then(
+            GetMainThreadSerialEventTarget(), __func__,
+            [self = RefPtr{this}, tile,
+             aIndex](RefPtr<gfx::SourceSurface>&& aSurface) {
+              if (!self->BlitTile(tile, aSurface)) {
+                self->Reject("Full screenshot failure: failed to copy a tile");
+                return;
+              }
+              self->CaptureTile(aIndex + 1);
+            },
+            [self = RefPtr{this}](const nsresult&) {
+              self->Reject("Full screenshot failure: failed to capture a tile");
+            });
+  }
+
+  bool BlitTile(const gfx::IntRect& aTileCss, gfx::SourceSurface* aSurface) {
+    // The tile surface uses R8G8B8A8 to match the ARGB_8888 destination bitmap.
+    const int32_t bpp = gfx::BytesPerPixel(gfx::SurfaceFormat::R8G8B8A8);
+
+    RefPtr<gfx::DataSourceSurface> data =
+        AndroidWidgetUtils::GetDataSourceSurfaceForAndroidBitmap(
+            aSurface, nullptr, aSurface->GetSize().width * bpp);
+    if (!data) {
+      return false;
+    }
+
+    gfx::DataSourceSurface::ScopedMap srcMap(data,
+                                             gfx::DataSourceSurface::READ);
+    if (!srcMap.IsMapped()) {
+      return false;
+    }
+
+    JNIEnv* const env = jni::GetEnvForThread();
+    AndroidBitmapInfo info;
+    if (AndroidBitmap_getInfo(env, mBitmap.Get(), &info) < 0) {
+      return false;
+    }
+
+    MOZ_RELEASE_ASSERT(info.format == ANDROID_BITMAP_FORMAT_RGBA_8888);
+
+    uint8_t* destBuf = nullptr;
+    if (AndroidBitmap_lockPixels(env, mBitmap.Get(),
+                                 reinterpret_cast<void**>(&destBuf)) < 0) {
+      return false;
+    }
+    auto unlock = MakeScopeExit(
+        [&]() { AndroidBitmap_unlockPixels(env, mBitmap.Get()); });
+
+    const gfx::IntSize tilePx = data->GetSize();
+    // Place each tile avoiding seams from fractional-scale rounding.
+    const int32_t col = (aTileCss.X() - mFullRect.X()) / kTileSize;
+    const int32_t row = (aTileCss.Y() - mFullRect.Y()) / kTileSize;
+    const int32_t destX = col * mSnapshotSize;
+    const int32_t destY = row * mSnapshotSize;
+    if (destX < 0 || destY < 0) {
+      return false;
+    }
+    const int32_t copyW = std::min(tilePx.width, int32_t(info.width) - destX);
+    const int32_t copyH = std::min(tilePx.height, int32_t(info.height) - destY);
+    if (copyW <= 0 || copyH <= 0) {
+      return false;
+    }
+
+    const uint8_t* srcRow = srcMap.GetData();
+    uint8_t* dstRow =
+        destBuf + size_t(destY) * info.stride + size_t(destX) * bpp;
+    for (int32_t y = 0; y < copyH; y++) {
+      memcpy(dstRow, srcRow, size_t(copyW) * bpp);
+      srcRow += srcMap.GetStride();
+      dstRow += info.stride;
+    }
+    return true;
+  }
+
+  java::GeckoResult::GlobalRef mResult;
+  RefPtr<dom::WindowGlobalParent> mWgp;
+  java::sdk::Bitmap::GlobalRef mBitmap;
+  gfx::IntRect mFullRect;
+  const float mScale;
+  int32_t mSnapshotSize = 0;
+  nsTArray<gfx::IntRect> mTiles;
+};
+
+void GeckoViewSupport::RequestFullScreenshot(
+    const java::GeckoSession::Window::LocalRef& inst,
+    jni::Object::Param aResult, jni::Object::Param aTarget, int32_t aX,
+    int32_t aY, int32_t aWidth, int32_t aHeight, float aRenderingScale) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  auto result =
+      java::GeckoResult::GlobalRef(java::GeckoResult::LocalRef(aResult));
+  auto target =
+      java::sdk::Bitmap::GlobalRef(java::sdk::Bitmap::LocalRef(aTarget));
+
+  if (!target) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalArgumentException::New(
+            "Error requesting full screenshot - no target bitmap")
+            .Cast<jni::Throwable>());
+    GVS_LOG("Error requesting full screenshot - no target bitmap");
+    return;
+  }
+  if (aWidth <= 0 || aHeight <= 0) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalArgumentException::New(
+            "Error requesting full screenshot - invalid dimensions")
+            .Cast<jni::Throwable>());
+    GVS_LOG("Error requesting full screenshot - invalid dimensions");
+    return;
+  }
+
+  RefPtr<CanonicalBrowsingContext> cbc = GetContentCanonicalBrowsingContext();
+  if (!cbc) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalStateException::New(
+            "Error requesting full screenshot - could not retrieve canonical "
+            "browsing context")
+            .Cast<jni::Throwable>());
+    GVS_LOG(
+        "Error requesting full screenshot - could not retrieve canonical "
+        "browsing context");
+    return;
+  }
+
+  RefPtr<dom::WindowGlobalParent> wgp = cbc->GetCurrentWindowGlobal();
+  if (!wgp) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalStateException::New(
+            "Error requesting full screenshot - could not retrieve current "
+            "window global")
+            .Cast<jni::Throwable>());
+    GVS_LOG(
+        "Error requesting full screenshot - could not retrieve current window "
+        "global");
+    return;
+  }
+
+  const gfx::IntRect srcRect(aX, aY, aWidth, aHeight);
+
+  MakeRefPtr<FullPageScreenshot>(std::move(result), std::move(wgp),
+                                 std::move(target), srcRect, aRenderingScale)
+      ->Start();
+}
+
+// Captures a single content region (CSS pixels, scaled by mScale) and blits it
+// into an Android Surface at the surface buffer's top-left.
+class RegionToSurface final {
+ public:
+  NS_INLINE_DECL_REFCOUNTING(RegionToSurface)
+
+  RegionToSurface(java::GeckoResult::GlobalRef&& aResult,
+                  RefPtr<dom::WindowGlobalParent>&& aWgp,
+                  java::sdk::Surface::GlobalRef&& aSurface,
+                  const gfx::IntRect& aRegion, float aScale)
+      : mResult(std::move(aResult)),
+        mWgp(std::move(aWgp)),
+        mSurface(std::move(aSurface)),
+        mRegion(aRegion),
+        mScale(aScale) {}
+
+  void Start() {
+    MOZ_ASSERT(NS_IsMainThread());
+
+    if (!mSurface) {
+      Reject("Failed to start region capture - no target surface");
+      return;
+    }
+
+    gfx::CrossProcessPaint::Start(
+        mWgp, Some(mRegion), mScale, NS_RGB(255, 255, 255),
+        gfx::CrossProcessPaintFlags::UseHighQualityScaling)
+        ->Then(
+            GetMainThreadSerialEventTarget(), __func__,
+            [self = RefPtr{this}](RefPtr<gfx::SourceSurface>&& aSnapshot) {
+              if (!self->Blit(aSnapshot)) {
+                self->Reject("Failed to capture region - blit error");
+                return;
+              }
+              self->mResult->Complete(nullptr);
+            },
+            [self = RefPtr{this}](const nsresult&) {
+              self->Reject("Failed to capture region - capture error");
+            });
+  }
+
+ private:
+  ~RegionToSurface() = default;
+
+  void Reject(const char* aMsg) {
+    mResult->CompleteExceptionally(
+        java::sdk::IllegalStateException::New(aMsg).Cast<jni::Throwable>());
+    GVS_LOG("%s", aMsg);
+  }
+
+  bool Blit(gfx::SourceSurface* aSnapshot) {
+    // R8G8B8A8 to match the RGBA_8888 Surface buffer.
+    const int32_t bpp = gfx::BytesPerPixel(gfx::SurfaceFormat::R8G8B8A8);
+
+    RefPtr<gfx::DataSourceSurface> data =
+        AndroidWidgetUtils::GetDataSourceSurfaceForAndroidBitmap(
+            aSnapshot, nullptr, aSnapshot->GetSize().width * bpp);
+    if (!data) {
+      return false;
+    }
+
+    gfx::DataSourceSurface::ScopedMap srcMap(data,
+                                             gfx::DataSourceSurface::READ);
+    if (!srcMap.IsMapped()) {
+      return false;
+    }
+
+    ANativeWindow* const window =
+        ANativeWindow_fromSurface(jni::GetEnvForThread(), mSurface.Get());
+    if (!window) {
+      return false;
+    }
+    auto releaseWindow =
+        MakeScopeExit([&]() { ANativeWindow_release(window); });
+
+    const int32_t format = ANativeWindow_getFormat(window);
+    if (format != WINDOW_FORMAT_RGBA_8888 &&
+        format != WINDOW_FORMAT_RGBX_8888) {
+      return false;
+    }
+
+    const gfx::IntSize srcPx = data->GetSize();
+    const int32_t copyW = std::min(srcPx.width, ANativeWindow_getWidth(window));
+    const int32_t copyH =
+        std::min(srcPx.height, ANativeWindow_getHeight(window));
+    if (copyW <= 0 || copyH <= 0) {
+      return false;
+    }
+
+    ANativeWindow_Buffer buffer;
+    if (ANativeWindow_lock(window, &buffer, nullptr) != 0) {
+      return false;
+    }
+    auto unlock = MakeScopeExit([&]() { ANativeWindow_unlockAndPost(window); });
+
+    const int32_t rows = std::min(copyH, buffer.height);
+    const int32_t cols = std::min(copyW, buffer.width);
+    const uint8_t* srcRow = srcMap.GetData();
+    uint8_t* dstRow = static_cast<uint8_t*>(buffer.bits);
+    const size_t dstStride = size_t(buffer.stride) * bpp;
+    for (int32_t y = 0; y < rows; y++) {
+      memcpy(dstRow, srcRow, size_t(cols) * bpp);
+      srcRow += srcMap.GetStride();
+      dstRow += dstStride;
+    }
+    return true;
+  }
+
+  java::GeckoResult::GlobalRef mResult;
+  RefPtr<dom::WindowGlobalParent> mWgp;
+  java::sdk::Surface::GlobalRef mSurface;
+  gfx::IntRect mRegion;
+  const float mScale;
+};
+
+void GeckoViewSupport::RequestRegionToSurface(
+    const java::GeckoSession::Window::LocalRef& inst,
+    jni::Object::Param aResult, jni::Object::Param aSurface, int32_t aX,
+    int32_t aY, int32_t aWidth, int32_t aHeight, float aScale) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  auto result =
+      java::GeckoResult::GlobalRef(java::GeckoResult::LocalRef(aResult));
+  auto surface =
+      java::sdk::Surface::GlobalRef(java::sdk::Surface::LocalRef(aSurface));
+
+  if (!surface) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalArgumentException::New(
+            "Error requesting region to surface - no target surface")
+            .Cast<jni::Throwable>());
+    GVS_LOG("Error requesting region to surface - no target surface");
+    return;
+  }
+  if (aWidth <= 0 || aHeight <= 0) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalArgumentException::New(
+            "Error requesting region to surface - invalid dimensions")
+            .Cast<jni::Throwable>());
+    GVS_LOG("Error requesting region to surface - invalid dimensions");
+    return;
+  }
+
+  RefPtr<CanonicalBrowsingContext> cbc = GetContentCanonicalBrowsingContext();
+  if (!cbc) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalStateException::New(
+            "Error requesting region to surface - could not retrieve canonical "
+            "browsing context")
+            .Cast<jni::Throwable>());
+    GVS_LOG(
+        "Error requesting region to surface - could not retrieve canonical "
+        "browsing context");
+    return;
+  }
+
+  RefPtr<dom::WindowGlobalParent> wgp = cbc->GetCurrentWindowGlobal();
+  if (!wgp) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalStateException::New(
+            "Error requesting region to surface - could not retrieve current "
+            "window global")
+            .Cast<jni::Throwable>());
+    GVS_LOG(
+        "Error requesting region to surface - could not retrieve current "
+        "window global");
+    return;
+  }
+
+  const gfx::IntRect region(aX, aY, aWidth, aHeight);
+
+  MakeRefPtr<RegionToSurface>(std::move(result), std::move(wgp),
+                              std::move(surface), region, aScale)
+      ->Start();
+}
+
+void GeckoViewSupport::RequestContentMetrics(
+    const java::GeckoSession::Window::LocalRef& inst,
+    jni::Object::Param aResult, jni::Object::Param aMetrics) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  auto result =
+      java::GeckoResult::GlobalRef(java::GeckoResult::LocalRef(aResult));
+  auto metrics = java::GeckoSession::Window::ContentMetrics::GlobalRef(
+      java::GeckoSession::Window::ContentMetrics::LocalRef(aMetrics));
+
+  if (!metrics) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalArgumentException::New(
+            "Error requesting content metrics - no metrics object")
+            .Cast<jni::Throwable>());
+    GVS_LOG("Error requesting content metrics - no metrics object");
+    return;
+  }
+
+  RefPtr<CanonicalBrowsingContext> cbc = GetContentCanonicalBrowsingContext();
+  if (!cbc) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalStateException::New(
+            "Error requesting content metrics - could not retrieve canonical "
+            "browsing context")
+            .Cast<jni::Throwable>());
+    GVS_LOG(
+        "Error requesting content metrics - Could not retrieve canonical "
+        "browsing context");
+    return;
+  }
+
+  RefPtr<dom::WindowGlobalParent> wgp = cbc->GetCurrentWindowGlobal();
+  if (!wgp) {
+    result->CompleteExceptionally(
+        java::sdk::IllegalStateException::New(
+            "Error requesting content metrics - could not retrieve current "
+            "window global")
+            .Cast<jni::Throwable>());
+    GVS_LOG(
+        "Error requesting content metrics - Could not retrieve current window "
+        "global");
+    return;
+  }
+
+  wgp->SendGetContentMetrics()->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      [result, metrics](
+          const PWindowGlobalParent::GetContentMetricsPromise::ResolveValueType&
+              aResolved) {
+        const auto& [size, dpr, scrollOffset] = aResolved;
+
+        const auto roundedSize = gfx::RoundedToInt(size);
+        metrics->Set(roundedSize.width, roundedSize.height, dpr, scrollOffset.x,
+                     scrollOffset.y);
+        result->Complete(metrics);
+      },
+      [result](mozilla::ipc::ResponseRejectReason) {
+        result->CompleteExceptionally(
+            java::sdk::IllegalStateException::New(
+                "Error requesting content metrics - failed to query content")
+                .Cast<jni::Throwable>());
+        GVS_LOG("Error requesting content metrics - failed to query content");
+      });
 }
 
 }  // namespace widget

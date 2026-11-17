@@ -10,59 +10,26 @@ ABS_CONFIG_DIR := $(abspath $(CONFIG_DIR))
 
 SFX_MODULE ?= $(error SFX_MODULE is not defined)
 
-ifeq ($(TARGET_CPU), aarch64)
-USE_UPX :=
-else
-ifneq (,$(UPX)$(MOZ_AUTOMATION))
+ifdef NSIS_USE_UPX
 USE_UPX := --use-upx
 endif
-endif
 
-TOOLKIT_NSIS_FILES = \
-	common.nsh \
-	locale.nlf \
-	locale-fonts.nsh \
-	locale-rtl.nlf \
-	locales.nsi \
-	overrides.nsh \
-	setup.ico \
-	$(NULL)
-
-CUSTOM_NSIS_PLUGINS = \
-	AccessControl.dll \
-	AppAssocReg.dll \
-	ApplicationID.dll \
-	BitsUtils.dll \
-	CertCheck.dll \
-	CityHash.dll \
-	ExecInExplorer.dll \
-	HttpPostFile.dll \
-	InetBgDL.dll \
-	InvokeShellVerb.dll \
-	liteFirewallW.dll \
-	nsJSON.dll \
-	PinToTaskbar.dll \
-	ServicesHelper.dll \
-	ShellLink.dll \
-	UAC.dll \
-	WebBrowser.dll \
-	$(NULL)
-
-CUSTOM_UI = \
-	nsisui.exe \
-	$(NULL)
-
-$(CONFIG_DIR)/setup.exe::
-	$(INSTALL) $(addprefix $(MOZILLA_DIR)/toolkit/mozapps/installer/windows/nsis/,$(TOOLKIT_NSIS_FILES)) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(MOZILLA_DIR)/other-licenses/nsis/Plugins/,$(CUSTOM_NSIS_PLUGINS)) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(MOZILLA_DIR)/other-licenses/nsis/,$(CUSTOM_UI)) $(CONFIG_DIR)
-	cd $(CONFIG_DIR) && $(MAKENSISU) $(MAKENSISU_FLAGS) installer.nsi
-ifdef MOZ_STUB_INSTALLER
-	cd $(CONFIG_DIR) && $(MAKENSISU) $(MAKENSISU_FLAGS) stub.nsi
-endif
+NSIS_STAGE_ARGS = --config-dir=$(CONFIG_DIR) \
+  $(addprefix --install=,$(addprefix $(srcdir)/,$(INSTALLER_FILES))) \
+  $(addprefix --install=,$(addprefix $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/,$(BRANDING_FILES))) \
+  $(addprefix --install=,$(addprefix $(MOZILLA_DIR)/toolkit/mozapps/installer/windows/nsis/,$(NSIS_TOOLKIT_FILES))) \
+  $(addprefix --install=,$(addprefix $(MOZILLA_DIR)/other-licenses/nsis/Plugins/,$(NSIS_CUSTOM_PLUGINS))) \
+  --defines-in=$(srcdir)/nsis/defines.nsi.in --defines-out=$(CONFIG_DIR)/defines.nsi \
+  --topsrcdir=$(topsrcdir) \
+  --preprocess-locale-script=$(topsrcdir)/toolkit/mozapps/installer/windows/nsis/preprocess-locale.py \
+  $(addprefix --locale-arg=,$(PPL_LOCALE_ARGS)) --ab-cd=$(AB_CD) --preprocess-locale \
+  $(NSIS_INSTALLER_DEFINES) $(ACDEFINES) -DTOPOBJDIR=$(topobjdir)
 
 ifdef ZIP_IN
 installer:: $(CONFIG_DIR)/setup.exe $(ZIP_IN)
+# In automation, the installers are created by repackage tasks, from setup.exe
+# and the package, so don't spend time creating them in the build.
+ifndef MOZ_AUTOMATION
 	$(NSINSTALL) -D '$(ABS_DIST)/$(PKG_PATH)'
 	$(PYTHON3) $(MOZILLA_DIR)/mach repackage installer \
 	  -o '$(ABS_DIST)/$(PKG_PATH)$(PKG_INST_BASENAME).exe' \
@@ -80,55 +47,8 @@ ifdef MOZ_STUB_INSTALLER
 	  --sfx-stub $(SFX_MODULE) \
 	  $(USE_UPX)
 endif
+endif
 else
 installer::
 	$(error ZIP_IN must be set when building installer)
-endif
-
-HELPER_DEPS = $(GLOBAL_DEPS) \
-              $(addprefix $(srcdir)/,$(INSTALLER_FILES)) \
-              $(addprefix $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/,$(BRANDING_FILES)) \
-              $(srcdir)/nsis/defines.nsi.in \
-              $(topsrcdir)/toolkit/mozapps/installer/windows/nsis/preprocess-locale.py \
-              $(addprefix $(MOZILLA_DIR)/toolkit/mozapps/installer/windows/nsis/,$(TOOLKIT_NSIS_FILES)) \
-              $(addprefix $(MOZILLA_DIR)/other-licenses/nsis/Plugins/,$(CUSTOM_NSIS_PLUGINS))
-
-# For building the uninstaller during the application build so it can be
-# included for mar file generation.
-$(CONFIG_DIR)/helper.exe: $(HELPER_DEPS)
-	$(RM) -r $(CONFIG_DIR)
-	$(MKDIR) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(srcdir)/,$(INSTALLER_FILES)) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/,$(BRANDING_FILES)) $(CONFIG_DIR)
-	$(call py_action,preprocessor defines.nsi,-Fsubstitution $(DEFINES) $(ACDEFINES) \
-	-DTOPOBJDIR=$(topobjdir) \
-	  $(srcdir)/nsis/defines.nsi.in -o $(CONFIG_DIR)/defines.nsi)
-	$(PYTHON3) $(topsrcdir)/toolkit/mozapps/installer/windows/nsis/preprocess-locale.py \
-	  --preprocess-locale $(topsrcdir) \
-	  $(PPL_LOCALE_ARGS) $(AB_CD) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(MOZILLA_DIR)/toolkit/mozapps/installer/windows/nsis/,$(TOOLKIT_NSIS_FILES)) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(MOZILLA_DIR)/other-licenses/nsis/Plugins/,$(CUSTOM_NSIS_PLUGINS)) $(CONFIG_DIR)
-	cd $(CONFIG_DIR) && $(MAKENSISU) $(MAKENSISU_FLAGS) uninstaller.nsi
-
-uninstaller:: $(CONFIG_DIR)/helper.exe
-	$(NSINSTALL) -D $(DIST)/bin/uninstall
-	cp $(CONFIG_DIR)/helper.exe $(DIST)/bin/uninstall
-
-ifdef MOZ_MAINTENANCE_SERVICE
-maintenanceservice_installer::
-	$(RM) -r $(CONFIG_DIR)
-	$(MKDIR) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(srcdir)/,$(INSTALLER_FILES)) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/,$(BRANDING_FILES)) $(CONFIG_DIR)
-	$(call py_action,preprocessor defines.nsi,-Fsubstitution $(DEFINES) $(ACDEFINES) \
-	-DTOPOBJDIR=$(topobjdir) \
-	  $(srcdir)/nsis/defines.nsi.in -o $(CONFIG_DIR)/defines.nsi)
-	$(PYTHON3) $(topsrcdir)/toolkit/mozapps/installer/windows/nsis/preprocess-locale.py \
-	  --preprocess-locale $(topsrcdir) \
-	  $(PPL_LOCALE_ARGS) $(AB_CD) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(MOZILLA_DIR)/toolkit/mozapps/installer/windows/nsis/,$(TOOLKIT_NSIS_FILES)) $(CONFIG_DIR)
-	$(INSTALL) $(addprefix $(MOZILLA_DIR)/other-licenses/nsis/Plugins/,$(CUSTOM_NSIS_PLUGINS)) $(CONFIG_DIR)
-	cd $(CONFIG_DIR) && $(MAKENSISU) $(MAKENSISU_FLAGS) maintenanceservice_installer.nsi
-	$(NSINSTALL) -D $(DIST)/bin/
-	cp $(CONFIG_DIR)/maintenanceservice_installer.exe $(DIST)/bin
 endif

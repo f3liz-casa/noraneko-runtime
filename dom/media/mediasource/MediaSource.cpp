@@ -210,6 +210,7 @@ already_AddRefed<MediaSource> MediaSource::Constructor(
 MediaSource::~MediaSource() {
   MOZ_ASSERT(NS_IsMainThread());
   MSE_API("");
+  CompletePendingTransactions();
   if (mDecoder) {
     mDecoder->DetachMediaSource();
   }
@@ -502,7 +503,7 @@ bool MediaSource::Attach(MediaSourceDecoder* aDecoder) {
 
 void MediaSource::Detach() {
   MOZ_ASSERT(NS_IsMainThread());
-  MOZ_RELEASE_ASSERT(mCompletionPromises.IsEmpty());
+  CompletePendingTransactions();
   MSE_DEBUG("mDecoder={} owner={}", fmt::ptr(mDecoder.get()),
             fmt::ptr(mDecoder ? mDecoder->GetOwner() : nullptr));
   if (!mDecoder) {
@@ -616,6 +617,15 @@ void MediaSource::DurationChangeOnEndOfStream() {
   // SourceBuffer.buffered getter.  Do this before comparison because
   // mDecoder->GetDuration() may have been similarly truncated.
   media::TimeUnit newDuration = highestEndTime.ToBase(USECS_PER_S);
+  // highestEndTime may carry a near-INT64_MAX timestamp from a crafted
+  // segment; ToBase(USECS_PER_S) overflows in that case. Skip setting the
+  // duration rather than crashing — the clip is malformed anyway.
+  if (!newDuration.IsValid()) {
+    MSE_DEBUG(
+        "DurationChangeOnEndOfStream: duration overflow (highestEndTime=%s)",
+        highestEndTime.ToString().get());
+    return;
+  }
   MSE_DEBUG("DurationChangeOnEndOfStream(newDuration={})",
             newDuration.ToString().get());
   if (mDecoder->GetDuration() == newDuration.ToSeconds()) {

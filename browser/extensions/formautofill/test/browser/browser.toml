@@ -23,6 +23,8 @@ support-files = [
   "../fixtures/**",
 ]
 
+["browser_address_migration.js"]
+
 ["browser_autocomplete_footer.js"]
 skip-if = [
   "verify-standalone",
@@ -31,15 +33,14 @@ skip-if = [
 ["browser_autocomplete_marked_back_forward.js"]
 
 ["browser_autocomplete_marked_detached_tab.js"]
-skip-if = [
-  "os == 'mac' && os_version == '10.15' && arch == 'x86_64'",
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64'",
-  "os == 'mac' && os_version == '15.30' && arch == 'aarch64'",
-]
 
 ["browser_autocomplete_region.js"]
 
 ["browser_autocomplete_secondary_action.js"]
+
+["browser_autocomplete_unrecognized_attribute.js"]
+
+["browser_autocomplete_unrecognized_attribute_dynamic.js"]
 
 ["browser_autofill_address_housenumber.js"]
 
@@ -62,10 +63,6 @@ skip-if = [
 ["browser_autofill_creditCard_type.js"]
 
 ["browser_autofill_duplicate_fields.js"]
-skip-if = [
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64' && debug", # Bug 1917060
-  "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && debug", # Bug 1917060
-]
 
 ["browser_autofill_invisible_fields.js"]
 
@@ -81,6 +78,10 @@ skip-if = [
 
 ["browser_collectFormFields.js"]
 
+["browser_creditCard_migration.js"]
+
+["browser_creditCard_primaryPassword.js"]
+
 ["browser_dropdown_layout.js"]
 
 ["browser_dynamic_form_autocompletion.js"]
@@ -94,8 +95,6 @@ skip-if = [
 ["browser_editAddressDialog.js"]
 skip-if = [
   "os == 'linux' && os_version == '22.04' && arch == 'x86_64' && display == 'wayland'", # Bug 1788900
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # Bug 1788900
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64' && debug && socketprocess_networking && verify-standalone",
   "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && debug && socketprocess_networking && verify-standalone",
 ]
 
@@ -149,10 +148,6 @@ skip-if = [
 ["browser_nested_forms.js"]
 
 ["browser_page_navigation_in_subtree.js"]
-skip-if = [
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64'", # Bug 1924248
-  "os == 'win' && os_version == '11.26200' && arch == 'x86_64'", # Bug 1924248
-]
 
 ["browser_passport_capture_doorhanger.js"]
 
@@ -169,5 +164,7 @@ skip-if = [
 ]
 
 ["browser_remoteiframe.js"]
+
+["browser_storage_rust_nimbus.js"]
 
 ["browser_submission_in_private_mode.js"]

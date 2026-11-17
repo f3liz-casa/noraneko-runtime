@@ -98,6 +98,43 @@ internal open class ForeignBytes : Structure() {
 
     class ByValue : ForeignBytes(), Structure.ByValue
 }
+
+// Converter for `&[u8]` / `[ByRef] bytes` arguments.
+//
+// Only `lower` is valid — zero-copy byte buffers only flow foreign -> Rust,
+// and only in argument position. `lift`, `read`, `write`, and
+// `allocationSize` have no sound implementation here and all panic at
+// runtime. The `FfiConverter` interface is implemented so that the
+// compiler enforces the full method set (rather than relying on eyeball).
+//
+// The provided `ByteBuffer` MUST be direct — only direct buffers have a
+// stable native address that JNA can expose via `getDirectBufferPointer`.
+// The returned `ForeignBytes.ByValue` is only valid for the duration of
+// the FFI call; the Rust side treats it as a borrow.
+internal object FfiConverterByRefBytes : FfiConverter<java.nio.ByteBuffer, ForeignBytes.ByValue> {
+    override fun lower(value: java.nio.ByteBuffer): ForeignBytes.ByValue {
+        require(value.isDirect) { "UniFFI zero-copy &[u8] requires a direct ByteBuffer. Use ByteBuffer.allocateDirect()." }
+        val remaining = value.remaining()
+        val fb = ForeignBytes.ByValue()
+        fb.len = remaining
+        // Zero-length direct buffers: skip getDirectBufferPointer (platform-variable behavior)
+        // and pass null. The Rust side treats (null, 0) as &[].
+        fb.data = if (remaining == 0) null else com.sun.jna.Native.getDirectBufferPointer(value)
+        return fb
+    }
+
+    override fun lift(value: ForeignBytes.ByValue): java.nio.ByteBuffer =
+        error("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
+
+    override fun read(buf: java.nio.ByteBuffer): java.nio.ByteBuffer =
+        error("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+
+    override fun write(value: java.nio.ByteBuffer, buf: java.nio.ByteBuffer): Unit =
+        error("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+
+    override fun allocationSize(value: java.nio.ByteBuffer): ULong =
+        error("ByRef bytes have no RustBuffer allocation size: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+}
 /**
  * The FfiConverter interface handles converter types to and from the FFI
  *
@@ -634,6 +671,8 @@ internal object IntegrityCheckingUniffiLib {
         Native.register(IntegrityCheckingUniffiLib::class.java, findLibraryName(componentName = "errorsupport"))
         uniffiCheckContractApiVersion(this)
     }
+
+    internal fun ensureInitialized() = Unit
     external fun ffi_error_support_uniffi_contract_version(
     ): Int
 
@@ -647,6 +686,8 @@ internal object UniffiLib {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "errorsupport"))
         
     }
+
+    internal fun ensureInitialized() = Unit
     external fun ffi_error_support_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun ffi_error_support_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -662,7 +703,7 @@ internal object UniffiLib {
     external fun ffi_error_support_rust_future_free_u8(`handle`: Long,
     ): Unit
     external fun ffi_error_support_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
+    ): Int
     external fun ffi_error_support_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
     external fun ffi_error_support_rust_future_cancel_i8(`handle`: Long,
@@ -678,7 +719,7 @@ internal object UniffiLib {
     external fun ffi_error_support_rust_future_free_u16(`handle`: Long,
     ): Unit
     external fun ffi_error_support_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Short
+    ): Int
     external fun ffi_error_support_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
     external fun ffi_error_support_rust_future_cancel_i16(`handle`: Long,
@@ -769,10 +810,10 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
  * @suppress
  */
 public fun uniffiEnsureInitialized() {
-    IntegrityCheckingUniffiLib
-    // UniffiLib() initialized as objects are used, but we still need to explicitly
-    // reference it so initialization across crates works as expected.
-    UniffiLib
+    // Call arbitrary methods on IntegrityCheckingUniffiLib and UniffiLib to ensure that
+    // their init blocks run. This ensures initialization across crates works as expected.
+    IntegrityCheckingUniffiLib.ensureInitialized()
+    UniffiLib.ensureInitialized()
 }
 
 // Async support

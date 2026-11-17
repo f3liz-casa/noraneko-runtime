@@ -4,6 +4,7 @@
 
 with Files("**"):
     BUG_COMPONENT = ("Core", "Networking")
+    SCHEDULES.exclusive = ["windows"]
 
 TEST_DIRS += ["tests/gtest"]
 
@@ -22,4 +23,9 @@ LOCAL_INCLUDES += [
     "../commonproxy",
     "/netwerk/base",
     "/widget/windows",
+]
+
+SOURCE_HEADERS += [
+    "nsWindowsSystemProxySettings.h",
+    "WindowsInternetFunctionsWrapper.h",
 ]

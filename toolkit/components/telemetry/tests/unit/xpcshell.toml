@@ -22,14 +22,9 @@ skip-if = [
 ]
 tags = "addons"
 
-["test_CoveragePing.js"]
-run-if = [
-  "os != 'android'", # Legacy telemetry is a lways disabled on Android
-]
-
 ["test_EventPing.js"]
 run-if = [
-  "os != 'android'", # Legacy telemetry is a lways disabled on Android
+  "os != 'android'", # Legacy telemetry is always disabled on Android
 ]
 tags = "coverage"
 
@@ -48,13 +43,13 @@ skip-if = [
 
 ["test_MigratePendingPings.js"]
 run-if = [
-  "os != 'android'", # Legacy telemetry is a lways disabled on Android
+  "os != 'android'", # Legacy telemetry is always disabled on Android
 ]
 
 ["test_PingAPI.js"]
 requesttimeoutfactor = 3  # Slow on macosx1500
 run-if = [
-  "os != 'android'", # Legacy telemetry is a lways disabled on Android
+  "os != 'android'", # Legacy telemetry is always disabled on Android
 ]
 
 ["test_PingSender.js"]
@@ -106,7 +101,7 @@ tags = "addons"
 
 ["test_TelemetryController_idle.js"]
 run-if = [
-  "os != 'android'", # Legacy telemetry is a lways disabled on Android
+  "os != 'android'", # Legacy telemetry is always disabled on Android
 ]
 
 ["test_TelemetryController_pingDisablement.js"]
@@ -172,7 +167,7 @@ skip-if = [
 
 ["test_TelemetrySession_activeTicks.js"]
 run-if = [
-  "os != 'android'", # Legacy telemetry is a lways disabled on Android
+  "os != 'android'", # Legacy telemetry is always disabled on Android
 ]
 
 ["test_TelemetryTimestamps.js"]
@@ -209,7 +204,6 @@ skip-if = [
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && opt", #  Bug 1781452
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && tsan", #  Bug 1781452
   "os == 'mac' && os_version == '10.15' && arch == 'x86_64'", # Bug 1713329
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64'", # Bug 1929422
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1707747
   "release_or_beta",
   "tsan",

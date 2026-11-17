@@ -77,7 +77,11 @@
   <string name="about_content" tools:ignore="BrandUsage">O %1$s é produzido pela Mozilla.</string>
   <!-- Private Browsing -->
   <string name="private_browsing_common_myths">Lendas comuns sobre navegação privativa</string>
-  <!-- Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active. -->
+  <!--
+    Private Browsing
+
+    Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active.
+  -->
   <string name="private_browsing_a11y_session_announcement">Sessão de navegação privativa</string>
   <!--
     True Private Browsing Mode
@@ -181,8 +185,10 @@
   <!--
     Browser Fragment
 
-    Content description (not visible, for screen readers etc.): Navigate backward (browsing history)
+    Label for popup button that appears when long-pressing the main menu. Tapping it allows the user to customize the main menu layout.
   -->
+  <string name="customize_menu">Personalizar menu</string>
+  <!-- Content description (not visible, for screen readers etc.): Navigate backward (browsing history) -->
   <string name="browser_menu_back">Voltar</string>
   <!-- Content description (not visible, for screen readers etc.): Navigate forward (browsing history) -->
   <string name="browser_menu_forward">Avançar</string>
@@ -313,8 +319,6 @@
   <string name="browser_menu_default_banner_title">Tornar o %1$s como padrão</string>
   <!-- Label text within the set as default banner -->
   <string name="browser_menu_default_banner_subtitle_2">Rápido, privativo e feito para você.</string>
-  <!-- Content description (not visible, for screen readers etc.) for the button that dismisses the set as default banner in the menu -->
-  <string name="browser_menu_default_banner_dismiss_promotion">Descartar promoção</string>
   <!-- Content description (not visible, for screen readers etc.) for recommended extensions in main menu -->
   <string name="browser_menu_recommended_extensions_content_description">Mais informações</string>
   <!--
@@ -348,7 +352,7 @@
 
     Toolbar title for the Page summaries settings fragment
   -->
-  <string name="preferences_page_summaries">Resumos de páginas</string>
+  <string name="preferences_page_summaries">Resumo de páginas</string>
   <!--
     AI Controls settings
 
@@ -709,13 +713,25 @@
   <string name="search_widget_text_long">Pesquisar na web</string>
   <!-- Content description (not visible, for screen readers etc.): Voice search -->
   <string name="search_widget_voice">Pesquisa por voz</string>
+  <!-- Content description (not visible, for screen readers etc.): Button in the search widget that starts a search in a private tab -->
+  <string name="search_widget_private_search">Pesquisa privativa</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for private search and for voice search -->
+  <string name="search_bar_widget_description">Barra de pesquisa com pesquisa privativa e por voz</string>
+  <!-- Widget description in the widget picker screen for the search bar widget that includes buttons for image search, private search and voice search -->
+  <string name="search_bar_with_lens_widget_description">Barra de pesquisa com pesquisa de imagem, privativa e por voz</string>
+  <!-- Widget description in the widget picker screen for the compact search bar widget -->
+  <string name="compact_search_bar_widget_description">Barra de pesquisa compacta</string>
   <!--
     Preferences
 
     Title for the settings page
   -->
   <string name="settings">Configurações</string>
-  <!-- Preference category for general settings -->
+  <!--
+    Preferences
+
+    Preference category for general settings
+  -->
   <string name="preferences_category_general">Geral</string>
   <!-- Preference category for all links about Fenix -->
   <string name="preferences_category_about">Sobre</string>
@@ -777,7 +793,7 @@
   <!-- Preference title for using the screen lock to hide tabs in private browsing -->
   <string name="preferences_pbm_lock_screen_title">Usar o bloqueio de tela para ocultar abas na navegação privativa</string>
   <!-- Informs the user how to access the tabs when "Use screen lock to hide tabs in private browsing" is enabled -->
-  <string name="preferences_pbm_lock_screen_summary_3">Veja abas com desbloqueio de impressão digital, PIN ou reconhecimento facial. Ativar isso também impede captura e compartilhamento de tela.</string>
+  <string name="preferences_pbm_lock_screen_summary_3">Ver abas com desbloqueio de impressão digital, PIN ou reconhecimento facial. Ativar isto também impede captura e compartilhamento de tela.</string>
   <!-- Description of the preference to enable "HTTPS-Only" mode. -->
   <string name="preferences_https_only_summary">Tentar se conectar com sites usando automaticamente o protocolo de criptografia HTTPS para maior segurança.</string>
   <!-- Summary of https only preference if https only is set to off -->
@@ -902,6 +918,10 @@
   <string name="preferences_open_links_in_apps_ask">Perguntar antes de abrir</string>
   <!-- Preference for open links in third party apps never open in apps option -->
   <string name="preferences_open_links_in_apps_never">Nunca</string>
+  <!-- Preference category header for media related open links in apps settings -->
+  <string name="preferences_media_category">Mídia</string>
+  <!-- Preference label for choosing whether links open in the YouTube app -->
+  <string name="preferences_open_links_in_youtube">Abrir links no aplicativo YouTube</string>
   <!-- Preference category for file storage. -->
   <string name="preferences_category_file_storage">Armazenamento de arquivos</string>
   <!-- Preference title for downloads default location. -->
@@ -1286,8 +1306,12 @@
   <string name="preference_simple_toolbar">Simples</string>
   <!-- Preference for using expanded toolbar -->
   <string name="preference_expanded_toolbar">Expandida</string>
-  <!-- Preference description indicating the toolbar location preference is disabled when the tab strip is enabled -->
-  <string name="preference_toolbar_pref_disabled_explanation">A barra de endereços deve estar no alto quando a barra de abas é exibida.</string>
+  <!-- Preference for changing where the search bar is positioned on the homepage, shown when the user has set the address bar to be displayed at the top of the screen -->
+  <string name="preferences_homepage_search_location">Posição da barra de pesquisa na página inicial</string>
+  <!-- Preference for showing the homepage search bar in the middle of the homepage -->
+  <string name="preference_homepage_search_location_middle">Meio</string>
+  <!-- Preference for showing the homepage search bar at the top of the homepage (combined with the address bar, already displayed at the top) -->
+  <string name="preference_homepage_search_location_top">No alto</string>
   <!-- New tab shortcut in toolbar customization -->
   <string name="toolbar_customize_shortcut_new_tab">Abrir nova aba</string>
   <!-- Share shortcut in toolbar customization -->
@@ -1369,6 +1393,8 @@
   <string name="library_desktop_bookmarks_unfiled">Outros favoritos</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">Histórico</string>
+  <!-- Content description (not visible, for screen readers etc.) for the check mark that replaces a site's icon in History and Recently closed tabs when the item is selected -->
+  <string name="library_item_selected_content_description">Selecionado</string>
   <!-- Settings Page Title -->
   <string name="settings_title">Configurações</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -1421,8 +1447,6 @@
   <string name="preferences_tabs">Abas</string>
   <!-- Title of preference that allows a user to specify the tab layout -->
   <string name="preferences_tab_layout">Layout de abas</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">Visão de abas</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">Lista</string>
   <!-- Option for a grid tab view -->
@@ -1477,20 +1501,12 @@
   <string name="preferences_tab_organization">Organização de abas</string>
   <!-- Title of the preference that allows a user to enable or disable the inactive tabs feature -->
   <string name="preferences_inactive_tabs_toggle_title">Abas inativas</string>
-  <!--
-    Inactive tabs
-
-    Category header of a preference that allows a user to enable or disable the inactive tabs feature
-  -->
-  <string name="preferences_inactive_tabs">Mover abas antigas para inativas</string>
   <!-- Summary of the preference that allows a user to enable or disable the inactive tabs feature. -->
   <string name="preferences_inactive_tabs_title">Mover abas que você não usa há duas semanas para a seção de inativas</string>
   <!-- Title of the preference that allows a user to enable or disable the tab groups feature -->
   <string name="preferences_tab_groups_title">Grupos de abas</string>
   <!-- Summary of the preference that allows a user to enable or disable the tab groups feature -->
   <string name="preferences_tab_groups_description">Organize suas abas em grupos que você pode nomear e salvar.</string>
-  <!-- Title for the preference to enable or disable the tab groups feature -->
-  <string name="preferences_tab_groups_feature">Ativar grupos de abas</string>
   <!--
     Privacy report
 
@@ -1520,7 +1536,7 @@
   -->
   <string name="remote_improvements_title">Permitir melhorias remotas</string>
   <!-- Description for remote improvements. Note: The word "Firefox" should NOT be translated -->
-  <string name="remote_improvements_description" tools:ignore="BrandUsage">O Firefox \u0020melhora funcionalidades, desempenho e estabilidade a cada atualização. Alterações são aplicadas remotamente.</string>
+  <string name="remote_improvements_description" tools:ignore="BrandUsage">O Firefox melhora funcionalidades, desempenho e estabilidade a cada atualização. Alterações são aplicadas remotamente.</string>
   <!-- Learn more link for remote improvements, links to an article for more information about rollouts. -->
   <string name="remote_improvements_learn_more">Saiba mais</string>
   <!-- Title for remote improvements preference in Advanced settings -->
@@ -1706,6 +1722,11 @@
   <string name="close_tab_and_delete_group_confirmation_dialog_cancel">Cancelar</string>
   <!-- Content description for the three dot button next to a tab group" -->
   <string name="tab_group_three_dot_button_content_description">Mais opções</string>
+  <!--
+    Content description for the Expand button on the contracted menu for a tab group:
+    when tapped, tabs are displayed in an expanded grid or list view, taking up the full screen.
+  -->
+  <string name="tab_groups_strip_expand_group_content_description">Expandir para mostrar abas em tela inteira</string>
   <!-- Text shown on the edit button for a tab group on the three dot menu -->
   <string name="tab_group_three_dot_menu_edit">Editar</string>
   <!-- Text shown on the ungroup button for a tab group on the three dot menu -->
@@ -1951,6 +1972,8 @@
   <string name="download_search_no_results_found">Nenhum resultado encontrado</string>
   <!-- Text for the "Select all" button, which selects all downloaded items in the downloads list. -->
   <string name="download_select_all_items">Selecionar tudo</string>
+  <!-- Shown in the downloads list in place of a website name when a file came from a data: or blob: URL that has no website address. "data" refers to the data: URL scheme. -->
+  <string name="download_item_source_data">(dados)</string>
   <!--
     Downloads Content Type Filters
 
@@ -2030,7 +2053,7 @@
   <!-- Broken site reason text for site is slow -->
   <string name="webcompat_reporter_reason_slow2">O site está lento</string>
   <!-- Broken site reason text for video isn’t playing or loading -->
-  <string name="webcompat_reporter_reason_media2">O vídeo não está sendo carregado ou \u0020reproduzido</string>
+  <string name="webcompat_reporter_reason_media2">O vídeo não está sendo carregado ou reproduzido</string>
   <!-- Broken site reason text for missing content -->
   <string name="webcompat_reporter_reason_content2">Falta conteúdo</string>
   <!-- Broken site reason text for can’t sign in or register -->
@@ -2439,6 +2462,8 @@
   <string name="sync_send_tab_empty_state_title">Nenhum dispositivo conectado</string>
   <!-- Send tab to synced devices: Empty state message - Displayed when the user has no synced devices -->
   <string name="sync_send_tab_empty_state_description" tools:ignore="BrandUsage">Para enviar uma aba, entre no Firefox em pelo menos um outro dispositivo.</string>
+  <!-- Send tab to synced devices: Empty state link - Displayed when the user has no synced devices -->
+  <string name="sync_send_tab_empty_state_link">Saiba como conectar um dispositivo</string>
   <!-- Send tab to synced devices: Connectivity Error title -->
   <string name="sync_send_tab_error_connection_title">Verifique sua conexão com a internet</string>
   <!-- Send tab to synced devices: Connectivity Error message - Suggested user action after internet connection has been established -->
@@ -2566,7 +2591,7 @@
   <!-- Title for the Delete browsing data on quit preference -->
   <string name="preferences_delete_browsing_data_on_quit">Limpar dados de navegação ao sair</string>
   <!-- Summary for the Delete browsing data on quit preference. "Quit" translation should match delete_browsing_data_on_quit_action translation. -->
-  <string name="preference_summary_delete_browsing_data_on_quit_2">Excluir automaticamente os dados de navegação selecionados abaixo ao tocar em \"Sair\" no menu principal</string>
+  <string name="preference_summary_delete_browsing_data_on_quit_2">Excluir automaticamente os dados de navegação selecionados abaixo ao tocar em “Sair” no menu principal</string>
   <!-- Title text of a delete browsing data dialog. -->
   <string name="delete_history_prompt_title">Intervalo de tempo a excluir</string>
   <!-- Body text of a delete browsing data dialog. -->
@@ -2701,7 +2726,7 @@
   <!-- Preference for enhanced tracking protection for the custom protection settings -->
   <string name="preference_enhanced_tracking_protection_custom">Personalizado</string>
   <!-- Preference description for enhanced tracking protection for the strict protection settings -->
-  <string name="preference_enhanced_tracking_protection_custom_description_2">Escolha que rastreadores e scripts bloquear.</string>
+  <string name="preference_enhanced_tracking_protection_custom_description_2">Escolher quais rastreadores e scripts bloquear.</string>
   <!-- Accessibility text for the Strict protection information icon -->
   <string name="preference_enhanced_tracking_protection_custom_info_button">O que é bloqueado pela proteção personalizada contra rastreamento</string>
   <!--
@@ -2715,9 +2740,9 @@
   <!-- Option for enhanced tracking protection for the custom protection settings for cookies -->
   <string name="preference_enhanced_tracking_protection_custom_cookies_2">Cookies de sites não visitados</string>
   <!-- Option for enhanced tracking protection for the custom protection settings for cookies -->
-  <string name="preference_enhanced_tracking_protection_custom_cookies_3">Todos os cookies de terceiros (pode atrapalhar alguns sites)</string>
+  <string name="preference_enhanced_tracking_protection_custom_cookies_3">Bloquear todos os cookies de terceiros (pode atrapalhar alguns sites)</string>
   <!-- Option for enhanced tracking protection for the custom protection settings for cookies -->
-  <string name="preference_enhanced_tracking_protection_custom_cookies_4">Todos os cookies (atrapalha vários sites)</string>
+  <string name="preference_enhanced_tracking_protection_custom_cookies_4">Bloquear todos os cookies (atrapalha vários sites)</string>
   <!-- Option for enhanced tracking protection for the custom protection settings for cookies -->
   <string name="preference_enhanced_tracking_protection_custom_cookies_5">Isolar cookies entre sites</string>
   <!-- Preference for Global Privacy Control for the custom privacy settings for Global Privacy Control. '&amp;' is replaced with the ampersand symbol: & -->
@@ -3034,7 +3059,7 @@
   <!-- Title for the Suggest Email Masks toggle -->
   <string name="preferences_email_masks_suggest_title">Sugerir máscaras de email</string>
   <!-- Summary for the Suggest Email Masks toggle. -->
-  <string name="preferences_email_masks_suggest_summary">Oculte seu email real para proteger sua caixa de entrada de spam. Alguns sites não oferecem suporte a máscaras de email.</string>
+  <string name="preferences_email_masks_suggest_summary">Ocultar email real para proteger a caixa de entrada contra spam. Alguns sites não oferecem suporte a máscaras de email.</string>
   <!-- Text that links to additional information about the Email Masks -->
   <string name="preferences_email_masks_suggest_learn_more">Saiba mais</string>
   <!-- Title for the Manage Email Masks links to Firefox Relay dashboard -->
@@ -3091,7 +3116,7 @@
   <!-- Badge label shown in the menu item when the browser VPN has an error -->
   <string name="ip_protection_menu_error">Erro</string>
   <!-- Badge label shown in the VPN menu item when the user is eligible for the feature but needs to authenticate / authorize to enable it -->
-  <string name="ip_protection_menu_try_vpn_cta">Experimente gratuitamente</string>
+  <string name="ip_protection_menu_try_vpn_cta">Experimente de graça</string>
   <!-- Content description for the chevron button that opens the browser VPN settings screen -->
   <string name="ip_protection_navigate_settings">Abrir configurações de VPN</string>
   <!--
@@ -3257,6 +3282,14 @@
   <string name="credit_cards_warning_dialog_set_up_now">Configurar agora</string>
   <!-- Negative button to ignore warning dialog if users have no device authentication set up -->
   <string name="credit_cards_warning_dialog_later">Mais tarde</string>
+  <!-- Title of the dialog shown on Android Automotive OS (in cars) when users have no device authentication set up and try to access their saved passwords, payment methods, or sign in to their account -->
+  <string name="automotive_authentication_setup_dialog_title">Proteja seus dados sensíveis</string>
+  <!-- Message of the dialog shown on Android Automotive OS (in cars) when users have no device authentication set up and try to access their saved passwords, payment methods, or sign in to their account -->
+  <string name="automotive_authentication_setup_dialog_message">Configure um método de bloqueio do dispositivo (desenho, código PIN ou senha) para proteger o acesso a seus dados confidenciais salvos, caso outra pessoa esteja dirigindo seu carro.</string>
+  <!-- Primary button on the dialog shown on Android Automotive OS (in cars). Tapping it directs users to the device settings to set up a device lock -->
+  <string name="automotive_authentication_setup_dialog_set_up_now">Configurar agora</string>
+  <!-- Secondary button of the dialog shown on Android Automotive OS (in cars). Tapping closes the dialogue and cancels the action that triggered the dialogue. -->
+  <string name="automotive_authentication_setup_dialog_cancel">Cancelar</string>
   <!-- Title of PIN verification dialog to direct users to re-enter their device credentials to access their credit cards -->
   <string name="credit_cards_biometric_prompt_message_pin">Desbloquear dispositivo</string>
   <!-- Message displayed in biometric prompt for authentication, before allowing users to use their stored payment method information -->
@@ -3424,7 +3457,7 @@
   <!-- This is the hint text that is shown inline on the hostname field of the create new login page. 'https://www.example.com' intentionally hardcoded here -->
   <string name="add_login_hostname_hint_text">https://www.example.com</string>
   <!-- This is an error message shown below the hostname field of the add login page when a hostname does not contain http or https. -->
-  <string name="add_login_hostname_invalid_text_3">O endereço web deve conter \"https://\" ou \"http://\"</string>
+  <string name="add_login_hostname_invalid_text_3">O endereço web deve conter “https://” ou “http://”</string>
   <!-- This is an error message shown below the hostname field of the add login page when a hostname is invalid. -->
   <string name="add_login_hostname_invalid_text_2">Nome de servidor válido é obrigatório</string>
   <!--
@@ -3969,7 +4002,7 @@
   <!-- Text for the connection security panel when the site is not secure. -->
   <string name="connection_security_panel_not_secure">Conexão não segura</string>
   <!-- Text for the connection security panel when accessed from local PDF. -->
-  <string name="connection_security_panel_local_pdf">Esta página está armazenada em seu dispositivo.</string>
+  <string name="connection_security_panel_local_pdf">Esta página está armazenada em seu dispositivo</string>
   <!--
     Text for the connection security panel to indicate who the certificate was verified by.
     %s is a placeholder for the name of the certificate authority that issued the certificate.
@@ -4520,6 +4553,18 @@
   <string name="lens_camera_mode_qr">Leitor de código QR</string>
   <!-- Toast shown when the user picks an image from the gallery in QR mode but no QR code is found in it -->
   <string name="lens_camera_qr_no_code_found">Nenhum código QR encontrado na imagem</string>
+  <!-- Status shown under an image picked from the gallery or taken with the camera while it is being sent to Google Lens for a visual search -->
+  <string name="lens_camera_loading_status">Pesquisa em andamento</string>
+  <!-- Button shown under an image picked from the gallery or taken with the camera while it is being sent to Google Lens. Tapping it stops the search and returns to the camera. -->
+  <string name="lens_camera_loading_cancel_button">Cancelar</string>
+  <!-- Snackbar message shown when an image picked from the gallery or taken with the camera could not be opened or read, so it was never sent to Google Lens. Shown after returning to the camera. -->
+  <string name="lens_camera_image_load_failed_v2">Não foi possível carregar esta imagem.</string>
+  <!-- Snackbar message shown when an image picked from the gallery could not be opened or read, so it was never sent to Google Lens. Shown after returning to the camera. -->
+  <string name="lens_camera_image_load_failed">Não foi possível carregar esta imagem. Tente outra.</string>
+  <!-- Snackbar message shown when an image picked from the gallery or taken with the camera could not be searched because of a network problem or an error from Google Lens. Shown after returning to the camera, next to the lens_camera_upload_failed_retry_button action. -->
+  <string name="lens_camera_upload_failed">Não foi possível obter resultados do Google Lens</string>
+  <!-- Action in the snackbar shown when an image picked from the gallery or taken with the camera could not be searched with Google Lens. Tapping it searches the same image again. -->
+  <string name="lens_camera_upload_failed_retry_button">Tentar novamente</string>
   <!-- Title of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
   <string name="lens_opt_out_title">Encontrar com Google Lens</string>
   <!-- Description of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
@@ -4579,6 +4624,12 @@
 
     Content description for accessibility (used by screen readers): Description for the button that triggers the start of a signature workflow on the PDF displayed on the screen.
   -->
+  <string name="pdf_tools_sign_content_description_2">Adicionar uma assinatura</string>
+  <!--
+    PDF viewer toolbar and buttons
+
+    Content description for accessibility (used by screen readers): Description for the button that triggers the start of a signature workflow on the PDF displayed on the screen.
+  -->
   <string name="pdf_tools_sign_content_description">Assinar PDF</string>
   <!-- Content description for accessibility (used by screen readers): Description of the button that downloads the PDF displayed on the screen to the user's device. -->
   <string name="pdf_tools_download_content_description">Baixar PDF</string>
@@ -4600,14 +4651,24 @@
   <string name="pdf_tools_signature_clear_button">Limpar</string>
   <!-- The text for the button that adds the signature the user has typed to the PDF. -->
   <string name="pdf_tools_signature_add_button">Adicionar</string>
+  <!-- Content description for accessibility (used by screen readers): Description for the loading indicator when a signature is in the process of being added to a PDF. -->
+  <string name="pdf_tools_signature_adding_content_description">Adicionando assinatura</string>
+  <!--
+    Listen to page
+
+    Content description for the reader view panel: a group of buttons floating over the content, which allow customizing the reader view or activating the Listen to Page feature
+  -->
+  <string name="reader_mode_panel_content_description_2">Opções do modo de leitura</string>
   <!--
     Listen to page
 
     Content description for the reader mode panel: a group of buttons floating over the content
   -->
   <string name="reader_mode_panel_content_description">Opções do modo leitura</string>
-  <!-- Content description for the button in reader mode panel that turns on the read aloud feature (playback of content begins when button is pressed) -->
+  <!-- Content description for the button in the reader view panel that turns on the Listen to Page feature (playback of content begins when button is pressed) -->
   <string name="reader_mode_panel_listen_content_description">Ler em voz alta</string>
-  <!-- Content description for media player displayed in Reader Mode when the Listen to Page (Read Aloud) feature is selected -->
+  <!-- Content description for media player displayed in Reader view when the Listen to Page (Read Aloud) feature is selected -->
   <string name="reader_mode_panel_media_player_content_description">Reprodutor de mídia</string>
+  <!-- Content description for the reader view button Reader view facilitates readability and has a Listen to Page feature. Button icon is a document with headphones, and is displayed next to the page URL when the feature is available. -->
+  <string name="browser_menu_read_or_listen">Modo de leitura, ler ou ouvir a página</string>
 </resources>

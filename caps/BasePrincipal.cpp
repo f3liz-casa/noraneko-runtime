@@ -388,7 +388,7 @@ nsresult BasePrincipal::WriteJSONProperties(JSONWriter& aWriter) {
   return NS_OK;
 }
 
-nsresult BasePrincipal::WriteJSONInnerProperties(JSONWriter& aWriter) {
+nsresult BasePrincipal::WriteJSONInnerProperties(JSONWriter& /*aWriter*/) {
   return NS_OK;
 }
 
@@ -1143,6 +1143,30 @@ BasePrincipal::GetIsLoopbackHost(bool* aRes) {
 }
 
 NS_IMETHODIMP
+BasePrincipal::GetIsSecureContextAllowlistedHost(bool* aRes) {
+  AssertIsOnMainThread();
+  *aRes = false;
+
+  // The allowlist only applies to network schemes, matching
+  // nsMixedContentBlocker::IsPotentiallyTrustworthyOrigin. An https principal
+  // is trustworthy on its own merits and must not be treated as allowlisted.
+  nsAutoCString scheme;
+  if (NS_FAILED(GetScheme(scheme)) ||
+      (!scheme.EqualsLiteral("http") && !scheme.EqualsLiteral("ws"))) {
+    return NS_OK;
+  }
+
+  nsAutoCString host;
+  // Swallow potential failure as this method is infallible.
+  if (NS_FAILED(GetHost(host))) {
+    return NS_OK;
+  }
+
+  *aRes = nsMixedContentBlocker::IsPotentiallyTrustworthyAllowlistedHost(host);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 BasePrincipal::GetAboutModuleFlags(uint32_t* flags) {
   AssertIsOnMainThread();
   *flags = 0;
@@ -1607,7 +1631,7 @@ NS_INTERFACE_MAP_BEGIN(BasePrincipal::Deserializer)
 NS_INTERFACE_MAP_END
 
 NS_IMETHODIMP
-BasePrincipal::Deserializer::Write(nsIObjectOutputStream* aStream) {
+BasePrincipal::Deserializer::Write(nsIObjectOutputStream* /*aStream*/) {
   // Read is used still for legacy principals
   MOZ_RELEASE_ASSERT(false, "Old style serialization is removed");
   return NS_OK;

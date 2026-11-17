@@ -5,6 +5,13 @@
 var TabContextMenu = {
   contextTab: null,
 
+  // Badge variants for menu items. Values map to the `tab-context-badge-*` l10n
+  // ids and, for NEW, the filled `badge-new` style.
+  BADGE_TYPE: {
+    NEW: "new",
+    BETA: "beta",
+  },
+
   /*
    * Declared layout for the tab context menu and its managed submenus, keyed by
    * mode. Each mode maps a popup id to the ordered sections describing that
@@ -76,6 +83,7 @@ var TabContextMenu = {
             "#context_askChat",
             "#context_aiSeparator",
             "#context_askChatSummarize",
+            "#context_createAITab",
           ],
         },
         {
@@ -138,6 +146,7 @@ var TabContextMenu = {
             "#context_moveToStart",
             "#context_moveToEnd",
             "#context_openTabInWindow",
+            "#context_openTabInMiniWindow",
             "#moveTabSeparator",
             "#context_moveTabToGroupSeparator",
             "#context_selectAllSeparator",
@@ -235,6 +244,7 @@ var TabContextMenu = {
             ["#context_bookmarkSelectedTabs", "#context_bookmarkTab"],
             ["#context_addNote", "#context_editNote"],
             "#context_askChatSummarize",
+            "#context_createAITab",
             "#context_tabToolsSeparator",
           ],
         },
@@ -309,6 +319,7 @@ var TabContextMenu = {
             "#context_moveToStart",
             "#context_moveToEnd",
             "#context_openTabInWindow",
+            "#context_openTabInMiniWindow",
             "#moveTabSeparator",
           ],
         },
@@ -513,6 +524,22 @@ var TabContextMenu = {
       if (tab.splitview) {
         splitViews.add(tab.splitview);
       }
+    }
+
+    let miniWindowItem = document.getElementById("context_openTabInMiniWindow");
+    miniWindowItem.hidden = !Services.prefs.getBoolPref(
+      "browser.mini-window.enabled",
+      false
+    );
+
+    this.addBadge(miniWindowItem, this.BADGE_TYPE.BETA);
+    if (!miniWindowItem.hidden) {
+      miniWindowItem.setAttribute(
+        "data-l10n-args",
+        JSON.stringify({
+          tabCount: this.MiniWindowManager.tabsToPop(this.contextTabs).length,
+        })
+      );
     }
 
     let disabled = gBrowser.tabs.length == 1;
@@ -736,11 +763,11 @@ var TabContextMenu = {
         multiselectingDiverseUrls || !this.TabNotes.isEligible(this.contextTab);
       contextEditNote.disabled = multiselectingDiverseUrls;
 
-      this.removeNewBadge(contextAddNote);
+      this.removeBadge(contextAddNote);
       if (
         Services.prefs.getBoolPref("browser.tabs.notes.newBadge.enabled", true)
       ) {
-        this.addNewBadge(contextAddNote);
+        this.addBadge(contextAddNote, this.BADGE_TYPE.NEW);
       }
 
       this.TabNotes.has(this.contextTab).then(hasNote => {
@@ -861,6 +888,12 @@ var TabContextMenu = {
         this
       );
     }
+
+    document.getElementById("context_createAITab").hidden =
+      !TabContextMenu.AIWindowMenu.canShowAITabMenu(
+        window,
+        this.contextTabs.map(tab => tab.linkedBrowser.currentURI)
+      );
 
     // Move Tab items
     let contextMoveTabOptions = document.getElementById(
@@ -1023,7 +1056,7 @@ var TabContextMenu = {
     document.getElementById("context_shareSelectedTabsSeparator").hidden =
       hideContentSharing;
     if (!contentSharingShareTabs.hidden) {
-      this.addNewBadge(contentSharingShareTabs);
+      this.addBadge(contentSharingShareTabs, this.BADGE_TYPE.NEW);
     }
 
     let toggleMute = document.getElementById("context_toggleMuteTab");
@@ -1427,20 +1460,35 @@ var TabContextMenu = {
   },
 
   /**
+   * Badge a menu item as a new or beta feature. NEW uses the filled style,
+   * BETA the default outlined one.
+   *
    * @param {MozMenuItem} menuItem
+   * @param {string} type - one of TabContextMenu.BADGE_TYPE.
    */
-  addNewBadge(menuItem) {
+  addBadge(menuItem, type) {
+    let l10nId;
+    switch (type) {
+      case this.BADGE_TYPE.NEW:
+        l10nId = "tab-context-badge-new";
+        break;
+      case this.BADGE_TYPE.BETA:
+        l10nId = "tab-context-badge-beta";
+        break;
+      default:
+        throw new Error(`Unknown badge type: ${type}`);
+    }
     menuItem.setAttribute(
       "badge",
-      gBrowser.tabLocalization.formatValueSync("tab-context-badge-new")
+      gBrowser.tabLocalization.formatValueSync(l10nId)
     );
-    menuItem.classList.add("badge-new");
+    menuItem.classList.toggle("badge-new", type === this.BADGE_TYPE.NEW);
   },
 
   /**
    * @param {MozMenuItem} menuItem
    */
-  removeNewBadge(menuItem) {
+  removeBadge(menuItem) {
     menuItem.removeAttribute("badge");
     menuItem.classList.remove("badge-new");
   },
@@ -1461,8 +1509,14 @@ XPCOMUtils.defineLazyPreferenceGetter(
 );
 
 ChromeUtils.defineESModuleGetters(TabContextMenu, {
-  GenAI: "resource:///modules/GenAI.sys.mjs",
+  AIWindow:
+    "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
+  AIWindowMenu:
+    "moz-src:///browser/components/aiwindow/ui/modules/AIWindowMenu.sys.mjs",
+  GenAI: "moz-src:///browser/components/genai/GenAI.sys.mjs",
   MenuSectionLayout: "resource:///modules/MenuSectionLayout.sys.mjs",
+  MiniWindowManager:
+    "moz-src:///browser/components/miniwindow/MiniWindowManager.sys.mjs",
   Tabbrowser: "moz-src:///browser/components/tabbrowser/Tabbrowser.sys.mjs",
   TabNotes: "moz-src:///browser/components/tabnotes/TabNotes.sys.mjs",
   TabStateFlusher:

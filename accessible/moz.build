@@ -25,6 +25,7 @@ DIRS += [
     "html",
     "interfaces",
     "ipc",
+    "pdf",
     "xpcom",
     "xul",
 ]
@@ -42,9 +43,11 @@ BROWSER_CHROME_MANIFESTS += [
     "tests/browser/forceEnabled/browser.toml",
     "tests/browser/general/browser.toml",
     "tests/browser/hittest/browser.toml",
+    "tests/browser/lateServiceEnable/browser.toml",
     "tests/browser/mac/browser.toml",
     "tests/browser/mac/zoom/browser.toml",
     "tests/browser/name_and_description/browser.toml",
+    "tests/browser/pdfOutput/browser.toml",
     "tests/browser/performance/perftest.toml",
     "tests/browser/pivot/browser.toml",
     "tests/browser/relations/browser.toml",
@@ -60,10 +63,6 @@ BROWSER_CHROME_MANIFESTS += [
     "tests/browser/windows/uia/browser.toml",
 ]
 
-if CONFIG["MOZ_ENABLE_SKIA_PDF"]:
-    DIRS += ["pdf"]
-    BROWSER_CHROME_MANIFESTS += ["tests/browser/pdfOutput/browser.toml"]
-
 with Files("**"):
     BUG_COMPONENT = ("Core", "Disability Access APIs")
 
@@ -71,3 +70,12 @@ SPHINX_TREES["/accessible"] = "docs"
 
 with Files("docs/**"):
     SCHEDULES.exclusive = ["docs"]
+
+with Files("tests/browser/atk/**"):
+    SCHEDULES.exclusive = ["linux"]
+
+with Files("tests/browser/windows/**"):
+    SCHEDULES.exclusive = ["windows"]
+
+with Files("tests/browser/mac/**"):
+    SCHEDULES.exclusive = ["macosx"]

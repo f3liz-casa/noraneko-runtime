@@ -123,51 +123,9 @@ struct UniformBlockInfo;
 struct VertAttribPointerDesc;
 }  // namespace webgl
 
-struct WebGLTexImageData {
-  TexImageTarget mTarget;
-  int32_t mRowLength;
-  uint32_t mWidth;
-  uint32_t mHeight;
-  uint32_t mDepth;
-  gfxAlphaType mSrcAlphaType;
-};
-
-struct WebGLTexPboOffset {
-  TexImageTarget mTarget;
-  uint32_t mWidth;
-  uint32_t mHeight;
-  uint32_t mDepth;
-  WebGLsizeiptr mPboOffset;
-  bool mHasExpectedImageSize;
-  GLsizei mExpectedImageSize;
-};
-
 WebGLTexelFormat GetWebGLTexelFormat(TexInternalFormat format);
 
 void AssertUintParamCorrect(gl::GLContext* gl, GLenum pname, GLuint shadow);
-
-// From WebGLContextUtils
-TexTarget TexImageTargetToTexTarget(TexImageTarget texImageTarget);
-
-struct WebGLIntOrFloat {
-  const enum { Int, Float, Uint } mType;
-
-  union {
-    GLint i;
-    GLfloat f;
-    GLuint u;
-  } mValue;
-
-  explicit WebGLIntOrFloat(GLint i) : mType(Int) { mValue.i = i; }
-  explicit WebGLIntOrFloat(GLfloat f) : mType(Float) { mValue.f = f; }
-
-  GLint AsInt() const {
-    return (mType == Int) ? mValue.i : NS_lroundf(mValue.f);
-  }
-  GLfloat AsFloat() const {
-    return (mType == Float) ? mValue.f : GLfloat(mValue.i);
-  }
-};
 
 ////////////////////////////////////
 
@@ -471,8 +429,6 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   void ErrorInvalidEnumInfo(const char* info, GLenum enumValue) const;
   void ErrorInvalidEnumArg(const char* argName, GLenum val) const;
 
-  static const char* ErrorName(GLenum error);
-
   void JsWarning(const std::string& text) const;
 
   /**
@@ -535,14 +491,14 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   void EndOfFrame();
   RefPtr<gfx::DataSourceSurface> GetFrontBufferSnapshot();
   Maybe<uvec2> FrontBufferSnapshotInto(
-      const Maybe<Range<uint8_t>> dest,
+      const Maybe<mozilla::Range<uint8_t>> dest,
       const Maybe<size_t> destStride = Nothing());
   Maybe<uvec2> FrontBufferSnapshotInto(
       const std::shared_ptr<gl::SharedSurface>& front,
-      const Maybe<Range<uint8_t>> dest,
+      const Maybe<mozilla::Range<uint8_t>> dest,
       const Maybe<size_t> destStride = Nothing());
   Maybe<uvec2> SnapshotInto(GLuint srcFb, const gfx::IntSize& size,
-                            const Range<uint8_t>& dest,
+                            const mozilla::Range<uint8_t>& dest,
                             const Maybe<size_t> destStride = Nothing());
   already_AddRefed<gfx::SourceSurface> GetBackBufferSnapshot(
       const bool requireAlphaPremult);
@@ -667,6 +623,8 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   void LineWidth(GLfloat width);
   void LinkProgram(WebGLProgram& prog);
   void PolygonOffset(GLfloat factor, GLfloat units);
+  void PolygonOffsetClampEXT(GLfloat factor, GLfloat units, GLfloat clamp);
+  void ClipControlEXT(GLenum origin, GLenum depth);
   void ProvokingVertex(webgl::ProvokingVertex) const;
 
   ////
@@ -684,7 +642,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
  public:
   void ReadPixelsPbo(const webgl::ReadPixelsDesc&, uint64_t offset);
   webgl::ReadPixelsResult ReadPixelsInto(const webgl::ReadPixelsDesc&,
-                                         const Range<uint8_t>& dest);
+                                         const mozilla::Range<uint8_t>& dest);
 
   ////
 
@@ -821,8 +779,6 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
 
   void OnDataAllocCall() const { mDataAllocGLCallCount++; }
 
-  uint64_t GetNumGLDataAllocCalls() const { return mDataAllocGLCallCount; }
-
   void OnEndOfFrame();
 
   // -----------------------------------------------------------------------------
@@ -844,7 +800,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   // CompressedTexSubImage if `sub`
   void CompressedTexImage(bool sub, GLenum imageTarget, uint32_t level,
                           GLenum format, uvec3 offset, uvec3 size,
-                          const Range<const uint8_t>& src,
+                          const mozilla::Range<const uint8_t>& src,
                           const uint32_t pboImageSize,
                           const Maybe<uint64_t>& pboOffset) const;
 
@@ -861,11 +817,11 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   void TexStorage(GLenum texTarget, uint32_t levels, GLenum sizedFormat,
                   uvec3 size) const;
 
-  std::unique_ptr<webgl::TexUnpackBlob> ToTexUnpackBytes(
-      const WebGLTexImageData& imageData);
-
-  std::unique_ptr<webgl::TexUnpackBytes> ToTexUnpackBytes(
-      WebGLTexPboOffset& aPbo);
+  // Hint that the texture bound to texTarget will be used as a framebuffer
+  // attachment, so that ANGLE D3D allocates render target storage up front
+  // instead of converting the storage on first use. Must be called before
+  // TexStorage to have any effect. Only for internal use by DrawTargetWebgl.
+  void HintTexRenderTarget(GLenum texTarget) const;
 
   ////////////////////////////////////
   // WebGLTextureUpload.cpp
@@ -944,9 +900,6 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   bool mForceResizeOnPresent = false;
   bool mVRReady = false;
 
-  template <typename WebGLObjectType>
-  void DeleteWebGLObjectsArray(nsTArray<WebGLObjectType>& array);
-
   GLuint mActiveTexture = 0;
   GLenum mDefaultFB_DrawBuffer0 = LOCAL_GL_BACK;
   GLenum mDefaultFB_ReadBuffer = LOCAL_GL_BACK;
@@ -964,8 +917,6 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
 
   uint32_t mGLMaxVertexTextureImageUnits = 0;
   uint32_t mGLMaxFragmentTextureImageUnits = 0;
-  uint32_t mGLMaxCombinedTextureImageUnits = 0;
-
   // ES3:
   uint32_t mGLMinProgramTexelOffset = 0;
   uint32_t mGLMaxProgramTexelOffset = 0;
@@ -1151,27 +1102,6 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
                     size_t dstTexelSize);
 
   //////
- public:
-  template <typename T>
-  bool ValidateObject(const char* const argName, const T& object) const {
-    // Todo: Remove all callers.
-    return true;
-  }
-
-  template <typename T>
-  bool ValidateObject(const char* const argName, const T* const object) const {
-    // Todo: Remove most (all?) callers.
-    if (!object) {
-      ErrorInvalidOperation(
-          "%s: Object argument cannot have been marked for"
-          " deletion.",
-          argName);
-      return false;
-    }
-    return true;
-  }
-
-  ////
 
  private:
   void LoseContextLruLocked(webgl::ContextLossReason reason)

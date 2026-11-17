@@ -4,8 +4,15 @@
 
 #import <AuthenticationServices/AuthenticationServices.h>
 
+#include <libproc.h>
+#include <signal.h>
+#include <string.h>
+#include <sys/param.h>
+#include <unistd.h>
+
 #include "ASWebAuthSessionHandler.h"
 #include "nsIASWebAuthSessionRequest.h"
+#include "MacAutoreleasePool.h"
 #include "MacStringHelpers.h"
 #include "mozilla/Logging.h"
 #include "mozilla/RefPtr.h"
@@ -41,7 +48,7 @@ static void CancelRequestObject(id requestObject) {
 // The wrapped object is the real request in production or a mock in tests.
 class ASWebAuthSessionRequestWrapper final : public nsIASWebAuthSessionRequest {
  public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIASWEBAUTHSESSIONREQUEST
 
   ASWebAuthSessionRequestWrapper(id aRequestObject, NSString* aUuid,
@@ -166,7 +173,6 @@ ASWebAuthSessionRequestWrapper::Cancel() {
   return NS_OK;
 }
 
-API_AVAILABLE(macos(12.0))
 @interface ASWebAuthSessionHandler
     : NSObject <ASWebAuthenticationSessionWebBrowserSessionHandling>
 @end
@@ -175,7 +181,8 @@ API_AVAILABLE(macos(12.0))
 
 - (void)beginHandlingWebAuthenticationSessionRequest:
     (ASWebAuthenticationSessionRequest*)request {
-  MOZ_ASSERT(NS_IsMainThread());
+  // AuthenticationServices calls this on one of its own threads, so everything
+  // that touches Gecko state runs in the runnable below.
   MOZ_LOG(gASWebAuthLog, mozilla::LogLevel::Info,
           ("beginHandlingWebAuthenticationSessionRequest"));
 
@@ -223,7 +230,7 @@ API_AVAILABLE(macos(12.0))
 
 - (void)cancelWebAuthenticationSessionRequest:
     (ASWebAuthenticationSessionRequest*)request {
-  MOZ_ASSERT(NS_IsMainThread());
+  // Called on an AuthenticationServices thread, same as the begin callback.
   MOZ_LOG(gASWebAuthLog, mozilla::LogLevel::Info,
           ("cancelWebAuthenticationSessionRequest"));
 
@@ -232,7 +239,14 @@ API_AVAILABLE(macos(12.0))
   NS_DispatchToMainThread(NS_NewRunnableFunction(
       "ASWebAuthSessionHandler::cancelHandling",
       [uuidXPCOM = nsString(uuidXPCOM)]() {
+        // A request queued here never reached the browser UI, so nothing else
+        // will answer it.
+        nsCOMPtr<nsIASWebAuthSessionRequest> queued =
+            sPendingBeginRequests.GetWeak(uuidXPCOM);
         sPendingBeginRequests.Remove(uuidXPCOM);
+        if (queued) {
+          queued->Cancel();
+        }
 
         nsCOMPtr<nsIObserverService> obsServ =
             mozilla::services::GetObserverService();
@@ -247,8 +261,7 @@ API_AVAILABLE(macos(12.0))
 
 namespace {
 
-class API_AVAILABLE(macos(12.0)) ASWebAuthServiceReadyObserver final
-    : public nsIObserver {
+class ASWebAuthServiceReadyObserver final : public nsIObserver {
  public:
   NS_DECL_ISUPPORTS
 
@@ -256,6 +269,11 @@ class API_AVAILABLE(macos(12.0)) ASWebAuthServiceReadyObserver final
                      const char16_t* aData) override {
     if (!strcmp(aTopic, "aswebauthsession-service-shutdown")) {
       sServiceReady = false;
+      // Queued requests never reached the browser UI, so the apps waiting
+      // on them have to be told that nothing is handling them.
+      for (const auto& request : sPendingBeginRequests.Values()) {
+        request->Cancel();
+      }
       sPendingBeginRequests.Clear();
       return NS_OK;
     }
@@ -293,13 +311,75 @@ NS_IMPL_ISUPPORTS(ASWebAuthServiceReadyObserver, nsIObserver)
 
 }  // namespace
 
-static ASWebAuthSessionHandler* sHandler API_AVAILABLE(macos(12.0)) = nil;
+static ASWebAuthSessionHandler* sHandler = nil;
 static bool sObserversRegistered = false;
 
-static void RegisterObservers() API_AVAILABLE(macos(12.0)) {
+void RegisterASWebAuthSessionHandler() {
+  sHandler = [[ASWebAuthSessionHandler alloc] init];
+  ASWebAuthenticationSessionWebBrowserSessionManager.sharedManager
+      .sessionHandler = sHandler;
+}
+
+static NSString* const kBrokerRefreshedKey = @"ASWebAuthSessionBrokerRefreshed";
+
+// SafariLaunchAgent picks the browser that handles authentication requests. It
+// remembers, per bundle path, a browser whose Info.plist lacked
+// ASWebAuthenticationSessionWebBrowserSupportCapabilities and keeps skipping
+// that browser until the agent exits. A Firefox that gained the key through an
+// update is therefore skipped until the user logs out. Terminate the agent once
+// so that it reads our Info.plist again. launchd starts it again on the next
+// request. This can be removed once builds without the key are no longer in
+// use. See bug 2074060.
+static void MaybeRefreshAuthenticationBroker() {
+  mozilla::MacAutoreleasePool pool;
+
+  NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+  if ([defaults boolForKey:kBrokerRefreshedKey]) {
+    return;
+  }
+  [defaults setBool:YES forKey:kBrokerRefreshedKey];
+
+  // A request that already reached us means the agent routes to us.
+  if (WasLaunchedByAuthenticationServices() || sPendingBeginRequests.Count()) {
+    return;
+  }
+
+  uid_t uid = getuid();
+  int bytes = proc_listpids(PROC_UID_ONLY, uid, nullptr, 0);
+  if (bytes <= 0) {
+    return;
+  }
+  nsTArray<pid_t> pids;
+  pids.SetLength(bytes / sizeof(pid_t) + 32);
+  bytes = proc_listpids(PROC_UID_ONLY, uid, pids.Elements(),
+                        static_cast<int>(pids.Length() * sizeof(pid_t)));
+  if (bytes <= 0) {
+    return;
+  }
+  pids.TruncateLength(bytes / sizeof(pid_t));
+
+  for (pid_t pid : pids) {
+    if (pid <= 0) {
+      continue;
+    }
+    char name[2 * MAXCOMLEN + 1] = {};
+    if (proc_name(pid, name, sizeof(name)) <= 0) {
+      continue;
+    }
+    if (!strcmp(name, "SafariLaunchAgent")) {
+      int rv = kill(pid, SIGTERM);
+      MOZ_LOG(gASWebAuthLog, mozilla::LogLevel::Info,
+              ("Terminated SafariLaunchAgent (pid %d): %d", pid, rv));
+    }
+  }
+}
+
+void RegisterASWebAuthSessionObservers() {
   if (sObserversRegistered || !sHandler) {
     return;
   }
+
+  MaybeRefreshAuthenticationBroker();
 
   nsCOMPtr<nsIObserverService> obsServ =
       mozilla::services::GetObserverService();
@@ -315,16 +395,10 @@ static void RegisterObservers() API_AVAILABLE(macos(12.0)) {
   obsServ->NotifyObservers(nullptr, "aswebauthsession-native-ready", nullptr);
 }
 
-void RegisterASWebAuthSessionHandler() {
-  if (@available(macOS 12.0, *)) {
-    sHandler = [[ASWebAuthSessionHandler alloc] init];
-    ASWebAuthenticationSessionWebBrowserSessionManager.sharedManager
-        .sessionHandler = sHandler;
-  }
-}
-
-void RegisterASWebAuthSessionObservers() {
-  if (@available(macOS 12.0, *)) {
-    RegisterObservers();
-  }
+bool WasLaunchedByAuthenticationServices() {
+  bool wasLaunched = ASWebAuthenticationSessionWebBrowserSessionManager
+                         .sharedManager.wasLaunchedByAuthenticationServices;
+  MOZ_LOG(gASWebAuthLog, mozilla::LogLevel::Info,
+          ("wasLaunchedByAuthenticationServices: %d", wasLaunched));
+  return wasLaunched;
 }

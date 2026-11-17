@@ -20,7 +20,11 @@ ChromeUtils.defineESModuleGetters(lazy, {
  */
 export class SuggestBackendMl extends SuggestBackend {
   get enablingPreferences() {
-    return ["quickSuggestMlEnabled", "browser.ml.enable"];
+    return [
+      "browser.ml.enable",
+      "quickSuggestMlEnabled",
+      "suggest.quicksuggest.all",
+    ];
   }
 
   enable(enabled) {
@@ -48,6 +52,12 @@ export class SuggestBackendMl extends SuggestBackend {
     // `MLSuggest` requires the query to be trimmed and lowercase, which
     // the original `searchString` isn't necessarily.
     searchString = queryContext.trimmedLowerCaseSearchString;
+
+    // Don't run inference on an empty search string, e.g. in the zero prefix
+    // view.
+    if (!searchString) {
+      return [];
+    }
 
     this.logger.debug("Handling query", { searchString });
 

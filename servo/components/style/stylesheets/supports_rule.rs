@@ -11,8 +11,8 @@ use crate::properties::{PropertyDeclaration, PropertyId, SourcePropertyDeclarati
 use crate::selector_parser::{SelectorImpl, SelectorParser};
 use crate::shared_lock::{DeepCloneWithLock, Locked};
 use crate::shared_lock::{SharedRwLock, SharedRwLockReadGuard, ToCssWithGuard};
+use crate::stylesheets::CssRules;
 use crate::stylesheets::rule_parser::AtRuleType;
-use crate::stylesheets::{CssRuleType, CssRules};
 use cssparser::{Delimiter, Parser, SourceLocation, Token};
 use cssparser::{ParseError as CssParseError, match_ignore_ascii_case};
 use cssparser::{parse_important, serialize_identifier};
@@ -212,7 +212,7 @@ impl SupportsCondition {
     }
 
     /// Evaluate a supports condition
-    pub fn eval(&self, cx: &ParserContext) -> bool {
+    pub fn eval(&self, cx: &mut ParserContext) -> bool {
         match *self {
             SupportsCondition::Not(ref cond) => !cond.eval(cx),
             SupportsCondition::Parenthesized(ref cond) => cond.eval(cx),
@@ -395,8 +395,8 @@ impl Declaration {
     /// Determine if a declaration parses
     ///
     /// <https://drafts.csswg.org/css-conditional-3/#support-definition>
-    pub fn eval(&self, context: &ParserContext) -> bool {
-        debug_assert!(context.rule_types().contains(CssRuleType::Style));
+    pub fn eval(&self, context: &mut ParserContext) -> bool {
+        debug_assert!(context.rule_types().allows_declarations());
 
         let mut input = Parser::new(&self.0);
         input
@@ -412,7 +412,9 @@ impl Declaration {
                     PropertyDeclaration::parse_into(&mut declarations, id, context, input)
                         .map_err(|_| CssParseError::custom(()))
                 })?;
-                let _ = input.try_parse(parse_important);
+                if context.allows_important_declarations() {
+                    let _ = input.try_parse(parse_important);
+                }
                 Ok(())
             })
             .is_ok()
@@ -476,6 +478,9 @@ impl NamedFeature {
         }
     }
 
+    /// Determine if a named feature is supported.
+    ///
+    /// <https://drafts.csswg.org/css-conditional-5/#typedef-supports-named-feature-fn>
     #[cfg(feature = "servo")]
     pub fn eval(self) -> bool {
         false

@@ -36,6 +36,7 @@ See the [DevTools Backward Compatitility Tests](tests/backward-compat-tests.md)
 documentation.
 
 The DevTools backward compatibility job was added in [Bug 2053559](https://bugzilla.mozilla.org/show_bug.cgi?id=2053559).
+Results can be found on the [devtools-backward-monitor](https://juliandescottes.github.io/devtools-backward-monitor/).
 
 The automated job currently only covers testing Desktop Firefox. Once we are
 confident the job works correctly and [Android coverage has been added](https://bugzilla.mozilla.org/show_bug.cgi?id=2062545),
@@ -47,7 +48,7 @@ We will run the remote debugging smoke tests twice. Once to exercise backward co
 
 You can use either desktop or mobile versions of Firefox as the server. Mobile is preferable as some codepaths are specific to Firefox mobile, but if you don't have access to an Android device, using a Desktop server is a decent alternative.
 
-- [Instructions](https://firefox-source-docs.mozilla.org/devtools-user/about_colon_debugging/index.html#connecting-to-a-remote-device) to setup remote debugging for Firefox mobile.
+- [Instructions](/devtools-user/about_colon_debugging/index.md#connecting-to-a-remote-device) to setup remote debugging for Firefox mobile.
 - [Instructions](https://gist.github.com/juliandescottes/b0d3d83154d9ea8a84db5d32aa35d2c1) to setup remote debugging for Firefox desktop.
 
 #### Backward compatibility test

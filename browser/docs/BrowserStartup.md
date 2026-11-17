@@ -40,6 +40,7 @@ are listed in the order they fire.
 | `browser-window-load` | During the window `load` event, after SessionStore has initialized the window. |
 | `browser-window-delayed-startup` | After the window's first paint, for code that can run after the window is visible. |
 | `browser-window-sessionstore-initialized` | Fired from the window's delayed startup once SessionStore is initialized. |
+| `browser-window-idle-tasks` | Invoked once all windows have been restored, for per-window work that can wait until the browser is idle. Each consumer runs in its own idle callback, and is dropped if the window closes before it runs. |
 | `browser-window-location-change` | Fires on every `XULBrowserWindow.onLocationChange` for the window. |
 | `browser-window-unload-begin` | At the very start of window unload, before checking whether the window finished loading. Runs even if the window never fully loaded. |
 | `browser-window-unload` | During window unload, before `Tabbrowser` is destroyed. Preferred entry point for window unload cleanup. |
@@ -93,7 +94,7 @@ Nimbus/Normandy time to complete its initialization and first
 fetch](https://searchfox.org/mozilla-central/rev/a965e3c683ecc035dee1de72bd33a8d91b1203ed/browser/components/BrowserContentHandler.sys.mjs#677)
 before continuing to process the command line. See [the
 `FirstStartup`
-module](https://firefox-source-docs.mozilla.org/toolkit/modules/toolkit_modules/FirstStartup.html).
+module](/toolkit/modules/toolkit_modules/FirstStartup.md).
 (Important caveat: `--first-startup` is only used on Windows; see [Bug
 1872934](https://bugzilla.mozilla.org/show_bug.cgi?id=1872934), for
 example.)

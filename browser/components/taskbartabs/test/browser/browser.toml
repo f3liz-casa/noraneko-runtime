@@ -5,12 +5,15 @@ run-if = [
   "os == 'linux'",
 ]
 prefs = [
-  "browser.taskbarTabs.enabled=true"
+  "browser.taskbarTabs.enabled=true",
+  # Ensure the page action isn't hidden by default except when we mock it out.
+  # (This can affect Linux.)
+  "browser.shell.desktop-entry-api=filesystem",
 ]
 
 ["browser_taskbarTabs_chromeTest.js"]
 skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && ccov && nova", # Bug 2057867
+  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && ccov", # Bug 2057867
 ]
 
 ["browser_taskbarTabs_cmd.js"]

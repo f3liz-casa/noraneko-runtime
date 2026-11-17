@@ -213,6 +213,7 @@ class Inspector extends EventEmitter {
   #cssProperties;
   #destroyed;
   #pendingSelectionUnique;
+  #rootElementWaitController;
   #InspectorTabPanel;
   #InspectorSplitBox;
   #TabBar;
@@ -468,6 +469,7 @@ class Inspector extends EventEmitter {
     // Record new-root timing for telemetry
     this.#newRootStart = this.panelWin.performance.now();
 
+    this.#stopWaitingForRootElement();
     this.selection.setNodeFront(null);
     this.#destroyMarkup();
 
@@ -730,6 +732,7 @@ class Inspector extends EventEmitter {
     }
     this.#destroyMarkup();
     this.#pendingSelectionUnique = null;
+    this.#stopWaitingForRootElement();
   };
 
   async #getCssProperties(targetFront) {
@@ -821,7 +824,39 @@ class Inspector extends EventEmitter {
       }
     }
 
+    // The document has no root element yet, try again when it gets one.
+    this.#waitForRootElement(rootNodeFront);
     return null;
+  }
+
+  /**
+   * Call onRootNodeAvailable again when children are added to the provided
+   * document node front.
+   *
+   * @param {NodeFront} rootNodeFront
+   *        The current root node front for the top walker.
+   */
+  #waitForRootElement(rootNodeFront) {
+    this.#rootElementWaitController = new AbortController();
+    rootNodeFront.walkerFront.on(
+      "mutations",
+      mutations => {
+        if (
+          mutations.some(
+            ({ type, target }) =>
+              type === "childList" && target === rootNodeFront
+          )
+        ) {
+          this.onRootNodeAvailable(rootNodeFront);
+        }
+      },
+      { signal: this.#rootElementWaitController.signal }
+    );
+  }
+
+  #stopWaitingForRootElement() {
+    this.#rootElementWaitController?.abort();
+    this.#rootElementWaitController = null;
   }
 
   /**
@@ -879,13 +914,12 @@ class Inspector extends EventEmitter {
   };
 
   #createInspectorShortcuts = () => {
-    this.inspectorShortcuts = new KeyShortcuts({
-      window: this.panelDoc.defaultView,
+    this.inspectorShortcuts = new KeyShortcuts(
       // The inspector search shortcuts need to be available from everywhere in the
       // inspector, and the inspector uses iframes (markupview, sidepanel webextensions).
       // Use the chromeEventHandler as the target to catch events from all frames.
-      target: this.toolbox.getChromeEventHandler(),
-    });
+      this.toolbox.getChromeEventHandler()
+    );
 
     const searchboxKey = INSPECTOR_L10N.getStr("inspector.searchHTML.key");
     this.inspectorShortcuts.on(searchboxKey, event => {
@@ -2024,6 +2058,7 @@ class Inspector extends EventEmitter {
       return;
     }
     this.#destroyed = true;
+    this.#stopWaitingForRootElement();
 
     // Prevents any further action from being dispatched
     this.store.dispatch(START_IGNORE_ACTION);

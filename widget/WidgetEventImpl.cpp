@@ -55,7 +55,7 @@ const char* ToChar(EventMessage aEventMessage) {
   case aMessage:                   \
     return #aMessage;
 
-#include "mozilla/EventMessageList.h"
+#include "mozilla/EventMessageList.inc"
 
 #undef NS_EVENT_MESSAGE
     default:
@@ -111,7 +111,6 @@ bool IsForbiddenDispatchingToNonElementContent(EventMessage aMessage) {
     case eMouseLeave:
     case eMouseTouchDrag:
     case eMouseLongTap:
-    case eMouseExploreByTouch:
     // Pointer event target should be an Element node
     case ePointerClick:
     case ePointerAuxClick:
@@ -208,7 +207,6 @@ bool IsValidMessageForIPC(EventMessage aMessage, EventClassID aClassID) {
     case eMouseLeave:
     case eMouseTouchDrag:
     case eMouseLongTap:
-    case eMouseExploreByTouch:
       return aClassID == eMouseEventClass;
     case eWheel:
     case eWheelOperationStart:
@@ -562,7 +560,6 @@ bool WidgetEvent::CanBeSentToRemoteProcess() const {
     case eMouseDown:
     case eMouseUp:
     case eMouseMove:
-    case eMouseExploreByTouch:
     case eContextMenu:
     case eMouseEnterIntoWidget:
     case eMouseExitFromWidget:

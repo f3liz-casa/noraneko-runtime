@@ -5,6 +5,7 @@
 #ifndef WEBGLQUEUEPARAMTRAITS_H_
 #define WEBGLQUEUEPARAMTRAITS_H_
 
+#include "QueueParamTraits.h"
 #include "TexUnpackBlob.h"
 #include "WebGLTypes.h"
 #include "ipc/EnumSerializer.h"
@@ -91,7 +92,7 @@ struct QueueParamTraits<Span<T>> {
     if (!status) return status;
 
     if (!elemCount) return status;
-    status = view.WriteFromRange(Range<const T>{in});
+    status = view.WriteFromRange(mozilla::Range<const T>{in});
 
     return status;
   }
@@ -164,7 +165,8 @@ struct QueueParamTraits<std::string> {
     const auto size = aArg.size();
     auto status = aProducerView.WriteParam(size);
     if (!status) return status;
-    status = aProducerView.WriteFromRange(Range<const char>{aArg.data(), size});
+    status = aProducerView.WriteFromRange(
+        mozilla::Range<const char>{aArg.data(), size});
     return status;
   }
 

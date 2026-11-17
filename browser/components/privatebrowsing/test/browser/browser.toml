@@ -35,13 +35,13 @@ tags = "trackingprotection"
 skip-if = [
   "os == 'linux' && os_version == '22.04' && arch == 'x86_64' && display == 'wayland'",
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'",
-  "os == 'mac' && os_version == '10.15' && arch == 'x86_64'",
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64'",
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'",
   "os == 'win' && msix", # We don't support private pinning in MSIX builds
 ]
 
 ["browser_privatebrowsing_about_default_promo.js"]
+
+["browser_privatebrowsing_about_kit_intro.js"]
 
 ["browser_privatebrowsing_about_nimbus_dismiss.js"]
 
@@ -108,6 +108,8 @@ skip-if = [
 ["browser_privatebrowsing_placestitle.js"]
 
 ["browser_privatebrowsing_protocolhandler.js"]
+
+["browser_privatebrowsing_redesign_telemetry.js"]
 
 ["browser_privatebrowsing_rememberprompt.js"]
 tags = "geolocation xr"

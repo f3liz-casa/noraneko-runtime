@@ -32,6 +32,7 @@
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/FileBlobImpl.h"
 #include "mozilla/dom/FileReader.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/StaticRange.h"
 #include "mozilla/dom/WorkerRef.h"
@@ -75,7 +76,6 @@
 #include "nsNameSpaceManager.h"
 #include "nsNetUtil.h"
 #include "nsPrintfCString.h"
-#include "nsRange.h"
 #include "nsReadableUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsStreamUtils.h"
@@ -206,7 +206,7 @@ nsresult HTMLEditor::LoadHTML(const nsAString& aInputString) {
   }
 
   // Get the first range in the selection, for context:
-  RefPtr<const nsRange> range = SelectionRef().GetRangeAt(0);
+  RefPtr<const dom::Range> range = SelectionRef().GetRangeAt(0);
   if (NS_WARN_IF(!range)) {
     return NS_ERROR_FAILURE;
   }
@@ -216,7 +216,7 @@ nsresult HTMLEditor::LoadHTML(const nsAString& aInputString) {
   RefPtr<DocumentFragment> documentFragment =
       range->CreateContextualFragment(aInputString, error);
   if (error.Failed()) {
-    NS_WARNING("nsRange::CreateContextualFragment() failed");
+    NS_WARNING("Range::CreateContextualFragment() failed");
     return error.StealNSResult();
   }
 
@@ -2566,8 +2566,9 @@ nsresult HTMLEditor::InsertURLAsLinkInternal(
       DeleteSelectionAndCreateElement(
           *nsGkAtoms::a, [&aURL](HTMLEditor& aEditor, Element& aNewElement,
                                  const EditorDOMPoint&) {
-            nsresult rv = aNewElement.SetAttr(kNameSpaceID_None,
-                                              nsGkAtoms::href, aURL, false);
+            nsresult rv =
+                aNewElement.SetAttr(kNameSpaceID_None, nsGkAtoms::href, aURL,
+                                    false, IsKnownNewAttr::Yes);
             if (NS_FAILED(rv)) {
               NS_WARNING("Element::SetAttr(href) failed");
               return rv;
@@ -2749,10 +2750,18 @@ nsresult HTMLEditor::PasteInternal(nsIClipboard::ClipboardType aClipboardType,
 }
 
 nsresult HTMLEditor::HandlePasteTransferable(
-    AutoEditActionDataSetter& aEditActionData, nsITransferable& aTransferable) {
-  // InitializeDataTransfer may fetch input stream in aTransferable, so it
-  // may be invalid after calling this.
-  aEditActionData.InitializeDataTransfer(&aTransferable);
+    AutoEditActionDataSetter& aEditActionData, nsITransferable& aTransferable,
+    DataTransfer* aDataTransfer) {
+  if (aDataTransfer) {
+    // aDataTransfer was already created from aTransferable by the caller.
+    // Reuse it, because creating another one would try to read the input
+    // streams in aTransferable a second time.
+    aEditActionData.InitializeDataTransfer(aDataTransfer);
+  } else {
+    // InitializeDataTransfer may fetch input stream in aTransferable, so it
+    // may be invalid after calling this.
+    aEditActionData.InitializeDataTransfer(&aTransferable);
+  }
 
   nsresult rv = aEditActionData.MaybeDispatchBeforeInputEvent();
   if (NS_FAILED(rv)) {
@@ -3044,7 +3053,7 @@ nsresult HTMLEditor::HandlePasteAsQuotation(
               MOZ_CAN_RUN_SCRIPT_BOUNDARY {
                 DebugOnly<nsresult> rvIgnored = aBlockquoteElement.SetAttr(
                     kNameSpaceID_None, nsGkAtoms::type, u"cite"_ns,
-                    aBlockquoteElement.IsInComposedDoc());
+                    aBlockquoteElement.IsInComposedDoc(), IsKnownNewAttr::Yes);
                 NS_WARNING_ASSERTION(
                     NS_SUCCEEDED(rvIgnored),
                     nsPrintfCString(
@@ -3479,7 +3488,7 @@ nsresult HTMLEditor::InsertAsPlaintextQuotation(const nsAString& aQuotedText,
               // quotation.
               DebugOnly<nsresult> rvIgnored = aSpanElement.SetAttr(
                   kNameSpaceID_None, nsGkAtoms::mozquote, u"true"_ns,
-                  aSpanElement.IsInComposedDoc());
+                  aSpanElement.IsInComposedDoc(), IsKnownNewAttr::Yes);
               NS_WARNING_ASSERTION(
                   NS_SUCCEEDED(rvIgnored),
                   nsPrintfCString(
@@ -3494,15 +3503,15 @@ nsresult HTMLEditor::InsertAsPlaintextQuotation(const nsAString& aQuotedText,
                     kNameSpaceID_None, nsGkAtoms::style,
                     nsLiteralString(u"white-space: pre-wrap; display: block; "
                                     u"width: 98vw;"),
-                    false);
+                    false, IsKnownNewAttr::Yes);
                 NS_WARNING_ASSERTION(
                     NS_SUCCEEDED(rvIgnored),
                     "Element::SetAttr(nsGkAtoms::style, \"pre-wrap, block\", "
                     "false) failed, but ignored");
               } else {
-                DebugOnly<nsresult> rvIgnored =
-                    aSpanElement.SetAttr(kNameSpaceID_None, nsGkAtoms::style,
-                                         u"white-space: pre-wrap;"_ns, false);
+                DebugOnly<nsresult> rvIgnored = aSpanElement.SetAttr(
+                    kNameSpaceID_None, nsGkAtoms::style,
+                    u"white-space: pre-wrap;"_ns, false, IsKnownNewAttr::Yes);
                 NS_WARNING_ASSERTION(
                     NS_SUCCEEDED(rvIgnored),
                     "Element::SetAttr(nsGkAtoms::style, "
@@ -3782,7 +3791,7 @@ nsresult HTMLEditor::InsertAsCitedQuotationInternal(
             // Try to set type=cite.  Ignore it if this fails.
             DebugOnly<nsresult> rvIgnored = aBlockquoteElement.SetAttr(
                 kNameSpaceID_None, nsGkAtoms::type, u"cite"_ns,
-                aBlockquoteElement.IsInComposedDoc());
+                aBlockquoteElement.IsInComposedDoc(), IsKnownNewAttr::Yes);
             NS_WARNING_ASSERTION(
                 NS_SUCCEEDED(rvIgnored),
                 nsPrintfCString(
@@ -3793,7 +3802,7 @@ nsresult HTMLEditor::InsertAsCitedQuotationInternal(
             if (!aCitation.IsEmpty()) {
               DebugOnly<nsresult> rvIgnored = aBlockquoteElement.SetAttr(
                   kNameSpaceID_None, nsGkAtoms::cite, aCitation,
-                  aBlockquoteElement.IsInComposedDoc());
+                  aBlockquoteElement.IsInComposedDoc(), IsKnownNewAttr::Yes);
               NS_WARNING_ASSERTION(
                   NS_SUCCEEDED(rvIgnored),
                   nsPrintfCString(
@@ -4392,11 +4401,11 @@ void HTMLEditor::HTMLWithContextInserter::
   MOZ_ASSERT(aStartPoint.IsSetAndValid());
   MOZ_ASSERT(aEndPoint.IsSetAndValid());
 
-  RefPtr<nsRange> range =
-      nsRange::Create(aStartPoint.ToRawRangeBoundary(),
-                      aEndPoint.ToRawRangeBoundary(), IgnoreErrors());
+  RefPtr<dom::Range> range =
+      dom::Range::Create(aStartPoint.ToRawRangeBoundary(),
+                         aEndPoint.ToRawRangeBoundary(), IgnoreErrors());
   if (!range) {
-    NS_WARNING("nsRange::Create() failed");
+    NS_WARNING("Range::Create() failed");
     return;
   }
   DOMSubtreeIterator iter;

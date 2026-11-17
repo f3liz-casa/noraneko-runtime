@@ -6,10 +6,8 @@ import os
 
 config = {
     "default_actions": [
-        "clobber",
         "build",
     ],
-    "stage_platform": "win64-add-on-devel",
     #### 64 bit build specific #####
     "env": {
         "HG_SHARE_BASE_DIR": "C:/builds/hg-shared",
@@ -21,6 +19,5 @@ config = {
         "TOOLTOOL_CACHE": "c:/builds/tooltool_cache",
         "TOOLTOOL_HOME": "/c/builds",
     },
-    "mozconfig_variant": "add-on-devel",
     #######################
 }

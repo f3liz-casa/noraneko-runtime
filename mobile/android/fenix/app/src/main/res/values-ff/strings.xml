@@ -76,11 +76,7 @@
   <string name="history_metadata_header_2">Jillaaɗe sakket</string>
   <!-- Content description for the button which navigates the user to show all of their history. -->
   <string name="past_explorations_show_all_content_description_2">Hollu jillanɗe ɓennuɗe fof</string>
-  <!--
-    Browser Fragment
-
-    Content description (not visible, for screen readers etc.): Navigate backward (browsing history)
-  -->
+  <!-- Content description (not visible, for screen readers etc.): Navigate backward (browsing history) -->
   <string name="browser_menu_back">Caggal</string>
   <!-- Content description (not visible, for screen readers etc.): Navigate forward (browsing history) -->
   <string name="browser_menu_forward">Yeeso</string>
@@ -151,7 +147,11 @@
     Title for the settings page
   -->
   <string name="settings">Teelte</string>
-  <!-- Preference category for general settings -->
+  <!--
+    Preferences
+
+    Preference category for general settings
+  -->
   <string name="preferences_category_general">Kuuɓal</string>
   <!-- Preference category for all links about Fenix -->
   <string name="preferences_category_about">Baɗte</string>
@@ -396,8 +396,6 @@
     Title of preference for tabs management
   -->
   <string name="preferences_tabs">Tabbe</string>
-  <!-- Title of preference that allows a user to specify the tab view -->
-  <string name="preferences_tab_view">Jiytol tabbe</string>
   <!-- Option for a list tab view -->
   <string name="tab_view_list">Doggol</string>
   <!-- Option for a grid tab view -->
@@ -440,12 +438,6 @@
   <string name="opening_screen_last_tab_summary">Uddit e hello sakkitiingo</string>
   <!-- Summary for homepage preference indicating opening the homepage when re-opening the app after four hours of inactivity -->
   <string name="opening_screen_after_four_hours_of_inactivity_summary">Uddit e hello jaɓɓorgo caggal waktuuji nayi</string>
-  <!--
-    Inactive tabs
-
-    Category header of a preference that allows a user to enable or disable the inactive tabs feature
-  -->
-  <string name="preferences_inactive_tabs">Dirtin tabbe ɓooyɗe to dooyiiɗe</string>
   <!-- Summary of the preference that allows a user to enable or disable the inactive tabs feature. -->
   <string name="preferences_inactive_tabs_title">Tabbe ɗe a yillaaki e nder jonte ɗiɗi maa ndirtine to lowre dooyorde toh.</string>
   <!-- Title of the active section on the studies list -->

@@ -51,6 +51,7 @@
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/LargestContentfulPaint.h"
 #include "mozilla/dom/Nullable.h"
+#include "mozilla/dom/PermissionsPolicy.h"
 #include "mozilla/dom/RadioGroupContainer.h"
 #include "mozilla/dom/TreeOrderedArray.h"
 #include "mozilla/dom/UserActivation.h"
@@ -91,6 +92,7 @@
 #include "nsIURI.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsLiteralString.h"
+#include "nsNetUtil.h"
 #include "nsPIDOMWindow.h"
 #include "nsPropertyTable.h"
 #include "nsRefPtrHashtable.h"
@@ -126,6 +128,11 @@ class ElementCreationOptionsOrString;
 }  // namespace dom
 }  // namespace mozilla
 #endif  // MOZILLA_INTERNAL_API
+
+namespace mozilla {
+template <unsigned KeySize, class T>
+class CountingBloomFilter;
+}  // namespace mozilla
 
 class InfallibleAllocPolicy;
 class JSObject;
@@ -174,7 +181,6 @@ class nsIVariant;
 class nsNodeInfoManager;
 class nsPIWindowRoot;
 class nsPresContext;
-class nsRange;
 class nsTextNode;
 class nsViewManager;
 class nsViewportInfo;
@@ -242,7 +248,7 @@ class EditContext;
 class Event;
 class EventListener;
 struct FailedCertSecurityInfo;
-class FeaturePolicy;
+class PermissionsPolicy;
 class FontFaceSet;
 class FragmentDirective;
 class FrameRequestCallback;
@@ -272,6 +278,7 @@ enum class SkipTransitionReason : uint8_t;
 class ProcessingInstruction;
 class Promise;
 struct PropertyDefinition;
+class Range;
 class ScriptLoader;
 class Selection;
 class ServiceWorkerDescriptor;
@@ -1390,6 +1397,18 @@ class Document : public nsINode,
    */
   nsViewportInfo GetViewportInfo(const ScreenIntSize& aDisplaySize);
 
+  /**
+   * Lays this top-level document out at a fixed layout viewport size.
+   */
+  MOZ_CAN_RUN_SCRIPT void SetViewportSizeOverrideForMiniWindow(float aWidth,
+                                                               float aHeight);
+  MOZ_CAN_RUN_SCRIPT void ClearViewportSizeOverrideForMiniWindow() {
+    SetViewportSizeOverrideForMiniWindow(0, 0);
+  }
+  bool HasViewportSizeOverrideForMiniWindow() const {
+    return !mViewportSizeOverrideForMiniWindow.IsEmpty();
+  }
+
   void SetMetaViewportData(UniquePtr<ViewportMetaData> aData);
 
   // Returns a ViewportMetaData for this document.
@@ -1614,6 +1633,9 @@ class Document : public nsINode,
   EditContext* GetActiveEditContext() const { return mActiveEditContext; }
   // https://w3c.github.io/edit-context/#dfn-update-the-text-edit-context
   MOZ_CAN_RUN_SCRIPT void UpdateTextEditContext();
+  // Deactivate the current EditContext and, even if the active editor
+  // is not an EditContext, commit the current composition.
+  MOZ_CAN_RUN_SCRIPT void DeactivateEditContextAndEndComposition();
 
   void SetKeyPressEventModel(uint16_t aKeyPressEventModel);
 
@@ -1640,9 +1662,10 @@ class Document : public nsINode,
 
   MOZ_CAN_RUN_SCRIPT void DoNotifyPossibleTitleChange();
 
-  void InitFeaturePolicy(const Variant<Nothing, FeaturePolicyInfo, Element*>&
-                             aContainerFeaturePolicy);
-  nsresult InitFeaturePolicy(nsIChannel* aChannel);
+  void InitPermissionsPolicy(
+      const Variant<Nothing, PermissionsPolicyInfo, Element*>&
+          aContainerPermissionsPolicy);
+  nsresult InitPermissionsPolicy(nsIChannel* aChannel);
 
   void EnsureNotEnteringAndExitFullscreen();
 
@@ -1653,6 +1676,7 @@ class Document : public nsINode,
   nsresult InitCSP(nsIChannel* aChannel);
   nsresult InitIntegrityPolicy(nsIChannel* aChannel);
   nsresult InitIntegrityPolicyWAICT(nsIChannel* aChannel);
+  nsresult InitConnectionAllowlists(nsIChannel* aChannel);
   nsresult InitCOEP(nsIChannel* aChannel);
   nsresult InitDocPolicy(nsIChannel* aChannel);
   nsresult InitTLSCertificateBinding(nsIChannel* aChannel);
@@ -1671,7 +1695,9 @@ class Document : public nsINode,
                          NotNull<const Encoding*>& aEncoding,
                          nsHtml5TreeOpExecutor* aExecutor);
 
-  MOZ_CAN_RUN_SCRIPT void DispatchContentLoadedEvents();
+  MOZ_CAN_RUN_SCRIPT void DispatchContentLoadedEvents(bool aFinishSync);
+  // Unblocks the load event. An aborted load also gets readyState complete.
+  MOZ_CAN_RUN_SCRIPT void FinishDOMContentLoaded();
 
   // TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230)
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void DispatchPageTransition(
@@ -1718,9 +1744,7 @@ class Document : public nsINode,
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult TurnEditingOff();
 
-  // MOZ_CAN_RUN_SCRIPT_BOUNDARY because this is called from all sorts
-  // of places, and I'm pretty sure the exact ExecCommand call it
-  // makes cannot actually run script.
+  // TODO: Convert this to MOZ_CAN_RUN_SCRIPT
   MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult EditingStateChanged();
 
   void MaybeEditingStateChanged();
@@ -1750,6 +1774,43 @@ class Document : public nsINode,
   // Get the "head" element in the sense of document.head.
   HTMLSharedElement* GetHead() const;
 
+  // Render-blocking mechanism
+  // https://html.spec.whatwg.org/#render-blocking-mechanism
+  bool AllowsAddingRenderBlockingElements() const;
+  bool IsRenderBlocked() const;
+  // Returns whether aElement blocks rendering after the call.
+  bool BlockRendering(Element& aElement);
+  void UnblockRendering(Element& aElement);
+  // Blocks rendering on aElement if it is potentially render-blocking.
+  void MaybeBlockRendering(Element& aElement);
+  // Permanently stops render-blocking for this document (timeout elapsed, or it
+  // can no longer be render-blocked) and kicks layout.
+  void StopRenderBlocking();
+
+  // https://html.spec.whatwg.org/#process-internal-resource-links
+  // Processes every rel=expect link that blocks rendering.
+  void ProcessInternalResourceLinks();
+  // Calls ProcessInternalResourceLinks when it is safe to run script. Use this
+  // during a DOM mutation: the target lookup uses getElementsByName(), and a
+  // cached list updates only when the mutation notifications run.
+  void ProcessInternalResourceLinksWhenSafe();
+
+  // Called when the HTML parser pops aElement off its stack of open elements,
+  // and when aElement is inserted while not on that stack. Processes the
+  // rel=expect links only if one waits for aElement's id or name.
+  void MaybeProcessInternalResourceLinksForElement(Element& aElement);
+
+  // Tracks the ids and names that blocking rel=expect links wait for.
+  void AddExpectedInternalResourceTarget(nsAtom* aFragment);
+  void RemoveExpectedInternalResourceTarget(nsAtom* aFragment);
+
+ private:
+  void StartLayoutAfterUnblocking();
+  // Starts the render-blocking timeout timer if it is not already running and
+  // the timeout has not already elapsed.
+  void EnsureRenderBlockingTimeoutTimer();
+
+ public:
   ServoStyleSet* StyleSetForPresShell() const {
     MOZ_ASSERT(!!mStyleSet.get());
     return mStyleSet.get();
@@ -2244,7 +2305,10 @@ class Document : public nsINode,
   uint32_t UpdateNestingLevel() { return mUpdateNestLevel; }
 
   void BeginLoad();
-  virtual void EndLoad();
+  // aFireDOMContentLoadedSync must be false for a terminated parse.
+  // See bug 344305.
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY virtual void EndLoad(
+      bool aFireDOMContentLoadedSync);
 
   enum ReadyState {
     READYSTATE_UNINITIALIZED = 0,
@@ -2647,7 +2711,8 @@ class Document : public nsINode,
 
   void BlockDOMContentLoaded() { ++mBlockDOMContentLoaded; }
 
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY void UnblockDOMContentLoaded();
+  // If aFireSync is false, DOMContentLoaded fires from a task instead.
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void UnblockDOMContentLoaded(bool aFireSync);
 
   /**
    * Notification that the page has been shown, for documents which are loaded
@@ -2770,8 +2835,7 @@ class Document : public nsINode,
     // If we are a document "whose URL's scheme is not a network scheme."
     // NB: Explicitly allow file: URIs to store cookies.
 
-    return !NodePrincipal()->SchemeIs("http") &&
-           !NodePrincipal()->SchemeIs("https") &&
+    return !net::SchemeIsHttpOrHttps(NodePrincipal()) &&
            !NodePrincipal()->SchemeIs("file");
   }
 
@@ -2852,6 +2916,7 @@ class Document : public nsINode,
                "Display documents should not nest");
     mDisplayDocument = aDisplayDocument;
     mHasDisplayDocument = !!aDisplayDocument;
+    mIsBeingUsedAsImage |= aDisplayDocument->mIsBeingUsedAsImage;
   }
 
   /**
@@ -3191,6 +3256,13 @@ class Document : public nsINode,
    * we're going away and then release our reference to it.
    */
   void UnlinkOriginalDocumentIfStatic();
+
+  /**
+   * Returns a value that identifies this document, used to vary the random
+   * base values of CSS `random()` functions between document instances.
+   * https://drafts.csswg.org/css-values-5/#random-caching
+   */
+  uintptr_t GetRandomSeed() const;
 
   /**
    * These are called by the parser as it encounters <picture> tags, the end of
@@ -3605,7 +3677,7 @@ class Document : public nsINode,
   already_AddRefed<Event> CreateEvent(const nsAString& aEventType,
                                       CallerType aCallerType,
                                       ErrorResult& rv) const;
-  already_AddRefed<nsRange> CreateRange(ErrorResult& rv);
+  already_AddRefed<Range> CreateRange(ErrorResult& rv);
   already_AddRefed<NodeIterator> CreateNodeIterator(nsINode& aRoot,
                                                     uint32_t aWhatToShow,
                                                     NodeFilter* aFilter,
@@ -3650,6 +3722,7 @@ class Document : public nsINode,
   Document* Open(const mozilla::dom::Optional<nsAString>& /* unused */,
                  const mozilla::dom::Optional<nsAString>& /* unused */,
                  mozilla::ErrorResult& aError);
+  MOZ_CAN_RUN_SCRIPT
   mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> Open(
       const nsACString& aURL, const nsAString& aName,
       const nsAString& aFeatures, mozilla::ErrorResult& rv);
@@ -3753,7 +3826,7 @@ class Document : public nsINode,
                                             bool aFocusPreviousElement,
                                             bool aFireEvents);
 
-  // Hides the given popover element, see
+  // Hides the given popover element, using this document as expectedDocument.
   // https://html.spec.whatwg.org/multipage/popover.html#hide-popover-algorithm
   MOZ_CAN_RUN_SCRIPT void HidePopover(Element& popover,
                                       bool aFocusPreviousElement,
@@ -3861,7 +3934,7 @@ class Document : public nsINode,
    * Wrapper around CaretPositionFromPoint that returns Range instead of
    * CaretPosition.
    */
-  already_AddRefed<nsRange> CaretRangeFromPoint(int32_t aX, int32_t aY);
+  already_AddRefed<Range> CaretRangeFromPoint(int32_t aX, int32_t aY);
 
   MOZ_CAN_RUN_SCRIPT Element* GetScrollingElement();
   // Like GetScrollingElement, but does not flush pending layout. Callers get
@@ -4001,12 +4074,6 @@ class Document : public nsINode,
   // Reports document use counters via telemetry.  This method only has an
   // effect once per document, and so is called during document destruction.
   void ReportDocumentUseCounters();
-
-  // Report the names of the HTMLDocument properties that had
-  // been shadowed using ID/name, and which were subsequently accessed
-  // ("DOM clobbering"). This data is collected by the corresponding NamedGetter
-  // method and limited to 10 unique entries.
-  void ReportShadowedProperties();
 
   // Reports largest contentful paint via telemetry. We want the most up to
   // date value for LCP and so this is called during document destruction.
@@ -4265,9 +4332,40 @@ class Document : public nsINode,
 
   void SetInboundViewTransitionParams(UniquePtr<ViewTransitionParams> aParams);
 
+  // Stores the captured params by browser id, for the new document to take at
+  // its reveal. Used when the old top-level document enters BFCache, since the
+  // new document is then in another BrowsingContext with the same browser id.
+  static void StashCrossDocViewTransitionParams(
+      uint64_t aBrowserId, UniquePtr<ViewTransitionParams> aParams);
+  static UniquePtr<ViewTransitionParams> TakeCrossDocViewTransitionParams(
+      uint64_t aBrowserId);
+  // Drops the params of a navigation that did not reach the reveal. If
+  // aProducerBrowsingContextId is set, drops only the params that the
+  // BrowsingContext with that id captured.
+  static void ClearCrossDocViewTransitionParams(
+      uint64_t aBrowserId,
+      Maybe<uint64_t> aProducerBrowsingContextId = Nothing());
+
   // Returns some ViewTransition or Nothing if skip transition.
   // https://drafts.csswg.org/css-view-transitions-2/#resolve-inbound-cross-document-view-transition
   Maybe<RefPtr<ViewTransition>> ResolveInboundCrossDocumentViewTransition();
+
+  // https://drafts.csswg.org/css-view-transitions-2/#setup-cross-document-view-transition
+  already_AddRefed<ViewTransition> SetupOutboundCrossDocumentViewTransition();
+
+  // Tells the parent whether the document has a @view-transition rule with
+  // navigation: auto. Called at the reveal. Does nothing before the reveal.
+  void UpdateOutboundViewTransitionOptIn();
+  // Calls UpdateOutboundViewTransitionOptIn if the rules may have changed
+  // since the last update. Called after a stylist update and before a
+  // navigation away from this document.
+  void MaybeUpdateOutboundViewTransitionOptIn();
+  // Marks that the rules may have changed. This does not read the rules,
+  // because that updates the stylist, which is expensive and not safe in the
+  // middle of a style sheet or media change.
+  void OutboundViewTransitionRulesChanged();
+  // Called when the stylist of this document has been updated.
+  void StylistUpdated();
 
   // Getter for PermissionDelegateHandler. Performs lazy initialization.
   PermissionDelegateHandler* GetPermissionDelegateHandler();
@@ -4419,9 +4517,11 @@ class Document : public nsINode,
   // mScaleMinFloat, mScaleMaxFloat and mScaleFloat respectively.
   void ParseScalesInViewportMetaData(const ViewportMetaData& aViewportMetaData);
 
-  // Get parent FeaturePolicy from container. The parent FeaturePolicy is
-  // stored in parent iframe or container's browsingContext (cross process)
-  already_AddRefed<mozilla::dom::FeaturePolicy> GetParentFeaturePolicy();
+  // Get the parent PermissionsPolicy from the container. The parent
+  // PermissionsPolicy is stored in parent iframe or container's browsingContext
+  // (cross process)
+  already_AddRefed<mozilla::dom::PermissionsPolicy>
+  GetParentPermissionsPolicy();
 
  public:
   const OriginTrials& Trials() const { return mTrials; }
@@ -4494,7 +4594,7 @@ class Document : public nsINode,
     --mIgnoreOpensDuringUnloadCounter;
   }
 
-  mozilla::dom::FeaturePolicy* FeaturePolicy() const;
+  mozilla::dom::PermissionsPolicy* PermissionsPolicy() const;
 
   /**
    * Find the (non-anonymous) content in this document for aFrame. It will
@@ -4513,7 +4613,7 @@ class Document : public nsINode,
 
   dom::XPathEvaluator* XPathEvaluator();
 
-  void MaybeInitializeFinalizeFrameLoaders();
+  MOZ_CAN_RUN_SCRIPT void MaybeInitializeFinalizeFrameLoaders();
 
   void SetDelayFrameLoaderInitialization(bool aDelayFrameLoaderInitialization) {
     mDelayFrameLoaderInitialization = aDelayFrameLoaderInitialization;
@@ -4925,13 +5025,11 @@ class Document : public nsINode,
   // Helper for GetScrollingElement/IsScrollingElement.
   bool IsPotentiallyScrollable(HTMLBodyElement* aBody);
 
-  // Whether GetScrollingElementImpl / IsPotentiallyScrollableImpl should flush
-  // pending style and frame construction before answering.
+  // Whether GetScrollingElementImpl should flush pending style and frame
+  // construction before answering.
   enum class Flush : bool { No, Yes };
   Element* GetScrollingElementImpl(Flush);
-  bool IsPotentiallyScrollableImpl(HTMLBodyElement* aBody, Flush);
-
-  void MaybeAllowStorageForOpenerAfterUserInteraction();
+  bool IsPotentiallyScrollableImpl(HTMLBodyElement* aBody);
 
   void MaybeStoreUserInteractionAsPermission();
 
@@ -5079,8 +5177,8 @@ class Document : public nsINode,
 
   RefPtr<Promise> mReadyForIdle;
 
-  // Lazily created in FeaturePolicy().
-  mutable RefPtr<mozilla::dom::FeaturePolicy> mFeaturePolicy;
+  // Lazily created in PermissionsPolicy().
+  mutable RefPtr<mozilla::dom::PermissionsPolicy> mPermissionsPolicy;
 
   // Permission Delegate Handler, lazily-initialized in
   // GetPermissionDelegateHandler
@@ -5414,6 +5512,13 @@ class Document : public nsINode,
 
   // https://html.spec.whatwg.org/#has-been-revealed
   bool mHasBeenRevealed : 1;
+
+  // Last value sent to the parent via SetMayHaveViewTransitionOptIn, so we only
+  // send on change. See UpdateOutboundViewTransitionOptIn.
+  bool mSentMayHaveViewTransitionOptIn : 1;
+  // Whether the rules may have changed since UpdateOutboundViewTransitionOptIn
+  // last ran.
+  bool mOutboundViewTransitionOptInDirty : 1;
 
   // Cached value of dom.image.sizes_auto.enabled
   const bool mAutoSizesEnabled : 1;
@@ -5805,7 +5910,7 @@ class Document : public nsINode,
 
   nsTArray<RefPtr<nsFrameLoader>> mInitializableFrameLoaders;
   nsTArray<nsCOMPtr<nsIRunnable>> mFrameLoaderFinalizers;
-  RefPtr<nsRunnableMethod<Document>> mFrameLoaderRunner;
+  RefPtr<nsIRunnable> mFrameLoaderRunner;
 
   nsTArray<PendingFrameStaticClone> mPendingFrameStaticClones;
 
@@ -5841,6 +5946,8 @@ class Document : public nsINode,
   CSSCoord mMaxWidth;
   CSSCoord mMinHeight;
   CSSCoord mMaxHeight;
+
+  CSSSize mViewportSizeOverrideForMiniWindow;
 
   RefPtr<EventListenerManager> mListenerManager;
 
@@ -5953,14 +6060,28 @@ class Document : public nsINode,
   // See SetNotifyFormOrPasswordRemoved and ShouldNotifyFormOrPasswordRemoved.
   bool mShouldNotifyFormOrPasswordRemoved;
 
-  // Used by the shadowed_html_document_property_access telemetry probe to
-  // collected shadowed HTMLDocument properties. (Limited to 10 entries)
-  nsTArray<nsString> mShadowedHTMLDocumentProperties;
-
   // Collection of data used by the pageload event.
   PageloadEventData mPageloadEventData;
 
-  // Submit the page load event at the end of the document's lifetime.
+  // Whether AccumulatePageLoadTelemetry() collected metrics, and whether the
+  // tab was foreground when the load event started. Background loads are still
+  // reported, but are left out of the paint and load timing histograms, as is
+  // a load whose load event never fired.
+  bool mPageLoadMetricsAccumulated = false;
+  bool mPageLoadWasForeground = false;
+
+  // Whether the load event fired. Tracked separately from loadTime, which is
+  // only set for a strictly positive duration.
+  bool mPageLoadCompleted = false;
+
+  // Whether ReportPageLoadTelemetry() has already run for this document.
+  bool mPageLoadTelemetryReported = false;
+
+  // Submit the page load event and the LCP histograms, once the document is
+  // hidden or at the end of its lifetime if it never was. ReportPageLoadEvent
+  // must run first: ReportLCP skips its histogram when the event carried the
+  // same LCP value.
+  void ReportPageLoadTelemetry();
   void ReportPageLoadEvent();
 
   // Accumulate JS telemetry collected
@@ -5987,12 +6108,28 @@ class Document : public nsINode,
   RefPtr<ResizeObserver> mAutoSizeImageObserver;
 
   RefPtr<class FragmentDirective> mFragmentDirective;
-  UniquePtr<RadioGroupContainer> mRadioGroupContainer;
+  RefPtr<RadioGroupContainer> mRadioGroupContainer;
 
   nsCOMPtr<nsIURI> mTLSCertificateBindingURI;
 
   // https://html.spec.whatwg.org/#document-sr-sets
   RefPtr<class SpeculationRules> mSpeculationRules;
+
+  // https://html.spec.whatwg.org/#render-blocking-element-set
+  // The set contains only connected elements, and only a small number of them.
+  // Performance is not critical, so use strong references for safety.
+  nsTHashSet<RefPtr<Element>> mRenderBlockingElementSet;
+  nsCOMPtr<nsITimer> mRenderBlockingTimer;
+  bool mRenderBlockingStopped = false;
+
+  // The ids and names that blocking rel=expect links wait for, with the number
+  // of links that wait for each.
+  nsTHashMap<RefPtr<nsAtom>, uint32_t> mExpectedInternalResourceTargets;
+  // Bloom filter over mExpectedInternalResourceTargets. Allocated only when a
+  // rel=expect link blocks.
+  UniquePtr<mozilla::CountingBloomFilter<8, nsAtom>>
+      mExpectedInternalResourceTargetsBloom;
+  bool mProcessInternalResourceLinksPending = false;
 
  public:
   // Needs to be public because the bindings code pokes at it.

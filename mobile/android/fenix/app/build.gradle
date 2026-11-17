@@ -2,11 +2,14 @@ import com.android.build.api.variant.FilterConfiguration
 
 import java.time.format.DateTimeFormatter
 
+import org.mozilla.conventions.WriteRuntimeDependencies
+
 import static org.mozilla.conventions.BuildConfigKt.getBuildId
 
 plugins {
     id 'com.android.application'
     id 'org.mozilla.conventions.zip-test-reports'
+    id 'org.mozilla.android-test-keep-rules'
     id 'org.mozilla.nimbus-gradle-plugin'
     id 'ApkSizePlugin'
     id 'jacoco'
@@ -81,6 +84,7 @@ android {
         shrinkResources = !project.hasProperty("disableOptimization")
         minifyEnabled = !project.hasProperty("disableOptimization")
         proguardFiles = [getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro']
+        testProguardFiles 'proguard-rules-android-test.pro'
         matchingFallbacks = ['release'] // Use on the "release" build type in dependencies (AARs)
 
         // Present in release builds.
@@ -208,6 +212,19 @@ android {
             resources.srcDirs += ['src/androidTest/resources']
             assets.srcDirs += files("$projectDir/schemas".toString())
         }
+        // Web extensions that only the UI tests install.
+        // WebExtensionController.ensureBuiltIn resolves resource://android/assets
+        // against the app's asset manager, so these have to be packaged in the app under test
+        // rather than the test apk.
+        // Added to the debug and other test builds, so they never reach a shipping build.
+        debug {
+            assets.srcDirs += ['src/androidTest/appAssets']
+        }
+        if (project.hasProperty("testBuildType")) {
+            named(project.property("testBuildType")) {
+                assets.srcDirs += ['src/androidTest/appAssets']
+            }
+        }
         if (project.hasProperty('baselineProfilePath')) {
             main {
                 baselineProfiles.srcDirs(project.property('baselineProfilePath'))
@@ -305,6 +322,16 @@ androidComponents {
             variant.outputs.each { output ->
                 output.versionName.set(versionName)
             }
+        }
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        tasks.register("writeRuntimeDependencies${variant.name.capitalize()}", WriteRuntimeDependencies) {
+            classpath(configurations.named("${variant.name}RuntimeClasspath"))
+            versionName = variant.outputs.first().versionName
+            outputFile = layout.buildDirectory.file("sbom/${variant.name}-runtime-dependencies.json")
         }
     }
 }
@@ -449,6 +476,7 @@ dependencies {
     implementation project(':components:compose-base')
     implementation project(':components:compose-browser-toolbar')
     implementation project(':components:compose-cfr')
+    implementation project(':components:compose-draggable')
     implementation project(':components:compose-menu')
     implementation project(':components:concept-awesomebar')
     implementation project(':components:concept-base')
@@ -460,6 +488,7 @@ dependencies {
     implementation project(':components:concept-tabstray')
     implementation project(':components:concept-toolbar')
     implementation project(':components:browser-domains')
+    implementation project(':components:browser-errorpages')
     implementation project(':components:browser-icons')
     implementation project(':components:browser-menu')
     implementation project(':components:browser-session-storage')
@@ -503,6 +532,8 @@ dependencies {
     implementation project(':components:feature-syncedtabs')
     implementation project(':components:feature-toolbar')
     implementation project(':components:feature-tab-collections')
+    implementation project(':components:feature-tabdata-coordinator')
+    implementation project(':components:feature-tabgroups-storage')
     implementation project(':components:feature-tabs')
     implementation project(':components:feature-top-sites')
     implementation project(':components:feature-webauthn')
@@ -550,7 +581,6 @@ dependencies {
     implementation project(':components:lib-ai-controls')
 
     implementation ComponentsDependencies.mozilla_appservices_syncmanager
-    implementation ComponentsDependencies.mozilla_appservices_merino
 
     implementation libs.accompanist.drawablepainter
     implementation libs.adjust
@@ -580,6 +610,8 @@ dependencies {
     implementation libs.androidx.exifinterface
     implementation libs.androidx.fragment
     implementation libs.androidx.fragment.compose
+    implementation libs.androidx.glance.appwidget
+    implementation libs.androidx.glance.preview
     implementation libs.androidx.lifecycle.common
     implementation libs.androidx.lifecycle.livedata
     implementation libs.androidx.lifecycle.process
@@ -616,7 +648,15 @@ dependencies {
     ksp libs.androidx.room.compiler
 
     debugImplementation libs.androidx.compose.ui.tooling
+    debugImplementation libs.androidx.glance.appwidget.preview
     debugImplementation libs.leakcanary
+
+    // Declares androidx.activity.ComponentActivity in the app under test, which the host-less
+    // Compose rules launch. Only added when building a non-debug variant for UI tests, so that
+    // it never reaches a shipping build.
+    if (project.hasProperty("testBuildType") && project.property("testBuildType") != "debug") {
+        addProvider("${project.property('testBuildType')}Implementation", libs.androidx.compose.ui.test.manifest)
+    }
 
     // Exclude Mockito to prevent classpath conflicts with MockK in tests.
     testImplementation (project(':components:support-test')) {
@@ -625,6 +665,7 @@ dependencies {
     testImplementation project(':components:support-test-fakes')
     testImplementation project(':components:support-test-libstate')
     testImplementation testFixtures(project(':components:support-utils'))
+    testImplementation testFixtures(project(':components:feature-tabgroups-storage'))
 
     testImplementation ComponentsDependencies.mozilla_appservices_full_megazord_libsForTests
 
@@ -667,7 +708,6 @@ dependencies {
     androidTestImplementation libs.kotlin.test
     androidTestImplementation libs.androidx.room.testing
     androidTestImplementation libs.leakcanary.instrumentation
-    androidTestImplementation libs.mockk.android
     androidTestImplementation libs.mockwebserver
     androidTestImplementation libs.okhttp
     androidTestRuntimeOnly libs.okio

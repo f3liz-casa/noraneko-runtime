@@ -4,6 +4,7 @@
 
 
 use gleam::gl;
+use std::cell::RefCell;
 use std::rc::Rc;
 use crate::blob;
 use crossbeam::sync::chase_lev;
@@ -37,6 +38,8 @@ pub struct DisplayList {
     /// If set to true, the pipeline will be rendered off-screen. Only snapshotted
     /// stacking contexts will be kept.
     pub render_offscreen: bool,
+    /// The pipelines this display list may embed.
+    pub embed_policy: Option<EmbedPolicy>,
 }
 
 // TODO(gw): This descriptor matches what we currently support for fonts
@@ -351,12 +354,46 @@ impl Wrench {
         });
 
         let gl = window.clone_gl();
+
+        // Build the shaders on a device of their own and share them with the
+        // renderer, as Gecko does, so that programs created or linked through
+        // one device are drawn with through another.
+        let shaders = {
+            let mut device = webrender::Device::new(
+                webrender::GpuBackendConfig::Gl(webrender::GlBackendConfig::new(gl.clone())),
+                webrender::DeviceOptions {
+                    crash_annotator: None,
+                    resource_override_path: opts.resource_override_path.clone(),
+                    use_optimized_shaders: opts.use_optimized_shaders,
+                    upload_method: opts.upload_method.clone(),
+                    batched_upload_threshold: opts.batched_upload_threshold,
+                    cached_programs: None,
+                    allow_texture_swizzling: opts.allow_texture_swizzling,
+                    dump_shader_source: opts.dump_shader_source.clone(),
+                    surface_origin_is_top_left: opts.surface_origin_is_top_left,
+                },
+            );
+            device.begin_frame();
+            let mut shaders = webrender::Shaders::new(&mut device, &opts).unwrap();
+            let precache_flags = if precache_shaders {
+                ShaderPrecacheFlags::FULL_COMPILE
+            } else {
+                ShaderPrecacheFlags::ASYNC_COMPILE
+            };
+            let mut pending = shaders.precache_all(precache_flags);
+            while shaders.resume_precache(&mut device, &mut pending).unwrap() {}
+            device.end_frame();
+            Rc::new(RefCell::new(shaders))
+        };
+
         let (renderer, sender) = webrender::create_webrender_instance(
-            gl.clone(),
+            webrender::GpuBackendConfig::Gl(webrender::GlBackendConfig::new(gl.clone())),
             notifier,
             opts,
-            None,
+            Some(&shaders),
         ).unwrap();
+        // The renderer now holds the only reference, so its deinit releases them.
+        drop(shaders);
 
         let api = sender.create_api();
         let document_id = api.add_document(size);
@@ -526,6 +563,13 @@ impl Wrench {
 
     pub fn put_dl_builder(&mut self, pipeline_id: PipelineId, builder: DisplayListBuilder) {
         self.dl_builders.insert(pipeline_id, builder);
+    }
+
+    /// Forget every retained builder, so the next display list for a pipeline is
+    /// built by a new one. Models the content process for that pipeline being
+    /// replaced; see `test_invalidation`'s `new-builder` option.
+    pub fn drop_dl_builders(&mut self) {
+        self.dl_builders.clear();
     }
 
     pub fn set_title(&mut self, extra: &str) {
@@ -698,11 +742,19 @@ impl Wrench {
         display_lists: Vec<DisplayList>,
         scroll_offsets: &HashMap<ExternalScrollId, Vec<SampledScrollOffset>>,
         transform_properties: &[PropertyValue<LayoutTransform>],
+        enforce_embed_policy: bool,
     ) {
         let mut txn = Transaction::new();
+        // The document outlives the yaml file, so this and the policies are
+        // set for every display list to not inherit a previous file's state.
+        txn.set_embed_policy_enforcement(enforce_embed_policy);
         let mut present = false;
         for display_list in display_lists {
             present |= display_list.present;
+
+            let embed_policy = display_list.embed_policy
+                .unwrap_or_else(|| EmbedPolicy::Restricted(Vec::new()));
+            txn.set_embed_policy(display_list.pipeline, embed_policy);
 
             txn.set_display_list(
                 Epoch(*frame_number),

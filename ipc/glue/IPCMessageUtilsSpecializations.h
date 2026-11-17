@@ -26,7 +26,6 @@
 #include "gfxPlatform.h"
 #include "NonCustomCSSPropertyId.h"
 #include "nsContentPolicyType.h"
-#include "nsContentPermissionHelper.h"
 #include "nsDebug.h"
 #include "nsIContentPolicy.h"
 #include "nsID.h"
@@ -250,11 +249,11 @@ struct ParamTraits<mozilla::Vector<E, N, AP>> {
   typedef mozilla::Vector<E, N, AP> paramType;
 
   static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    WriteSequenceParam<const E&>(aWriter, aParam.Elements(), aParam.Length());
+    WriteSequenceParam<const E&>(aWriter, aParam.begin(), aParam.length());
   }
 
   static void Write(MessageWriter* aWriter, paramType&& aParam) {
-    WriteSequenceParam<E&&>(aWriter, aParam.Elements(), aParam.Length());
+    WriteSequenceParam<E&&>(aWriter, aParam.begin(), aParam.length());
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
@@ -641,12 +640,6 @@ struct ParamTraits<nsILoadInfo::IPAddressSpace>
     : public ContiguousEnumSerializer<nsILoadInfo::IPAddressSpace,
                                       nsILoadInfo::IPAddressSpace::Unknown,
                                       nsILoadInfo::IPAddressSpace::Invalid> {};
-
-using PromptResult = mozilla::dom::ContentPermissionRequestBase::PromptResult;
-template <>
-struct ParamTraits<PromptResult>
-    : public ContiguousEnumSerializerInclusive<
-          PromptResult, PromptResult::Granted, PromptResult::Pending> {};
 
 } /* namespace IPC */
 

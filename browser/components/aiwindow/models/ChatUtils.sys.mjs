@@ -4,6 +4,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+import {
+  expandUrlTokens,
+  URL_TOKEN_REGEX,
+} from "moz-src:///browser/components/aiwindow/ui/modules/UrlTokenizer.sys.mjs";
+
 // Important! Changing or removing this value requires a security review.
 //
 // Limit the page titles to 100 characters to relax the use of the untrusted content flag
@@ -13,6 +18,8 @@ const MAX_METADATA_LENGTH = 100;
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  getSmartPageName:
+    "chrome://browser/content/aiwindow/modules/TrustedInternalURLs.mjs",
   MemoriesManager:
     "moz-src:///browser/components/aiwindow/models/memories/MemoriesManager.sys.mjs",
   renderPrompt: "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs",
@@ -115,7 +122,7 @@ export function getLocalIsoTime() {
  *
  * @param {Array<ContextWebsite>} contextMentions
  *
- * @returns {Promise<{url: string, title: string, description: string}>}
+ * @returns {Promise<{url: string, title: string, description: string, pageSlug: string}>}
  */
 export async function getCurrentTabMetadata(contextMentions = []) {
   const currentTab = contextMentions.find(
@@ -123,20 +130,21 @@ export async function getCurrentTabMetadata(contextMentions = []) {
   );
 
   if (!currentTab) {
-    return { url: "", title: "", description: "" };
+    return { url: "", title: "", description: "", pageSlug: "" };
   }
 
   let description = "";
 
   const url = currentTab.url || "";
   const title = sanitizeUntrustedContent(currentTab.label || "");
+  const pageSlug = lazy.getSmartPageName(URL.parse(url)) ?? "";
 
   /**
    * TODO: BUG 2015574
    * Need to extract page description in PageExtractor
    */
 
-  return { url, title, description };
+  return { url, title, description, pageSlug };
 }
 
 /**
@@ -146,12 +154,12 @@ export async function getCurrentTabMetadata(contextMentions = []) {
  *
  * @param {Array<ContextWebsite>} contextMentions
  *
- * @returns {Promise<{url, title, description, locale, timezone, isoTimestamp, todayDate, hasTabInfo}>}
+ * @returns {Promise<{url, pageSlug, title, description, locale, timezone, isoTimestamp, todayDate, hasTabInfo}>}
  */
 export async function constructRealTimeInfoInjectionMessage(
   contextMentions = []
 ) {
-  const { url, title, description } =
+  const { url, pageSlug, title, description } =
     await getCurrentTabMetadata(contextMentions);
   const isoTimestamp = getLocalIsoTime();
   const datePart = isoTimestamp?.split("T")[0] ?? "";
@@ -161,6 +169,7 @@ export async function constructRealTimeInfoInjectionMessage(
 
   return {
     url,
+    pageSlug,
     title,
     description,
     locale,
@@ -321,31 +330,6 @@ export function isNewPageUrl(url) {
 }
 
 /**
- * Expands URL tokens (e.g. §url_token: GITHUB_COM_1§) in text using the provided
- * mapping. Any token not found in the mapping is left unchanged.
- *
- * @param {string} text
- * @param {Map<string, string>} tokenToUrl
- * @returns {string}
- */
-export function expandUrlTokens(text, tokenToUrl) {
-  return text.replace(/§url_token:\s*([A-Z0-9_]+_\d+)§/g, (match, token) => {
-    return tokenToUrl.get(token) ?? match;
-  });
-}
-
-/**
- * Strips URL tokens that remain after expansion.
- * Any remaining tokens at this point were hallucinated by the model.
- *
- * @param {string} text
- * @returns {string}
- */
-export function stripUnresolvedUrlTokens(text) {
-  return text.replace(/§url_token:\s*[A-Z0-9_]+_\d+§/g, "");
-}
-
-/**
  * Resolve inline `@mention` markdown to URLs.
  * The smartbar editor contains inline mentions as `[label](mention:?href=url)`.
  *
@@ -368,7 +352,7 @@ export function resolveMentionUrls(text) {
  * @returns {string}
  */
 function resolveUrlTokenItem(item, tokenToUrl) {
-  const matches = [...item.matchAll(/§url_token:\s*([A-Z0-9_]+_\d+)§/g)];
+  const matches = [...item.matchAll(URL_TOKEN_REGEX)];
   if (matches.length === 1) {
     const url = tokenToUrl.get(matches[0][1]);
     if (url) {

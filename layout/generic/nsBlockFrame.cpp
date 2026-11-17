@@ -1131,26 +1131,40 @@ inline bool HasLineClampAuto(const StyleLineClamp& aLineClamp) {
          !aLineClamp.webkit_legacy;
 }
 
-static bool IsLineClampRoot(const nsBlockFrame* aFrame) {
-  if (!GetLineClampMaxLines(aFrame->StyleDisplay()->mWebkitLineClamp) &&
-      !HasLineClampAuto(aFrame->StyleDisplay()->mWebkitLineClamp)) {
-    return false;
+enum class SetsLineClamp {
+  No,
+  Yes,
+  YesLegacy,
+};
+
+// Does this style set `(-webkit-)line-clamp`?
+static SetsLineClamp IsLineClampStyle(const nsStyleDisplay* aStyleDisplay) {
+  if (!GetLineClampMaxLines(aStyleDisplay->mWebkitLineClamp) &&
+      !HasLineClampAuto(aStyleDisplay->mWebkitLineClamp)) {
+    return SetsLineClamp::No;
   }
 
+  if (!aStyleDisplay->mWebkitLineClamp.webkit_legacy) {
+    return SetsLineClamp::Yes;
+  }
+
+  return SetsLineClamp::YesLegacy;
+}
+
+static bool IsLineClampRoot(const nsBlockFrame* aFrame) {
   if (!aFrame->HasAnyStateBits(NS_BLOCK_BFC)) {
     return false;
   }
+  const auto setsLineClamp = IsLineClampStyle(aFrame->StyleDisplay());
+  if (setsLineClamp != SetsLineClamp::YesLegacy) {
+    return setsLineClamp == SetsLineClamp::Yes;
+  }
 
-  if (!aFrame->StyleDisplay()->mWebkitLineClamp.webkit_legacy ||
-      StaticPrefs::layout_css_webkit_line_clamp_block_enabled() ||
-      aFrame->PresContext()->Document()->ChromeRulesEnabled()) {
+  if (aFrame->PresContext()->Document()->ChromeRulesEnabled()) {
     return true;
   }
 
-  // For now, -webkit-box is the only thing allowed to be a line-clamp root.
-  // Ideally we'd just make this work everywhere, but for now we're carrying
-  // this forward as a limitation on the legacy -webkit-line-clamp feature,
-  // since relaxing this limitation might create webcompat trouble.
+  // -webkit-box is the only thing allowed to be a line-clamp root.
   auto origDisplay = [&] {
     if (aFrame->Style()->GetPseudoType() ==
         PseudoStyleType::MozScrolledContent) {
@@ -1208,7 +1222,8 @@ class MOZ_RAII LineClampLineIterator {
       : mCur(aFrame->LinesBegin()),
         mEnd(aFrame->LinesEnd()),
         mCurrentFrame(mCur == mEnd ? nullptr : aFrame),
-        mLastFrameToExit(aLastFrameToExit) {
+        mLastFrameToExit(aLastFrameToExit),
+        mEnteredLastFrameToExit(aFrame == aLastFrameToExit) {
     if (mCur != mEnd && !mCur->IsInline()) {
       Advance();
     }
@@ -1231,6 +1246,8 @@ class MOZ_RAII LineClampLineIterator {
     Advance();
   }
 
+  bool IsLastFrameOrDescendant() { return mEnteredLastFrameToExit; }
+
  private:
   void Advance() {
     for (;;) {
@@ -1252,6 +1269,9 @@ class MOZ_RAII LineClampLineIterator {
         mEnd = mCurrentFrame->LinesEnd();
       } else if (mCur->IsBlock()) {
         if (nsBlockFrame* child = GetAsLineClampDescendant(mCur->mFirstChild)) {
+          if (child == mLastFrameToExit) {
+            mEnteredLastFrameToExit = true;
+          }
           nsBlockFrame::LineIterator next = mCur;
           ++next;
           mStack.AppendElement(std::tuple(mCurrentFrame, next,
@@ -1307,6 +1327,9 @@ class MOZ_RAII LineClampLineIterator {
   nscoord mAccumulatedBEndBP = 0;
 
   WritingMode mWm = mLastFrameToExit->GetWritingMode();
+
+  // Used to check if we are in the last frame or one of its descendants.
+  bool mEnteredLastFrameToExit;
 
   // Stack of mCurrentFrame and mEnd values that we push and pop as we enter and
   // exist blocks.
@@ -1453,7 +1476,8 @@ void nsBlockFrame::ReflowAbsoluteDescendantsInInlineFrame(
     // were pushed from a previous fragmentainer.
     AddOrRemoveStateBits(
         NS_BLOCK_HAS_INLINE_ABSPOS_DESCENDANT,
-        prev->HasAnyStateBits(NS_BLOCK_HAS_INLINE_ABSPOS_DESCENDANT));
+        foundAbspos ||
+            prev->HasAnyStateBits(NS_BLOCK_HAS_INLINE_ABSPOS_DESCENDANT));
   } else if (!foundAbspos) {
     // We are a first-in-flow. Remove NS_BLOCK_HAS_INLINE_ABSPOS_DESCENDANT bit
     // if we didn't find any abspos descendants after a full walk over all our
@@ -1614,9 +1638,8 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
 #ifdef DEBUG
   if (gNoisyReflow) {
     IndentBy(stdout, gNoiseIndent);
-    fmt::println("{}: begin reflow: availSize={} computedSize={}",
-                 ListTag().get(), ToString(aReflowInput.AvailableSize()),
-                 ToString(aReflowInput.ComputedSize()));
+    fmt::println("{}: begin reflow: availSize={} computedSize={}", ListTag(),
+                 aReflowInput.AvailableSize(), aReflowInput.ComputedSize());
   }
   AutoNoisyIndenter indent(gNoisy);
   PRTime start = 0;  // Initialize these variablies to silence the compiler.
@@ -1751,28 +1774,33 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   // Return a BalanceTarget record representing the position at which line-clamp
   // will take effect for the current line list. Only to be used when there are
   // enough lines that the clamp will apply.
-  auto getClampPosition = [&](uint32_t aClampCount) -> BalanceTarget {
-    if (NS_WARN_IF(aClampCount >= mLines.size())) {
+  auto getClampPosition = [&]() -> BalanceTarget {
+    if ((!HasLineClampEllipsis() && !HasLineClampEllipsisDescendant()) ||
+        LineClampIsClampedToZero()) {
       return BalanceTarget{};
     }
-    auto iter = mLines.begin();
-    for (uint32_t i = 0; i < aClampCount; i++) {
-      ++iter;
+    for (LineClampLineIterator iter(this, this);
+         nsLineBox* line = iter.GetCurrentLine(); iter.Next()) {
+      // LineClampLineIterator is used to mimic the traversal behaviour of
+      // FindLineClamp*Target(). We skip over empty lines as they are not
+      // counted for numbered line-clamp.
+      if (line->IsEmpty()) {
+        continue;
+      }
+      if (line->HasLineClampEllipsis()) {
+        // The balance target should be the first line past the clamp point.
+        iter.Next();
+        line = iter.GetCurrentLine();
+
+        nsIFrame* firstChild = line->mFirstChild;
+        if (firstChild && firstChild->IsTextFrame()) {
+          auto* textFrame = static_cast<nsTextFrame*>(firstChild);
+          return BalanceTarget{textFrame->GetContent(),
+                               textFrame->GetContentOffset(), line->BStart()};
+        }
+      }
     }
-    nsIFrame* firstChild = iter->mFirstChild;
-    if (!firstChild) {
-      return BalanceTarget{};
-    }
-    nsIContent* content = firstChild->GetContent();
-    if (!content) {
-      return BalanceTarget{};
-    }
-    int32_t offset = 0;
-    if (firstChild->IsTextFrame()) {
-      auto* textFrame = static_cast<nsTextFrame*>(firstChild);
-      offset = textFrame->GetContentOffset();
-    }
-    return BalanceTarget{content, offset, iter.get()->BStart()};
+    return BalanceTarget{};
   };
 
   // "balancing" is implemented by shortening the effective inline-size of the
@@ -1818,18 +1846,14 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
       trialState.ResetForBalance(balanceStep);
       balanceStep /= 2;
 
-      // If -webkit-line-clamp is in effect, then we need to maintain the
+      // If line-clamp is in effect, then we need to maintain the
       // content location at which clamping occurs, rather than the total
       // number of lines in the block.
       if (StaticPrefs::layout_css_text_wrap_balance_after_clamp_enabled() &&
           IsLineClampRoot(this)) {
-        uint32_t lineClampCount =
-            GetLineClampMaxLines(aReflowInput.mStyleDisplay->mWebkitLineClamp);
-        if (uint32_t(balanceTarget.mOffset) > lineClampCount) {
-          auto t = getClampPosition(lineClampCount);
-          if (t.mContent) {
-            balanceTarget = t;
-          }
+        BalanceTarget lineClampBalanceTarget = getClampPosition();
+        if (lineClampBalanceTarget != BalanceTarget{}) {
+          balanceTarget = lineClampBalanceTarget;
         }
       }
 
@@ -1845,8 +1869,7 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
         return false;
       }
       if (balanceTarget.mContent) {
-        auto t = getClampPosition(
-            GetLineClampMaxLines(aReflowInput.mStyleDisplay->mWebkitLineClamp));
+        auto t = getClampPosition();
         return t == balanceTarget;
       }
       int32_t numLines =
@@ -2073,13 +2096,11 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
 
   if (gNoisyReflow) {
     IndentBy(stdout, gNoiseIndent);
-    fmt::print("{}: status={} metrics={} carriedMargin={}", ListTag().get(),
-               ToString(aStatus), ToString(aMetrics.Size(wm)),
-               aMetrics.mCarriedOutBEndMargin.Get());
+    fmt::print("{}: status={} metrics={} carriedMargin={}", ListTag(), aStatus,
+               aMetrics.Size(wm), aMetrics.mCarriedOutBEndMargin.Get());
     if (HasOverflowAreas()) {
-      fmt::print(" overflow-ink={} overflow-scr={}",
-                 ToString(aMetrics.InkOverflow()),
-                 ToString(aMetrics.ScrollableOverflow()));
+      fmt::print(" overflow-ink={} overflow-scr={}", aMetrics.InkOverflow(),
+                 aMetrics.ScrollableOverflow());
     }
     printf("\n");
   }
@@ -2132,8 +2153,9 @@ nsReflowStatus nsBlockFrame::TrialReflow(nsPresContext* aPresContext,
   // descendants when applying line-clamp.
   if (IsLineClampRoot(this)) {
     ClearLineClampEllipsis();
-    SetLineClampRootMaxHeight(std::min(aReflowInput.ComputedMaxBSize(),
-                                       aReflowInput.ComputedBSize()) +
+    nscoord rootMaxBSize =
+        aReflowInput.ApplyMinMaxBSize(aReflowInput.ComputedBSize());
+    SetLineClampRootMaxHeight(rootMaxBSize +
                               GetLogicalUsedBorderAndPadding(GetWritingMode())
                                   .BStartEnd(GetWritingMode()));
   }
@@ -2347,25 +2369,57 @@ Maybe<nsBlockFrame::LineClampTarget> nsBlockFrame::FindLineClampAutoTarget(
                          GetLogicalUsedBorderAndPadding(wm).BEnd(wm) -
                          aCollapsingBEndMargin;
 
+  nscoord thisMinBSize = aReflowInput.ComputedMinBSize();
+
   nsLineBox* prevLine = nullptr;
   nsBlockFrame* prevFrame = nullptr;
   nscoord prevBEdge = 0;
   for (LineClampLineIterator iter(aLineClampRoot, this);
        nsLineBox* line = iter.GetCurrentLine(); iter.Next()) {
-    if (line->IsEmpty() && line->BSize() == 0) {
-      continue;
-    }
-
     nsBlockFrame* frame = iter.GetCurrentFrame();
 
+    const bool isNewFrame = frame != prevFrame && line == frame->LinesBegin();
+
+    // - If this frame has an ancestor that we know doesn't fit (due to
+    // min-height or height), this frame has no clamp point.
+    // - If this frame has a definite height that we know fits, we do not have a
+    // clamp point.
+    // - If this frame has a min-height that is satsfied, but does not have a
+    // definite height, we may have a clamp point, and should continue iterating
+    // as usual.
+    const bool bSizeIsConstrained =
+        !frame->StylePosition()
+             ->MinBSize(wm, AnchorPosResolutionParams::From(frame))
+             ->IsAuto();
+
+    if (isNewFrame && bSizeIsConstrained) {
+      const nscoord sizeToCheck = frame == this ? thisMinBSize : frame->BSize();
+      if (sizeToCheck + prevBEdge > rootMaxBSize) {
+        // The current frame does not fit due to its min-height.
+        if (iter.IsLastFrameOrDescendant() && frame != this) {
+          // The current frame is in this frame's subtree and affects clamping.
+          return Some(
+              nsBlockFrame::LineClampTarget{prevFrame, prevLine, prevBEdge});
+        }
+        // The current frame is a this frame, or a constrained size parent of
+        // this frame, so this frame does not need a clamp point.
+        return Nothing();
+      }
+    }
+
     const bool bSizeIsDefinite =
-        frame && !frame->StylePosition()
-                      ->BSize(wm, AnchorPosResolutionParams::From(frame))
-                      ->IsAuto();
-    // We are stepping into a new frame of a definite size that isn't a
+        !frame->StylePosition()
+             ->BSize(wm, AnchorPosResolutionParams::From(frame))
+             ->IsAuto();
+    // We are stepping into a new frame of a constrained size that isn't a
     // placeholder.
-    if (bSizeIsDefinite && frame != prevFrame && frame != aLineClampRoot &&
+    if (bSizeIsDefinite && isNewFrame && frame != aLineClampRoot &&
         !frame->IsPlaceholderFrame()) {
+      // We are a child of a fixed size container and do not affect BSize.
+      if (!iter.IsLastFrameOrDescendant()) {
+        return Nothing();
+      }
+
       // If the next frame has a fixed size and doesn't fit, clamp it
       if (frame->BSize() + prevBEdge > rootMaxBSize) {
         return Some(
@@ -2390,11 +2444,20 @@ Maybe<nsBlockFrame::LineClampTarget> nsBlockFrame::FindLineClampAutoTarget(
       for (nsLineBox* lineCatchup = nullptr; lineCatchup != nextLine;
            lineCatchup = iter.GetCurrentLine()) {
         iter.Next();
+        if (!iter.GetCurrentLine()) {
+          // If we run out of iterator, then the clamp point is in a
+          // constrained-size parent of this frame.
+          return Nothing();
+        }
       }
 
       prevLine = nextLine;
       prevFrame = nextFrame;
       prevBEdge = frame->BSize() + prevBEdge;
+      continue;
+    }
+
+    if (line->IsEmpty() && line->BSize() == 0) {
       continue;
     }
 
@@ -3435,8 +3498,8 @@ static void DumpLine(const BlockReflowState& aState, nsLineBox* aLine,
         "line={} mBCoord={} dirty={} bounds={} overflow-ink={} "
         "overflow-scr={} deltaBCoord={} mPrevBEndMargin={} childCount={}",
         static_cast<void*>(aLine), aState.mBCoord, YesOrNo(aLine->IsDirty()),
-        ToString(aLine->GetBounds()), ToString(aLine->InkOverflowRect()),
-        ToString(aLine->ScrollableOverflowRect()), aDeltaBCoord,
+        aLine->GetBounds(), aLine->InkOverflowRect(),
+        aLine->ScrollableOverflowRect(), aDeltaBCoord,
         aState.mPrevBEndMargin.Get(), aLine->GetChildCount());
   }
 #endif
@@ -4001,6 +4064,7 @@ bool nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
         RemoveFirstLine(nextInFlow->mLines, nextInFlow->mFrames, &pulledLine,
                         &pulledFrames);
         ClearLineCursors();
+        nextInFlow->ClearLineCursors();
       } else {
         // Grab an overflow line if there are any
         FrameLines* overflowLines = nextInFlow->GetOverflowLines();
@@ -4364,6 +4428,7 @@ nsIFrame* nsBlockFrame::PullFrameFrom(nsLineBox* aLine,
     MOZ_ASSERT(aLine == mLines.back());
     MOZ_ASSERT(aFromLine == aFromContainer->mLines.begin(),
                "should only pull from first line");
+    aFromContainer->ClearLineCursors();
     aFromContainer->mFrames.RemoveFrame(frame);
 
     // When pushing and pulling frames we need to check for whether any
@@ -7382,8 +7447,9 @@ void nsBlockFrame::DidSetComputedStyle(ComputedStyle* aOldStyle) {
     return;
   }
 
+  const bool wasBFC = HasAnyStateBits(NS_BLOCK_BFC);
   const bool isBFC = EstablishesBFC(this);
-  if (HasAnyStateBits(NS_BLOCK_BFC) != isBFC) {
+  if (wasBFC != isBFC) {
     if (HasAnyFloats()) {
       // If the frame contains floats, this update may change their float
       // manager. Be safe by dirtying all descendant lines of the nearest
@@ -7391,10 +7457,16 @@ void nsBlockFrame::DidSetComputedStyle(ComputedStyle* aOldStyle) {
       RemoveStateBits(NS_BLOCK_BFC);
       MarkSameFloatManagerLinesDirty(this);
     }
-    if (isBFC && !IsLineClampRoot(this)) {
+    AddOrRemoveStateBits(NS_BLOCK_BFC, isBFC);
+    const bool wasLineClampRoot =
+        wasBFC &&
+        IsLineClampStyle(aOldStyle->StyleDisplay()) != SetsLineClamp::No;
+    // `IsLineClampRoot` checks NS_BLOCK_BFC, so it must be called after
+    // the frame bit is set above.
+    const bool isLineClampRoot = isBFC && IsLineClampRoot(this);
+    if (wasLineClampRoot != isLineClampRoot) {
       ClearLineClampEllipsis();
     }
-    AddOrRemoveStateBits(NS_BLOCK_BFC, isBFC);
   }
 }
 
@@ -8374,6 +8446,22 @@ static void DisplayLine(nsDisplayListBuilder* aBuilder,
   collection.MoveTo(aLists);
 }
 
+// Traverse lines skipped by line-clamp to build marked abspos descendants and
+// their ancestor container items.
+static void DisplayLineClampAbsPosDescendants(
+    nsDisplayListBuilder* aBuilder,
+    nsBlockFrame::LineIterator aFirstSkippedLine,
+    nsBlockFrame::LineIterator aLineEnd, const nsDisplayListSet& aLists,
+    nsBlockFrame* aFrame, int32_t aDepth, int32_t& aDrawnLines) {
+  nsDisplayListBuilder::AutoInLineClampAbsPosTraversal traversal(aBuilder);
+  bool foundClamp = false;
+
+  for (auto line = aFirstSkippedLine; line != aLineEnd; ++line) {
+    DisplayLine(aBuilder, line, line->IsInline(), aLists, aFrame, nullptr, 0,
+                aDepth, aDrawnLines, foundClamp);
+  }
+}
+
 // Walk aFrame's inline descendants and, for each inline that is an absolute
 // containing block, build the display items for its abspos children that are
 // continuations. Note the first continuation of the abspos children is built
@@ -8452,6 +8540,9 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   if (HidesContent()) {
     return;
   }
+
+  const bool skipClampedContent =
+      StaticPrefs::layout_css_webkit_line_clamp_skip_paint();
 
   if (GetPrevInFlow()) {
     DisplayOverflowContainers(aBuilder, aLists);
@@ -8533,7 +8624,7 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     }
     if ((HasLineClampEllipsis() || HasLineClampEllipsisDescendant() ||
          LineClampIsClampedToZero()) &&
-        StaticPrefs::layout_css_webkit_line_clamp_skip_paint()) {
+        skipClampedContent) {
       // We can't use the cursor if we're in a line-clamping situation, and
       // we're configured to not paint its clamped content, as we need to know
       // whether we've hit the clamp point which requires iterating over all
@@ -8546,7 +8637,7 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   nsLineBox* cursor = canUseCursor
                           ? GetFirstLineContaining(aBuilder->GetDirtyRect().y)
                           : nullptr;
-  LineIterator line_end = LinesEnd();
+  const LineIterator line_end = LinesEnd();
 
   TextOverflow* textOverflowPtr = textOverflow.get();
   bool foundClamp = false;
@@ -8565,8 +8656,7 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
         if (ShouldDescendIntoLine(lineArea)) {
           DisplayLine(aBuilder, line, line->IsInline(), aLists, this, nullptr,
                       0, depth, drawnLines, foundClamp);
-          MOZ_ASSERT(!foundClamp ||
-                     !StaticPrefs::layout_css_webkit_line_clamp_skip_paint());
+          MOZ_ASSERT(!foundClamp || !skipClampedContent);
         }
       }
     }
@@ -8591,8 +8681,11 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
           backplateColor.value());
     };
 
-    if (!(LineClampIsClampedToZero() &&
-          StaticPrefs::layout_css_webkit_line_clamp_skip_paint())) {
+    LineIterator firstSkippedLine =
+        LineClampIsClampedToZero() && skipClampedContent ? LinesBegin()
+                                                         : line_end;
+
+    if (firstSkippedLine == line_end) {
       for (LineIterator line = LinesBegin(); line != line_end; ++line) {
         const nsRect lineArea = line->InkOverflowRect();
         const bool lineInLine = line->IsInline();
@@ -8632,12 +8725,20 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
           }
         }
         foundClamp = foundClamp || line->HasLineClampEllipsis();
-        if (foundClamp &&
-            StaticPrefs::layout_css_webkit_line_clamp_skip_paint()) {
+        if (foundClamp && skipClampedContent) {
+          firstSkippedLine = line.next();
           break;
         }
         lineCount++;
       }
+    }
+
+    const bool hasForcedDisplayListDescend =
+        HasAnyStateBits(NS_FRAME_FORCE_DISPLAY_LIST_DESCEND_INTO);
+
+    if (firstSkippedLine != line_end && hasForcedDisplayListDescend) {
+      DisplayLineClampAbsPosDescendants(aBuilder, firstSkippedLine, line_end,
+                                        aLists, this, depth, drawnLines);
     }
 
     if (GetPrevInFlow() || GetNextInFlow()) {

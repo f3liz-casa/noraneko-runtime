@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef mozilla_HalInternal_h
-#define mozilla_HalInternal_h 1
+#define mozilla_HalInternal_h
 
 /*
  * This file is included by HalImpl.h and HalSandbox.h with a mechanism similar
@@ -53,8 +53,8 @@ void EnableScreenConfigurationNotifications();
 void DisableScreenConfigurationNotifications();
 
 /**
- * Has the child-side HAL IPC object been destroyed?  If so, you shouldn't send
- * messages to hal_sandbox.
+ * Has the child-side HAL IPC object been destroyed, or could it not be created?
+ * If so, you shouldn't send messages to hal_sandbox.
  */
 bool HalChildDestroyed();
 }  // namespace MOZ_HAL_NAMESPACE

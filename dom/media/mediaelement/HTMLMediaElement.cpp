@@ -74,7 +74,6 @@
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/ElementInlines.h"
-#include "mozilla/dom/FeaturePolicyUtils.h"
 #include "mozilla/dom/HTMLAudioElement.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "mozilla/dom/HTMLMediaElementBinding.h"
@@ -85,8 +84,10 @@
 #include "mozilla/dom/MediaEncryptedEvent.h"
 #include "mozilla/dom/MediaErrorBinding.h"
 #include "mozilla/dom/MediaSource.h"
+#include "mozilla/dom/PermissionsPolicyUtils.h"
 #include "mozilla/dom/PlayPromise.h"
 #include "mozilla/dom/Promise.h"
+#include "mozilla/dom/Range.h"
 #include "mozilla/dom/TextTrack.h"
 #include "mozilla/dom/UserActivation.h"
 #include "mozilla/dom/VideoPlaybackQuality.h"
@@ -129,7 +130,6 @@
 #include "nsNodeInfoManager.h"
 #include "nsPresContext.h"
 #include "nsQueryObject.h"
-#include "nsRange.h"
 #include "nsSize.h"
 #include "nsThreadUtils.h"
 #include "nsURIHashKey.h"
@@ -456,8 +456,18 @@ class HTMLMediaElement::MediaControlKeyListener final
 
     MOZ_ASSERT(mControlAgent);
     auto* owner = Owner();
-    PositionState state(owner->Duration(),
-                        owner->Paused() ? 0.0 : owner->PlaybackRate(),
+    // `Duration()` is NaN while the element has neither a decoder nor a
+    // stream, and infinite for a stream. Neither is a length that a platform's
+    // media controls can lay a timeline out from, so report no position state
+    // at all instead.
+    const double duration = owner->Duration();
+    if (!std::isfinite(duration)) {
+      MEDIACONTROL_LOG("Clear media position state (duration={})", duration);
+      mControlAgent->UpdateGuessedPositionState(mOwnerBrowsingContextId,
+                                                mElementId, Nothing());
+      return;
+    }
+    PositionState state(duration, owner->Paused() ? 0.0 : owner->PlaybackRate(),
                         owner->CurrentTime(), TimeStamp::Now());
     MEDIACONTROL_LOG(
         "Notify media position state (duration={}, playbackRate={}, "
@@ -569,19 +579,23 @@ class HTMLMediaElement::MediaControlKeyListener final
     }
   }
 
-  void SuspendForInterrupt() override {
+  void SuspendForInterrupt(AudioSessionInterruptKind aKind) override {
     MOZ_ASSERT(NS_IsMainThread());
     // Only an audible, playing element yields to an interruption; a paused or
     // inaudible element (muted, volume 0, or no audio track) is left alone.
-    if (!Owner() || Owner()->Paused() || !mIsOwnerAudible) {
-      return;
+    const bool willPause = Owner() && !Owner()->Paused() && mIsOwnerAudible;
+    MEDIACONTROL_LOG("SuspendForInterrupt {}, pause={}",
+                     dom::EnumValueToString(aKind), willPause);
+    if (willPause) {
+      // Pausing clears mSuspendedByInterrupt (see NotifyPaused); set it back
+      // right after our own pause so ResumeFromInterrupt knows this element is
+      // the one the interruption suspended.
+      Owner()->Pause();
+      mSuspendedByInterrupt = true;
     }
-    MEDIACONTROL_LOG("SuspendForInterrupt");
-    // Pausing clears mSuspendedByInterrupt (see NotifyPaused); set it back
-    // right after our own pause so ResumeFromInterrupt knows this element is
-    // the one the interruption suspended.
-    Owner()->Pause();
-    mSuspendedByInterrupt = true;
+    if (aKind == AudioSessionInterruptKind::Permanent) {
+      mSuspendedByInterrupt = false;
+    }
   }
 
   void ResumeFromInterrupt() override {
@@ -1034,7 +1048,7 @@ class HTMLMediaElement::MediaStreamRenderer {
     ResolveAudioDevicePromiseIfExists(__func__);
 
     RefPtr promise = mSetAudioDevicePromise.Ensure(__func__);
-    GenericPromise::AllSettled(GetCurrentSerialEventTarget(), promises)
+    GenericPromise::AllSettled(AbstractThread::MainThread(), promises)
         ->Then(GetMainThreadSerialEventTarget(), __func__,
                [self = RefPtr{this},
                 this](const GenericPromise::AllSettledPromiseType::
@@ -2279,6 +2293,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLMediaElement,
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mIncomingMediaKeys)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSelectedVideoStreamTrack)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPendingPlayPromises)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPendingPlayPromisesRunners)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSeekDOMPromise)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSetMediaKeysDOMPromise)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEventBlocker)
@@ -2333,6 +2348,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLMediaElement,
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mIncomingMediaKeys)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSelectedVideoStreamTrack)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPendingPlayPromises)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPendingPlayPromisesRunners)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSeekDOMPromise)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSetMediaKeysDOMPromise)
   if (tmp->mMediaControlKeyListener) {
@@ -2595,9 +2611,6 @@ void HTMLMediaElement::ShutdownDecoder() {
   NS_ASSERTION(mDecoder, "Must have decoder to shut down");
 
   mWaitingForKeyListener.DisconnectIfExists();
-  if (mMediaSource) {
-    mMediaSource->CompletePendingTransactions();
-  }
   mDecoder->Shutdown();
   DDUNLINKCHILD(mDecoder.get());
   mDecoder = nullptr;
@@ -2606,6 +2619,7 @@ void HTMLMediaElement::ShutdownDecoder() {
 void HTMLMediaElement::AbortExistingLoads() {
   MOZ_ASSERT(NS_IsMainThread());
   LOG(LogLevel::Debug, ("{} Abort existing loads", fmt::ptr(this)));
+  mLazyLoadingCompleted = false;
   // Abort any already-running instance of the resource selection algorithm.
   mLoadWaitStatus = NOT_WAITING;
 
@@ -2852,6 +2866,44 @@ static nsCString DocumentOrigin(Document* aDoc) {
   return origin;
 }
 
+void HTMLMediaElement::SetLazyLoading() {
+  if (!StaticPrefs::media_lazy_loading_enabled()) {
+    return;
+  }
+
+  if (mLazyLoading || mLazyLoadingCompleted || !MaybeStartLazyLoading()) {
+    return;
+  }
+
+  mLazyLoading = true;
+  ChangeNetworkState(NETWORK_IDLE);
+  LOG(LogLevel::Debug, ("{} SetLazyLoading: pending", fmt::ptr(this)));
+}
+
+void HTMLMediaElement::StopLazyLoading(StartLoad aStartLoad) {
+  if (!mLazyLoading) {
+    return;
+  }
+
+  mLazyLoading = false;
+  Element::StopLazyLoading();
+
+  if (IsVideo() && aStartLoad == StartLoad::Yes) {
+    if (nsVideoFrame* videoFrame = do_QueryFrame(GetPrimaryFrame())) {
+      videoFrame->UpdatePosterSource(true);
+    }
+  }
+
+  if (aStartLoad == StartLoad::Yes) {
+    LOG(LogLevel::Debug, ("{} StopLazyLoading: loading now", fmt::ptr(this)));
+    DoLoad();
+    mLazyLoadingCompleted = true;
+  } else {
+    LOG(LogLevel::Debug,
+        ("{} StopLazyLoading: stopped without loading", fmt::ptr(this)));
+  }
+}
+
 void HTMLMediaElement::Load() {
   LOG(LogLevel::Debug,
       ("{} Load() hasSrcAttrStream={} hasSrcAttr={} hasSourceChildren={} "
@@ -2868,8 +2920,20 @@ void HTMLMediaElement::Load() {
     return;
   }
 
+  // An explicit load() call must override lazy loading deferral.
+  // StartLoad::No: DoLoad() handles resource selection itself and skips
+  // UpdatePosterSource. An explicit load() should not trigger poster loading,
+  // matching the spec's load() steps, which invoke only the media lazy load
+  // resumption steps.
+  const bool wasLazyLoading = mLazyLoading;
+  StopLazyLoading(StartLoad::No);
+
   mIsDoingExplicitLoad = true;
   DoLoad();
+
+  if (wasLazyLoading) {
+    mLazyLoadingCompleted = true;
+  }
 }
 
 void HTMLMediaElement::DoLoad() {
@@ -2881,6 +2945,11 @@ void HTMLMediaElement::DoLoad() {
   }
 
   if (mIsRunningLoadMethod) {
+    return;
+  }
+
+  if (mLazyLoading) {
+    LOG(LogLevel::Debug, ("{} DoLoad: load deferred (lazy)", fmt::ptr(this)));
     return;
   }
 
@@ -2944,6 +3013,12 @@ void HTMLMediaElement::SelectResource(
     // element children, abort the load.
     ChangeNetworkState(NETWORK_EMPTY);
     ChangeDelayLoadStatus(false);
+    return;
+  }
+
+  if (mLazyLoading) {
+    LOG(LogLevel::Debug,
+        ("{} SelectResource: load deferred (lazy)", fmt::ptr(this)));
     return;
   }
 
@@ -3178,7 +3253,7 @@ void HTMLMediaElement::DealWithFailedElement(nsIContent* aSourceElement) {
 
 void HTMLMediaElement::LoadFromSourceChildren(
     const JSCallingLocation& aCallingLocation) {
-  NS_ASSERTION(mDelayingLoadEvent,
+  NS_ASSERTION(mDelayingLoadEvent || LoadingState() == Loading::Lazy,
                "Should delay load event (if in document) during load");
   NS_ASSERTION(mIsLoadingFromSourceChildren,
                "Must remember we're loading from source children");
@@ -3451,7 +3526,7 @@ void HTMLMediaElement::UpdatePreloadAction(
 
 MediaResult HTMLMediaElement::LoadResource(
     const JSCallingLocation& aCallingLocation) {
-  NS_ASSERTION(mDelayingLoadEvent,
+  NS_ASSERTION(mDelayingLoadEvent || LoadingState() == Loading::Lazy,
                "Should delay load event (if in document) during load");
 
   if (mChannelLoader) {
@@ -3790,6 +3865,7 @@ void HTMLMediaElement::Pause(ErrorResult& aRv) {
 }
 
 void HTMLMediaElement::PauseInternal() {
+  RefPtr<HTMLMediaElement> kungFuDeathGrip(this);
   if (mDecoder && mNetworkState != NETWORK_EMPTY) {
     mDecoder->Pause();
   }
@@ -5145,6 +5221,17 @@ already_AddRefed<Promise> HTMLMediaElement::Play(ErrorResult& aRv) {
   // play promises.
   // Note: Promise appended to list of pending promises as needed below.
 
+  // Per spec, play() invokes the media lazy load resumption steps but not the
+  // poster lazy load resumption steps. Handle this before other checks so
+  // loading begins even if play is later blocked or delayed.
+  if (mLazyLoading) {
+    StopLazyLoading(StartLoad::No);
+    DoLoad();
+    // Must be set after DoLoad(): DoLoad() calls AbortExistingLoads(), which
+    // resets mLazyLoadingCompleted to false.
+    mLazyLoadingCompleted = true;
+  }
+
   if (ShouldBeSuspendedByInactiveDocShell()) {
     LOG(LogLevel::Debug,
         ("{} no allow to play by the docShell for now", fmt::ptr(this)));
@@ -5600,6 +5687,10 @@ bool HTMLMediaElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
                                     // not a recognised value.
                                     kPreloadDefaultType);
     }
+
+    if (aAttribute == nsGkAtoms::loading) {
+      return ParseLoadingAttribute(aValue, aResult);
+    }
   }
 
   return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
@@ -5635,7 +5726,14 @@ void HTMLMediaElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
                                     nsIPrincipal* aMaybeScriptedPrincipal,
                                     bool aNotify) {
   if (aNameSpaceID == kNameSpaceID_None) {
-    if (aName == nsGkAtoms::src) {
+    if (aName == nsGkAtoms::loading) {
+      if (aValue && Loading(aValue->GetEnumValue()) == Loading::Lazy) {
+        SetLazyLoading();
+      } else if (aOldValue &&
+                 Loading(aOldValue->GetEnumValue()) == Loading::Lazy) {
+        StopLazyLoading(StartLoad(aNotify));
+      }
+    } else if (aName == nsGkAtoms::src) {
       mSrcMediaSource = nullptr;
       nsAttrValueOrString srcVal(aValue);
       mSrcAttrTriggeringPrincipal = nsContentUtils::GetAttrTriggeringPrincipal(
@@ -5652,11 +5750,13 @@ void HTMLMediaElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
     } else if (aName == nsGkAtoms::autoplay) {
       if (aNotify) {
         if (aValue) {
+          if (!mLazyLoading) {
 #if defined(MOZ_WIDGET_ANDROID)
-          StartObservingGVAutoplayIfNeeded();
+            StartObservingGVAutoplayIfNeeded();
 #endif
-          StopSuspendingAfterFirstFrame();
-          CheckAutoplayDataReady();
+            StopSuspendingAfterFirstFrame();
+            CheckAutoplayDataReady();
+          }
         }
         // This attribute can affect AddRemoveSelfReference
         AddRemoveSelfReference();
@@ -5715,6 +5815,15 @@ void HTMLMediaElement::AfterMaybeChangeAttr(int32_t aNamespaceID, nsAtom* aName,
                                             bool aNotify) {
   if (aNamespaceID == kNameSpaceID_None) {
     if (aName == nsGkAtoms::src) {
+      mLazyLoadingCompleted = false;
+
+      if (StaticPrefs::media_lazy_loading_enabled() &&
+          LoadingState() == Loading::Lazy) {
+        if (!mLazyLoading) {
+          AbortExistingLoads();
+        }
+        SetLazyLoading();
+      }
       DoLoad();
     }
   }
@@ -5732,6 +5841,10 @@ nsresult HTMLMediaElement::BindToTree(BindContext& aContext, nsINode& aParent) {
     UpdatePreloadAction(JSCallingLocation::Get());
   }
 
+  if (mLazyLoading) {
+    LazyLoadingElementBindToTree(aContext);
+  }
+
   NotifyDecoderActivityChanges();
   mMediaControlKeyListener->UpdateOwnerBrowsingContextIfNeeded();
   return rv;
@@ -5742,6 +5855,10 @@ void HTMLMediaElement::UnbindFromTree(UnbindContext& aContext) {
 
   if (IsInComposedDoc()) {
     TeardownUAShadowRoot(NotifyUAWidget::Yes);
+  }
+
+  if (mLazyLoading) {
+    LazyLoadingElementUnbindFromTree(aContext);
   }
 
   nsGenericHTMLElement::UnbindFromTree(aContext);
@@ -6442,6 +6559,7 @@ void HTMLMediaElement::Error(uint16_t aErrorCode,
 }
 
 void HTMLMediaElement::PlaybackEnded() {
+  RefPtr<HTMLMediaElement> kungFuDeathGrip(this);
   // We changed state which can affect AddRemoveSelfReference
   AddRemoveSelfReference();
 
@@ -6509,6 +6627,7 @@ void HTMLMediaElement::UpdatePlayedRangesBeforeSeek(double aRangeEndTime) {
 }
 
 void HTMLMediaElement::SeekCompleted() {
+  RefPtr<HTMLMediaElement> kungFuDeathGrip(this);
   mPlayingBeforeSeek = false;
   SetPlayedOrSeeked(true);
   if (mTextTrackManager) {
@@ -6901,6 +7020,8 @@ void HTMLMediaElement::ChangeReadyState(nsMediaReadyState aState) {
   if (mReadyState == aState) {
     return;
   }
+
+  RefPtr<HTMLMediaElement> kungFuDeathGrip(this);
 
   nsMediaReadyState oldState = mReadyState;
   mReadyState = aState;
@@ -7661,6 +7782,11 @@ HTMLSourceElement* HTMLMediaElement::GetNextSource() {
 }
 
 void HTMLMediaElement::ChangeDelayLoadStatus(bool aDelay) {
+  if (aDelay && LoadingState() == Loading::Lazy) {
+    // Lazy media must not delay the document load event after deferral resumes.
+    aDelay = false;
+  }
+
   if (mDelayingLoadEvent == aDelay) {
     return;
   }
@@ -7777,6 +7903,7 @@ bool HTMLMediaElement::ShouldQueueTimeupdateAsyncTask(
 
 void HTMLMediaElement::FireTimeUpdate(TimeupdateType aType) {
   NS_ASSERTION(NS_IsMainThread(), "Should be on main thread.");
+  RefPtr<HTMLMediaElement> kungFuDeathGrip(this);
 
   if (ShouldQueueTimeupdateAsyncTask(aType)) {
     RefPtr<nsMediaEventRunner> runner =
@@ -8667,8 +8794,8 @@ already_AddRefed<Promise> HTMLMediaElement::SetSinkId(const nsAString& aSinkId,
     return nullptr;
   }
 
-  if (!FeaturePolicyUtils::IsFeatureAllowed(win->GetExtantDoc(),
-                                            u"speaker-selection"_ns)) {
+  if (!PermissionsPolicyUtils::IsFeatureAllowed(win->GetExtantDoc(),
+                                                u"speaker-selection"_ns)) {
     promise->MaybeRejectWithNotAllowedError(
         "Document's Permissions Policy does not allow setSinkId()");
   }
@@ -8944,6 +9071,11 @@ void HTMLMediaElement::NodeInfoChanged(Document* aOldDoc) {
   if (mMediaSource) {
     OwnerDoc()->AddMediaElementWithMSE();
     aOldDoc->RemoveMediaElementWithMSE();
+  }
+
+  StopLazyLoading(StartLoad::No);
+  if (LoadingState() == Loading::Lazy) {
+    SetLazyLoading();
   }
 
   nsGenericHTMLElement::NodeInfoChanged(aOldDoc);

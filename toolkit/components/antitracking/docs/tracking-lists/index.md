@@ -12,7 +12,7 @@ Disconnect provides Mozilla with an updated blocklist every so often, with a pul
 
 ### The Lists
 
-The following lists are kept in the [shavar-prod-lists]([https://github.com/mozilla-services/shavar-prod-lists](https://github.com/mozilla-services/shavar-prod-lists)) repository.
+The following lists are kept in the [shavar-prod-lists](https://github.com/mozilla-services/shavar-prod-lists) repository.
 
 | List | Purpose |
 | ---  | ------- |
@@ -68,7 +68,7 @@ versioning_needed=true
 
 ## Remote Settings
 
-Remote Settings (RS) is used to manage evergreen data in Firefox, which can be accessed with an API to sync data between clients and the server. You can find more about it here [Remote Settings — Firefox Source Docs documentation](https://firefox-source-docs.mozilla.org/services/settings/index.html)
+Remote Settings (RS) is used to manage evergreen data in Firefox, which can be accessed with an API to sync data between clients and the server. You can find more about it here {doc}`/services/settings/index`
 
 We intend to migrate the ETP list management to leverage RS. Benefits include,
 

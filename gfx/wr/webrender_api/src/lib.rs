@@ -51,6 +51,7 @@ mod display_list;
 mod font;
 mod gradient_builder;
 mod image;
+pub mod path;
 /// Internal: hashable building blocks for interning keys, shared with the
 /// `webrender` crate. Not part of the public API surface.
 #[doc(hidden)]
@@ -59,6 +60,10 @@ pub mod key_types;
 /// `webrender` crate. Not part of the public API surface.
 #[doc(hidden)]
 pub mod interned_prims;
+/// Internal: content-side interning for the display list builder. Not part of
+/// the public API surface.
+#[doc(hidden)]
+pub mod interning;
 /// Internal: primitive geometry simplification / gradient optimization helpers,
 /// shared with the `webrender` crate. Not part of the public API surface.
 #[doc(hidden)]
@@ -75,6 +80,7 @@ pub use crate::gradient_builder::*;
 pub use crate::image::*;
 pub use crate::tile_pool::*;
 pub use crate::fast_transform::*;
+pub use crate::path::*;
 
 use crate::units::*;
 use crate::channel::Receiver;
@@ -199,6 +205,28 @@ impl PipelineId {
     }
 
     pub const INVALID: Self = PipelineId(!0, !0);
+}
+
+/// The pipelines that a pipeline's display list may embed with iframe items.
+///
+/// Only enforced in documents where enforcement is enabled, see
+/// `Transaction::set_embed_policy_enforcement`. There, a pipeline without a
+/// policy may not embed anything.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum EmbedPolicy {
+    /// Any pipeline may be embedded.
+    Unrestricted,
+    /// Only the pipelines whose `PipelineSourceId` is in the list may be embedded.
+    Restricted(Vec<PipelineSourceId>),
+}
+
+impl EmbedPolicy {
+    pub fn allows(&self, pipeline_id: PipelineId) -> bool {
+        match *self {
+            EmbedPolicy::Unrestricted => true,
+            EmbedPolicy::Restricted(ref namespaces) => namespaces.contains(&pipeline_id.0),
+        }
+    }
 }
 
 #[repr(C)]
@@ -804,6 +832,13 @@ bitflags! {
         /// which has no quad-shader path to fall back to: dropping that clip
         /// would not reroute it, it would lose it.
         const DISABLE_COMPOSITOR_CLIPS = (1 as u64) << 37;
+        /// Never draw frames: Renderer::render only applies pending resource
+        /// updates, and frames that are replaced or rendered offscreen are
+        /// dropped. The persistent targets (texture cache render tasks and
+        /// picture cache tiles) are left with stale content, so rendering is
+        /// incorrect after the flag is cleared until they are invalidated.
+        /// Useful to benchmark frame building on its own.
+        const SKIP_RENDERING = (1 as u64) << 38;
     }
 }
 

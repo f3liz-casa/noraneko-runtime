@@ -11,7 +11,7 @@
  * https://w3c.github.io/page-visibility/#extensions-to-the-document-interface
  * https://drafts.csswg.org/cssom/#extensions-to-the-document-interface
  * https://drafts.csswg.org/cssom-view/#extensions-to-the-document-interface
- * https://wicg.github.io/feature-policy/#policy
+ * https://w3c.github.io/webappsec-permissions-policy/
  * https://wicg.github.io/scroll-to-text-fragment/#feature-detectability
  */
 
@@ -598,6 +598,16 @@ partial interface Document {
   boolean consumeTransientUserGestureActivation();
 };
 
+// Lets chrome JS lay out a top-level document at a fixed viewport size,
+// independent of its browser's size, while the visual viewport keeps following
+// the browser.
+partial interface Document {
+  [ChromeOnly]
+  undefined setViewportSizeOverrideForMiniWindow(float width, float height);
+  [ChromeOnly]
+  undefined clearViewportSizeOverrideForMiniWindow();
+};
+
 // Extension to give chrome JS the ability to set an event handler which is
 // called with certain events that happened while events were suppressed in the
 // document or one of its subdocuments.
@@ -632,10 +642,12 @@ Document includes GeometryUtils;
 Document includes FontFaceSource;
 Document includes DocumentOrShadowRoot;
 
-// https://w3c.github.io/webappsec-feature-policy/#idl-index
+// https://w3c.github.io/webappsec-permissions-policy/#idl-index
 partial interface Document {
-    [SameObject, Pref="dom.security.featurePolicy.webidl.enabled"]
-    readonly attribute FeaturePolicy featurePolicy;
+    [SameObject, BinaryName="PermissionsPolicy",
+     BindingAlias="permissionsPolicy",
+     Pref="dom.security.permissionsPolicy.webidl.enabled"]
+    readonly attribute PermissionsPolicy featurePolicy;
 };
 
 // Extension to give chrome JS the ability to specify a non-default keypress
@@ -783,7 +795,7 @@ Document includes NonElementParentNode;
  * https://wicg.github.io/scroll-to-text-fragment/#feature-detectability
  */
 partial interface Document {
-    [Pref="dom.text_fragments.enabled", SameObject]
+    [SameObject]
     readonly attribute FragmentDirective fragmentDirective;
 };
 

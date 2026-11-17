@@ -94,6 +94,7 @@ UNIFIED_SOURCES += [
     "testMappedArrayBuffer.cpp",
     "testMapSet.cpp",
     "testMemoryAssociation.cpp",
+    "testMicroTask.cpp",
     "testMutedErrors.cpp",
     "testNewObject.cpp",
     "testNewTargetInvokeConstructor.cpp",
@@ -174,6 +175,7 @@ SOURCES += [
 if not CONFIG["JS_CODEGEN_NONE"]:
     UNIFIED_SOURCES += [
         "testJitABIcalls.cpp",
+        "testJitcodeGlobalTableReuse.cpp",
         "testJitDCEinGVN.cpp",
         "testJitFoldsTo.cpp",
         "testJitGVN.cpp",
@@ -181,8 +183,12 @@ if not CONFIG["JS_CODEGEN_NONE"]:
         "testJitMoveEmitterCycles.cpp",
         "testJitRangeAnalysis.cpp",
         "testJitRegisterSet.cpp",
+        "testJitRInstructionResults.cpp",
         "testJitRValueAlloc.cpp",
         "testsJit.cpp",
+    ]
+    SOURCE_HEADERS += [
+        "testsJit.h",
     ]
 
 if CONFIG["NIGHTLY_BUILD"]:
@@ -218,3 +224,8 @@ if CONFIG["MOZ_LTO_FAT"]:
 
 DEFINES["topsrcdir"] = "%s/js/src" % TOPSRCDIR
 OBJDIR_PP_FILES.js.src["jsapi-tests"] += ["jsapi-tests-gdb.py.in"]
+
+SOURCE_HEADERS += [
+    "testJitMinimalFunc.h",
+    "tests.h",
+]

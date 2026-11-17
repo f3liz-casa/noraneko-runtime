@@ -20,6 +20,7 @@
 #include "secerr.h"
 #include "secitem.h"
 #include "secoid.h"
+#include "pk11_import.h"
 
 namespace nss_test {
 
@@ -161,9 +162,9 @@ class CryptohiMlDsaWycheproofTest : public ::testing::Test {
 
     SECItem item = as_item(privateKeyPkcs8_);
     SECKEYPrivateKey* key = nullptr;
-    if (PK11_ImportDERPrivateKeyInfoAndReturnKey(slot.get(), &item, nullptr,
-                                                 nullptr, false, false, KU_ALL,
-                                                 &key, nullptr) != SECSuccess) {
+    if (nss_test::ImportDERPrivateKeyInfoAndReturnKey(
+            slot.get(), &item, nullptr, nullptr, false, false, KU_ALL, &key,
+            nullptr) != SECSuccess) {
       return nullptr;
     }
     return ScopedSECKEYPrivateKey(key);
@@ -260,7 +261,7 @@ class CryptohiMlDsaParamsTest : public ::testing::Test {
     CK_ML_DSA_PARAMETER_SET_TYPE paramSet = CKP_ML_DSA_44;
     SECKEYPublicKey* pub = nullptr;
     priv_.reset(PK11_GenerateKeyPair(slot.get(), CKM_ML_DSA_KEY_PAIR_GEN,
-                                     &paramSet, &pub, PR_FALSE, PR_FALSE,
+                                     &paramSet, &pub, PR_FALSE, PR_TRUE,
                                      nullptr));
     pub_.reset(pub);
     ASSERT_TRUE(priv_);
@@ -360,7 +361,7 @@ class CryptohiMlDsaKeyTest : public ::testing::TestWithParam<SECOidTag> {
     CK_ML_DSA_PARAMETER_SET_TYPE paramSet = Pkcs11ParamSet(oid_);
     SECKEYPublicKey* pub = nullptr;
     priv_.reset(PK11_GenerateKeyPair(slot.get(), CKM_ML_DSA_KEY_PAIR_GEN,
-                                     &paramSet, &pub, PR_FALSE, PR_FALSE,
+                                     &paramSet, &pub, PR_FALSE, PR_TRUE,
                                      nullptr));
     pub_.reset(pub);
     ASSERT_TRUE(priv_);
@@ -520,6 +521,74 @@ TEST_P(CryptohiMlDsaKeyTest, VerifyDataDirect) {
   EXPECT_EQ(SECFailure,
             VFY_VerifyDataDirect(kMsg, sizeof(kMsg), pub_.get(), sig_.get(),
                                  oid_, SEC_OID_SHA256, nullptr, nullptr));
+}
+
+// The generic entry points take the algorithm from the signed object, so they
+// have to reject a parameter set that isn't the key's rather than let the
+// object's label pick which parameter set's policy is consulted. The signature
+// itself would verify -- softoken takes the parameter set from the key -- so
+// the mismatch has to be caught before that.
+TEST_P(CryptohiMlDsaKeyTest, VerifyRejectsARelabelledParameterSet) {
+  ScopedPLArenaPool arena(PORT_NewArena(DER_DEFAULT_CHUNKSIZE));
+  ASSERT_TRUE(arena);
+
+  for (SECOidTag other :
+       {SEC_OID_ML_DSA_44, SEC_OID_ML_DSA_65, SEC_OID_ML_DSA_87}) {
+    if (other == oid_) {
+      continue;
+    }
+    SCOPED_TRACE(testing::Message() << "relabelled as " << other);
+
+    SECAlgorithmID algid = {};
+    ASSERT_EQ(SECSuccess,
+              SECOID_SetAlgorithmID(arena.get(), &algid, other, nullptr));
+
+    // hash must be left alone on failure, never set to the label.
+    SECOidTag hash = SEC_OID_UNKNOWN;
+    EXPECT_EQ(SECFailure, VFY_VerifyDataWithAlgorithmID(
+                              kMsg, sizeof(kMsg), pub_.get(), sig_.get(),
+                              &algid, &hash, nullptr));
+    EXPECT_EQ(SEC_ERROR_PKCS7_KEYALG_MISMATCH, PORT_GetError());
+    EXPECT_EQ(SEC_OID_UNKNOWN, hash);
+
+    EXPECT_FALSE(VFY_CreateContextWithAlgorithmID(pub_.get(), sig_.get(),
+                                                  &algid, &hash, nullptr));
+    EXPECT_EQ(SEC_ERROR_PKCS7_KEYALG_MISMATCH, PORT_GetError());
+    EXPECT_EQ(SEC_OID_UNKNOWN, hash);
+
+    EXPECT_EQ(SECFailure, VFY_VerifyData(kMsg, sizeof(kMsg), pub_.get(),
+                                         sig_.get(), other, nullptr));
+    EXPECT_EQ(SEC_ERROR_PKCS7_KEYALG_MISMATCH, PORT_GetError());
+
+    EXPECT_FALSE(VFY_CreateContext(pub_.get(), sig_.get(), other, nullptr));
+    EXPECT_EQ(SEC_ERROR_PKCS7_KEYALG_MISMATCH, PORT_GetError());
+
+    // The *Direct entry points are covered too, with the parameter set named
+    // as the hash and left unnamed.
+    EXPECT_EQ(SECFailure,
+              VFY_VerifyDataDirect(kMsg, sizeof(kMsg), pub_.get(), sig_.get(),
+                                   other, other, &hash, nullptr));
+    EXPECT_EQ(SEC_ERROR_PKCS7_KEYALG_MISMATCH, PORT_GetError());
+    EXPECT_EQ(SEC_OID_UNKNOWN, hash);
+
+    EXPECT_EQ(SECFailure,
+              VFY_VerifyDataDirect(kMsg, sizeof(kMsg), pub_.get(), sig_.get(),
+                                   other, SEC_OID_UNKNOWN, &hash, nullptr));
+    EXPECT_EQ(SEC_ERROR_PKCS7_KEYALG_MISMATCH, PORT_GetError());
+    EXPECT_EQ(SEC_OID_UNKNOWN, hash);
+  }
+
+  // The honestly labelled signature still verifies, and reports the key's own
+  // parameter set back.
+  SECAlgorithmID algid = {};
+  ASSERT_EQ(SECSuccess,
+            SECOID_SetAlgorithmID(arena.get(), &algid, oid_, nullptr));
+  SECOidTag hash = SEC_OID_UNKNOWN;
+  EXPECT_EQ(SECSuccess,
+            VFY_VerifyDataWithAlgorithmID(kMsg, sizeof(kMsg), pub_.get(),
+                                          sig_.get(), &algid, &hash, nullptr))
+      << PORT_ErrorToString(PORT_GetError());
+  EXPECT_EQ(oid_, hash);
 }
 
 // ML-DSA signs the message, not a digest of it, so there is nothing for the

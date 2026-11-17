@@ -323,18 +323,15 @@ void HTMLSlotElement::AppendAssignedNode(nsIContent& aNode) {
 
 void HTMLSlotElement::AddedAssignedNode(nsIContent& aNode) {
   if (IsMaybeSelected()) {
-    // Normally it's nsRange::ContentAppended's responsibility to
+    // Normally it's dom::Range::ContentAppended's responsibility to
     // mark new descendants, however this doesn't work for slotted
-    // content because nsRange observes the common ancestor of
+    // content because dom::Range observes the common ancestor of
     // start/end, whereas slotted element may not have the same
     // ancestor as them.
     dom::AbstractRange::UpdateDescendantsInFlattenedTree(
         aNode, true /* aMarkDesendants*/);
   }
   SlotAssignedNodeAddedForDir(this, aNode);
-  if (StaticPrefs::dom_headingoffset_enabled()) {
-    aNode.UpdateHeadingElementsOffsetChange();
-  }
 }
 
 void HTMLSlotElement::RecalculateHasSlottedState() {
@@ -381,9 +378,6 @@ void HTMLSlotElement::ClearAssignedNodes() {
                    node->AsContent()->GetAssignedSlot() == this,
                "How exactly?");
     node->AsContent()->SetAssignedSlot(nullptr);
-    if (StaticPrefs::dom_headingoffset_enabled()) {
-      node->AsContent()->UpdateHeadingElementsOffsetChange();
-    }
     RemovedAssignedNode(*node->AsContent());
   }
 
@@ -392,10 +386,10 @@ void HTMLSlotElement::ClearAssignedNodes() {
 
 void HTMLSlotElement::RemovedAssignedNode(nsIContent& aNode) {
   if (aNode.IsMaybeSelected()) {
-    // Normally, this shouldn't happen because nsRange::ContentRemoved
+    // Normally, this shouldn't happen because dom::Range::ContentRemoved
     // should be called for content removal, and then
     // AbstractRange::UnmarkDescendants will be used to clear the flags.
-    // Though this doesn't work for slotted element because nsRange
+    // Though this doesn't work for slotted element because dom::Range
     // observers the common ancestor of start/end, whereas slotted element
     // may not have the same ancestor as them, so we have to clear
     // the flags manually here.

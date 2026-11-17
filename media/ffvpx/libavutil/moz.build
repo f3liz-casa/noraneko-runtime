@@ -24,9 +24,11 @@ SOURCES += [
     'cpu.c',
     'crc.c',
     'dict.c',
+    'display.c',
     'error.c',
     'eval.c',
     'fifo.c',
+    'file_open.c',
     'fixed_dsp.c',
     'float_dsp.c',
     'float_scalarproduct.c',
@@ -62,6 +64,7 @@ if not CONFIG['MOZ_FFVPX_AUDIOONLY']:
         'base64.c',
         'film_grain_params.c',
         'hdr_dynamic_metadata.c',
+        'hdr_dynamic_vivid_metadata.c',
         'integer.c',
         'intmath.c',
         'lls.c',
@@ -74,14 +77,29 @@ if not CONFIG['MOZ_FFVPX_AUDIOONLY']:
         LOCAL_INCLUDES += ['/third_party/khronos/vulkan-headers/include']
         SOURCES += [
             'hwcontext_vulkan.c',
+            'uuid.c',
             'vulkan.c',
         ]
+        SOURCES['hwcontext_vulkan.c'].flags += ['-DMOZ_FFVPX_VULKAN_LIBDRM']
     if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
         LOCAL_INCLUDES += ['/media/mozva']
         SOURCES += [
             'hwcontext_vaapi.c',
         ]
         USE_LIBS += ['mozva']
+        if CONFIG['MOZ_ENABLE_VULKAN_VIDEO']:
+            SOURCES += [
+                '/third_party/drm/libdrm/mozdrm.cpp',
+            ]
+            USE_LIBS += ['nspr']
+            CFLAGS += CONFIG['MOZ_LIBDRM_CFLAGS']
+            CXXFLAGS += CONFIG['MOZ_LIBDRM_CFLAGS']
+            if not CONFIG['MOZ_SYSTEM_LIBDRM']:
+                LOCAL_INCLUDES += [
+                    '/third_party/drm/drm/',
+                    '/third_party/drm/drm/include',
+                    '/third_party/drm/drm/include/libdrm',
+                ]
     elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
         SOURCES += [
             'hwcontext_d3d11va.c',
@@ -118,3 +136,93 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
     OS_LIBS += ['android']
 
 include("../ffvpxcommon.mozbuild")
+
+SOURCE_HEADERS += [
+	"adler32.h",
+	"attributes.h",
+	"attributes_internal.h",
+	"avassert.h",
+	"avconfig.h",
+	"avstring.h",
+	"avutil.h",
+	"base64.h",
+	"bprint.h",
+	"bswap.h",
+	"buffer.h",
+	"buffer_internal.h",
+	"channel_layout.h",
+	"colorspace.h",
+	"common.h",
+	"container_fifo.h",
+	"cpu.h",
+	"cpu_internal.h",
+	"crc.h",
+	"csp.h",
+	"dict.h",
+	"dict_internal.h",
+	"display.h",
+	"dynarray.h",
+	"emms.h",
+	"error.h",
+	"eval.h",
+	"ffmath.h",
+	"fftime.h",
+	"ffversion.h",
+	"fifo.h",
+	"file_open.h",
+	"film_grain_params.h",
+	"fixed_dsp.h",
+	"float_dsp.h",
+	"frame.h",
+	"hdr_dynamic_metadata.h",
+	"hdr_dynamic_vivid_metadata.h",
+	"hwcontext.h",
+	"hwcontext_drm.h",
+	"hwcontext_internal.h",
+	"hwcontext_vaapi.h",
+	"hwcontext_vulkan.h",
+	"imgutils.h",
+	"imgutils_internal.h",
+	"integer.h",
+	"internal.h",
+	"intfloat.h",
+	"intmath.h",
+	"intreadwrite.h",
+	"libm.h",
+	"lls.h",
+	"log.h",
+	"macros.h",
+	"mastering_display_metadata.h",
+	"mathematics.h",
+	"mem.h",
+	"mem_internal.h",
+	"opt.h",
+	"parseutils.h",
+	"pixdesc.h",
+	"pixelutils.h",
+	"pixfmt.h",
+	"qsort.h",
+	"random_seed.h",
+	"rational.h",
+	"refstruct.h",
+	"replaygain.h",
+	"reverse.h",
+	"samplefmt.h",
+	"sfc64.h",
+	"side_data.h",
+	"slicethread.h",
+	"stereo3d.h",
+	"thread.h",
+	"threadmessage.h",
+	"time_internal.h",
+	"timecode.h",
+	"timecode_internal.h",
+	"timer.h",
+	"timestamp.h",
+	"tx_priv.h",
+	"version.h",
+	"video_enc_params.h",
+	"vulkan_functions.h",
+	"vulkan_loader.h",
+	"wchar_filename.h",
+]

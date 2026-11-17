@@ -4,6 +4,10 @@
 #ifndef _include_mozilla_gfx_ipc_OverlayInfo_h_
 #define _include_mozilla_gfx_ipc_OverlayInfo_h_
 
+#include <cstdint>
+
+#include "X11UndefineNone.h"
+
 namespace IPC {
 template <typename>
 struct ParamTraits;

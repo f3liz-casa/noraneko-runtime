@@ -12,9 +12,7 @@
 #include <stdint.h>
 
 #include "HTMLLinkElement.h"
-#include "Link.h"
 #include "MediaList.h"
-#include "mozAutoDocUpdate.h"
 #include "mozilla/Components.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
@@ -26,17 +24,19 @@
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StoragePrincipalHelper.h"
+#include "mozilla/StyleSheet.h"
 #include "mozilla/css/Loader.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/HTMLDNSPrefetch.h"
+#include "mozilla/dom/Link.h"
 #include "mozilla/dom/LinkStyle.h"
 #include "mozilla/dom/ModuleLoader.h"
-#include "mozilla/dom/MutationObservers.h"
 #include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/dom/SRILogHelper.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/ServiceWorkerDescriptor.h"
+#include "mozilla/dom/SpeculationRules.h"
 #include "mozilla/net/HttpBaseChannel.h"
 #include "mozilla/net/NeckoChannelParams.h"
 #include "nsAtom.h"
@@ -73,27 +73,19 @@ using namespace mozilla;
 using namespace mozilla::css;
 using namespace mozilla::dom;
 
-LazyLogModule gContentSinkLogModuleInfo("nscontentsink");
-
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsContentSink)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsContentSink)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsContentSink)
+  NS_INTERFACE_MAP_ENTRY_CONCRETE(nsContentSink)
   NS_INTERFACE_MAP_ENTRY(nsICSSLoaderObserver)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
-  NS_INTERFACE_MAP_ENTRY(nsIDocumentObserver)
-  NS_INTERFACE_MAP_ENTRY(nsIMutationObserver)
-  NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
-  NS_INTERFACE_MAP_ENTRY(nsINamed)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDocumentObserver)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsICSSLoaderObserver)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsContentSink)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsContentSink)
-  if (tmp->mDocument) {
-    tmp->mDocument->RemoveObserver(tmp);
-  }
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mParser)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocShell)
@@ -110,15 +102,9 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsContentSink)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 nsContentSink::nsContentSink()
-    : mBackoffCount(0),
-      mLastNotificationTime(0),
-      mLayoutStarted(0),
+    : mLayoutStarted(0),
       mDynamicLowerValue(0),
-      mParsing(0),
-      mDroppedTimer(0),
       mDeferredLayoutStart(0),
-      mDeferredFlushTags(0),
-      mIsDocumentObserver(0),
       mRunsToCompletion(0),
       mIsBlockingOnload(false),
       mDeflectedCount(0),
@@ -126,28 +112,15 @@ nsContentSink::nsContentSink()
       mCurrentParseEndTime(0),
       mBeginLoadTime(0),
       mLastSampledUserEventTime(0),
-      mInMonolithicContainer(0),
-      mInNotification(0),
-      mUpdatesInNotification(0),
       mPendingSheetCount(0) {
   NS_ASSERTION(!mLayoutStarted, "What?");
   NS_ASSERTION(!mDynamicLowerValue, "What?");
-  NS_ASSERTION(!mParsing, "What?");
   NS_ASSERTION(mLastSampledUserEventTime == 0, "What?");
   NS_ASSERTION(mDeflectedCount == 0, "What?");
-  NS_ASSERTION(!mDroppedTimer, "What?");
-  NS_ASSERTION(mInMonolithicContainer == 0, "What?");
-  NS_ASSERTION(mInNotification == 0, "What?");
   NS_ASSERTION(!mDeferredLayoutStart, "What?");
 }
 
-nsContentSink::~nsContentSink() {
-  if (mDocument) {
-    // Remove ourselves just to be safe, though we really should have
-    // been removed in DidBuildModel if everything worked right.
-    mDocument->RemoveObserver(this);
-  }
-}
+nsContentSink::~nsContentSink() = default;
 
 nsresult nsContentSink::Init(Document* aDoc, nsIURI* aURI,
                              nsISupports* aContainer, nsIChannel* aChannel) {
@@ -177,8 +150,6 @@ nsresult nsContentSink::Init(Document* aDoc, nsIURI* aURI,
 
   mNodeInfoManager = aDoc->NodeInfoManager();
 
-  mBackoffCount = StaticPrefs::content_notify_backoffcount();
-
   if (StaticPrefs::content_sink_enable_perf_mode() != 0) {
     mDynamicLowerValue = StaticPrefs::content_sink_enable_perf_mode() == 1;
   }
@@ -197,19 +168,16 @@ nsContentSink::StyleSheetLoaded(StyleSheet* aSheet, bool aWasDeferred,
   --mPendingSheetCount;
 
   const bool loadedAllSheets = !mPendingSheetCount;
-  if (loadedAllSheets && (mDeferredLayoutStart || mDeferredFlushTags)) {
-    if (mDeferredFlushTags) {
-      FlushTags();
-    }
-    if (mDeferredLayoutStart) {
-      // We might not have really started layout, since this sheet was still
-      // loading.  Do it now.  Probably doesn't matter whether we do this
-      // before or after we unblock scripts, but before feels saner.  Note
-      // that if mDeferredLayoutStart is true, that means any subclass
-      // StartLayout() stuff that needs to happen has already happened, so
-      // we don't need to worry about it.
-      StartLayout(false);
-    }
+  if (loadedAllSheets && mDeferredLayoutStart) {
+    // We might not have really started layout, since this sheet was still
+    // loading.  Do it now.  Probably doesn't matter whether we do this
+    // before or after we unblock scripts, but before feels saner.  Note
+    // that if mDeferredLayoutStart is true, that means any subclass
+    // StartLayout() stuff that needs to happen has already happened, so
+    // we don't need to worry about it.
+    // While the document is still render-blocked this bails out, and
+    // Document::StartLayoutAfterUnblocking starts layout later.
+    StartLayout(false);
 
     // Go ahead and try to scroll to our ref if we have one
     ScrollToRef();
@@ -244,8 +212,9 @@ nsresult nsContentSink::ProcessHTTPHeaders(nsIChannel* aChannel) {
     mDocument->SetEarlyHints(std::move(earlyHints));
   }
 
-  // Note that the only header we care about is the "link" header, since we
-  // have all the infrastructure for kicking off stylesheet loads.
+  // Note that the only headers we care about are the "link" header, since we
+  // have all the infrastructure for kicking off stylesheet loads, and the
+  // "Speculation-Rules" header for top-level documents.
 
   nsAutoCString linkHeader;
 
@@ -265,6 +234,21 @@ nsresult nsContentSink::ProcessHTTPHeaders(nsIChannel* aChannel) {
     rv = NS_DispatchToCurrentThread(mProcessLinkHeaderEvent.get());
     if (NS_FAILED(rv)) {
       mProcessLinkHeaderEvent.Forget();
+    }
+  }
+
+  // https://html.spec.whatwg.org/#initialise-the-document-object
+  // Step 20. If navigationParams's navigable is a top-level traversable, then
+  // process the `Speculation-Rules` header given document and
+  // navigationParams's response.
+  if (StaticPrefs::dom_speculation_rules_enabled() && mDocShell &&
+      mDocShell->GetBrowsingContext()->IsTop()) {
+    nsAutoCString speculationRulesHeader;
+    rv = httpchannel->GetResponseHeader("Speculation-Rules"_ns,
+                                        speculationRulesHeader);
+    if (NS_SUCCEEDED(rv) && !speculationRulesHeader.IsEmpty()) {
+      mDocument->SpeculationRules().ProcessSpeculationRulesHeader(
+          speculationRulesHeader);
     }
   }
 
@@ -591,8 +575,10 @@ void nsContentSink::StartLayout(bool aIgnorePendingSheets) {
   mDeferredLayoutStart = true;
 
   if (!aIgnorePendingSheets &&
-      (WaitForPendingSheets() || mDocument->HasPendingInitialTranslation())) {
-    // Bail out; we'll start layout when the sheets and l10n load
+      (WaitForPendingSheets() || mDocument->HasPendingInitialTranslation() ||
+       mDocument->IsRenderBlocked())) {
+    // Bail out; we'll start layout when the sheets and l10n load, or when
+    // render-blocking elements finish loading
     return;
   }
 
@@ -607,16 +593,7 @@ void nsContentSink::StartLayout(bool aIgnorePendingSheets) {
         PropertiesFile::LAYOUT_PROPERTIES, "ForcedLayoutStart");
   }
 
-  // Notify on all our content.  If none of our presshells have started layout
-  // yet it'll be a no-op except for updating our data structures, a la
-  // UpdateChildCounts() (because we don't want to double-notify on whatever we
-  // have right now).  If some of them _have_ started layout, we want to make
-  // sure to flush tags instead of just calling UpdateChildCounts() after we
-  // loop over the shells.
-  FlushTags();
-
   mLayoutStarted = true;
-  mLastNotificationTime = PR_Now();
 
   mDocument->SetMayStartLayout(true);
   RefPtr<PresShell> presShell = mDocument->GetPresShell();
@@ -636,134 +613,6 @@ void nsContentSink::StartLayout(bool aIgnorePendingSheets) {
   // frameset document, disable the scroll bars on the views.
 
   mDocument->SetScrollToRef(mDocument->GetDocumentURI());
-}
-
-void nsContentSink::NotifyAppend(nsIContent* aContainer, uint32_t aStartIndex) {
-  mInNotification++;
-
-  {
-    // Scope so we call EndUpdate before we decrease mInNotification
-    //
-    // Note that aContainer->OwnerDoc() may not be mDocument.
-    MOZ_AUTO_DOC_UPDATE(aContainer->OwnerDoc(), true);
-    MutationObservers::NotifyContentAppended(
-        aContainer, aContainer->GetChildAt_Deprecated(aStartIndex), {});
-    mLastNotificationTime = PR_Now();
-  }
-
-  mInNotification--;
-}
-
-NS_IMETHODIMP
-nsContentSink::Notify(nsITimer* timer) {
-  if (mParsing) {
-    // We shouldn't interfere with our normal DidProcessAToken logic
-    mDroppedTimer = true;
-    return NS_OK;
-  }
-
-  if (WaitForPendingSheets()) {
-    mDeferredFlushTags = true;
-  } else {
-    FlushTags();
-
-    // Now try and scroll to the reference
-    // XXX Should we scroll unconditionally for history loads??
-    ScrollToRef();
-  }
-
-  mNotificationTimer = nullptr;
-  return NS_OK;
-}
-
-bool nsContentSink::IsTimeToNotify() {
-  if (!StaticPrefs::content_notify_ontimer() || !mLayoutStarted ||
-      !mBackoffCount || mInMonolithicContainer) {
-    return false;
-  }
-
-  if (WaitForPendingSheets()) {
-    mDeferredFlushTags = true;
-    return false;
-  }
-
-  PRTime now = PR_Now();
-
-  int64_t interval = GetNotificationInterval();
-  int64_t diff = now - mLastNotificationTime;
-
-  if (diff > interval) {
-    mBackoffCount--;
-    return true;
-  }
-
-  return false;
-}
-
-nsresult nsContentSink::WillInterruptImpl() {
-  nsresult result = NS_OK;
-
-  SINK_TRACE(static_cast<LogModule*>(gContentSinkLogModuleInfo),
-             SINK_TRACE_CALLS, ("nsContentSink::WillInterrupt: this=%p", this));
-#ifndef SINK_NO_INCREMENTAL
-  if (WaitForPendingSheets()) {
-    mDeferredFlushTags = true;
-  } else if (StaticPrefs::content_notify_ontimer() && mLayoutStarted) {
-    if (mBackoffCount && !mInMonolithicContainer) {
-      int64_t now = PR_Now();
-      int64_t interval = GetNotificationInterval();
-      int64_t diff = now - mLastNotificationTime;
-
-      // If it's already time for us to have a notification
-      if (diff > interval || mDroppedTimer) {
-        mBackoffCount--;
-        SINK_TRACE(static_cast<LogModule*>(gContentSinkLogModuleInfo),
-                   SINK_TRACE_REFLOW,
-                   ("nsContentSink::WillInterrupt: flushing tags since we've "
-                    "run out time; backoff count: %d",
-                    mBackoffCount));
-        result = FlushTags();
-        if (mDroppedTimer) {
-          ScrollToRef();
-          mDroppedTimer = false;
-        }
-      } else if (!mNotificationTimer) {
-        interval -= diff;
-        int32_t delay = interval;
-
-        // Convert to milliseconds
-        delay /= PR_USEC_PER_MSEC;
-
-        NS_NewTimerWithCallback(getter_AddRefs(mNotificationTimer), this, delay,
-                                nsITimer::TYPE_ONE_SHOT);
-        if (mNotificationTimer) {
-          SINK_TRACE(static_cast<LogModule*>(gContentSinkLogModuleInfo),
-                     SINK_TRACE_REFLOW,
-                     ("nsContentSink::WillInterrupt: setting up timer with "
-                      "delay %d",
-                      delay));
-        }
-      }
-    }
-  } else {
-    SINK_TRACE(static_cast<LogModule*>(gContentSinkLogModuleInfo),
-               SINK_TRACE_REFLOW,
-               ("nsContentSink::WillInterrupt: flushing tags "
-                "unconditionally"));
-    result = FlushTags();
-  }
-#endif
-
-  mParsing = false;
-
-  return result;
-}
-
-void nsContentSink::WillResumeImpl() {
-  SINK_TRACE(static_cast<LogModule*>(gContentSinkLogModuleInfo),
-             SINK_TRACE_CALLS, ("nsContentSink::WillResume: this=%p", this));
-
-  mParsing = true;
 }
 
 nsresult nsContentSink::DidProcessATokenImpl() {
@@ -813,36 +662,6 @@ nsresult nsContentSink::DidProcessATokenImpl() {
   return NS_OK;
 }
 
-//----------------------------------------------------------------------
-
-void nsContentSink::BeginUpdate(Document* aDocument) {
-  // Remember nested updates from updates that we started.
-  if (mInNotification > 0 && mUpdatesInNotification < 2) {
-    ++mUpdatesInNotification;
-  }
-
-  // If we're in a script and we didn't do the notification,
-  // something else in the script processing caused the
-  // notification to occur. Since this could result in frame
-  // creation, make sure we've flushed everything before we
-  // continue.
-
-  if (!mInNotification++) {
-    FlushTags();
-  }
-}
-
-void nsContentSink::EndUpdate(Document* aDocument) {
-  // If we're in a script and we didn't do the notification,
-  // something else in the script processing caused the
-  // notification to occur. Update our notion of how much
-  // has been flushed to include any new content if ending
-  // this update leaves us not inside a notification.
-  if (!--mInNotification) {
-    UpdateChildCounts();
-  }
-}
-
 void nsContentSink::DidBuildModelImpl(bool aTerminated) {
   MOZ_ASSERT(aTerminated || (mParser && mParser->IsParserClosed()) ||
                  mDocument->GetReadyStateEnum() == Document::READYSTATE_LOADING,
@@ -858,16 +677,6 @@ void nsContentSink::DidBuildModelImpl(bool aTerminated) {
 
   if (!mDocument->HaveFiredDOMTitleChange()) {
     mDocument->NotifyPossibleTitleChange(false);
-  }
-
-  // Cancel a timer if we had one out there
-  if (mNotificationTimer) {
-    SINK_TRACE(static_cast<LogModule*>(gContentSinkLogModuleInfo),
-               SINK_TRACE_REFLOW,
-               ("nsContentSink::DidBuildModel: canceling notification "
-                "timeout"));
-    mNotificationTimer->Cancel();
-    mNotificationTimer = nullptr;
   }
 }
 
@@ -995,10 +804,4 @@ void nsContentSink::NotifyDocElementCreated(Document* aDoc) {
 
   nsContentUtils::DispatchChromeEvent(aDoc, aDoc, u"DOMDocElementInserted"_ns,
                                       CanBubble::eYes, Cancelable::eNo);
-}
-
-NS_IMETHODIMP
-nsContentSink::GetName(nsACString& aName) {
-  aName.AssignLiteral("nsContentSink_timer");
-  return NS_OK;
 }

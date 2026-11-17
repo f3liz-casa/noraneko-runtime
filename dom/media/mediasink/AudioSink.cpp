@@ -38,7 +38,7 @@ AudioSink::AudioSink(AbstractThread* aThread,
     : mOwnerThread(aThread),
       mOutputRate(
           DecideAudioPlaybackSampleRate(aInfo, aShouldResistFingerprinting)),
-      mOutputChannels(DecideAudioPlaybackChannels(aInfo)),
+      mOutputChannels(AudioPlaybackChannels(aInfo)),
       mAudibilityMonitor(
           mOutputRate,
           StaticPrefs::dom_media_silence_duration_for_audibility()),
@@ -164,6 +164,7 @@ void AudioSink::ApplyPlaybackParams(const PlaybackParams& aParams) {
   mAudioStream->SetVolume(aParams.mVolume);
   mAudioStream->SetPlaybackRate(aParams.mPlaybackRate);
   mAudioStream->SetPreservesPitch(aParams.mPreservesPitch);
+  mAudioStream->SetStreamName(aParams.mStreamName);
 }
 
 void AudioSink::ConnectAudioQueues() {
@@ -336,6 +337,11 @@ RefPtr<MediaSink::EndedPromise> AudioSink::ResetForReuse(
              "Nothing may be pushed while the sink is stopped for a seek");
   SINK_LOG("ResetForReuse to start time {}", aStartTime.ToMicroseconds());
 
+  // This is safe because the sink is shut down, and all event listeners that
+  // push to this queue are disconnected at this time and nobody can be writing
+  // to it.
+  mProcessedSPSCQueue->ResetProducerThreadId();
+
   ApplyPlaybackParams(aParams);
 
   // Re-establish the same initial playback accounting as a freshly constructed
@@ -351,8 +357,6 @@ RefPtr<MediaSink::EndedPromise> AudioSink::ResetForReuse(
   mLastProcessedPacket = Nothing();
   mConverter = nullptr;
 
-  // Resuming into a playing state. A pause taken before the seek leaves the
-  // backend stopped, in which case this restarts it for real.
   mAudioStream->Resume();
 
   // Must precede ConnectAudioQueues() and NotifyAudioNeeded(); see

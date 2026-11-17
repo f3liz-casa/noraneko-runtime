@@ -5,33 +5,63 @@
 
 #![allow(clippy::needless_range_loop)]
 
-use crate::util::sync::{Mutex, atomic::Ordering};
 use std::fmt::Debug;
 
 use row_buffers::RowBuffer;
 
+use super::RenderPipeline;
+use super::internal::{RenderPipelineShared, RunInOutStage, RunInPlaceStage};
 use crate::api::JxlOutputBuffer;
 use crate::error::Result;
-use crate::image::{DataTypeTag, Image, ImageDataType, OwnedRawImage, Rect};
+use crate::image::{DataTypeTag, Image, ImageDataType, Rect};
 use crate::render::buffer_splitter::{BufferSplitter, SaveStageBufferInfo};
 use crate::render::internal::Stage;
 use crate::render::low_memory_pipeline::input_buffers::InputBuffers;
 use crate::render::{ErasedLocalState, MAX_BORDER};
-use crate::util::{PerThreadStorage, ShiftRightCeil, tracing_wrappers::*};
-
-use super::RenderPipeline;
-use super::internal::{RenderPipelineShared, RunInOutStage, RunInPlaceStage};
+use crate::util::sync::atomic::Ordering;
+use crate::util::tracing_wrappers::*;
+use crate::util::{PerThreadStorage, ShiftRightCeil};
 
 mod group_scheduler;
 mod helpers;
 mod input_buffers;
 mod render_group;
-pub(crate) mod row_buffers;
+pub mod row_buffers;
 mod run_stage;
 mod save;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RowBufferConfig {
+    data_type: DataTypeTag,
+    next_y_border: usize,
+    y_shift: usize,
+    x_shift: usize,
+    row_len: usize,
+}
+
+impl RowBufferConfig {
+    fn merge(&mut self, other: &Self) {
+        assert_eq!(self.data_type, other.data_type);
+        self.next_y_border = self.next_y_border.max(other.next_y_border);
+        self.y_shift = self.y_shift.max(other.y_shift);
+        self.x_shift = self.x_shift.max(other.x_shift);
+        self.row_len = self.row_len.max(other.row_len);
+    }
+
+    fn allocate(&self) -> Result<RowBuffer> {
+        RowBuffer::new(
+            self.data_type,
+            self.next_y_border,
+            self.y_shift,
+            self.x_shift,
+            self.row_len,
+        )
+    }
+}
+
 struct LowMemoryRenderPipelinePerThread {
     row_buffers: Vec<Vec<RowBuffer>>,
+    save_scratch: Option<[RowBuffer; 4]>,
     // Local states of each stage, if any.
     local_states: Vec<Option<Box<ErasedLocalState>>>,
 }
@@ -47,33 +77,17 @@ impl LowMemoryRenderPipelinePerThread {
         if !self.row_buffers.is_empty() {
             return Ok(());
         }
-        let nc = p.shared.num_channels();
-        let mut initial_buffers = vec![];
-        for chan in 0..nc {
-            initial_buffers.push(RowBuffer::new(
-                p.shared.channel_info[0][chan].ty.unwrap_or(DataTypeTag::U8),
-                p.next_border_and_cur_downsample[0][chan].0 as usize,
-                0,
-                0,
-                p.shared.chunk_size >> p.shared.channel_info[0][chan].downsample.0,
-            )?);
-        }
-        self.row_buffers = vec![initial_buffers];
-
-        // Allocate buffers.
-        for (i, stage) in p.shared.stages.iter().enumerate() {
-            let mut stage_buffers = vec![];
-            for (next_y_border, (dsx, _)) in p.next_border_and_cur_downsample[i + 1].iter() {
-                stage_buffers.push(RowBuffer::new(
-                    stage.output_type().unwrap(),
-                    *next_y_border as usize,
-                    stage.shift().1 as usize,
-                    stage.shift().0 as usize,
-                    p.shared.chunk_size >> *dsx,
-                )?);
-            }
-            self.row_buffers.push(stage_buffers);
-        }
+        self.row_buffers = p
+            .row_buffer_configs
+            .iter()
+            .map(|stage_cfgs| stage_cfgs.iter().map(RowBufferConfig::allocate).collect())
+            .collect::<Result<_>>()?;
+        self.save_scratch = Some([
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.shared.chunk_size)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.shared.chunk_size)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.shared.chunk_size)?,
+            RowBuffer::new(DataTypeTag::F32, 0, 0, 0, p.shared.chunk_size)?,
+        ]);
         self.local_states = p
             .shared
             .stages
@@ -88,7 +102,7 @@ pub struct LowMemoryRenderPipeline {
     shared: RenderPipelineShared<RowBuffer>,
     per_thread_data: PerThreadStorage<LowMemoryRenderPipelinePerThread>,
     input_buffers: InputBuffers,
-    next_border_and_cur_downsample: Vec<Vec<(u8, (u8, u8))>>,
+    row_buffer_configs: Vec<Vec<RowBufferConfig>>,
     save_buffer_info: Vec<Option<SaveStageBufferInfo>>,
     // The input buffer that each channel of each stage should use.
     // This is indexed both by stage index (0 corresponds to input data, 1 to stage[0], etc) and by
@@ -107,15 +121,8 @@ pub struct LowMemoryRenderPipeline {
     // For every stage, the downsampling level of *any* channel that the stage uses at that point.
     // Note that this must be equal across all the used channels.
     downsampling_for_stage: Vec<(usize, usize)>,
-    // Pre-filled opaque alpha buffers for stages that need fill_opaque_alpha.
-    // Indexed by stage index; None if stage doesn't need alpha fill.
-    opaque_alpha_buffers: Vec<Option<RowBuffer>>,
     // Sorted indices to call get_distinct_indices.
     sorted_buffer_indices: Vec<Vec<(usize, usize, usize)>>,
-    // Indexed by [3*channel] = center, [3*channel+1] = topbottom, [3*channel+2] = leftright.
-    scratch_channel_buffers: Mutex<Vec<Vec<OwnedRawImage>>>,
-    // TODO(veluca): get rid of this when switching to global recycling of scratch buffers.
-    group_scratch_buffers_limit: Option<usize>,
 }
 
 impl RenderPipeline for LowMemoryRenderPipeline {
@@ -222,25 +229,6 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             })
             .collect();
 
-        // Create opaque alpha buffers for save stages that need fill_opaque_alpha
-        let mut opaque_alpha_buffers = vec![];
-        for (i, stage) in shared.stages.iter().enumerate() {
-            if let Stage::Save(s) = stage {
-                if s.fill_opaque_alpha {
-                    let (dx, _dy) = downsampling_for_stage[i];
-                    let row_len = shared.chunk_size >> dx;
-                    let fill_pattern = s.data_format.opaque_alpha_bytes();
-                    let buf =
-                        RowBuffer::new_filled(s.data_format.data_type(), row_len, &fill_pattern)?;
-                    opaque_alpha_buffers.push(Some(buf));
-                } else {
-                    opaque_alpha_buffers.push(None);
-                }
-            } else {
-                opaque_alpha_buffers.push(None);
-            }
-        }
-
         let default_channels: Vec<usize> = (0..nc).collect();
         for (s, ibi) in stage_input_buffer_index.iter_mut().enumerate() {
             let mut filtered = vec![];
@@ -265,7 +253,7 @@ impl RenderPipeline for LowMemoryRenderPipeline {
                     .enumerate()
                     .map(|(i, (outer, inner))| (*outer, *inner, i))
                     .collect();
-                v.sort();
+                v.sort_unstable();
                 v
             })
             .collect();
@@ -288,12 +276,78 @@ impl RenderPipeline for LowMemoryRenderPipeline {
                 .max(border_pixels_per_stage[s].1 << downsampling_for_stage[s].1);
         }
 
+        let mut row_buffer_configs = vec![];
+        let mut initial_configs = vec![];
+        for chan in 0..nc {
+            let dsx = shared.channel_info[0][chan].downsample.0;
+            initial_configs.push(RowBufferConfig {
+                data_type: shared.channel_info[0][chan].ty,
+                next_y_border: next_border_and_cur_downsample[0][chan].0 as usize,
+                y_shift: 0,
+                x_shift: 0,
+                row_len: (shared.chunk_size + 2 * border_size.0) >> dsx,
+            });
+        }
+        row_buffer_configs.push(initial_configs);
+
+        for (i, stage) in shared.stages.iter().enumerate() {
+            let mut stage_configs = vec![];
+            for &(next_y_border, (dsx, _)) in next_border_and_cur_downsample[i + 1].iter() {
+                stage_configs.push(RowBufferConfig {
+                    data_type: stage.output_type().unwrap(),
+                    next_y_border: next_y_border as usize,
+                    y_shift: stage.shift().1 as usize,
+                    x_shift: stage.shift().0 as usize,
+                    row_len: (shared.chunk_size + 2 * border_size.0) >> dsx,
+                });
+            }
+            row_buffer_configs.push(stage_configs);
+        }
+
+        // Unify buffer configurations for each InOut stage across all its channels to a fixed point.
+        loop {
+            let mut changed = false;
+            for (s, stage) in shared.stages.iter().enumerate().rev() {
+                if let Stage::InOut(_) = stage {
+                    if let Some(mut unified_out) = row_buffer_configs[s + 1].first().copied() {
+                        for cfg in &row_buffer_configs[s + 1] {
+                            unified_out.merge(cfg);
+                        }
+                        for cfg in &mut row_buffer_configs[s + 1] {
+                            if *cfg != unified_out {
+                                *cfg = unified_out;
+                                changed = true;
+                            }
+                        }
+                    }
+
+                    let inputs = &stage_input_buffer_index[s];
+                    if let Some(&(first_o, first_i)) = inputs.first() {
+                        let mut unified_in = row_buffer_configs[first_o][first_i];
+                        for &(o, i) in inputs {
+                            unified_in.merge(&row_buffer_configs[o][i]);
+                        }
+                        for &(o, i) in inputs {
+                            if row_buffer_configs[o][i] != unified_in {
+                                row_buffer_configs[o][i] = unified_in;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
         Ok(Self {
             input_buffers: InputBuffers::new(nc, shared.group_count)?,
             stage_input_buffer_index,
-            next_border_and_cur_downsample,
+            row_buffer_configs,
             per_thread_data: PerThreadStorage::new(|| LowMemoryRenderPipelinePerThread {
                 row_buffers: vec![],
+                save_scratch: None,
                 local_states: vec![],
             }),
             padding_was_rendered: false,
@@ -301,22 +355,16 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             stage_output_border_pixels: border_pixels_per_stage,
             border_size,
             input_border_pixels: border_pixels,
-            group_scratch_buffers_limit: shared.group_scratch_buffers_limit,
             shared,
             downsampling_for_stage,
-            opaque_alpha_buffers,
             sorted_buffer_indices,
-            scratch_channel_buffers: Mutex::new((0..nc * 3).map(|_| vec![]).collect()),
         })
     }
 
     #[instrument(skip_all, err)]
     fn get_buffer<T: ImageDataType>(&self, channel: usize) -> Result<Image<T>> {
-        if let Some(b) = self.maybe_get_scratch_buffer(channel, 0) {
-            return Ok(Image::from_raw(b));
-        }
         let sz = self.shared.group_size_for_channel(channel, T::DATA_TYPE_ID);
-        Image::<T>::new(sz)
+        self.shared.buffer_recycler.get_buffer(sz)
     }
 
     fn set_buffer_for_group<T: ImageDataType>(
@@ -346,6 +394,8 @@ impl RenderPipeline for LowMemoryRenderPipeline {
             }
 
             self.render_with_new_group(group_id, buffer_splitter)?;
+        } else {
+            self.shared.buffer_recycler.recycle_buffer(buf);
         }
         Ok(())
     }

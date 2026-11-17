@@ -7,9 +7,10 @@ ChromeUtils.defineESModuleGetters(this, {
   MockRegistrar: "resource://testing-common/MockRegistrar.sys.mjs",
   sinon: "resource://testing-common/Sinon.sys.mjs",
   ShellService: "moz-src:///browser/components/shell/ShellService.sys.mjs",
-  TaskbarTabsPin: "resource:///modules/taskbartabs/TaskbarTabsPin.sys.mjs",
+  TaskbarTabsPin:
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsPin.sys.mjs",
   TaskbarTabsRegistry:
-    "resource:///modules/taskbartabs/TaskbarTabsRegistry.sys.mjs",
+    "moz-src:///browser/components/taskbartabs/TaskbarTabsRegistry.sys.mjs",
   XPCOMUtils: "resource://gre/modules/XPCOMUtils.sys.mjs",
 });
 
@@ -72,7 +73,7 @@ add_task(async function test_pinCreatesDesktopEntry() {
   sinon.resetHistory();
 
   Assert.equal(
-    await TaskbarTabsPin.pinTaskbarTab(taskbarTab),
+    (await TaskbarTabsPin.pinTaskbarTab(taskbarTab)).shortcut,
     "glib.mock.prgname.webapp-" + taskbarTab.id + ".desktop",
     "Expected shortcut path is returned"
   );
@@ -92,7 +93,7 @@ add_task(async function test_pinUnusualName() {
   sinon.resetHistory();
 
   Assert.equal(
-    await TaskbarTabsPin.pinTaskbarTab(invalidTaskbarTab),
+    (await TaskbarTabsPin.pinTaskbarTab(invalidTaskbarTab)).shortcut,
     "glib.mock.prgname.webapp-" + invalidTaskbarTab.id + ".desktop",
     "Expected shortcut path is returned"
   );

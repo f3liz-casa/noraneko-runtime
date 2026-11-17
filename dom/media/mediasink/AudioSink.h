@@ -36,6 +36,7 @@ class AudioSink : private AudioStream::DataSource {
     double mVolume;
     double mPlaybackRate;
     bool mPreservesPitch;
+    nsString mStreamName;
   };
 
   AudioSink(AbstractThread* aThread, MediaQueue<AudioData>& aAudioQueue,
@@ -88,6 +89,10 @@ class AudioSink : private AudioStream::DataSource {
 
   bool IsStreamDrained() const {
     return mAudioStream && mAudioStream->IsPlaybackCompleted();
+  }
+
+  bool IsCubebStarted() const {
+    return mAudioStream && mAudioStream->IsCubebStarted();
   }
 
   void SetVolume(double aVolume);

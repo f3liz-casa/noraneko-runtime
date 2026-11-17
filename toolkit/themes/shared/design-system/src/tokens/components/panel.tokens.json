@@ -8,27 +8,15 @@
           "nativeTheme": "Field",
           "forcedColors": "Menu"
         }
-      },
-      "dimmed": {
-        "@base": {
-          "value": "{background.color.dimmed.@base}"
-        },
-        "further": {
-          "value": "{background.color.dimmed.further}"
-        }
       }
     }
   },
   "border": {
     "color": {
-      "value": {
-        "light": "rgb(240, 240, 244)",
-        "dark": "rgb(82, 82, 94)",
-        "nativeTheme": "{border.color.deemphasized.@base}"
-      }
+      "value": "{popup.border.color}"
     },
     "radius": {
-      "value": "{border.radius.medium}"
+      "value": "{popup.border.radius}"
     }
   },
   "box": {
@@ -38,6 +26,22 @@
       },
       "margin": {
         "value": "4px"
+      }
+    }
+  },
+  "footer": {
+    "background": {
+      "color": {
+        "value": {
+          "light": "color-mix(in srgb, currentColor 12%, transparent)",
+          "dark": "color-mix(in srgb, currentColor 17%, transparent)",
+          "nativeTheme": "color-mix(in srgb, currentColor 17%, transparent)"
+        }
+      }
+    },
+    "text": {
+      "color": {
+        "value": "inherit"
       }
     }
   },
@@ -72,11 +76,13 @@
   },
   "text": {
     "color": {
-      "value": {
-        "light": "{color.black.@base}",
-        "dark": "rgb(251, 251, 254)",
-        "nativeTheme": "FieldText",
-        "forcedColors": "MenuText"
+      "@base": {
+        "value": {
+          "light": "{color.black.@base}",
+          "dark": "rgb(251, 251, 254)",
+          "nativeTheme": "FieldText",
+          "forcedColors": "MenuText"
+        }
       }
     }
   },

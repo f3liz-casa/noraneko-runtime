@@ -396,7 +396,7 @@ already_AddRefed<PushManager> ServiceWorkerRegistration::GetPushManager(
     }
 
     GlobalObject global(aCx, globalObject->GetGlobalJSObject());
-    mPushManager = PushManager::Constructor(
+    mPushManager = PushManager::Create(
         global, NS_ConvertUTF8toUTF16(mDescriptor.Scope()), aRv);
     if (aRv.Failed()) {
       return nullptr;
@@ -489,6 +489,10 @@ already_AddRefed<Promise> ServiceWorkerRegistration::GetNotifications(
               scope = NS_ConvertUTF8toUTF16(mDescriptor.Scope())](
                  const PServiceWorkerRegistrationChild::
                      GetNotificationsPromise::ResolveOrRejectValue&& aValue) {
+               if (promise->GetParentObject()->IsDying()) {
+                 return;
+               }
+
                if (aValue.IsReject()) {
                  // An unregistered registration
                  promise->MaybeResolve(nsTArray<RefPtr<Notification>>());

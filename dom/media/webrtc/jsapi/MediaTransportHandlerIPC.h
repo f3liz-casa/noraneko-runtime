@@ -68,7 +68,7 @@ class MediaTransportHandlerIPC final : public MediaTransportHandler {
 
   void AddIceCandidate(const std::string& aTransportId,
                        const std::string& aCandidate, const std::string& aUfrag,
-                       const std::string& aObfuscatedAddress) override;
+                       const std::string& aResolvedAddress) override;
 
   void UpdateNetworkState(bool aOnline) override;
 
@@ -77,7 +77,6 @@ class MediaTransportHandlerIPC final : public MediaTransportHandler {
 
  private:
   friend class MediaTransportChild;
-  void Destroy() override;
   virtual ~MediaTransportHandlerIPC();
 
   RefPtr<MediaTransportChild> mChild;

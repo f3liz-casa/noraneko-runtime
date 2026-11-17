@@ -136,6 +136,11 @@ class TransactionBuilder final {
 
   void RemovePipeline(PipelineId aPipelineId);
 
+  // Sets the namespaces of the pipelines that aPipelineId may embed with
+  // iframe items. Nothing() lets it embed any pipeline.
+  void SetEmbedPolicy(PipelineId aPipelineId,
+                      const Maybe<nsTArray<uint32_t>>& aNamespaces);
+
   // aIdNamespace is the namespace whose resources the display list is allowed
   // to reference. It must be supplied by the compositor-side owner of the
   // pipeline.
@@ -143,7 +148,8 @@ class TransactionBuilder final {
                       wr::WrPipelineId pipeline_id,
                       wr::BuiltDisplayListDescriptor dl_descriptor,
                       wr::Vec<uint8_t>& dl_items_data,
-                      wr::Vec<uint8_t>& dl_spatial_tree);
+                      wr::Vec<uint8_t>& dl_spatial_tree,
+                      wr::Vec<uint8_t>& dl_interner_delta);
 
   void ClearDisplayList(Epoch aEpoch, wr::IdNamespace aIdNamespace,
                         wr::WrPipelineId aPipeline);
@@ -206,6 +212,8 @@ class TransactionBuilder final {
   void AddSnapshotImage(wr::SnapshotImageKey aKey);
 
   void DeleteSnapshotImage(wr::SnapshotImageKey aKey);
+
+  void AdoptSnapshotImage(wr::SnapshotImageKey aFrom, wr::SnapshotImageKey aTo);
 
   void AddRawFont(wr::FontKey aKey, wr::Vec<uint8_t>& aBytes, uint32_t aIndex);
 
@@ -296,7 +304,7 @@ class WebRenderAPI final {
 
   void Readback(const TimeStamp& aStartTime, gfx::IntSize aSize,
                 const gfx::SurfaceFormat& aFormat,
-                const Range<uint8_t>& aBuffer, bool* aNeedsYFlip);
+                const mozilla::Range<uint8_t>& aBuffer, bool* aNeedsYFlip);
 
   void ClearAllCaches();
   void SetBatchingLookback(uint32_t aCount);
@@ -621,10 +629,15 @@ class DisplayListBuilder final {
   wr::WrClipId DefineImageMaskClip(const wr::ImageMask& aMask,
                                    const nsTArray<wr::LayoutPoint>&,
                                    wr::FillRule);
+  // aAntiAliased keeps the clip at its exact position instead of snapping it
+  // to the device pixel grid. It is meant for clips defined in the same space
+  // as anti-aliased primitives, such as SVG user space.
   wr::WrClipId DefineRoundedRectClip(Maybe<wr::WrSpatialId> aSpace,
-                                     const wr::ComplexClipRegion& aComplex);
+                                     const wr::ComplexClipRegion& aComplex,
+                                     bool aAntiAliased = false);
   wr::WrClipId DefineRectClip(Maybe<wr::WrSpatialId> aSpace,
-                              wr::LayoutRect aClipRect);
+                              wr::LayoutRect aClipRect,
+                              bool aAntiAliased = false);
 
   wr::WrSpatialId DefineStickyFrame(const ActiveScrolledRoot* aStickyAsr,
                                     Maybe<wr::WrSpatialId> aParentSpatialId,
@@ -641,6 +654,11 @@ class DisplayListBuilder final {
   Maybe<wr::WrSpatialId> GetSpatialIdForDefinedLayer(
       const ActiveScrolledRoot* aASR) const;
 
+  // The external scroll offset WebRender adds to items pushed into the current
+  // space, moving them from the pre-scrolled coordinates they are authored in
+  // to the scroll-invariant ones they are snapped in.
+  wr::LayoutVector2D CurrentAccumulatedScrollOffset();
+
   wr::WrSpatialId DefineScrollLayer(
       const ActiveScrolledRoot* aAsr,
       const layers::ScrollableLayerGuid::ViewID& aViewId,
@@ -656,9 +674,14 @@ class DisplayListBuilder final {
                              const wr::LayoutRect& aClip,
                              bool aIsBackfaceVisible, const wr::ColorF& aColor,
                              const WrAnimationProperty* aAnimation);
+  // Fills an ellipse inscribed in aBounds.
+  void PushEllipse(const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
+                   bool aIsBackfaceVisible, const wr::ColorF& aColor);
+  // Fills a rectangle with the given elliptical corner radii (the same for
+  // all four corners). The radii must not exceed half the size of aBounds.
   void PushRoundedRect(const wr::LayoutRect& aBounds,
                        const wr::LayoutRect& aClip, bool aIsBackfaceVisible,
-                       const wr::ColorF& aColor);
+                       const wr::LayoutSize& aRadii, const wr::ColorF& aColor);
   void PushHitTest(const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
                    bool aIsBackfaceVisible,
                    const layers::ScrollableLayerGuid::ViewID& aScrollId,
@@ -671,31 +694,30 @@ class DisplayListBuilder final {
                           const nsTArray<wr::WrFilterData>& aFilterDatas,
                           bool aIsBackfaceVisible);
 
-  void PushLinearGradient(const wr::LayoutRect& aBounds,
-                          const wr::LayoutRect& aClip, bool aIsBackfaceVisible,
-                          const wr::LayoutPoint& aStartPoint,
-                          const wr::LayoutPoint& aEndPoint,
-                          const nsTArray<wr::GradientStop>& aStops,
-                          wr::ExtendMode aExtendMode,
-                          const wr::LayoutSize aTileSize,
-                          const wr::LayoutSize aTileSpacing);
+  void PushLinearGradient(
+      const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
+      bool aIsBackfaceVisible, const wr::LayoutVector2D& aStartPoint,
+      const wr::LayoutVector2D& aEndPoint,
+      const nsTArray<wr::GradientStop>& aStops, wr::ExtendMode aExtendMode,
+      const wr::LayoutSize aTileSize, const wr::LayoutSize aTileSpacing,
+      bool aForceAntiAliasing = false,
+      wr::AlphaMode aAlphaMode = wr::AlphaMode::Premultiplied);
 
-  void PushRadialGradient(const wr::LayoutRect& aBounds,
-                          const wr::LayoutRect& aClip, bool aIsBackfaceVisible,
-                          const wr::LayoutPoint& aCenter,
-                          const wr::LayoutSize& aRadius,
-                          const nsTArray<wr::GradientStop>& aStops,
-                          wr::ExtendMode aExtendMode,
-                          const wr::LayoutSize aTileSize,
-                          const wr::LayoutSize aTileSpacing);
+  void PushRadialGradient(
+      const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
+      bool aIsBackfaceVisible, const wr::LayoutVector2D& aCenter,
+      const wr::LayoutSize& aRadius, const nsTArray<wr::GradientStop>& aStops,
+      wr::ExtendMode aExtendMode, const wr::LayoutSize aTileSize,
+      const wr::LayoutSize aTileSpacing, bool aForceAntiAliasing = false,
+      wr::AlphaMode aAlphaMode = wr::AlphaMode::Premultiplied);
 
-  void PushConicGradient(const wr::LayoutRect& aBounds,
-                         const wr::LayoutRect& aClip, bool aIsBackfaceVisible,
-                         const wr::LayoutPoint& aCenter, const float aAngle,
-                         const nsTArray<wr::GradientStop>& aStops,
-                         wr::ExtendMode aExtendMode,
-                         const wr::LayoutSize aTileSize,
-                         const wr::LayoutSize aTileSpacing);
+  void PushConicGradient(
+      const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
+      bool aIsBackfaceVisible, const wr::LayoutVector2D& aCenter,
+      const float aAngle, const nsTArray<wr::GradientStop>& aStops,
+      wr::ExtendMode aExtendMode, const wr::LayoutSize aTileSize,
+      const wr::LayoutSize aTileSpacing,
+      wr::AlphaMode aAlphaMode = wr::AlphaMode::Premultiplied);
 
   void PushImage(const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
                  bool aIsBackfaceVisible, bool aForceAntiAliasing,
@@ -703,7 +725,8 @@ class DisplayListBuilder final {
                  bool aPremultipliedAlpha = true,
                  const wr::ColorF& aColor = wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
                  bool aPreferCompositorSurface = false,
-                 bool aSupportsExternalCompositing = false);
+                 bool aSupportsExternalCompositing = false,
+                 bool aRasterizedForRect = false);
 
   void PushRepeatingImage(
       const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
@@ -769,10 +792,11 @@ class DisplayListBuilder final {
   void PushBorder(
       const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
       bool aIsBackfaceVisible, const wr::LayoutSideOffsets& aWidths,
-      const Range<const wr::BorderSide>& aSides,
+      const mozilla::Range<const wr::BorderSide>& aSides,
       const wr::BorderRadius& aRadius,
       const wr::LayoutSideOffsets& aInset = EmptyLayoutSideOffsets(),
-      wr::AntialiasBorder = wr::AntialiasBorder::Yes);
+      wr::AntialiasBorder = wr::AntialiasBorder::Yes,
+      bool aForceAntiAliasing = false);
 
   void PushBorderImage(const wr::LayoutRect& aBounds,
                        const wr::LayoutRect& aClip, bool aIsBackfaceVisible,
@@ -783,27 +807,27 @@ class DisplayListBuilder final {
                           const wr::LayoutSideOffsets& aWidths,
                           const int32_t aWidth, const int32_t aHeight,
                           bool aFill, const wr::DeviceIntSideOffsets& aSlice,
-                          const wr::LayoutPoint& aStartPoint,
-                          const wr::LayoutPoint& aEndPoint,
+                          const wr::LayoutVector2D& aStartPoint,
+                          const wr::LayoutVector2D& aEndPoint,
                           const nsTArray<wr::GradientStop>& aStops,
                           wr::ExtendMode aExtendMode);
 
   void PushBorderRadialGradient(
       const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
       bool aIsBackfaceVisible, const wr::LayoutSideOffsets& aWidths, bool aFill,
-      const wr::LayoutPoint& aCenter, const wr::LayoutSize& aRadius,
+      const wr::LayoutVector2D& aCenter, const wr::LayoutSize& aRadius,
       const nsTArray<wr::GradientStop>& aStops, wr::ExtendMode aExtendMode);
 
   void PushBorderConicGradient(
       const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
       bool aIsBackfaceVisible, const wr::LayoutSideOffsets& aWidths, bool aFill,
-      const wr::LayoutPoint& aCenter, const float aAngle,
+      const wr::LayoutVector2D& aCenter, const float aAngle,
       const nsTArray<wr::GradientStop>& aStops, wr::ExtendMode aExtendMode);
 
   void PushText(const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
                 bool aIsBackfaceVisible, const wr::ColorF& aColor,
                 wr::FontInstanceKey aFontKey,
-                Range<const wr::GlyphInstance> aGlyphBuffer,
+                mozilla::Range<const wr::GlyphInstance> aGlyphBuffer,
                 const wr::GlyphOptions* aGlyphOptions = nullptr);
 
   void PushLine(const wr::LayoutRect& aClip, bool aIsBackfaceVisible,

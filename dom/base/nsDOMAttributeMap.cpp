@@ -94,12 +94,11 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsDOMAttributeMap)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsDOMAttributeMap)
 
-nsresult nsDOMAttributeMap::SetOwnerDocument(Document* aDocument) {
+void nsDOMAttributeMap::AdoptCachedAttributes(nsNodeInfoManager* aManager) {
   for (const auto& entry : mAttributeCache.Values()) {
-    nsresult rv = entry->SetOwnerDocument(aDocument);
-    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+    IgnoredErrorResult rv;
+    entry->Adopt(aManager, rv);
   }
-  return NS_OK;
 }
 
 void nsDOMAttributeMap::DropAttribute(int32_t aNamespaceID,
@@ -263,7 +262,8 @@ already_AddRefed<Attr> nsDOMAttributeMap::SetNamedItemNS(
   aAttr.SetMap(this);
 
   rv = mContent->SetAttr(ni->NamespaceID(), ni->NameAtom(), ni->GetPrefixAtom(),
-                         *compliantString, true);
+                         *compliantString, nullptr, true,
+                         oldNi ? IsKnownNewAttr::No : IsKnownNewAttr::Yes);
   if (NS_FAILED(rv)) {
     DropAttribute(ni->NamespaceID(), ni->NameAtom());
     aError.Throw(rv);

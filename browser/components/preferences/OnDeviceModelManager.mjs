@@ -13,13 +13,13 @@ const XPCOMUtils = ChromeUtils.importESModule(
 const lazy = XPCOMUtils.declareLazy({
   AIWindow:
     "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
-  GenAI: "resource:///modules/GenAI.sys.mjs",
+  GenAI: "moz-src:///browser/components/genai/GenAI.sys.mjs",
   LinkPreview: "moz-src:///browser/components/genai/LinkPreview.sys.mjs",
   PdfJsGuessAltTextFeature: "resource://pdf.js/PdfJsAIFeature.sys.mjs",
   SmartTabGroupingManager:
     "moz-src:///browser/components/tabbrowser/SmartTabGrouping.sys.mjs",
   SpeechRecognitionFeature:
-    "resource://gre/modules/SpeechRecognitionFeature.sys.mjs",
+    "moz-src:///dom/media/webspeech/recognition/SpeechRecognitionFeature.sys.mjs",
   TranslationsFeature:
     "chrome://global/content/translations/TranslationsFeature.sys.mjs",
 });

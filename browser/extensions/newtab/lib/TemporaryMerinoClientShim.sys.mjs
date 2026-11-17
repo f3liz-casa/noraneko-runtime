@@ -134,8 +134,10 @@ export class TemporaryMerinoClientShim {
     this.#sessionTimeoutMs = value;
   }
 
-  // Note: Cannot be JSDoc due to https://github.com/pyodide/sphinx-js/issues/242
-  // The current session ID. Null when there is no active session.
+  /**
+   * @returns {?string}
+   *   The current session ID. Null when there is no active session.
+   */
   get sessionID() {
     return this.#sessionID;
   }
@@ -149,9 +151,11 @@ export class TemporaryMerinoClientShim {
     return this.#sequenceNumber;
   }
 
-  // Note: Cannot be JSDoc due to https://github.com/pyodide/sphinx-js/issues/242
-  // A string that indicates the status of the last fetch. Possible values:
-  // success, timeout, network_error, http_error
+  /**
+   * @returns {string}
+   *   A string that indicates the status of the last fetch. Possible values:
+   *   success, timeout, network_error, http_error
+   */
   get lastFetchStatus() {
     return this.#lastFetchStatus;
   }
@@ -489,6 +493,8 @@ export class TemporaryMerinoClientShim {
    *   Timeout in milliseconds. This method will return once the timeout
    *   elapses, a response is received, or an error occurs, whichever happens
    *   first.
+   * @param {string=} options.endpointUrl
+   *   Overrides the Merino endpoint URL from the merinoEndpointURL pref.
    * @returns {Promise<MerinoClientSuggestion>}
    *   The Merino suggestions or null if there's an error or unexpected
    *   response.
@@ -573,6 +579,8 @@ export class TemporaryMerinoClientShim {
    *   region codes.
    * @param {string=} options.city
    *   The city that should be a city name.
+   * @param {string=} options.endpointUrl
+   *   The hourly forecasts endpoint. Without it, null is returned.
    * @returns {Promise<Array<{date_time: string, epoch_date_time: number, icon_id: number, temperature: {c: number, f: number}, url: string}>|null>}
    *   Array of hourly forecast slots, or null if the endpoint is not
    *   configured or an error occurs.
@@ -651,197 +659,6 @@ export class TemporaryMerinoClientShim {
       return data;
     } catch (e) {
       this.#lazy.logger.error("Hourly forecast fetch error", e);
-      return null;
-    }
-  }
-
-  /**
-   * Fetch the list of available sports teams from the Merino WCS endpoint.
-   *
-   * @param {object} options
-   *   Options object
-   * @param {string} options.source
-   *   The source that is requesting this fetch.
-   * @param {string} options.endpointUrl
-   *   The teams endpoint URL.
-   * @returns {Promise<{data: object|null, error: null | "invalid_url" | "load_error"}>}
-   *   `error: null` with `data: null` means the endpoint is not configured
-   *   (deliberate skip).
-   */
-  async fetchSportsTeams({ source, endpointUrl }) {
-    if (!endpointUrl) {
-      return { data: null, error: null };
-    }
-    let url = URL.parse(endpointUrl);
-    if (!url) {
-      this.#lazy.logger.error("Invalid sports teams endpoint URL", endpointUrl);
-      return { data: null, error: "invalid_url" };
-    }
-    if (source) {
-      url.searchParams.set("source", source);
-    }
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        this.#lazy.logger.error(
-          `Sports teams fetch failed with status ${response.status}`
-        );
-        return { data: null, error: "load_error" };
-      }
-      const data = /** @type {any} */ (await response.json());
-      this.#lazy.logger.debug("fetchSportsTeams response", data);
-      return { data, error: null };
-    } catch (e) {
-      this.#lazy.logger.error("Sports teams fetch error", e);
-      return { data: null, error: "load_error" };
-    }
-  }
-
-  /**
-   * Fetch upcoming matches from the Merino WCS endpoint.
-   *
-   * @param {object} options
-   *   Options object
-   * @param {string} options.source
-   *   The source that is requesting this fetch.
-   * @param {string} options.endpointUrl
-   *   The matches endpoint URL.
-   * @param {string} [options.date]
-   *   Optional YYYY-MM-DD date around which the backend should return its
-   *   ±21 day window of matches. Used by the load-more scroll on both the
-   *   Upcoming and Results lists (stepping the date forward to load future
-   *   matches or backward to load older ones); omit for the initial fetch
-   *   (which defaults to "today" backend-side).
-   * @returns {Promise<{data: object|null, error: null | "invalid_url" | "load_error"}>}
-   *   `error: null` with `data: null` means the endpoint is not configured
-   *   (deliberate skip).
-   */
-  async fetchSportsMatches({ source, endpointUrl, date }) {
-    if (!endpointUrl) {
-      return { data: null, error: null };
-    }
-    let url = URL.parse(endpointUrl);
-    if (!url) {
-      this.#lazy.logger.error(
-        "Invalid sports matches endpoint URL",
-        endpointUrl
-      );
-      return { data: null, error: "invalid_url" };
-    }
-    if (source) {
-      url.searchParams.set("source", source);
-    }
-    if (date) {
-      url.searchParams.set("date", date);
-    }
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        this.#lazy.logger.error(
-          `Sports matches fetch failed with status ${response.status}`
-        );
-        return { data: null, error: "load_error" };
-      }
-      const data = /** @type {any} */ (await response.json());
-      this.#lazy.logger.debug("fetchSportsMatches response", data);
-      return { data, error: null };
-    } catch (e) {
-      this.#lazy.logger.error("Sports matches fetch error", e);
-      return { data: null, error: "load_error" };
-    }
-  }
-
-  /**
-   * Fetch currently-live matches from the Merino WCS endpoint.
-   *
-   * @param {object} options
-   *   Options object
-   * @param {string} options.source
-   *   The source that is requesting this fetch.
-   * @param {string} options.endpointUrl
-   *   The live matches endpoint URL.
-   * @returns {Promise<{data: object|null, error: null | "invalid_url" | "load_error"}>}
-   *   On success, `data` is `{ matches: [...] }`. `error: null` with
-   *   `data: null` means the endpoint is not configured (deliberate skip).
-   */
-  async fetchSportsLive({ source, endpointUrl }) {
-    if (!endpointUrl) {
-      return { data: null, error: null };
-    }
-    let url = URL.parse(endpointUrl);
-    if (!url) {
-      this.#lazy.logger.error("Invalid sports live endpoint URL", endpointUrl);
-      return { data: null, error: "invalid_url" };
-    }
-    if (source) {
-      url.searchParams.set("source", source);
-    }
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        this.#lazy.logger.error(
-          `Sports live fetch failed with status ${response.status}`
-        );
-        return { data: null, error: "load_error" };
-      }
-      const data = /** @type {any} */ (await response.json());
-      this.#lazy.logger.debug("fetchSportsLive response", data);
-      return { data, error: null };
-    } catch (e) {
-      this.#lazy.logger.error("Sports live fetch error", e);
-      return { data: null, error: "load_error" };
-    }
-  }
-
-  /**
-   * Fetch watch-live broadcaster listings for the active sports event from
-   * the Merino WCS endpoint.
-   *
-   * @param {object} options
-   *   Options object
-   * @param {string} options.source
-   *   The source that is requesting this fetch.
-   * @param {string} options.endpointUrl
-   *   The watch-live endpoint URL.
-   * @param {string} [options.acceptLanguage]
-   *   Optional BCP-47 locale string sent as the Accept-Language header so
-   *   the backend can localize broadcaster/region copy.
-   * @returns {Promise<object|null>}
-   *   The watch-live payload, or null if the endpoint is not configured or
-   *   an error occurs. The caller is responsible for shape-validating the
-   *   payload before consuming it.
-   */
-  async fetchWatchLive({ source, endpointUrl, acceptLanguage }) {
-    if (!endpointUrl) {
-      return null;
-    }
-    let url = URL.parse(endpointUrl);
-    if (!url) {
-      this.#lazy.logger.error(
-        "Invalid sports watch-live endpoint URL",
-        endpointUrl
-      );
-      return null;
-    }
-    if (source) {
-      url.searchParams.set("source", source);
-    }
-    const fetchOptions = acceptLanguage
-      ? { headers: { "Accept-Language": acceptLanguage } }
-      : undefined;
-    try {
-      const response = await fetch(url, fetchOptions);
-      if (!response.ok) {
-        this.#lazy.logger.error(
-          `Sports watch-live fetch failed with status ${response.status}`
-        );
-        return null;
-      }
-      const data = /** @type {any} */ (await response.json());
-      this.#lazy.logger.debug("fetchWatchLive response", data);
-      return data;
-    } catch (e) {
-      this.#lazy.logger.error("Sports watch-live fetch error", e);
       return null;
     }
   }
@@ -1022,7 +839,7 @@ export class TemporaryMerinoClientShim {
   }
 
   // State related to the current session.
-  /** @type {string} */
+  /** @type {?string} */
   #sessionID = null;
   #sequenceNumber = 0;
   /** @type {SkippableTimer} */
@@ -1034,7 +851,7 @@ export class TemporaryMerinoClientShim {
   #timeoutTimer = null;
   /** @type {AbortController} */
   #fetchController = null;
-  /** @type {string} */
+  /** @type {?string} */
   #lastFetchStatus = null;
   /** @type {PromiseWithResolvers<?Response|?OHTTPResponse>} */
   #nextResponseDeferred = null;

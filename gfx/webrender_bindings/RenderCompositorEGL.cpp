@@ -55,7 +55,7 @@ UniquePtr<RenderCompositor> RenderCompositorEGL::Create(
 
 EGLSurface RenderCompositorEGL::CreateEGLSurface() {
   EGLSurface surface = EGL_NO_SURFACE;
-  surface = gl::GLContextEGL::CreateEGLSurfaceForCompositorWidget(
+  surface = gl::GLContextEGL::Cast(gl())->CreateEGLSurfaceForCompositorWidget(
       mWidget, gl::GLContextEGL::Cast(gl())->mSurfaceConfig);
   if (surface == EGL_NO_SURFACE) {
     const auto* renderThread = RenderThread::Get();
@@ -292,7 +292,7 @@ void RenderCompositorEGL::MaybeWaitingForPendingReadFence(
   mWaitingForPendingReadFence.emplace_back(aTexture);
 }
 
-RefPtr<layers::Fence> RenderCompositorEGL::GetAndResetReleaseFence() {
+RefPtr<layers::Fence> RenderCompositorEGL::GetAndResetReadFence() {
 #ifdef MOZ_WIDGET_ANDROID
   if (mReleaseFence && !mWaitingForPendingReadFence.empty()) {
     auto* fileFence = mReleaseFence->AsFenceFileHandle();

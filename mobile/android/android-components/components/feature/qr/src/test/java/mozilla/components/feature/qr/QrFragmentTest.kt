@@ -14,6 +14,7 @@ import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.SessionConfiguration
 import android.media.Image
 import android.media.ImageReader
@@ -41,6 +42,7 @@ import com.google.zxing.NotFoundException
 import com.google.zxing.PlanarYUVLuminanceSource
 import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.RejectedExecutionException
 import kotlin.test.assertNotNull
 import mozilla.components.feature.qr.QrFragment.Companion.chooseOptimalSize
 import mozilla.components.feature.qr.views.AutoFitTextureView
@@ -53,6 +55,7 @@ import mozilla.components.support.test.robolectric.testContext
 import mozilla.components.support.test.whenever
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -73,16 +76,6 @@ import org.robolectric.annotation.Config
 
 @RunWith(AndroidJUnit4::class)
 class QrFragmentTest {
-
-    @Test
-    fun `initialize QR fragment`() {
-        val scanCompleteListener = mock<QrFragment.OnScanCompleteListener>()
-        val qrFragment = spy(QrFragment.newInstance(scanCompleteListener))
-
-        qrFragment.scanCompleteListener?.onScanComplete("result")
-        shadowOf(getMainLooper()).idle()
-        verify(scanCompleteListener).onScanComplete("result")
-    }
 
     @Test
     fun `onPause closes camera, stops background thread, and shuts down executor service`() {
@@ -211,6 +204,24 @@ class QrFragmentTest {
 
         verify(listener).onScanComplete(eq("qrcode-result"))
         assertEquals(QrFragment.STATE_QRCODE_EXIST, QrFragment.qrState)
+    }
+
+    @Test
+    fun `GIVEN the listener is cleared after a qr code is decoded WHEN the result is delivered THEN it is dropped`() {
+        val listener = mock<QrFragment.OnScanCompleteListener>()
+        val reader = mock<MultiFormatReader>()
+        val qrFragment = spy(QrFragment.newInstance(listener))
+        val source = mock<PlanarYUVLuminanceSource>()
+        val result = com.google.zxing.Result("qrcode-result", ByteArray(0), emptyArray(), BarcodeFormat.ITF)
+        whenever(reader.decodeWithState(any())).thenReturn(result)
+        qrFragment.multiFormatReader = reader
+        QrFragment.qrState = QrFragment.STATE_DECODE_PROGRESS
+
+        qrFragment.tryScanningSource(source)
+        qrFragment.scanCompleteListener = null
+        shadowOf(getMainLooper()).idle()
+
+        verify(listener, never()).onScanComplete(any())
     }
 
     @Test
@@ -854,5 +865,137 @@ class QrFragmentTest {
         } catch (e: NullPointerException) {
             fail("NullPointerException should not not have been thrown.")
         }
+    }
+
+    @Test
+    fun `GIVEN cameraDevice is null WHEN onSessionConfigured is called THEN the session is closed and setRepeatingRequest is not called`() {
+        val qrFragment = QrFragment.newInstance(mock<QrFragment.OnScanCompleteListener>())
+        qrFragment.cameraDevice = null
+
+        val session: CameraCaptureSession = mock()
+        whenever(session.device).thenReturn(mock())
+        val request: CaptureRequest = mock()
+        val captureCallback = object : CameraCaptureSession.CaptureCallback() {}
+
+        qrFragment.onSessionConfigured(session, request, captureCallback)
+
+        verify(session).close()
+        verify(session, never()).setRepeatingRequest(any(), any(), any())
+        assertNull(qrFragment.captureSession)
+    }
+
+    @Test
+    fun `GIVEN cameraDevice is null and the executor is terminated WHEN onSessionConfigured is called THEN the RejectedExecutionException is caught`() {
+        val qrFragment = QrFragment.newInstance(mock<QrFragment.OnScanCompleteListener>())
+        qrFragment.cameraDevice = null
+
+        val session: CameraCaptureSession = mock()
+        whenever(session.device).thenReturn(mock())
+        whenever(session.close()).thenThrow(RejectedExecutionException())
+        val request: CaptureRequest = mock()
+        val captureCallback = object : CameraCaptureSession.CaptureCallback() {}
+
+        try {
+            qrFragment.onSessionConfigured(session, request, captureCallback)
+        } catch (e: RejectedExecutionException) {
+            fail("RejectedExecutionException should have been caught and logged, not re-thrown.")
+        }
+
+        verify(session).close()
+        verify(session, never()).setRepeatingRequest(any(), any(), any())
+        assertNull(qrFragment.captureSession)
+    }
+
+    @Test
+    fun `GIVEN the thread is interrupted and the executor is terminated WHEN onSessionConfigured is called THEN the RejectedExecutionException is caught`() {
+        val qrFragment = QrFragment.newInstance(mock<QrFragment.OnScanCompleteListener>())
+        val camera: CameraDevice = mock()
+        qrFragment.cameraDevice = camera
+
+        val session: CameraCaptureSession = mock()
+        whenever(session.device).thenReturn(camera)
+        whenever(session.close()).thenThrow(RejectedExecutionException())
+        val request: CaptureRequest = mock()
+        val captureCallback = object : CameraCaptureSession.CaptureCallback() {}
+
+        Thread.currentThread().interrupt()
+        try {
+            qrFragment.onSessionConfigured(session, request, captureCallback)
+        } catch (e: RejectedExecutionException) {
+            fail("RejectedExecutionException should have been caught and logged, not re-thrown.")
+        } finally {
+            assertTrue(Thread.interrupted())
+        }
+
+        verify(session).close()
+        verify(session, never()).setRepeatingRequest(any(), any(), any())
+        assertNull(qrFragment.captureSession)
+    }
+
+    @Test
+    fun `GIVEN the session belongs to a previous camera WHEN onSessionConfigured is called THEN the session is closed and setRepeatingRequest is not called`() {
+        val qrFragment = QrFragment.newInstance(mock<QrFragment.OnScanCompleteListener>())
+        qrFragment.cameraDevice = mock()
+
+        val session: CameraCaptureSession = mock()
+        whenever(session.device).thenReturn(mock())
+        val request: CaptureRequest = mock()
+        val captureCallback = object : CameraCaptureSession.CaptureCallback() {}
+
+        qrFragment.onSessionConfigured(session, request, captureCallback)
+
+        verify(session).close()
+        verify(session, never()).setRepeatingRequest(any(), any(), any())
+        assertNull(qrFragment.captureSession)
+    }
+
+    @Test
+    fun `GIVEN cameraDevice exists WHEN onSessionConfigured is called THEN setRepeatingRequest is called and captureSession is assigned`() {
+        val qrFragment = QrFragment.newInstance(mock<QrFragment.OnScanCompleteListener>())
+        val camera: CameraDevice = mock()
+        qrFragment.cameraDevice = camera
+
+        val session: CameraCaptureSession = mock()
+        whenever(session.device).thenReturn(camera)
+        val request: CaptureRequest = mock()
+        val captureCallback = object : CameraCaptureSession.CaptureCallback() {}
+
+        qrFragment.onSessionConfigured(session, request, captureCallback)
+
+        assertSame(session, qrFragment.captureSession)
+        verify(session).setRepeatingRequest(eq(request), eq(captureCallback), any())
+        verify(session, never()).close()
+    }
+
+    @Test
+    fun `GIVEN setRepeatingRequest throws IllegalArgumentException WHEN onSessionConfigured is called THEN it does not crash`() {
+        val qrFragment = QrFragment.newInstance(mock<QrFragment.OnScanCompleteListener>())
+        val camera: CameraDevice = mock()
+        qrFragment.cameraDevice = camera
+
+        val session: CameraCaptureSession = mock()
+        whenever(session.device).thenReturn(camera)
+        whenever(session.setRepeatingRequest(any(), any(), any()))
+            .thenThrow(IllegalArgumentException("CaptureRequest contains unconfigured Input/Output Surface!"))
+        val request: CaptureRequest = mock()
+        val captureCallback = object : CameraCaptureSession.CaptureCallback() {}
+
+        try {
+            qrFragment.onSessionConfigured(session, request, captureCallback)
+        } catch (e: IllegalArgumentException) {
+            fail("IllegalArgumentException should have been caught and logged, not re-thrown.")
+        }
+    }
+
+    @Test
+    fun `GIVEN a capture session exists WHEN closeCamera is called THEN the session is closed and cleared`() {
+        val qrFragment = QrFragment.newInstance(mock<QrFragment.OnScanCompleteListener>())
+        val session: CameraCaptureSession = mock()
+        qrFragment.captureSession = session
+
+        qrFragment.closeCamera()
+
+        verify(session).close()
+        assertNull(qrFragment.captureSession)
     }
 }

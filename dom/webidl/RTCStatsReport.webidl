@@ -132,7 +132,7 @@ dictionary RTCOutboundRtpStreamStats : RTCSentRtpStreamStats {
   unsigned long long retransmittedPacketsSent;
   unsigned long long retransmittedBytesSent;
   unsigned long rtxSsrc;
-  unsigned long long totalEncodedBytesTarget;
+  double targetBitrate;
   unsigned long frameWidth;
   unsigned long frameHeight;
   double framesPerSecond;
@@ -219,7 +219,7 @@ dictionary RTCIceCandidatePairStats : RTCStats {
 
 dictionary RTCIceCandidateStats : RTCStats {
   required DOMString transportId;
-  DOMString address;
+  DOMString? address;
   long port;
   DOMString protocol;
   RTCIceCandidateType candidateType;

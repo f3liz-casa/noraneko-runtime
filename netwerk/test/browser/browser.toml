@@ -139,11 +139,14 @@ support-files = ["early_hint_preload_test_helper.sys.mjs",]
 ["browser_NetUtil.js"]
 
 ["browser_about_cache.js"]
-skip-if = [
-  "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # Bug 1970244
-]
 
 ["browser_accept_language_override.js"]
+
+["browser_akamai_waf_telemetry.js"]
+support-files = ["!/netwerk/test/unit/http2-ca.pem"] # for node server
+
+["browser_alt_data_cross_origin.js"]
+support-files = ["alt_data_cross_origin.sjs"]
 
 ["browser_backgroundtask_purgeHTTPCache.js"]
 
@@ -328,6 +331,7 @@ support-files = [
 
 ["browser_test_offline_tab.js"]
 skip-if = [
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64' && debug && verify-standalone",
   "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && debug && verify-standalone",
 ]
+
+["browser_wallpaper_protocol_library.js"]

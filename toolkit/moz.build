@@ -23,7 +23,7 @@ DIRS += [
 ]
 
 if CONFIG["OS_ARCH"] == "WINNT":
-    # mingw is missing Windows toast notification definitions.
+    # mingw-w64 is missing the WRL headers the toast notification code uses.
     if CONFIG["CC_TYPE"] == "clang-cl":
         if CONFIG["MOZ_NOTIFICATION_SERVER"]:
             DIRS += ["mozapps/notificationserver"]
@@ -34,7 +34,8 @@ if CONFIG["OS_ARCH"] == "WINNT":
             "mozapps/msixcomserver-rust",
         ]
 
-    DIRS += ["mozapps/pushnotificationhelper"]
+    if CONFIG["MOZ_PUSH_NOTIFICATION_HELPER"]:
+        DIRS += ["mozapps/pushnotificationhelper"]
 
     if CONFIG["CC_TYPE"] == "clang-cl" or CONFIG["MOZ_ARTIFACT_BUILDS"]:
         # Default Browser Agent relies on Windows toast notifications, so should
