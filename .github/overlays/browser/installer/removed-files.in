@@ -86,9 +86,6 @@
 # update-settings.ini has been removed on macOS.
 #ifdef XP_MACOSX
 @DIR_RESOURCES@update-settings.ini
-<<<<<<< noraneko
-#endif
-=======
 #endif
 
 # update_telemetry.json was accidentally added invalidating the code signature on macOS.
@@ -96,4 +93,3 @@
 #ifdef XP_MACOSX
 update_telemetry.json
 #endif
->>>>>>> upstream
